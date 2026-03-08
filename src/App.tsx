@@ -67,7 +67,7 @@ const dashboardTabs: Array<{ value: DashboardTab; label: string; description: st
 const inputTabs: Array<{ value: InputsTab; label: string; description: string }> = [
   { value: 'team', label: '成员与员工', description: '配置成员收入结构，以及员工月薪和场次成本。' },
   { value: 'operating', label: '经营底盘', description: '定义单价、固定成本、场次成本与耗材。' },
-  { value: 'timeline', label: '月度排期', description: '按月份矩阵批量维护经营周期。' },
+  { value: 'timeline', label: '月度排期', description: '用默认基线和曲线编辑整段经营周期。' },
 ]
 
 const chartMetricTabs: Array<{ value: ChartMetricKey; label: string }> = [

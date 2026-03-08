@@ -27,7 +27,14 @@ export function OverviewPanel(props: {
     props.selectedMonthResult.employeeBasePayCost + props.selectedMonthResult.employeeEventCost
   const trainingCost = props.selectedMonthResult.rehearsalCost + props.selectedMonthResult.teacherCost
   const perEventCost = props.selectedMonthResult.eventOperatingCost + props.selectedMonthResult.extraPerEventCost
-  const monthColumnCount = Math.min(6, Math.max(3, props.months.length))
+  const selectedMonthIndex = Math.max(
+    0,
+    props.months.findIndex((month) => month.id === props.selectedMonthPlan.id),
+  )
+  const monthLabelStride = Math.max(1, Math.ceil(props.months.length / 6))
+  const visibleMonths = props.months.filter(
+    (_, index) => index === 0 || index === props.months.length - 1 || index % monthLabelStride === 0,
+  )
 
   return (
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1.04fr)_minmax(360px,0.96fr)] xl:items-start">
@@ -93,28 +100,45 @@ export function OverviewPanel(props: {
         />
 
         <div className="mt-4 rounded-[22px] border border-stone-900/10 bg-stone-50/80 p-3">
-          <div className="grid gap-3 lg:grid-cols-[160px_minmax(0,1fr)] lg:items-center">
-            <div className="shrink-0">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-stone-500">月度切换</p>
-              <p className="mt-1 text-sm font-semibold text-stone-950">选择月份展开单月输入与成本</p>
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-stone-500">月份</p>
+              <p className="mt-1 text-sm font-semibold text-stone-950">{props.selectedMonthPlan.label}</p>
             </div>
+            <span className="rounded-full border border-stone-900/10 bg-white px-2.5 py-1 text-[11px] font-semibold text-stone-500">
+              {selectedMonthIndex + 1} / {props.months.length}
+            </span>
+          </div>
+
+          <div className="mt-3">
+            <input
+              type="range"
+              min={0}
+              max={Math.max(0, props.months.length - 1)}
+              step={1}
+              value={selectedMonthIndex}
+              onChange={(event) => {
+                const nextMonth = props.months[Number(event.target.value)]
+                if (nextMonth) {
+                  props.onSelectMonth(nextMonth.id)
+                }
+              }}
+              className="h-2 w-full cursor-pointer accent-amber-500"
+            />
             <div
-              className="grid min-w-0 gap-2"
-              style={{ gridTemplateColumns: `repeat(${monthColumnCount}, minmax(0, 1fr))` }}
+              className="mt-2 grid gap-2 text-[11px] font-medium text-stone-500"
+              style={{ gridTemplateColumns: `repeat(${visibleMonths.length}, minmax(0, 1fr))` }}
             >
-              {props.months.map((month) => (
-                <button
+              {visibleMonths.map((month) => (
+                <span
                   key={month.id}
-                  type="button"
-                  onClick={() => props.onSelectMonth(month.id)}
-                  className={
-                    month.id === props.selectedMonthPlan.id
-                      ? 'min-w-0 rounded-full border border-amber-300 bg-amber-100 px-2.5 py-2 text-xs font-semibold leading-none text-amber-800'
-                      : 'min-w-0 rounded-full border border-stone-900/10 bg-white px-2.5 py-2 text-xs font-medium leading-none text-stone-600 transition hover:bg-stone-100'
-                  }
+                  className={cx(
+                    'truncate text-center transition',
+                    month.id === props.selectedMonthPlan.id && 'font-semibold text-amber-700',
+                  )}
                 >
                   {month.label}
-                </button>
+                </span>
               ))}
             </div>
           </div>

@@ -18,7 +18,7 @@ export function OperatingWorkbench(props: {
         icon={Coins}
         eyebrow="Inputs"
         title="经营底盘"
-        description="这里只放长期假设：前期投入、单价、固定成本、场次成本、耗材，以及经营从几月开始、规划多少期。月度排期页只做默认模板和逐月覆盖。"
+        description="这里只放长期假设：前期投入、单价、固定成本、场次成本、耗材，以及经营从几月开始、规划多少期。月度排期页只做默认基线和月度曲线覆盖。"
       />
 
       <div className="mt-6 grid gap-6">
@@ -131,7 +131,7 @@ export function OperatingWorkbench(props: {
             </label>
 
             <div className="rounded-[18px] border border-stone-900/10 bg-stone-50/80 px-4 py-3 text-sm leading-7 text-stone-600">
-              经营底盘决定模型周期，月度排期里会先展示一行“默认模板”，你调完后可以一键套用到全部月份，再逐月改单独差异。
+              经营底盘决定模型周期，月度排期里会先给你一条默认基线；你调完后同步默认，再只改少数例外月份。
             </div>
           </div>
         </section>
