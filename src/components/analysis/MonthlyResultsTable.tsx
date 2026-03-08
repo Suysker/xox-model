@@ -1,7 +1,7 @@
 import { Table2 } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { MonthlyScenarioResult } from '../../types'
-import { cx, formatCompactNumber, formatCurrency, formatDecimal } from '../../lib/format'
+import { cx, formatCurrency, formatDecimal, formatPaybackMonths } from '../../lib/format'
 import { Panel, SectionTitle, StatCard } from '../common/ui'
 
 export function MonthlyResultsTable(props: {
@@ -10,7 +10,7 @@ export function MonthlyResultsTable(props: {
   onSelectMonth: (id: string) => void
 }) {
   const profitableMonths = props.months.filter((month) => month.monthlyProfit >= 0).length
-  const paybackMonth = props.months.find((month) => month.hasPaidBack)?.label ?? '未回本'
+  const paybackMonthIndex = props.months.findIndex((month) => month.hasPaidBack)
   const lastCash = props.months.at(-1)?.cumulativeCash ?? 0
 
   return (
@@ -24,32 +24,38 @@ export function MonthlyResultsTable(props: {
 
       <div className="mt-5 grid gap-3 md:grid-cols-3">
         <StatCard label="盈利月份" value={`${profitableMonths} / ${props.months.length}`} />
-        <StatCard label="回本月份" value={paybackMonth} />
+        <StatCard
+          label="回本周期"
+          value={formatPaybackMonths(paybackMonthIndex >= 0 ? paybackMonthIndex + 1 : null)}
+        />
         <StatCard label="期末累计现金" value={formatCurrency(lastCash)} />
       </div>
 
       <div className="mt-5 overflow-x-auto rounded-[24px] border border-stone-900/10">
-        <table className="min-w-[1160px] w-full border-collapse text-sm">
+        <table className="min-w-[980px] w-full border-collapse text-sm">
           <thead className="bg-stone-100/90 text-stone-700">
             <tr className="border-b border-stone-900/10">
               <HeaderCell>月份</HeaderCell>
               <HeaderCell align="right">场次</HeaderCell>
               <HeaderCell align="right">单场张数</HeaderCell>
-              <HeaderCell align="right">月总张数</HeaderCell>
               <HeaderCell align="right">营收</HeaderCell>
               <HeaderCell align="right">提成</HeaderCell>
-              <HeaderCell align="right">固定成本</HeaderCell>
-              <HeaderCell align="right">场次成本</HeaderCell>
+              <HeaderCell align="right">人力</HeaderCell>
+              <HeaderCell align="right">训练</HeaderCell>
+              <HeaderCell align="right">经营固定</HeaderCell>
+              <HeaderCell align="right">每场成本</HeaderCell>
+              <HeaderCell align="right">专项</HeaderCell>
               <HeaderCell align="right">耗材</HeaderCell>
-              <HeaderCell align="right">总成本</HeaderCell>
               <HeaderCell align="right">月利润</HeaderCell>
               <HeaderCell align="right">累计现金</HeaderCell>
-              <HeaderCell align="center">状态</HeaderCell>
             </tr>
           </thead>
           <tbody>
             {props.months.map((month) => {
               const active = month.monthId === props.selectedMonthId
+              const peopleCost = month.basePayCost + month.employeeBasePayCost + month.employeeEventCost
+              const trainingCost = month.rehearsalCost + month.teacherCost
+              const perEventCost = month.eventOperatingCost + month.extraPerEventCost
 
               return (
                 <tr
@@ -63,13 +69,14 @@ export function MonthlyResultsTable(props: {
                   <BodyCell className="font-semibold text-stone-950">{month.label}</BodyCell>
                   <BodyCell align="right">{month.events}</BodyCell>
                   <BodyCell align="right">{formatDecimal(month.totalUnitsPerEvent)}</BodyCell>
-                  <BodyCell align="right">{formatCompactNumber(month.totalUnitsPerMonth)}</BodyCell>
                   <BodyCell align="right">{formatCurrency(month.grossSales)}</BodyCell>
                   <BodyCell align="right">{formatCurrency(month.commissionCost)}</BodyCell>
-                  <BodyCell align="right">{formatCurrency(month.fixedCostTotal)}</BodyCell>
-                  <BodyCell align="right">{formatCurrency(month.showLinkedCostTotal)}</BodyCell>
+                  <BodyCell align="right">{formatCurrency(peopleCost)}</BodyCell>
+                  <BodyCell align="right">{formatCurrency(trainingCost)}</BodyCell>
+                  <BodyCell align="right">{formatCurrency(month.fixedOperatingCost)}</BodyCell>
+                  <BodyCell align="right">{formatCurrency(perEventCost)}</BodyCell>
+                  <BodyCell align="right">{formatCurrency(month.specialProjectCost)}</BodyCell>
                   <BodyCell align="right">{formatCurrency(month.unitLinkedCostTotal)}</BodyCell>
-                  <BodyCell align="right">{formatCurrency(month.totalCost)}</BodyCell>
                   <BodyCell
                     align="right"
                     className={month.monthlyProfit >= 0 ? 'font-semibold text-emerald-700' : 'font-semibold text-rose-700'}
@@ -81,19 +88,6 @@ export function MonthlyResultsTable(props: {
                     className={month.cumulativeCash >= 0 ? 'font-semibold text-emerald-700' : 'font-semibold text-stone-700'}
                   >
                     {formatCurrency(month.cumulativeCash)}
-                  </BodyCell>
-                  <BodyCell align="center">
-                    <span
-                      className={
-                        month.hasPaidBack
-                          ? 'rounded-full border border-emerald-200 bg-emerald-100 px-2 py-1 text-[11px] font-semibold text-emerald-700'
-                          : active
-                            ? 'rounded-full border border-amber-200 bg-white px-2 py-1 text-[11px] font-semibold text-amber-800'
-                            : 'rounded-full border border-stone-900/10 bg-white px-2 py-1 text-[11px] font-semibold text-stone-500'
-                      }
-                    >
-                      {month.hasPaidBack ? '已回本' : active ? '当前查看' : '未回本'}
-                    </span>
                   </BodyCell>
                 </tr>
               )

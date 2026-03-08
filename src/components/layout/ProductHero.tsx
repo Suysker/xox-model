@@ -1,6 +1,6 @@
 import { Sparkles, Target, TrendingUp, Vault } from 'lucide-react'
 import type { ScenarioResult } from '../../types'
-import { formatCurrency, formatPercent } from '../../lib/format'
+import { formatCurrency, formatDecimal, formatPaybackMonths, formatPercent } from '../../lib/format'
 import { StatCard } from '../common/ui'
 
 export function ProductHero(props: {
@@ -8,7 +8,6 @@ export function ProductHero(props: {
   scenario: ScenarioResult
   memberCount: number
   monthCount: number
-  snapshotCount: number
 }) {
   return (
     <section className="overflow-hidden rounded-[32px] bg-stone-950 p-6 text-white shadow-[0_24px_80px_rgba(41,37,36,0.28)]">
@@ -30,8 +29,8 @@ export function ProductHero(props: {
           <Highlight icon={Target} label="当前场景" value={props.scenario.label} />
           <Highlight
             icon={Vault}
-            label="回本判断"
-            value={props.scenario.paybackMonthLabel ? `${props.scenario.paybackMonthLabel} 回本` : '周期内未回本'}
+            label="回本周期"
+            value={formatPaybackMonths(props.scenario.paybackMonthIndex)}
           />
           <Highlight icon={TrendingUp} label="当前 ROI" value={formatPercent(props.scenario.roi)} />
         </div>
@@ -40,7 +39,7 @@ export function ProductHero(props: {
       <div className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4">
         <StatCard dark label="成员数量" value={`${props.memberCount} 人`} />
         <StatCard dark label="规划月份" value={`${props.monthCount} 个月`} />
-        <StatCard dark label="版本快照" value={`${props.snapshotCount} 个`} />
+        <StatCard dark label="平均单场" value={`${formatDecimal(props.scenario.averageUnitsPerEvent)} 张`} />
         <StatCard dark label="期末现金" value={formatCurrency(props.scenario.netCashAfterInvestment)} />
       </div>
     </section>

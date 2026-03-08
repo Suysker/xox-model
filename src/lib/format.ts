@@ -69,3 +69,11 @@ export function formatDateTime(value: string | null) {
 
   return dateTimeFormatter.format(date)
 }
+
+export function formatPaybackMonths(paybackMonthIndex: number | null) {
+  if (paybackMonthIndex === null) {
+    return '周期内未回本'
+  }
+
+  return `${paybackMonthIndex}个月回本`
+}

@@ -11,13 +11,16 @@ describe('monthly underground-idol investment model', () => {
     expect(result.months[0]?.label).toBe('3月')
     expect(result.months[0]?.totalUnitsPerEvent).toBeCloseTo(100.32, 2)
     expect(result.months[0]?.grossSales).toBeCloseTo(52968.96, 2)
-    expect(result.months[0]?.totalCost).toBeCloseTo(9100, 2)
+    expect(result.months[0]?.employeeEventCost).toBeCloseTo(3600, 2)
+    expect(result.months[0]?.members[1]?.basePayCost).toBe(0)
+    expect(result.months[0]?.operatingCostTotal).toBeCloseTo(9100, 2)
+    expect(result.months[0]?.totalCost).toBeCloseTo(25408.86, 2)
     expect(result.months[0]?.monthlyProfit).toBeCloseTo(27560.1, 1)
 
     expect(result.months[1]?.label).toBe('4月')
     expect(result.months[1]?.grossSales).toBeCloseTo(80256, 2)
     expect(result.months[1]?.fixedCostTotal).toBeCloseTo(3500, 2)
-    expect(result.months[1]?.showLinkedCostTotal).toBeCloseTo(3600, 2)
+    expect(result.months[1]?.eventLinkedCostTotal).toBeCloseTo(3600, 2)
     expect(result.months[1]?.monthlyProfit).toBeCloseTo(48445.6, 2)
 
     expect(result.months[2]?.label).toBe('5月')

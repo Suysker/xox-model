@@ -1,4 +1,5 @@
 import type {
+  EmployeeMonthResult,
   MemberMonthResult,
   ModelConfig,
   ModelResult,
@@ -61,7 +62,6 @@ function getMemberMonthResults(config: ModelConfig, month: MonthlyPlan, key: Sce
     const grossSales = monthlyUnits * clampToNonNegative(config.operating.unitPrice)
     const commissionCost = grossSales * clampToNonNegative(member.commissionRate)
     const basePayCost = clampToNonNegative(member.monthlyBasePay)
-    const allowanceCost = events * clampToNonNegative(member.eventAllowance)
 
     return {
       memberId: member.id,
@@ -72,8 +72,25 @@ function getMemberMonthResults(config: ModelConfig, month: MonthlyPlan, key: Sce
       grossSales,
       commissionCost,
       basePayCost,
-      allowanceCost,
       companyRevenueAfterCommission: grossSales - commissionCost,
+    }
+  })
+}
+
+function getEmployeeMonthResults(config: ModelConfig, month: MonthlyPlan) {
+  const events = clampToNonNegative(month.events)
+
+  return config.employees.map<EmployeeMonthResult>((employee) => {
+    const basePayCost = clampToNonNegative(employee.monthlyBasePay)
+    const perEventCost = events * clampToNonNegative(employee.perEventCost)
+
+    return {
+      employeeId: employee.id,
+      name: employee.name,
+      role: employee.role,
+      basePayCost,
+      perEventCost,
+      totalCost: basePayCost + perEventCost,
     }
   })
 }
@@ -86,13 +103,15 @@ export function getScenarioResult(config: ModelConfig, key: ScenarioKey): Scenar
 
   config.months.forEach((month, monthIndex) => {
     const members = getMemberMonthResults(config, month, key)
+    const employees = getEmployeeMonthResults(config, month)
     const events = clampToNonNegative(month.events)
     const totalUnitsPerEvent = members.reduce((sum, member) => sum + member.unitsPerEvent, 0)
     const totalUnitsPerMonth = members.reduce((sum, member) => sum + member.monthlyUnits, 0)
     const grossSales = members.reduce((sum, member) => sum + member.grossSales, 0)
     const commissionCost = members.reduce((sum, member) => sum + member.commissionCost, 0)
     const basePayCost = members.reduce((sum, member) => sum + member.basePayCost, 0)
-    const allowanceCost = members.reduce((sum, member) => sum + member.allowanceCost, 0)
+    const employeeBasePayCost = employees.reduce((sum, employee) => sum + employee.basePayCost, 0)
+    const employeeEventCost = employees.reduce((sum, employee) => sum + employee.perEventCost, 0)
     const fixedOperatingCost = clampToNonNegative(config.operating.monthlyFixedCost)
     const eventOperatingCost = events * clampToNonNegative(config.operating.perEventOperatingCost)
     const extraPerEventCost = events * clampToNonNegative(month.extraPerEventCost)
@@ -105,11 +124,18 @@ export function getScenarioResult(config: ModelConfig, key: ScenarioKey): Scenar
       ? totalUnitsPerMonth * clampToNonNegative(config.operating.materialCostPerUnit)
       : 0
     const fixedCostTotal =
-      basePayCost + fixedOperatingCost + rehearsalCost + teacherCost + specialProjectCost
-    const showLinkedCostTotal = allowanceCost + eventOperatingCost + extraPerEventCost
+      basePayCost +
+      employeeBasePayCost +
+      fixedOperatingCost +
+      rehearsalCost +
+      teacherCost +
+      specialProjectCost
+    const eventLinkedCostTotal =
+      employeeEventCost + eventOperatingCost + extraPerEventCost
     const unitLinkedCostTotal = materialCost
-    const totalCost = fixedCostTotal + showLinkedCostTotal + unitLinkedCostTotal
-    const monthlyProfit = grossSales - commissionCost - totalCost
+    const operatingCostTotal = fixedCostTotal + eventLinkedCostTotal + unitLinkedCostTotal
+    const totalCost = commissionCost + operatingCostTotal
+    const monthlyProfit = grossSales - totalCost
 
     cumulativeProfit += monthlyProfit
     const cumulativeCash = cumulativeProfit - clampToNonNegative(config.operating.initialInvestment)
@@ -131,7 +157,8 @@ export function getScenarioResult(config: ModelConfig, key: ScenarioKey): Scenar
       grossSales,
       commissionCost,
       basePayCost,
-      allowanceCost,
+      employeeBasePayCost,
+      employeeEventCost,
       fixedOperatingCost,
       eventOperatingCost,
       extraPerEventCost,
@@ -139,7 +166,8 @@ export function getScenarioResult(config: ModelConfig, key: ScenarioKey): Scenar
       teacherCost,
       specialProjectCost,
       fixedCostTotal,
-      showLinkedCostTotal,
+      eventLinkedCostTotal,
+      operatingCostTotal,
       unitLinkedCostTotal,
       totalCost,
       monthlyProfit,
@@ -147,12 +175,14 @@ export function getScenarioResult(config: ModelConfig, key: ScenarioKey): Scenar
       cumulativeCash,
       hasPaidBack,
       members,
+      employees,
     })
   })
 
   const totalEvents = months.reduce((sum, month) => sum + month.events, 0)
   const totalUnitsPerMonth = months.reduce((sum, month) => sum + month.totalUnitsPerMonth, 0)
   const grossSales = months.reduce((sum, month) => sum + month.grossSales, 0)
+  const operatingCostTotal = months.reduce((sum, month) => sum + month.operatingCostTotal, 0)
   const totalCost = months.reduce((sum, month) => sum + month.totalCost, 0)
   const totalProfit = months.reduce((sum, month) => sum + month.monthlyProfit, 0)
   const netCashAfterInvestment = totalProfit - clampToNonNegative(config.operating.initialInvestment)
@@ -171,6 +201,7 @@ export function getScenarioResult(config: ModelConfig, key: ScenarioKey): Scenar
     averageUnitsPerEvent,
     totalUnitsPerMonth,
     grossSales,
+    operatingCostTotal,
     totalCost,
     totalProfit,
     netCashAfterInvestment,

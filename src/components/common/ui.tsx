@@ -141,7 +141,7 @@ export function HeaderCell(props: {
       rowSpan={props.rowSpan}
       colSpan={props.colSpan}
       className={cx(
-        'px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.16em]',
+        'px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-[0.16em]',
         props.align === 'right' && 'text-right',
         props.align === 'center' && 'text-center',
       )}
@@ -159,7 +159,7 @@ export function BodyCell(props: {
   return (
     <td
       className={cx(
-        'px-4 py-3 align-top text-stone-700',
+        'px-3 py-2.5 align-top text-stone-700',
         props.align === 'right' && 'text-right',
         props.align === 'center' && 'text-center',
         props.className,
@@ -177,11 +177,27 @@ export function CompactNumberInput(props: {
   min?: number | undefined
   max?: number | undefined
   suffix?: string | undefined
+  size?: 'sm' | 'md' | undefined
+  align?: 'left' | 'center' | 'right' | undefined
+  className?: string | undefined
+  inputClassName?: string | undefined
 }) {
   return (
-    <div className="flex h-10 items-center overflow-hidden rounded-xl border border-stone-900/10 bg-stone-50 focus-within:border-emerald-500 focus-within:bg-white">
+    <div
+      className={cx(
+        'flex items-center overflow-hidden border border-stone-900/10 bg-stone-50 focus-within:border-emerald-500 focus-within:bg-white',
+        props.size === 'sm' ? 'h-9 rounded-lg' : 'h-10 rounded-xl',
+        props.className,
+      )}
+    >
       <input
-        className="h-full min-w-0 flex-1 border-none bg-transparent px-3 text-sm font-medium text-stone-900 outline-none"
+        className={cx(
+          'h-full min-w-0 flex-1 border-none bg-transparent text-sm font-medium text-stone-900 outline-none',
+          props.size === 'sm' ? 'px-2.5' : 'px-3',
+          props.align === 'center' && 'text-center',
+          props.align === 'right' && 'text-right',
+          props.inputClassName,
+        )}
         type="number"
         value={Number.isFinite(props.value) ? props.value : 0}
         step={props.step}
@@ -190,7 +206,12 @@ export function CompactNumberInput(props: {
         onChange={(event) => props.onChange(Number(event.target.value))}
       />
       {props.suffix ? (
-        <span className="pr-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-stone-500">
+        <span
+          className={cx(
+            'font-semibold uppercase tracking-[0.12em] text-stone-500',
+            props.size === 'sm' ? 'pr-2 text-[10px]' : 'pr-3 text-[11px]',
+          )}
+        >
           {props.suffix}
         </span>
       ) : null}

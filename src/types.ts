@@ -12,8 +12,15 @@ export type TeamMember = {
   employmentType: EmploymentType
   monthlyBasePay: number
   commissionRate: number
-  eventAllowance: number
   unitsPerEvent: ScenarioBand
+}
+
+export type Employee = {
+  id: string
+  name: string
+  role: string
+  monthlyBasePay: number
+  perEventCost: number
 }
 
 export type OperatingConfig = {
@@ -22,6 +29,11 @@ export type OperatingConfig = {
   monthlyFixedCost: number
   perEventOperatingCost: number
   materialCostPerUnit: number
+}
+
+export type PlanningConfig = {
+  startMonth: number
+  horizonMonths: number
 }
 
 export type MonthlyPlan = {
@@ -45,9 +57,14 @@ export type MonthlyPlan = {
   notes: string
 }
 
+export type MonthlyPlanTemplate = Omit<MonthlyPlan, 'id' | 'label'>
+
 export type ModelConfig = {
   operating: OperatingConfig
+  planning: PlanningConfig
+  timelineTemplate: MonthlyPlanTemplate
   teamMembers: TeamMember[]
+  employees: Employee[]
   months: MonthlyPlan[]
 }
 
@@ -60,8 +77,16 @@ export type MemberMonthResult = {
   grossSales: number
   commissionCost: number
   basePayCost: number
-  allowanceCost: number
   companyRevenueAfterCommission: number
+}
+
+export type EmployeeMonthResult = {
+  employeeId: string
+  name: string
+  role: string
+  basePayCost: number
+  perEventCost: number
+  totalCost: number
 }
 
 export type MonthlyScenarioResult = {
@@ -75,7 +100,8 @@ export type MonthlyScenarioResult = {
   grossSales: number
   commissionCost: number
   basePayCost: number
-  allowanceCost: number
+  employeeBasePayCost: number
+  employeeEventCost: number
   fixedOperatingCost: number
   eventOperatingCost: number
   extraPerEventCost: number
@@ -83,7 +109,8 @@ export type MonthlyScenarioResult = {
   teacherCost: number
   specialProjectCost: number
   fixedCostTotal: number
-  showLinkedCostTotal: number
+  eventLinkedCostTotal: number
+  operatingCostTotal: number
   unitLinkedCostTotal: number
   totalCost: number
   monthlyProfit: number
@@ -91,6 +118,7 @@ export type MonthlyScenarioResult = {
   cumulativeCash: number
   hasPaidBack: boolean
   members: MemberMonthResult[]
+  employees: EmployeeMonthResult[]
 }
 
 export type ScenarioResult = {
@@ -101,6 +129,7 @@ export type ScenarioResult = {
   averageUnitsPerEvent: number
   totalUnitsPerMonth: number
   grossSales: number
+  operatingCostTotal: number
   totalCost: number
   totalProfit: number
   netCashAfterInvestment: number

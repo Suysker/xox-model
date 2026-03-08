@@ -54,7 +54,6 @@ export function MemberContributionList(props: {
 
       <div className="mt-5 grid gap-3">
         {members.map((member) => {
-          const memberFixedComp = member.basePayCost + member.allowanceCost
           const width = `${Math.max(8, (member.grossSales / maxGrossSales) * 100)}%`
 
           return (
@@ -84,7 +83,7 @@ export function MemberContributionList(props: {
                 <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 xl:min-w-[620px]">
                   <MetricCard label="营收" value={formatCurrency(member.grossSales)} />
                   <MetricCard label="提成成本" value={formatCurrency(member.commissionCost)} />
-                  <MetricCard label="底薪 / 场补" value={formatCurrency(memberFixedComp)} />
+                  <MetricCard label="成员底薪" value={formatCurrency(member.basePayCost)} />
                   <MetricCard label="扣提成后留存" value={formatCurrency(member.companyRevenueAfterCommission)} />
                 </div>
               </div>

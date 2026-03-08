@@ -1,17 +1,9 @@
-import { CalendarRange, Plus } from 'lucide-react'
-import { useState } from 'react'
-import type { MonthlyPlan } from '../../types'
-import { formatCurrency } from '../../lib/format'
-import {
-  InlinePairField,
-  NumberField,
-  Panel,
-  SectionTitle,
-  SegmentTabs,
-  StatCard,
-  TextAreaField,
-} from '../common/ui'
+import { CalendarRange, RefreshCcw } from 'lucide-react'
+import { useState, type ReactNode } from 'react'
+import type { MonthlyPlan, MonthlyPlanTemplate } from '../../types'
+import { CompactNumberInput, Panel, SectionTitle, SegmentTabs, TextAreaField } from '../common/ui'
 
+type MatrixTab = 'sales' | 'training' | 'special' | 'notes'
 type MonthNumberKey =
   | 'events'
   | 'salesMultiplier'
@@ -27,38 +19,43 @@ type MonthNumberKey =
   | 'travelCost'
   | 'streamingCost'
   | 'mealCost'
+type MonthTextKey = 'notes'
 
-type MonthTextKey = 'label' | 'notes'
-type DetailTab = 'rhythm' | 'coreCost' | 'specialCost' | 'notes'
+const salesColumns: Array<{ key: MonthNumberKey; label: string; step: number | 'any' }> = [
+  { key: 'events', label: '场次', step: 1 },
+  { key: 'salesMultiplier', label: '销售系数', step: 'any' },
+]
 
-function getSpecialCostTotal(month: MonthlyPlan) {
-  return (
-    month.extraFixedCost +
-    month.vjCost +
-    month.originalSongCost +
-    month.makeupCost +
-    month.travelCost +
-    month.streamingCost +
-    month.mealCost
-  )
-}
+const trainingColumns: Array<{ key: MonthNumberKey; label: string; step: number | 'any' }> = [
+  { key: 'rehearsalCount', label: '排练次数', step: 1 },
+  { key: 'rehearsalCost', label: '排练单价', step: 50 },
+  { key: 'teacherCount', label: '老师次数', step: 1 },
+  { key: 'teacherCost', label: '老师单价', step: 50 },
+  { key: 'extraPerEventCost', label: '额外每场', step: 100 },
+  { key: 'extraFixedCost', label: '额外固定', step: 100 },
+]
+
+const specialColumns: Array<{ key: MonthNumberKey; label: string; step: number | 'any' }> = [
+  { key: 'vjCost', label: 'VJ', step: 100 },
+  { key: 'originalSongCost', label: '原创', step: 100 },
+  { key: 'makeupCost', label: '化妆', step: 100 },
+  { key: 'travelCost', label: '路费', step: 100 },
+  { key: 'streamingCost', label: '推流', step: 100 },
+  { key: 'mealCost', label: '聚餐', step: 100 },
+]
 
 export function TimelineEditor(props: {
+  template: MonthlyPlanTemplate
   months: MonthlyPlan[]
-  selectedMonthId: string
-  onSelect: (id: string) => void
-  onAddMonth: () => void
+  onTemplateNumberChange: (key: MonthNumberKey, value: number) => void
+  onTemplateMaterialToggle: (value: boolean) => void
   onTextChange: (id: string, key: MonthTextKey, value: string) => void
   onNumberChange: (id: string, key: MonthNumberKey, value: number) => void
   onMaterialToggle: (id: string, value: boolean) => void
-  onRemove: (id: string) => void
+  onApplyTemplateToAll: (tab: Exclude<MatrixTab, 'notes'>) => void
+  onResetMonthFromTemplate: (id: string, tab: Exclude<MatrixTab, 'notes'>) => void
 }) {
-  const [detailTab, setDetailTab] = useState<DetailTab>('rhythm')
-  const selectedMonth = props.months.find((month) => month.id === props.selectedMonthId) ?? props.months[0]
-
-  if (!selectedMonth) {
-    return null
-  }
+  const [tab, setTab] = useState<MatrixTab>('sales')
 
   return (
     <Panel>
@@ -66,245 +63,391 @@ export function TimelineEditor(props: {
         icon={CalendarRange}
         eyebrow="Inputs"
         title="月度经营排期"
-        description="这里不再用长表单堆满屏幕，而是按月份切换编辑。每个月都能单独配置场次、销售系数和专项成本。"
-        aside={
-          <button
-            type="button"
-            onClick={props.onAddMonth}
-            className="inline-flex items-center gap-2 rounded-full border border-stone-900/10 bg-stone-950 px-4 py-2 text-sm font-medium text-white transition hover:bg-stone-800"
-          >
-            <Plus className="h-4 w-4" />
-            添加月份
-          </button>
-        }
+        description="这里先调默认模板，再一键应用到全部月份。月度表只保留逐月差异，避免每个月都从头填一遍。"
       />
 
-      <div className="mt-5 flex gap-3 overflow-x-auto pb-1">
-        {props.months.map((month) => {
-          const active = month.id === selectedMonth.id
-
-          return (
-            <div
-              key={month.id}
-              className={
-                active
-                  ? 'min-w-44 rounded-[22px] border border-amber-300 bg-amber-100/90 p-4 text-stone-950 shadow-[0_12px_30px_rgba(70,52,17,0.08)]'
-                  : 'min-w-44 rounded-[22px] border border-stone-900/10 bg-stone-50/80 p-4 text-stone-700'
-              }
-            >
-              <button
-                type="button"
-                onClick={() => props.onSelect(month.id)}
-                className="w-full text-left"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold">{month.label}</p>
-                    <p className="mt-1 text-xs text-stone-600">
-                      {month.events} 场 · 销售系数 {month.salesMultiplier}x
-                    </p>
-                  </div>
-                  <span
-                    className={
-                      active
-                        ? 'rounded-full border border-amber-300 bg-white/70 px-2 py-1 text-[11px] font-semibold text-amber-800'
-                        : 'rounded-full border border-stone-900/10 bg-white/80 px-2 py-1 text-[11px] font-semibold text-stone-500'
-                    }
-                  >
-                    {active ? '当前' : '查看'}
-                  </span>
-                </div>
-              </button>
-
-              <div className="mt-3 flex items-center justify-between gap-3 text-xs text-stone-600">
-                <span>{month.includeMaterialCost ? '计入耗材' : '不计耗材'}</span>
-                <button
-                  type="button"
-                  onClick={() => props.onRemove(month.id)}
-                  disabled={props.months.length === 1}
-                  className="rounded-full border border-stone-900/10 bg-white px-2 py-1 text-[11px] font-semibold text-stone-600 disabled:opacity-40"
-                >
-                  删除
-                </button>
-              </div>
-            </div>
-          )
-        })}
-      </div>
-
-      <div className="mt-5 grid gap-3 sm:grid-cols-3">
-        <StatCard label="当前月份" value={selectedMonth.label} />
-        <StatCard label="特殊成本合计" value={formatCurrency(getSpecialCostTotal(selectedMonth))} />
-        <StatCard label="耗材开关" value={selectedMonth.includeMaterialCost ? '计入' : '不计入'} />
-      </div>
-
-      <div className="mt-5">
-        <SegmentTabs<DetailTab>
-          value={detailTab}
+      <div className="mt-5 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <SegmentTabs<MatrixTab>
+          value={tab}
           items={[
-            { value: 'rhythm', label: '节奏' },
-            { value: 'coreCost', label: '核心成本' },
-            { value: 'specialCost', label: '专项成本' },
+            { value: 'sales', label: '经营节奏' },
+            { value: 'training', label: '训练与补充成本' },
+            { value: 'special', label: '专项项目' },
             { value: 'notes', label: '备注' },
           ]}
-          onChange={setDetailTab}
+          onChange={setTab}
         />
+
+        {tab !== 'notes' ? (
+          <div className="rounded-full border border-stone-900/10 bg-stone-50/80 px-4 py-2 text-sm text-stone-600">
+            默认模板先定节奏，再逐月改差异
+          </div>
+        ) : null}
       </div>
 
-      {detailTab === 'rhythm' ? (
-        <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <div className="grid gap-2">
-            <span className="text-sm font-semibold text-stone-800">月份标签</span>
-            <input
-              className="h-11 rounded-2xl border border-stone-900/10 bg-stone-100/80 px-4 text-sm font-medium text-stone-900 outline-none transition focus:border-emerald-500 focus:bg-white"
-              value={selectedMonth.label}
-              onChange={(event) => props.onTextChange(selectedMonth.id, 'label', event.target.value)}
-            />
-          </div>
-          <NumberField
-            label="场次"
-            value={selectedMonth.events}
-            min={0}
-            step={1}
-            suffix="场"
-            onChange={(value) => props.onNumberChange(selectedMonth.id, 'events', value)}
-          />
-          <NumberField
-            label="销售系数"
-            helper="1.0 表示按成员基准张数原样执行。"
-            value={selectedMonth.salesMultiplier}
-            min={0}
-            step="any"
-            suffix="x"
-            onChange={(value) => props.onNumberChange(selectedMonth.id, 'salesMultiplier', value)}
-          />
-          <div className="grid gap-2">
-            <span className="text-sm font-semibold text-stone-800">耗材是否计入</span>
-            <button
-              type="button"
-              onClick={() => props.onMaterialToggle(selectedMonth.id, !selectedMonth.includeMaterialCost)}
-              className={
-                selectedMonth.includeMaterialCost
-                  ? 'h-11 rounded-2xl border border-emerald-200 bg-emerald-100 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-200'
-                  : 'h-11 rounded-2xl border border-stone-900/10 bg-stone-100/80 text-sm font-semibold text-stone-600 transition hover:bg-white'
+      {tab === 'sales' ? (
+        <>
+          <TemplateBlock title="默认经营模板" onApply={() => props.onApplyTemplateToAll('sales')}>
+            <MonthGridTable
+              headers={['模板', '场次', '销售系数', '耗材', '操作']}
+              body={
+                <tr className="border-b border-stone-900/10 last:border-none">
+                  <MonthLabelCell label="默认" description="应用到全部月份" highlight />
+                  <GridCell>
+                    <CompactNumberInput
+                      value={props.template.events}
+                      min={0}
+                      step={1}
+                      size="sm"
+                      align="center"
+                      onChange={(value) => props.onTemplateNumberChange('events', value)}
+                    />
+                  </GridCell>
+                  <GridCell>
+                    <CompactNumberInput
+                      value={props.template.salesMultiplier}
+                      min={0}
+                      step="any"
+                      size="sm"
+                      align="center"
+                      onChange={(value) => props.onTemplateNumberChange('salesMultiplier', value)}
+                    />
+                  </GridCell>
+                  <GridCell>
+                    <ToggleCell
+                      active={props.template.includeMaterialCost}
+                      activeLabel="计入"
+                      inactiveLabel="不计"
+                      onClick={() => props.onTemplateMaterialToggle(!props.template.includeMaterialCost)}
+                    />
+                  </GridCell>
+                  <ActionCell>
+                    <ApplyButton onClick={() => props.onApplyTemplateToAll('sales')} label="应用全部" />
+                  </ActionCell>
+                </tr>
               }
-            >
-              {selectedMonth.includeMaterialCost ? '当前计入耗材' : '当前不计耗材'}
-            </button>
-          </div>
-        </div>
-      ) : null}
-
-      {detailTab === 'coreCost' ? (
-        <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <div className="grid gap-2">
-            <span className="text-sm font-semibold text-stone-800">排练</span>
-            <InlinePairField
-              leftLabel="次"
-              rightLabel="元"
-              leftValue={selectedMonth.rehearsalCount}
-              rightValue={selectedMonth.rehearsalCost}
-              leftStep={1}
-              rightStep={50}
-              onLeftChange={(value) => props.onNumberChange(selectedMonth.id, 'rehearsalCount', value)}
-              onRightChange={(value) => props.onNumberChange(selectedMonth.id, 'rehearsalCost', value)}
             />
-          </div>
-          <div className="grid gap-2">
-            <span className="text-sm font-semibold text-stone-800">老师</span>
-            <InlinePairField
-              leftLabel="次"
-              rightLabel="元"
-              leftValue={selectedMonth.teacherCount}
-              rightValue={selectedMonth.teacherCost}
-              leftStep={1}
-              rightStep={50}
-              onLeftChange={(value) => props.onNumberChange(selectedMonth.id, 'teacherCount', value)}
-              onRightChange={(value) => props.onNumberChange(selectedMonth.id, 'teacherCost', value)}
+          </TemplateBlock>
+
+          <OverrideBlock title="逐月微调">
+            <MonthGridTable
+              headers={['月份', '场次', '销售系数', '耗材', '操作']}
+              body={
+                <>
+                  {props.months.map((month) => (
+                    <tr key={month.id} className="border-b border-stone-900/10 last:border-none">
+                      <MonthLabelCell label={month.label} />
+                      <GridCell>
+                        <CompactNumberInput
+                          value={month.events}
+                          min={0}
+                          step={1}
+                          size="sm"
+                          align="center"
+                          onChange={(value) => props.onNumberChange(month.id, 'events', value)}
+                        />
+                      </GridCell>
+                      <GridCell>
+                        <CompactNumberInput
+                          value={month.salesMultiplier}
+                          min={0}
+                          step="any"
+                          size="sm"
+                          align="center"
+                          onChange={(value) => props.onNumberChange(month.id, 'salesMultiplier', value)}
+                        />
+                      </GridCell>
+                      <GridCell>
+                        <ToggleCell
+                          active={month.includeMaterialCost}
+                          activeLabel="计入"
+                          inactiveLabel="不计"
+                          onClick={() => props.onMaterialToggle(month.id, !month.includeMaterialCost)}
+                        />
+                      </GridCell>
+                      <ActionCell>
+                        <ResetButton onClick={() => props.onResetMonthFromTemplate(month.id, 'sales')} />
+                      </ActionCell>
+                    </tr>
+                  ))}
+                </>
+              }
             />
-          </div>
-          <NumberField
-            label="额外场次成本 / 场"
-            value={selectedMonth.extraPerEventCost}
-            min={0}
-            step={100}
-            suffix="元"
-            onChange={(value) => props.onNumberChange(selectedMonth.id, 'extraPerEventCost', value)}
-          />
-          <NumberField
-            label="额外固定成本"
-            value={selectedMonth.extraFixedCost}
-            min={0}
-            step={100}
-            suffix="元"
-            onChange={(value) => props.onNumberChange(selectedMonth.id, 'extraFixedCost', value)}
-          />
-        </div>
+          </OverrideBlock>
+        </>
       ) : null}
 
-      {detailTab === 'specialCost' ? (
-        <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          <NumberField
-            label="VJ"
-            value={selectedMonth.vjCost}
-            min={0}
-            step={100}
-            suffix="元"
-            onChange={(value) => props.onNumberChange(selectedMonth.id, 'vjCost', value)}
-          />
-          <NumberField
-            label="原创制作"
-            value={selectedMonth.originalSongCost}
-            min={0}
-            step={100}
-            suffix="元"
-            onChange={(value) => props.onNumberChange(selectedMonth.id, 'originalSongCost', value)}
-          />
-          <NumberField
-            label="化妆"
-            value={selectedMonth.makeupCost}
-            min={0}
-            step={100}
-            suffix="元"
-            onChange={(value) => props.onNumberChange(selectedMonth.id, 'makeupCost', value)}
-          />
-          <NumberField
-            label="路费"
-            value={selectedMonth.travelCost}
-            min={0}
-            step={100}
-            suffix="元"
-            onChange={(value) => props.onNumberChange(selectedMonth.id, 'travelCost', value)}
-          />
-          <NumberField
-            label="推流"
-            value={selectedMonth.streamingCost}
-            min={0}
-            step={100}
-            suffix="元"
-            onChange={(value) => props.onNumberChange(selectedMonth.id, 'streamingCost', value)}
-          />
-          <NumberField
-            label="聚餐"
-            value={selectedMonth.mealCost}
-            min={0}
-            step={100}
-            suffix="元"
-            onChange={(value) => props.onNumberChange(selectedMonth.id, 'mealCost', value)}
-          />
-        </div>
+      {tab === 'training' ? (
+        <>
+          <TemplateBlock title="默认训练模板" onApply={() => props.onApplyTemplateToAll('training')}>
+            <MonthGridTable
+              headers={['模板', ...trainingColumns.map((column) => column.label), '操作']}
+              body={
+                <tr className="border-b border-stone-900/10 last:border-none">
+                  <MonthLabelCell label="默认" description="应用到全部月份" highlight />
+                  {trainingColumns.map((column) => (
+                    <GridCell key={column.key}>
+                      <CompactNumberInput
+                        value={props.template[column.key]}
+                        min={0}
+                        step={column.step}
+                        size="sm"
+                        align="center"
+                        onChange={(value) => props.onTemplateNumberChange(column.key, value)}
+                      />
+                    </GridCell>
+                  ))}
+                  <ActionCell>
+                    <ApplyButton onClick={() => props.onApplyTemplateToAll('training')} label="应用全部" />
+                  </ActionCell>
+                </tr>
+              }
+            />
+          </TemplateBlock>
+
+          <OverrideBlock title="逐月微调">
+            <MonthGridTable
+              headers={['月份', ...trainingColumns.map((column) => column.label), '操作']}
+              body={
+                <>
+                  {props.months.map((month) => (
+                    <tr key={month.id} className="border-b border-stone-900/10 last:border-none">
+                      <MonthLabelCell label={month.label} />
+                      {trainingColumns.map((column) => (
+                        <GridCell key={`${month.id}-${column.key}`}>
+                          <CompactNumberInput
+                            value={month[column.key]}
+                            min={0}
+                            step={column.step}
+                            size="sm"
+                            align="center"
+                            onChange={(value) => props.onNumberChange(month.id, column.key, value)}
+                          />
+                        </GridCell>
+                      ))}
+                      <ActionCell>
+                        <ResetButton onClick={() => props.onResetMonthFromTemplate(month.id, 'training')} />
+                      </ActionCell>
+                    </tr>
+                  ))}
+                </>
+              }
+            />
+          </OverrideBlock>
+        </>
       ) : null}
 
-      {detailTab === 'notes' ? (
-        <div className="mt-5">
-          <TextAreaField
-            label="备注"
-            helper="记录这个月的特殊情况，例如启动月、上新歌、巡演或休整。"
-            value={selectedMonth.notes}
-            onChange={(value) => props.onTextChange(selectedMonth.id, 'notes', value)}
-          />
+      {tab === 'special' ? (
+        <>
+          <TemplateBlock title="默认专项模板" onApply={() => props.onApplyTemplateToAll('special')}>
+            <MonthGridTable
+              headers={['模板', ...specialColumns.map((column) => column.label), '操作']}
+              body={
+                <tr className="border-b border-stone-900/10 last:border-none">
+                  <MonthLabelCell label="默认" description="应用到全部月份" highlight />
+                  {specialColumns.map((column) => (
+                    <GridCell key={column.key}>
+                      <CompactNumberInput
+                        value={props.template[column.key]}
+                        min={0}
+                        step={column.step}
+                        size="sm"
+                        align="center"
+                        onChange={(value) => props.onTemplateNumberChange(column.key, value)}
+                      />
+                    </GridCell>
+                  ))}
+                  <ActionCell>
+                    <ApplyButton onClick={() => props.onApplyTemplateToAll('special')} label="应用全部" />
+                  </ActionCell>
+                </tr>
+              }
+            />
+          </TemplateBlock>
+
+          <OverrideBlock title="逐月微调">
+            <MonthGridTable
+              headers={['月份', ...specialColumns.map((column) => column.label), '操作']}
+              body={
+                <>
+                  {props.months.map((month) => (
+                    <tr key={month.id} className="border-b border-stone-900/10 last:border-none">
+                      <MonthLabelCell label={month.label} />
+                      {specialColumns.map((column) => (
+                        <GridCell key={`${month.id}-${column.key}`}>
+                          <CompactNumberInput
+                            value={month[column.key]}
+                            min={0}
+                            step={column.step}
+                            size="sm"
+                            align="center"
+                            onChange={(value) => props.onNumberChange(month.id, column.key, value)}
+                          />
+                        </GridCell>
+                      ))}
+                      <ActionCell>
+                        <ResetButton onClick={() => props.onResetMonthFromTemplate(month.id, 'special')} />
+                      </ActionCell>
+                    </tr>
+                  ))}
+                </>
+              }
+            />
+          </OverrideBlock>
+        </>
+      ) : null}
+
+      {tab === 'notes' ? (
+        <div className="mt-5 grid gap-4 xl:grid-cols-2">
+          {props.months.map((month) => (
+            <div key={month.id} className="rounded-[22px] border border-stone-900/10 bg-stone-50/80 p-4">
+              <p className="text-sm font-semibold text-stone-950">{month.label}</p>
+              <div className="mt-3">
+                <TextAreaField
+                  label="月份备注"
+                  helper="例如启动月、上新歌、冲销量、巡演或休息。"
+                  value={month.notes}
+                  onChange={(value) => props.onTextChange(month.id, 'notes', value)}
+                />
+              </div>
+            </div>
+          ))}
         </div>
       ) : null}
     </Panel>
+  )
+}
+
+function TemplateBlock(props: {
+  title: string
+  onApply: () => void
+  children: ReactNode
+}) {
+  return (
+    <section className="mt-5 rounded-[24px] border border-amber-200 bg-amber-50/80 p-4">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h3 className="text-lg font-semibold text-stone-950">{props.title}</h3>
+          <p className="mt-1 text-sm leading-6 text-stone-600">先把默认节奏定下来，再统一铺满全部月份。</p>
+        </div>
+        <ApplyButton onClick={props.onApply} label="应用到全部月份" />
+      </div>
+      <div className="mt-4">{props.children}</div>
+    </section>
+  )
+}
+
+function OverrideBlock(props: {
+  title: string
+  children: ReactNode
+}) {
+  return (
+    <section className="mt-4 rounded-[24px] border border-stone-900/10 bg-white p-4">
+      <div>
+        <h3 className="text-lg font-semibold text-stone-950">{props.title}</h3>
+        <p className="mt-1 text-sm leading-6 text-stone-600">只有和默认模板不一样的月份才需要改，右侧可以一键恢复默认。</p>
+      </div>
+      <div className="mt-4">{props.children}</div>
+    </section>
+  )
+}
+
+function MonthGridTable(props: {
+  headers: string[]
+  body: ReactNode
+}) {
+  return (
+    <div className="overflow-x-auto rounded-[20px] border border-stone-900/10">
+      <table className="min-w-[820px] w-full border-collapse text-sm">
+        <thead className="bg-stone-100/90 text-stone-700">
+          <tr className="border-b border-stone-900/10">
+            {props.headers.map((header) => (
+              <th key={header} className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-[0.16em]">
+                {header}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>{props.body}</tbody>
+      </table>
+    </div>
+  )
+}
+
+function MonthLabelCell(props: {
+  label: string
+  description?: string | undefined
+  highlight?: boolean | undefined
+}) {
+  return (
+    <td className={props.highlight ? 'px-3 py-2.5 align-top bg-amber-50/60' : 'px-3 py-2.5 align-top'}>
+      <div>
+        <p className="font-semibold text-stone-950">{props.label}</p>
+        {props.description ? <p className="mt-1 text-xs text-stone-500">{props.description}</p> : null}
+      </div>
+    </td>
+  )
+}
+
+function GridCell(props: {
+  children: ReactNode
+}) {
+  return <td className="px-2 py-2.5">{props.children}</td>
+}
+
+function ActionCell(props: {
+  children: ReactNode
+}) {
+  return <td className="px-3 py-2.5 text-right">{props.children}</td>
+}
+
+function ToggleCell(props: {
+  active: boolean
+  activeLabel: string
+  inactiveLabel: string
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={props.onClick}
+      className={
+        props.active
+          ? 'h-9 w-full rounded-lg border border-emerald-200 bg-emerald-100 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-200'
+          : 'h-9 w-full rounded-lg border border-stone-900/10 bg-stone-100/80 text-xs font-semibold text-stone-600 transition hover:bg-white'
+      }
+    >
+      {props.active ? props.activeLabel : props.inactiveLabel}
+    </button>
+  )
+}
+
+function ApplyButton(props: {
+  onClick: () => void
+  label: string
+}) {
+  return (
+    <button
+      type="button"
+      onClick={props.onClick}
+      className="inline-flex items-center gap-2 rounded-full border border-stone-900/10 bg-stone-950 px-4 py-2 text-sm font-medium text-white transition hover:bg-stone-800"
+    >
+      {props.label}
+    </button>
+  )
+}
+
+function ResetButton(props: {
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={props.onClick}
+      className="inline-flex items-center gap-1 rounded-full border border-stone-900/10 bg-white px-3 py-1.5 text-xs font-semibold text-stone-700 transition hover:bg-stone-100"
+    >
+      <RefreshCcw className="h-3.5 w-3.5" />
+      恢复默认
+    </button>
   )
 }

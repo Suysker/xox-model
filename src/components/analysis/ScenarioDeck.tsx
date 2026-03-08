@@ -1,4 +1,4 @@
-import { formatCurrency, formatPercent } from '../../lib/format'
+import { formatCurrency, formatPaybackMonths, formatPercent } from '../../lib/format'
 import type { ScenarioKey, ScenarioResult } from '../../types'
 import { cx } from '../../lib/format'
 
@@ -23,10 +23,6 @@ const scenarioMeta: Record<
     labelClass: 'border-emerald-200 bg-emerald-100 text-emerald-700',
     cardClass: 'border-emerald-200 bg-emerald-50/80',
   },
-}
-
-function formatPayback(scenario: ScenarioResult) {
-  return scenario.paybackMonthLabel ? `${scenario.paybackMonthLabel} 回本` : '周期内未回本'
 }
 
 export function ScenarioDeck(props: {
@@ -73,10 +69,10 @@ export function ScenarioDeck(props: {
             </div>
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
               <KeyValue label="总营收" value={formatCurrency(scenario.grossSales)} />
-              <KeyValue label="总成本" value={formatCurrency(scenario.totalCost)} />
+              <KeyValue label="总成本（含提成）" value={formatCurrency(scenario.totalCost)} />
               <KeyValue label="总利润" value={formatCurrency(scenario.totalProfit)} />
               <KeyValue label="期末现金" value={formatCurrency(scenario.netCashAfterInvestment)} />
-              <KeyValue label="回本判断" value={formatPayback(scenario)} />
+              <KeyValue label="回本周期" value={formatPaybackMonths(scenario.paybackMonthIndex)} />
               <KeyValue label="ROI" value={formatPercent(scenario.roi)} />
             </div>
           </button>

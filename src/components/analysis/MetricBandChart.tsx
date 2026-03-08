@@ -41,6 +41,7 @@ export function MetricBandChart(props: {
   scenarios: ScenarioResult[]
   metric: ChartMetricKey
   initialInvestment: number
+  selectedScenarioKey: ScenarioKey
 }) {
   const width = 760
   const height = 320
@@ -67,6 +68,7 @@ export function MetricBandChart(props: {
 
     return {
       key,
+      active: key === props.selectedScenarioKey,
       values,
     }
   })
@@ -79,6 +81,8 @@ export function MetricBandChart(props: {
   const plotHeight = height - padding.top - padding.bottom
   const xStep = labels.length > 1 ? plotWidth / (labels.length - 1) : 0
   const valueRange = maxValue - minValue || 1
+  const xLabelStride = Math.max(1, Math.ceil(labels.length / 8))
+  const pointLabelStride = Math.max(1, Math.ceil(labels.length / 6))
 
   function getX(index: number) {
     return padding.left + xStep * index
@@ -92,6 +96,14 @@ export function MetricBandChart(props: {
     return values
       .map((value, index) => `${index === 0 ? 'M' : 'L'} ${getX(index)} ${getY(value)}`)
       .join(' ')
+  }
+
+  function shouldShowXAxisLabel(index: number) {
+    return index === 0 || index === labels.length - 1 || index % xLabelStride === 0
+  }
+
+  function shouldShowPointLabel(index: number) {
+    return index === 0 || index === labels.length - 1 || index % pointLabelStride === 0
   }
 
   const bandTop = labels.map((_, index) =>
@@ -115,10 +127,9 @@ export function MetricBandChart(props: {
       : ''
 
   return (
-    <div className="overflow-x-auto">
       <svg
         viewBox={`0 0 ${width} ${height}`}
-        className="h-[320px] min-w-[680px] w-full"
+        className="block h-[320px] w-full"
         role="img"
         aria-label="悲观、基准、乐观三档场景的月度经营图表"
       >
@@ -158,10 +169,39 @@ export function MetricBandChart(props: {
             d={buildLine(item.values)}
             fill="none"
             stroke={scenarioColors[item.key]}
-            strokeWidth="3"
+            strokeWidth={item.active ? '4' : '2'}
+            strokeOpacity={item.active ? 1 : 0.28}
             strokeLinecap="round"
           />
         ))}
+        {series
+          .filter((item) => item.active)
+          .flatMap((item) =>
+            item.values.map((value, index) => (
+              <g key={`${item.key}-${index}`}>
+                <circle
+                  cx={getX(index)}
+                  cy={getY(value)}
+                  r="4.5"
+                  fill={scenarioColors[item.key]}
+                  stroke="rgba(12,10,9,0.9)"
+                  strokeWidth="1.5"
+                />
+                {shouldShowPointLabel(index) ? (
+                  <text
+                    x={getX(index)}
+                    y={getY(value) - 12}
+                    textAnchor="middle"
+                    fontSize="10"
+                    fontWeight="700"
+                    fill="rgba(250,250,249,0.9)"
+                  >
+                    {formatCompactNumber(value)}
+                  </text>
+                ) : null}
+              </g>
+            )),
+          )}
         {labels.map((label, index) => (
           <g key={`${label}-${index}`}>
             <line
@@ -171,18 +211,19 @@ export function MetricBandChart(props: {
               y2={height - padding.bottom + 6}
               stroke="rgba(255,255,255,0.28)"
             />
-            <text
-              x={getX(index)}
-              y={height - 10}
-              textAnchor="middle"
-              fontSize="11"
-              fill="rgba(231,229,228,0.72)"
-            >
-              {label}
-            </text>
+            {shouldShowXAxisLabel(index) ? (
+              <text
+                x={getX(index)}
+                y={height - 10}
+                textAnchor="middle"
+                fontSize="11"
+                fill="rgba(231,229,228,0.72)"
+              >
+                {label}
+              </text>
+            ) : null}
           </g>
         ))}
       </svg>
-    </div>
   )
 }
