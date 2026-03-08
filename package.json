@@ -1,0 +1,27 @@
+{
+  "name": "xox-model",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "lucide-react": "^0.577.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.2.1",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.4",
+    "tailwindcss": "^4.2.1",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1",
+    "vitest": "^4.0.18"
+  }
+}
