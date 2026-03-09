@@ -21,7 +21,7 @@ export function ProductHero(props: {
             {props.workspaceName}
           </h1>
           <p className="mt-3 max-w-2xl text-sm leading-7 text-stone-300 md:text-base">
-            围绕“场次 x 成员单场张数 x 成本结构”来做月度现金流判断。先看回本节奏，再回到输入页修正成员假设和月度排期。
+            围绕场次、成员单场张数和成本结构，直接判断月度现金流与回本节奏。
           </p>
         </div>
 

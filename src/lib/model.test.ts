@@ -19,8 +19,8 @@ describe('monthly underground-idol investment model', () => {
 
     expect(result.months[1]?.label).toBe('4月')
     expect(result.months[1]?.grossSales).toBeCloseTo(80256, 2)
-    expect(result.months[1]?.fixedCostTotal).toBeCloseTo(3500, 2)
-    expect(result.months[1]?.eventLinkedCostTotal).toBeCloseTo(3600, 2)
+    expect(result.months[1]?.monthlyFixedCostTotal).toBeCloseTo(3500, 2)
+    expect(result.months[1]?.perEventCostTotal).toBeCloseTo(3600, 2)
     expect(result.months[1]?.monthlyProfit).toBeCloseTo(48445.6, 2)
 
     expect(result.months[2]?.label).toBe('5月')
@@ -51,11 +51,24 @@ describe('monthly underground-idol investment model', () => {
     const config = createProductDefaultModel()
     const base = getScenarioResult(config, 'base')
 
+    expect(base.totalInvestment).toBe(85000)
     expect(base.paybackMonthIndex).toBe(3)
     expect(base.paybackMonthLabel).toBe('5月')
     expect(base.months[0]?.cumulativeCash).toBeLessThan(0)
     expect(base.months[1]?.cumulativeCash).toBeLessThan(0)
     expect(base.months[2]?.cumulativeCash).toBeGreaterThan(0)
     expect(base.months[5]?.cumulativeCash).toBeCloseTo(base.netCashAfterInvestment, 2)
+  })
+
+  it('adds extra channel revenue on top of member-driven offline sales', () => {
+    const config = createProductDefaultModel()
+    config.months[0]!.extraChannelRevenue = 8800
+
+    const base = getScenarioResult(config, 'base')
+
+    expect(base.months[0]?.memberGrossSales).toBeCloseTo(52968.96, 2)
+    expect(base.months[0]?.extraChannelRevenue).toBe(8800)
+    expect(base.months[0]?.grossSales).toBeCloseTo(61768.96, 2)
+    expect(base.months[0]?.monthlyProfit).toBeCloseTo(36360.1, 1)
   })
 })

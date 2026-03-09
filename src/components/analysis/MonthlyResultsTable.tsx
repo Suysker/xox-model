@@ -12,6 +12,7 @@ export function MonthlyResultsTable(props: {
   const profitableMonths = props.months.filter((month) => month.monthlyProfit >= 0).length
   const paybackMonthIndex = props.months.findIndex((month) => month.hasPaidBack)
   const lastCash = props.months.at(-1)?.cumulativeCash ?? 0
+  const showExtraRevenue = props.months.some((month) => month.extraChannelRevenue > 0)
 
   return (
     <Panel>
@@ -19,7 +20,7 @@ export function MonthlyResultsTable(props: {
         icon={Table2}
         eyebrow="Dashboard"
         title="月度经营结果表"
-        description="按月份展开收入、成本、利润和累计现金。点击任意一行，可以联动切到成员拆解。"
+        description="按月份展开营收、固定成本、每场成本、专项、耗材和累计现金。"
       />
 
       <div className="mt-5 grid gap-3 md:grid-cols-3">
@@ -31,19 +32,18 @@ export function MonthlyResultsTable(props: {
         <StatCard label="期末累计现金" value={formatCurrency(lastCash)} />
       </div>
 
-      <div className="mt-5 overflow-x-auto rounded-[24px] border border-stone-900/10">
-        <table className="min-w-[980px] w-full border-collapse text-sm">
+      <div className="mt-5 rounded-[24px] border border-stone-900/10">
+        <table className="w-full table-fixed border-collapse text-sm">
           <thead className="bg-stone-100/90 text-stone-700">
             <tr className="border-b border-stone-900/10">
               <HeaderCell>月份</HeaderCell>
               <HeaderCell align="right">场次</HeaderCell>
               <HeaderCell align="right">单场张数</HeaderCell>
               <HeaderCell align="right">营收</HeaderCell>
+              {showExtraRevenue ? <HeaderCell align="right">额外渠道</HeaderCell> : null}
               <HeaderCell align="right">提成</HeaderCell>
-              <HeaderCell align="right">人力</HeaderCell>
-              <HeaderCell align="right">训练</HeaderCell>
-              <HeaderCell align="right">经营固定</HeaderCell>
-              <HeaderCell align="right">每场成本</HeaderCell>
+              <HeaderCell align="right">月固定</HeaderCell>
+              <HeaderCell align="right">每场</HeaderCell>
               <HeaderCell align="right">专项</HeaderCell>
               <HeaderCell align="right">耗材</HeaderCell>
               <HeaderCell align="right">月利润</HeaderCell>
@@ -53,9 +53,13 @@ export function MonthlyResultsTable(props: {
           <tbody>
             {props.months.map((month) => {
               const active = month.monthId === props.selectedMonthId
-              const peopleCost = month.basePayCost + month.employeeBasePayCost + month.employeeEventCost
-              const trainingCost = month.rehearsalCost + month.teacherCost
-              const perEventCost = month.eventOperatingCost + month.extraPerEventCost
+              const monthlyFixedCost =
+                month.basePayCost +
+                month.employeeBasePayCost +
+                month.monthlyOperatingCost +
+                month.rehearsalCost +
+                month.teacherCost +
+                month.extraFixedCost
 
               return (
                 <tr
@@ -70,11 +74,10 @@ export function MonthlyResultsTable(props: {
                   <BodyCell align="right">{month.events}</BodyCell>
                   <BodyCell align="right">{formatDecimal(month.totalUnitsPerEvent)}</BodyCell>
                   <BodyCell align="right">{formatCurrency(month.grossSales)}</BodyCell>
+                  {showExtraRevenue ? <BodyCell align="right">{formatCurrency(month.extraChannelRevenue)}</BodyCell> : null}
                   <BodyCell align="right">{formatCurrency(month.commissionCost)}</BodyCell>
-                  <BodyCell align="right">{formatCurrency(peopleCost)}</BodyCell>
-                  <BodyCell align="right">{formatCurrency(trainingCost)}</BodyCell>
-                  <BodyCell align="right">{formatCurrency(month.fixedOperatingCost)}</BodyCell>
-                  <BodyCell align="right">{formatCurrency(perEventCost)}</BodyCell>
+                  <BodyCell align="right">{formatCurrency(monthlyFixedCost)}</BodyCell>
+                  <BodyCell align="right">{formatCurrency(month.perEventCostTotal)}</BodyCell>
                   <BodyCell align="right">{formatCurrency(month.specialProjectCost)}</BodyCell>
                   <BodyCell align="right">{formatCurrency(month.unitLinkedCostTotal)}</BodyCell>
                   <BodyCell
@@ -106,9 +109,10 @@ function HeaderCell(props: {
   return (
     <th
       className={cx(
-        'px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.16em]',
+        'px-4 py-3 text-center text-xs font-semibold uppercase tracking-[0.16em]',
         props.align === 'right' && 'text-right',
         props.align === 'center' && 'text-center',
+        props.align === 'left' && 'text-left',
       )}
     >
       {props.children}

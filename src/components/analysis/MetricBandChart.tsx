@@ -40,7 +40,6 @@ function buildTicks(minValue: number, maxValue: number) {
 export function MetricBandChart(props: {
   scenarios: ScenarioResult[]
   metric: ChartMetricKey
-  initialInvestment: number
   selectedScenarioKey: ScenarioKey
 }) {
   const width = 760
@@ -61,7 +60,7 @@ export function MetricBandChart(props: {
     const values =
       props.metric === 'cash'
         ? [
-            -props.initialInvestment,
+            -baseScenario.totalInvestment,
             ...(scenario?.months.map((month) => getScenarioValue(month, props.metric)) ?? []),
           ]
         : scenario?.months.map((month) => getScenarioValue(month, props.metric)) ?? []
@@ -127,103 +126,78 @@ export function MetricBandChart(props: {
       : ''
 
   return (
-      <svg
-        viewBox={`0 0 ${width} ${height}`}
-        className="block h-[320px] w-full"
-        role="img"
-        aria-label="悲观、基准、乐观三档场景的月度经营图表"
-      >
-        <rect x="0" y="0" width={width} height={height} fill="transparent" />
-        {ticks.map((tick) => (
-          <g key={tick}>
-            <line
-              x1={padding.left}
-              y1={getY(tick)}
-              x2={width - padding.right}
-              y2={getY(tick)}
-              stroke="rgba(255,255,255,0.12)"
-              strokeDasharray="4 6"
-            />
-            <text
-              x={padding.left - 10}
-              y={getY(tick) + 4}
-              textAnchor="end"
-              fontSize="11"
-              fill="rgba(231,229,228,0.7)"
-            >
-              {formatCompactNumber(tick)}
-            </text>
-          </g>
-        ))}
-        <line
-          x1={padding.left}
-          y1={getY(0)}
-          x2={width - padding.right}
-          y2={getY(0)}
-          stroke="rgba(255,255,255,0.28)"
-        />
-        {bandPath ? <path d={bandPath} fill="rgba(255,255,255,0.08)" stroke="none" /> : null}
-        {series.map((item) => (
-          <path
-            key={item.key}
-            d={buildLine(item.values)}
-            fill="none"
-            stroke={scenarioColors[item.key]}
-            strokeWidth={item.active ? '4' : '2'}
-            strokeOpacity={item.active ? 1 : 0.28}
-            strokeLinecap="round"
+    <svg
+      viewBox={`0 0 ${width} ${height}`}
+      className="block h-[320px] w-full"
+      role="img"
+      aria-label="悲观、基准、乐观三档场景的月度经营图表"
+    >
+      <rect x="0" y="0" width={width} height={height} fill="transparent" />
+      {ticks.map((tick) => (
+        <g key={tick}>
+          <line
+            x1={padding.left}
+            y1={getY(tick)}
+            x2={width - padding.right}
+            y2={getY(tick)}
+            stroke="rgba(120,113,108,0.16)"
+            strokeDasharray="4 6"
           />
-        ))}
-        {series
-          .filter((item) => item.active)
-          .flatMap((item) =>
-            item.values.map((value, index) => (
-              <g key={`${item.key}-${index}`}>
-                <circle
-                  cx={getX(index)}
-                  cy={getY(value)}
-                  r="4.5"
-                  fill={scenarioColors[item.key]}
-                  stroke="rgba(12,10,9,0.9)"
-                  strokeWidth="1.5"
-                />
-                {shouldShowPointLabel(index) ? (
-                  <text
-                    x={getX(index)}
-                    y={getY(value) - 12}
-                    textAnchor="middle"
-                    fontSize="10"
-                    fontWeight="700"
-                    fill="rgba(250,250,249,0.9)"
-                  >
-                    {formatCompactNumber(value)}
-                  </text>
-                ) : null}
-              </g>
-            )),
-          )}
-        {labels.map((label, index) => (
-          <g key={`${label}-${index}`}>
-            <line
-              x1={getX(index)}
-              y1={height - padding.bottom}
-              x2={getX(index)}
-              y2={height - padding.bottom + 6}
-              stroke="rgba(255,255,255,0.28)"
-            />
-            {shouldShowXAxisLabel(index) ? (
-              <text
-                x={getX(index)}
-                y={height - 10}
-                textAnchor="middle"
-                fontSize="11"
-                fill="rgba(231,229,228,0.72)"
-              >
-                {label}
-              </text>
-            ) : null}
-          </g>
-        ))}
-      </svg>
+          <text x={padding.left - 10} y={getY(tick) + 4} textAnchor="end" fontSize="11" fill="#78716c">
+            {formatCompactNumber(tick)}
+          </text>
+        </g>
+      ))}
+      <line x1={padding.left} y1={getY(0)} x2={width - padding.right} y2={getY(0)} stroke="rgba(87,83,78,0.32)" />
+      {bandPath ? <path d={bandPath} fill="rgba(120,113,108,0.12)" stroke="none" /> : null}
+      {series.map((item) => (
+        <path
+          key={item.key}
+          d={buildLine(item.values)}
+          fill="none"
+          stroke={scenarioColors[item.key]}
+          strokeWidth={item.active ? '4' : '2'}
+          strokeOpacity={item.active ? 1 : 0.34}
+          strokeLinecap="round"
+        />
+      ))}
+      {series
+        .filter((item) => item.active)
+        .flatMap((item) =>
+          item.values.map((value, index) => (
+            <g key={`${item.key}-${index}`}>
+              <circle cx={getX(index)} cy={getY(value)} r="4.5" fill={scenarioColors[item.key]} stroke="white" strokeWidth="1.5" />
+              {shouldShowPointLabel(index) ? (
+                <text
+                  x={getX(index)}
+                  y={getY(value) - 12}
+                  textAnchor="middle"
+                  fontSize="10"
+                  fontWeight="700"
+                  fill="#292524"
+                >
+                  {formatCompactNumber(value)}
+                </text>
+              ) : null}
+            </g>
+          )),
+        )}
+      {labels.map((label, index) => (
+        <g key={`${label}-${index}`}>
+          <line
+            x1={getX(index)}
+            y1={height - padding.bottom}
+            x2={getX(index)}
+            y2={height - padding.bottom + 6}
+            stroke="rgba(120,113,108,0.24)"
+          />
+          {shouldShowXAxisLabel(index) ? (
+            <text x={getX(index)} y={height - 10} textAnchor="middle" fontSize="11" fill="#57534e">
+              {label}
+            </text>
+          ) : null}
+        </g>
+      ))}
+    </svg>
   )
 }

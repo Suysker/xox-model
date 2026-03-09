@@ -6,9 +6,12 @@ import { MonthlyResultsTable } from './components/analysis/MonthlyResultsTable'
 import { OverviewPanel } from './components/analysis/OverviewPanel'
 import { ScenarioDeck } from './components/analysis/ScenarioDeck'
 import { NoticeBanner, type NoticeTone } from './components/common/NoticeBanner'
-import { Panel, SectionTitle, SegmentTabs } from './components/common/ui'
+import { Panel, SectionTitle } from './components/common/ui'
+import { CostWorkbench } from './components/inputs/CostWorkbench'
+import { CostOverridesEditor } from './components/inputs/CostOverridesEditor'
 import { OperatingWorkbench } from './components/inputs/OperatingWorkbench'
 import { EmployeesTable } from './components/inputs/EmployeesTable'
+import { RevenueWorkbench } from './components/inputs/RevenueWorkbench'
 import { TeamMembersTable } from './components/inputs/TeamMembersTable'
 import { TimelineEditor } from './components/inputs/TimelineEditor'
 import { ProductHero } from './components/layout/ProductHero'
@@ -16,7 +19,7 @@ import { SidebarNav } from './components/layout/SidebarNav'
 import { WorkspacePanel } from './components/workspace/WorkspacePanel'
 import { WorkspaceToolbar } from './components/workspace/WorkspaceToolbar'
 import { useWorkspace } from './hooks/useWorkspace'
-import { createEmployee, createMember } from './lib/defaults'
+import { createEmployee, createMember, createShareholder } from './lib/defaults'
 import { projectModel } from './lib/model'
 import { parseWorkspaceBundle, serializeWorkspaceBundle } from './lib/storage'
 import { syncMonthsToPlanning } from './lib/defaults'
@@ -24,12 +27,13 @@ import type { ModelConfig, MonthlyPlan, MonthlyPlanTemplate, ScenarioKey, Worksp
 
 type MainTab = 'dashboard' | 'inputs'
 type DashboardTab = 'overview' | 'months' | 'members'
-type InputsTab = 'team' | 'operating' | 'timeline'
+type InputsTab = 'capital' | 'revenue' | 'cost'
 type BannerState = { tone: NoticeTone; message: string }
 type TimelineSection = 'sales' | 'training' | 'special'
 type TimelineTemplateNumberKey =
   | 'events'
   | 'salesMultiplier'
+  | 'extraChannelRevenue'
   | 'rehearsalCount'
   | 'rehearsalCost'
   | 'teacherCount'
@@ -38,10 +42,9 @@ type TimelineTemplateNumberKey =
   | 'extraFixedCost'
   | 'vjCost'
   | 'originalSongCost'
-  | 'makeupCost'
-  | 'travelCost'
-  | 'streamingCost'
-  | 'mealCost'
+  | 'makeupPerEventCost'
+  | 'streamingPerEventCost'
+  | 'mealPerEventCost'
 
 const mainTabs: Array<{ value: MainTab; label: string; description: string; icon: LucideIcon }> = [
   {
@@ -53,7 +56,7 @@ const mainTabs: Array<{ value: MainTab; label: string; description: string; icon
   {
     value: 'inputs',
     label: '模型输入',
-    description: '配置成员、经济参数和整段经营周期。',
+    description: '配置股东投资、收入引擎和成本结构。',
     icon: Settings2,
   },
 ]
@@ -65,16 +68,16 @@ const dashboardTabs: Array<{ value: DashboardTab; label: string; description: st
 ]
 
 const inputTabs: Array<{ value: InputsTab; label: string; description: string }> = [
-  { value: 'team', label: '成员与员工', description: '配置成员收入结构，以及员工月薪和场次成本。' },
-  { value: 'operating', label: '经营底盘', description: '定义单价、固定成本、场次成本与耗材。' },
-  { value: 'timeline', label: '月度排期', description: '用默认基线和曲线编辑整段经营周期。' },
+  { value: 'capital', label: '股东投资', description: '配置投资金额、股东结构和分红比例。' },
+  { value: 'revenue', label: '收入引擎', description: '把单价、成员卖张、场次节奏和额外渠道收入放在一起配置。' },
+  { value: 'cost', label: '成本结构', description: '按每月固定、每场固定、每张成本拆开配置，并逐月改成本差异。' },
 ]
 
 const chartMetricTabs: Array<{ value: ChartMetricKey; label: string }> = [
   { value: 'cash', label: '累计现金' },
-  { value: 'profit', label: '月利润' },
-  { value: 'revenue', label: '月收入' },
-  { value: 'cost', label: '月总成本' },
+  { value: 'profit', label: '利润' },
+  { value: 'revenue', label: '收入' },
+  { value: 'cost', label: '总成本' },
 ]
 
 function sanitizeFilename(name: string) {
@@ -86,9 +89,9 @@ function findSnapshot(snapshots: WorkspaceSnapshot[], id: string) {
 }
 
 const timelineSectionKeys: Record<TimelineSection, TimelineTemplateNumberKey[]> = {
-  sales: ['events', 'salesMultiplier'],
+  sales: ['events', 'salesMultiplier', 'extraChannelRevenue'],
   training: ['rehearsalCount', 'rehearsalCost', 'teacherCount', 'teacherCost', 'extraPerEventCost', 'extraFixedCost'],
-  special: ['vjCost', 'originalSongCost', 'makeupCost', 'travelCost', 'streamingCost', 'mealCost'],
+  special: ['vjCost', 'originalSongCost', 'makeupPerEventCost', 'streamingPerEventCost', 'mealPerEventCost'],
 }
 
 function applyTemplateToMonthSection(
@@ -104,7 +107,7 @@ function applyTemplateToMonthSection(
     nextMonth[key] = template[key]
   })
 
-  if (section === 'sales') {
+  if (section === 'special') {
     nextMonth.includeMaterialCost = template.includeMaterialCost
   }
 
@@ -132,7 +135,7 @@ export default function App() {
 
   const [mainTab, setMainTab] = useState<MainTab>('dashboard')
   const [dashboardTab, setDashboardTab] = useState<DashboardTab>('overview')
-  const [inputsTab, setInputsTab] = useState<InputsTab>('team')
+  const [inputsTab, setInputsTab] = useState<InputsTab>('revenue')
   const [selectedScenario, setSelectedScenario] = useState<ScenarioKey>('base')
   const [chartMetric, setChartMetric] = useState<ChartMetricKey>('cash')
   const [selectedMonthId, setSelectedMonthId] = useState(config.months[0]?.id ?? '')
@@ -175,6 +178,18 @@ export default function App() {
         ...current.operating,
         [key]: value,
       },
+    }))
+  }
+
+  function updateShareholder(
+    id: string,
+    updater: (shareholder: ModelConfig['shareholders'][number]) => ModelConfig['shareholders'][number],
+  ) {
+    setConfig((current) => ({
+      ...current,
+      shareholders: current.shareholders.map((shareholder) =>
+        shareholder.id === id ? updater(shareholder) : shareholder,
+      ),
     }))
   }
 
@@ -288,6 +303,32 @@ export default function App() {
     })
   }
 
+  function handleAddShareholder() {
+    setConfig((current) => {
+      const nextIndex = current.shareholders.length + 1
+
+      return {
+        ...current,
+        shareholders: [
+          ...current.shareholders,
+          createShareholder(`${Date.now()}`, {
+            name: `股东 ${String.fromCharCode(64 + nextIndex)}`,
+          }),
+        ],
+      }
+    })
+  }
+
+  function handleRemoveShareholder(id: string) {
+    setConfig((current) => ({
+      ...current,
+      shareholders:
+        current.shareholders.length > 1
+          ? current.shareholders.filter((shareholder) => shareholder.id !== id)
+          : current.shareholders,
+    }))
+  }
+
   function handleRemoveEmployee(id: string) {
     setConfig((current) => ({
       ...current,
@@ -382,7 +423,7 @@ export default function App() {
   function handleResetWorkspace() {
     resetWorkspace()
     setMainTab('inputs')
-    setInputsTab('team')
+    setInputsTab('revenue')
     setDashboardTab('overview')
     setWorkspaceOpen(false)
     setBanner({ tone: 'info', message: '已重置为新的草稿工作区。' })
@@ -394,7 +435,7 @@ export default function App() {
       months: current.months.map((month) => applyTemplateToMonthSection(month, current.timelineTemplate, section)),
     }))
 
-    setBanner({ tone: 'success', message: '已将默认模板应用到全部月份，你可以再逐月调整差异。' })
+    setBanner({ tone: 'success', message: '已同步默认基线，接下来只需要改少数例外月份。' })
   }
 
   function handleResetMonthFromTemplate(id: string, section: TimelineSection) {
@@ -450,7 +491,7 @@ export default function App() {
                     icon={LineChart}
                     eyebrow="Analysis"
                     title="三档场景总览"
-                    description="先看悲观 / 基准 / 乐观的上下界，再决定要不要回到左侧的输入模块里继续修模型。"
+                    description="先选一档主判断口径。"
                   />
                   <div className="mt-5">
                     <ScenarioDeck
@@ -467,7 +508,6 @@ export default function App() {
                     selectedScenarioResult={selectedScenarioResult}
                     chartMetric={chartMetric}
                     chartMetricTabs={chartMetricTabs}
-                    initialInvestment={config.operating.initialInvestment}
                     onChartMetricChange={setChartMetric}
                     months={config.months}
                     selectedMonthPlan={selectedMonthPlan}
@@ -496,8 +536,46 @@ export default function App() {
 
             {mainTab === 'inputs' ? (
               <>
-                {inputsTab === 'team' ? (
+                {inputsTab === 'capital' ? (
+                  <OperatingWorkbench
+                    shareholders={config.shareholders}
+                    planning={config.planning}
+                    onPlanningChange={updatePlanning}
+                    onShareholderAdd={handleAddShareholder}
+                    onShareholderRemove={handleRemoveShareholder}
+                    onShareholderNameChange={(id, value) =>
+                      updateShareholder(id, (shareholder) => ({ ...shareholder, name: value }))
+                    }
+                    onShareholderInvestmentChange={(id, value) =>
+                      updateShareholder(id, (shareholder) => ({ ...shareholder, investmentAmount: value }))
+                    }
+                    onShareholderDividendChange={(id, value) =>
+                      updateShareholder(id, (shareholder) => ({ ...shareholder, dividendRate: value }))
+                    }
+                  />
+                ) : null}
+
+                {inputsTab === 'revenue' ? (
                   <div className="space-y-4">
+                    <RevenueWorkbench
+                      unitPrice={config.operating.unitPrice}
+                      onUnitPriceChange={(value) => updateOperating('unitPrice', value)}
+                    />
+
+                    <TimelineEditor
+                      template={config.timelineTemplate}
+                      months={config.months}
+                      onTemplateNumberChange={updateTimelineTemplate}
+                      onNumberChange={(id, key, value) =>
+                        updateMonth(id, (month) => ({
+                          ...month,
+                          [key]: value,
+                        }))
+                      }
+                      onApplyTemplateToAll={() => handleApplyTemplateToAll('sales')}
+                      onResetMonthFromTemplate={(id) => handleResetMonthFromTemplate(id, 'sales')}
+                    />
+
                     <TeamMembersTable
                       members={config.teamMembers}
                       onAdd={handleAddMember}
@@ -511,6 +589,9 @@ export default function App() {
                       onBasePayChange={(id, value) =>
                         updateMember(id, (member) => ({ ...member, monthlyBasePay: value }))
                       }
+                      onTravelCostChange={(id, value) =>
+                        updateMember(id, (member) => ({ ...member, perEventTravelCost: value }))
+                      }
                       onUnitsChange={(id, key, value) =>
                         updateMember(id, (member) => ({
                           ...member,
@@ -521,6 +602,38 @@ export default function App() {
                         }))
                       }
                       onRemove={handleRemoveMember}
+                    />
+                  </div>
+                ) : null}
+
+                {inputsTab === 'cost' ? (
+                  <div className="space-y-4">
+                    <CostWorkbench
+                      operating={config.operating}
+                      teamMembers={config.teamMembers}
+                      employees={config.employees}
+                      onOperatingChange={updateOperating}
+                    />
+
+                    <CostOverridesEditor
+                      template={config.timelineTemplate}
+                      months={config.months}
+                      onTemplateNumberChange={updateTimelineTemplate}
+                      onNumberChange={(id, key, value) =>
+                        updateMonth(id, (month) => ({
+                          ...month,
+                          [key]: value,
+                        }))
+                      }
+                      onMaterialToggle={(id, value) =>
+                        updateMonth(id, (month) => ({
+                          ...month,
+                          includeMaterialCost: value,
+                        }))
+                      }
+                      onTemplateMaterialToggle={updateTimelineTemplateMaterial}
+                      onApplyTemplateToAll={handleApplyTemplateToAll}
+                      onResetMonthFromTemplate={handleResetMonthFromTemplate}
                     />
 
                     <EmployeesTable
@@ -539,43 +652,6 @@ export default function App() {
                   </div>
                 ) : null}
 
-                {inputsTab === 'operating' ? (
-                  <OperatingWorkbench
-                    operating={config.operating}
-                    planning={config.planning}
-                    onOperatingChange={updateOperating}
-                    onPlanningChange={updatePlanning}
-                  />
-                ) : null}
-
-                {inputsTab === 'timeline' ? (
-                  <TimelineEditor
-                    template={config.timelineTemplate}
-                    months={config.months}
-                    onTemplateNumberChange={updateTimelineTemplate}
-                    onTemplateMaterialToggle={updateTimelineTemplateMaterial}
-                    onTextChange={(id, key, value) =>
-                      updateMonth(id, (month) => ({
-                        ...month,
-                        [key]: value,
-                      }))
-                    }
-                    onNumberChange={(id, key, value) =>
-                      updateMonth(id, (month) => ({
-                        ...month,
-                        [key]: value,
-                      }))
-                    }
-                    onMaterialToggle={(id, value) =>
-                      updateMonth(id, (month) => ({
-                        ...month,
-                        includeMaterialCost: value,
-                      }))
-                    }
-                    onApplyTemplateToAll={handleApplyTemplateToAll}
-                    onResetMonthFromTemplate={handleResetMonthFromTemplate}
-                  />
-                ) : null}
               </>
             ) : null}
           </main>

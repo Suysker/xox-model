@@ -6,11 +6,19 @@ export type EmploymentType = 'salary' | 'partTime'
 
 export type ScenarioBand = Record<ScenarioKey, number>
 
+export type Shareholder = {
+  id: string
+  name: string
+  investmentAmount: number
+  dividendRate: number
+}
+
 export type TeamMember = {
   id: string
   name: string
   employmentType: EmploymentType
   monthlyBasePay: number
+  perEventTravelCost: number
   commissionRate: number
   unitsPerEvent: ScenarioBand
 }
@@ -24,7 +32,6 @@ export type Employee = {
 }
 
 export type OperatingConfig = {
-  initialInvestment: number
   unitPrice: number
   monthlyFixedCost: number
   perEventOperatingCost: number
@@ -41,6 +48,7 @@ export type MonthlyPlan = {
   label: string
   events: number
   salesMultiplier: number
+  extraChannelRevenue: number
   rehearsalCount: number
   rehearsalCost: number
   teacherCount: number
@@ -49,17 +57,16 @@ export type MonthlyPlan = {
   extraFixedCost: number
   vjCost: number
   originalSongCost: number
-  makeupCost: number
-  travelCost: number
-  streamingCost: number
-  mealCost: number
+  makeupPerEventCost: number
+  streamingPerEventCost: number
+  mealPerEventCost: number
   includeMaterialCost: boolean
-  notes: string
 }
 
 export type MonthlyPlanTemplate = Omit<MonthlyPlan, 'id' | 'label'>
 
 export type ModelConfig = {
+  shareholders: Shareholder[]
   operating: OperatingConfig
   planning: PlanningConfig
   timelineTemplate: MonthlyPlanTemplate
@@ -77,7 +84,8 @@ export type MemberMonthResult = {
   grossSales: number
   commissionCost: number
   basePayCost: number
-  companyRevenueAfterCommission: number
+  travelCost: number
+  companyNetContribution: number
 }
 
 export type EmployeeMonthResult = {
@@ -95,21 +103,25 @@ export type MonthlyScenarioResult = {
   monthIndex: number
   events: number
   salesMultiplier: number
+  extraChannelRevenue: number
+  memberGrossSales: number
   totalUnitsPerEvent: number
   totalUnitsPerMonth: number
   grossSales: number
   commissionCost: number
   basePayCost: number
+  memberTravelCost: number
   employeeBasePayCost: number
   employeeEventCost: number
-  fixedOperatingCost: number
-  eventOperatingCost: number
+  monthlyOperatingCost: number
+  perEventOperatingCost: number
   extraPerEventCost: number
+  extraFixedCost: number
   rehearsalCost: number
   teacherCost: number
   specialProjectCost: number
-  fixedCostTotal: number
-  eventLinkedCostTotal: number
+  monthlyFixedCostTotal: number
+  perEventCostTotal: number
   operatingCostTotal: number
   unitLinkedCostTotal: number
   totalCost: number
@@ -125,6 +137,7 @@ export type ScenarioResult = {
   key: ScenarioKey
   label: string
   description: string
+  totalInvestment: number
   totalEvents: number
   averageUnitsPerEvent: number
   totalUnitsPerMonth: number

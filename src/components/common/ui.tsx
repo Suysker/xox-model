@@ -22,7 +22,7 @@ export function SectionTitle(props: {
   icon: LucideIcon
   eyebrow: string
   title: string
-  description: string
+  description?: string | undefined
   dark?: boolean | undefined
   aside?: ReactNode
 }) {
@@ -53,9 +53,13 @@ export function SectionTitle(props: {
           <h2 className={props.dark ? 'text-2xl font-bold text-white' : 'text-2xl font-bold text-stone-950'}>
             {props.title}
           </h2>
-          <p className={props.dark ? 'max-w-4xl text-sm leading-7 text-stone-300' : 'max-w-4xl text-sm leading-7 text-stone-600'}>
-            {props.description}
-          </p>
+          {props.description ? (
+            <p
+              className={props.dark ? 'max-w-4xl text-sm leading-7 text-stone-300' : 'max-w-4xl text-sm leading-7 text-stone-600'}
+            >
+              {props.description}
+            </p>
+          ) : null}
         </div>
       </div>
       {props.aside ? <div className="shrink-0">{props.aside}</div> : null}
@@ -141,7 +145,8 @@ export function HeaderCell(props: {
       rowSpan={props.rowSpan}
       colSpan={props.colSpan}
       className={cx(
-        'px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-[0.16em]',
+        'whitespace-nowrap px-3 py-2.5 align-middle text-center text-xs font-semibold uppercase tracking-[0.16em]',
+        props.align === 'left' && 'text-left',
         props.align === 'right' && 'text-right',
         props.align === 'center' && 'text-center',
       )}
@@ -159,7 +164,7 @@ export function BodyCell(props: {
   return (
     <td
       className={cx(
-        'px-3 py-2.5 align-top text-stone-700',
+        'px-3 py-2.5 align-middle text-stone-700',
         props.align === 'right' && 'text-right',
         props.align === 'center' && 'text-center',
         props.className,

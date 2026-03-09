@@ -20,6 +20,7 @@ describe('workspace storage bundle', () => {
     expect(parsed?.workspaceName).toBe(bundle.workspaceName)
     expect(parsed?.snapshots).toHaveLength(1)
     expect(parsed?.currentConfig.months[0]?.label).toBe('3月')
+    expect(parsed?.currentConfig.shareholders).toHaveLength(3)
     expect(parsed?.currentConfig.employees).toHaveLength(2)
   })
 
@@ -35,7 +36,10 @@ describe('workspace storage bundle', () => {
       schemaVersion: 1,
       workspaceName: '旧工作区',
       currentConfig: {
-        operating: legacyDefault.operating,
+        operating: {
+          ...legacyDefault.operating,
+          initialInvestment: 85000,
+        },
         teamMembers: legacyDefault.teamMembers.map((member, index) =>
           index < 2 ? { ...member, eventAllowance: 300 } : member,
         ),
@@ -51,6 +55,7 @@ describe('workspace storage bundle', () => {
     expect(parsed?.currentConfig.planning.startMonth).toBe(3)
     expect(parsed?.currentConfig.planning.horizonMonths).toBe(6)
     expect(parsed?.currentConfig.timelineTemplate.events).toBeGreaterThan(0)
+    expect(parsed?.currentConfig.shareholders[0]?.investmentAmount).toBe(85000)
     expect(parsed?.currentConfig.employees).toHaveLength(2)
     expect(parsed?.currentConfig.employees[0]?.perEventCost).toBe(300)
   })

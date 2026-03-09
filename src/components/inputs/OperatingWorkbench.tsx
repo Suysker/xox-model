@@ -1,141 +1,164 @@
-import { CalendarRange, Coins } from 'lucide-react'
+import { Coins, Plus, Trash2 } from 'lucide-react'
 import { monthLabelOptions } from '../../lib/defaults'
-import type { ModelConfig, PlanningConfig } from '../../types'
-import { CompactNumberInput, NumberField, Panel, SectionTitle } from '../common/ui'
-
-type OperatingNumberKey = keyof ModelConfig['operating']
-type PlanningKey = keyof PlanningConfig
+import { formatCurrency, formatPercent } from '../../lib/format'
+import type { PlanningConfig, Shareholder } from '../../types'
+import { CompactNumberInput, Panel, SectionTitle } from '../common/ui'
 
 export function OperatingWorkbench(props: {
-  operating: ModelConfig['operating']
+  shareholders: Shareholder[]
   planning: PlanningConfig
-  onOperatingChange: (key: OperatingNumberKey, value: number) => void
-  onPlanningChange: (key: PlanningKey, value: number) => void
+  onPlanningChange: (key: keyof PlanningConfig, value: number) => void
+  onShareholderAdd: () => void
+  onShareholderRemove: (id: string) => void
+  onShareholderNameChange: (id: string, value: string) => void
+  onShareholderInvestmentChange: (id: string, value: number) => void
+  onShareholderDividendChange: (id: string, value: number) => void
 }) {
+  const totalInvestment = props.shareholders.reduce((sum, shareholder) => sum + shareholder.investmentAmount, 0)
+  const totalDividendRate = props.shareholders.reduce((sum, shareholder) => sum + shareholder.dividendRate, 0)
+
   return (
     <Panel>
       <SectionTitle
         icon={Coins}
         eyebrow="Inputs"
-        title="经营底盘"
-        description="这里只放长期假设：前期投入、单价、固定成本、场次成本、耗材，以及经营从几月开始、规划多少期。月度排期页只做默认基线和月度曲线覆盖。"
+        title="股东投资"
+        description="先定经营起点和周期，再录股东资金来源与分红结构。"
+        aside={
+          <button
+            type="button"
+            onClick={props.onShareholderAdd}
+            className="inline-flex items-center justify-center gap-2 rounded-full border border-stone-900/10 bg-stone-950 px-4 py-2 text-sm font-medium text-white transition hover:bg-stone-800"
+          >
+            <Plus className="h-4 w-4" />
+            添加股东
+          </button>
+        }
       />
 
-      <div className="mt-6 grid gap-6">
-        <section className="rounded-[24px] border border-stone-900/10 bg-stone-50/80 p-4">
-          <div className="flex items-start gap-3">
-            <div className="rounded-2xl border border-stone-900/10 bg-white p-3 text-stone-900">
-              <Coins className="h-4 w-4" />
-            </div>
-            <div>
-              <h3 className="text-lg font-semibold text-stone-950">资金与单价</h3>
-              <p className="mt-1 text-sm leading-6 text-stone-600">这些是整套模型的基础口径，不需要再看重复换算卡片。</p>
-            </div>
-          </div>
+      <div className="mt-5 grid gap-3 xl:grid-cols-[190px_170px_repeat(3,minmax(0,1fr))]">
+        <label className="grid gap-2 rounded-[18px] border border-stone-900/10 bg-stone-50/90 px-4 py-3">
+          <span className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">经营开始月份</span>
+          <select
+            className="h-10 rounded-xl border border-stone-900/10 bg-white px-3 text-sm font-medium text-stone-900 outline-none transition focus:border-emerald-500"
+            value={props.planning.startMonth}
+            onChange={(event) => props.onPlanningChange('startMonth', Number(event.target.value))}
+          >
+            {monthLabelOptions.map((label, index) => (
+              <option key={label} value={index + 1}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
 
-          <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-            <NumberField
-              label="前期已投入"
-              helper="已经花出去但尚未回收的启动资金。"
-              value={props.operating.initialInvestment}
-              step={1000}
-              min={0}
-              suffix="元"
-              onChange={(value) => props.onOperatingChange('initialInvestment', value)}
-            />
-            <NumberField
-              label="单张售价"
-              helper="默认按对话中的 88 元。"
-              value={props.operating.unitPrice}
-              step={1}
-              min={0}
-              suffix="元"
-              onChange={(value) => props.onOperatingChange('unitPrice', value)}
-            />
-            <NumberField
-              label="基础固定成本 / 月"
-              helper="例如设备、场地摊销、行政费用。"
-              value={props.operating.monthlyFixedCost}
-              step={100}
-              min={0}
-              suffix="元"
-              onChange={(value) => props.onOperatingChange('monthlyFixedCost', value)}
-            />
-            <NumberField
-              label="基础场次成本 / 场"
-              helper="例如每场固定发生的运营费用。"
-              value={props.operating.perEventOperatingCost}
-              step={100}
-              min={0}
-              suffix="元"
-              onChange={(value) => props.onOperatingChange('perEventOperatingCost', value)}
-            />
-            <NumberField
-              label="耗材成本 / 张"
-              helper="例如拍立得、周边耗材。"
-              value={props.operating.materialCostPerUnit}
-              step={1}
-              min={0}
-              suffix="元"
-              onChange={(value) => props.onOperatingChange('materialCostPerUnit', value)}
-            />
-          </div>
-        </section>
+        <label className="grid gap-2 rounded-[18px] border border-stone-900/10 bg-stone-50/90 px-4 py-3">
+          <span className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">规划月数</span>
+          <CompactNumberInput
+            value={props.planning.horizonMonths}
+            min={1}
+            max={24}
+            step={1}
+            size="sm"
+            align="center"
+            suffix="月"
+            onChange={(value) => props.onPlanningChange('horizonMonths', value)}
+          />
+        </label>
 
-        <section className="rounded-[24px] border border-stone-900/10 bg-white p-4">
-          <div className="flex items-start gap-3">
-            <div className="rounded-2xl border border-stone-900/10 bg-stone-950 p-3 text-amber-100">
-              <CalendarRange className="h-4 w-4" />
-            </div>
-            <div>
-              <h3 className="text-lg font-semibold text-stone-950">经营周期</h3>
-              <p className="mt-1 text-sm leading-6 text-stone-600">先定起始月份和规划期数，下面的月度排期就按这个周期生成。</p>
-            </div>
-          </div>
+        <SummaryPill label="总投资" value={formatCurrency(totalInvestment)} />
+        <SummaryPill label="股东人数" value={`${props.shareholders.length} 人`} />
+        <SummaryPill
+          label="分红比例合计"
+          value={formatPercent(totalDividendRate)}
+          tone={Math.abs(totalDividendRate - 1) <= 0.001 ? 'ok' : 'warn'}
+        />
+      </div>
 
-          <div className="mt-4 grid gap-4 md:grid-cols-[220px_240px_1fr]">
-            <label className="grid gap-2">
-              <span className="text-sm font-semibold text-stone-800">经营开始月份</span>
-              <select
-                className="h-11 rounded-2xl border border-stone-900/10 bg-stone-100/80 px-4 text-sm font-medium text-stone-900 outline-none transition focus:border-emerald-500 focus:bg-white"
-                value={props.planning.startMonth}
-                onChange={(event) => props.onPlanningChange('startMonth', Number(event.target.value))}
-              >
-                {monthLabelOptions.map((label, index) => (
-                  <option key={label} value={index + 1}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="grid gap-2">
-              <span className="text-sm font-semibold text-stone-800">规划月数</span>
-              <div className="flex items-center gap-2">
-                <CompactNumberInput
-                  value={props.planning.horizonMonths}
-                  min={1}
-                  max={24}
-                  step={1}
-                  suffix="月"
-                  onChange={(value) => props.onPlanningChange('horizonMonths', value)}
-                />
-                <button
-                  type="button"
-                  onClick={() => props.onPlanningChange('horizonMonths', props.planning.horizonMonths + 6)}
-                  className="h-10 rounded-xl border border-stone-900/10 bg-white px-3 text-xs font-semibold text-stone-700 transition hover:bg-stone-100"
-                >
-                  +6 月
-                </button>
-              </div>
-            </label>
-
-            <div className="rounded-[18px] border border-stone-900/10 bg-stone-50/80 px-4 py-3 text-sm leading-7 text-stone-600">
-              经营底盘决定模型周期，月度排期里会先给你一条默认基线；你调完后同步默认，再只改少数例外月份。
-            </div>
-          </div>
-        </section>
+      <div className="mt-5 rounded-[24px] border border-stone-900/10 bg-white">
+        <table className="w-full table-fixed text-sm">
+          <colgroup>
+            <col className="w-[34%]" />
+            <col className="w-[26%]" />
+            <col className="w-[26%]" />
+            <col className="w-[14%]" />
+          </colgroup>
+          <thead className="bg-stone-100/90 text-stone-700">
+            <tr className="border-b border-stone-900/10">
+              <th className="px-3 py-2.5 text-center text-xs font-semibold uppercase tracking-[0.16em]">股东</th>
+              <th className="px-3 py-2.5 text-center text-xs font-semibold uppercase tracking-[0.16em]">投资额</th>
+              <th className="px-3 py-2.5 text-center text-xs font-semibold uppercase tracking-[0.16em]">分红比例</th>
+              <th className="px-3 py-2.5 text-center text-xs font-semibold uppercase tracking-[0.16em]">删除</th>
+            </tr>
+          </thead>
+          <tbody>
+            {props.shareholders.map((shareholder) => (
+              <tr key={shareholder.id} className="border-b border-stone-900/10 last:border-none">
+                <td className="px-3 py-2.5">
+                  <input
+                    className="h-9 w-full rounded-lg border border-stone-900/10 bg-stone-50 px-3 text-sm font-medium text-stone-900 outline-none transition focus:border-emerald-500 focus:bg-white"
+                    value={shareholder.name}
+                    onChange={(event) => props.onShareholderNameChange(shareholder.id, event.target.value)}
+                  />
+                </td>
+                <td className="px-2 py-2.5">
+                  <CompactNumberInput
+                    value={shareholder.investmentAmount}
+                    min={0}
+                    step={1000}
+                    size="sm"
+                    align="right"
+                    onChange={(value) => props.onShareholderInvestmentChange(shareholder.id, value)}
+                  />
+                </td>
+                <td className="px-2 py-2.5">
+                  <CompactNumberInput
+                    value={shareholder.dividendRate * 100}
+                    min={0}
+                    max={100}
+                    step={1}
+                    size="sm"
+                    align="center"
+                    onChange={(value) => props.onShareholderDividendChange(shareholder.id, value / 100)}
+                  />
+                </td>
+                <td className="px-2 py-2.5 text-center">
+                  <button
+                    type="button"
+                    onClick={() => props.onShareholderRemove(shareholder.id)}
+                    disabled={props.shareholders.length === 1}
+                    aria-label={`删除 ${shareholder.name}`}
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-stone-900/10 bg-white text-stone-600 transition hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </Panel>
+  )
+}
+
+function SummaryPill(props: {
+  label: string
+  value: string
+  tone?: 'default' | 'ok' | 'warn' | undefined
+}) {
+  return (
+    <div
+      className={
+        props.tone === 'ok'
+          ? 'rounded-[18px] border border-emerald-200 bg-emerald-50 px-4 py-3'
+          : props.tone === 'warn'
+            ? 'rounded-[18px] border border-amber-200 bg-amber-50 px-4 py-3'
+            : 'rounded-[18px] border border-stone-900/10 bg-stone-50/90 px-4 py-3'
+      }
+    >
+      <p className="text-xs uppercase tracking-[0.18em] text-stone-500">{props.label}</p>
+      <p className="mt-1.5 text-lg font-bold text-stone-950">{props.value}</p>
+    </div>
   )
 }

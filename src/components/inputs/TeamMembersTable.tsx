@@ -1,7 +1,7 @@
 import { Plus, Trash2, Users } from 'lucide-react'
 import type { EmploymentType, ScenarioKey, TeamMember } from '../../types'
 import { CompactNumberInput, HeaderCell, Panel, SectionTitle } from '../common/ui'
-import { formatDecimal } from '../../lib/format'
+import { formatCurrency, formatDecimal } from '../../lib/format'
 
 const employmentOptions: Array<{ label: string; value: EmploymentType }> = [
   { label: '底薪', value: 'salary' },
@@ -17,11 +17,13 @@ export function TeamMembersTable(props: {
   onEmploymentTypeChange: (id: string, value: EmploymentType) => void
   onCommissionChange: (id: string, value: number) => void
   onBasePayChange: (id: string, value: number) => void
+  onTravelCostChange: (id: string, value: number) => void
   onUnitsChange: (id: string, key: ScenarioKey, value: number) => void
   onRemove: (id: string) => void
 }) {
   const salariedCount = props.members.filter((member) => member.employmentType === 'salary').length
   const baseUnitsPerEvent = props.members.reduce((sum, member) => sum + member.unitsPerEvent.base, 0)
+  const totalTravel = props.members.reduce((sum, member) => sum + member.perEventTravelCost, 0)
 
   return (
     <Panel>
@@ -46,19 +48,21 @@ export function TeamMembersTable(props: {
         <SummaryPill label="成员数量" value={`${props.members.length} 人`} />
         <SummaryPill label="底薪成员" value={`${salariedCount} 人`} />
         <SummaryPill label="基准单场合计" value={`${formatDecimal(baseUnitsPerEvent)} 张`} />
+        <SummaryPill label="成员路费 / 场" value={formatCurrency(totalTravel)} />
       </div>
 
-      <div className="mt-5 overflow-x-auto rounded-[24px] border border-stone-900/10 bg-white">
-        <table className="min-w-[680px] w-full table-fixed border-collapse text-sm">
+      <div className="mt-5 rounded-[24px] border border-stone-900/10 bg-white">
+        <table className="w-full table-fixed border-collapse text-sm">
           <colgroup>
-            <col className="w-[112px]" />
-            <col className="w-[76px]" />
-            <col className="w-[76px]" />
-            <col className="w-[104px]" />
-            <col className="w-[72px]" />
-            <col className="w-[72px]" />
-            <col className="w-[72px]" />
-            <col className="w-[56px]" />
+            <col className="w-[16%]" />
+            <col className="w-[10%]" />
+            <col className="w-[10%]" />
+            <col className="w-[12%]" />
+            <col className="w-[12%]" />
+            <col className="w-[10%]" />
+            <col className="w-[10%]" />
+            <col className="w-[10%]" />
+            <col className="w-[10%]" />
           </colgroup>
           <thead className="bg-stone-100/90 text-stone-700">
             <tr className="border-b border-stone-900/10">
@@ -71,6 +75,9 @@ export function TeamMembersTable(props: {
               </HeaderCell>
               <HeaderCell rowSpan={2} align="center">
                 底薪/月
+              </HeaderCell>
+              <HeaderCell rowSpan={2} align="center">
+                路费/场
               </HeaderCell>
               <HeaderCell colSpan={3} align="center">
                 单场张数
@@ -133,6 +140,16 @@ export function TeamMembersTable(props: {
                     size="sm"
                     align="right"
                     onChange={(value) => props.onBasePayChange(member.id, value)}
+                  />
+                </td>
+                <td className="px-2 py-2.5">
+                  <CompactNumberInput
+                    value={member.perEventTravelCost}
+                    min={0}
+                    step={100}
+                    size="sm"
+                    align="right"
+                    onChange={(value) => props.onTravelCostChange(member.id, value)}
                   />
                 </td>
                 {scenarioOrder.map((key) => (

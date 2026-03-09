@@ -40,8 +40,8 @@ export function EmployeesTable(props: {
         <SummaryPill label="单场员工成本" value={formatCurrency(perEventPayroll)} />
       </div>
 
-      <div className="mt-5 overflow-x-auto rounded-[24px] border border-stone-900/10 bg-white">
-        <table className="min-w-[540px] w-full table-fixed border-collapse text-sm">
+      <div className="mt-5 rounded-[24px] border border-stone-900/10 bg-white">
+        <table className="w-full table-fixed border-collapse text-sm">
           <colgroup>
             <col className="w-[132px]" />
             <col className="w-[128px]" />

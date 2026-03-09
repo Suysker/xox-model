@@ -13,15 +13,15 @@ import type {
 const scenarioLabels: Record<ScenarioKey, { label: string; description: string }> = {
   pessimistic: {
     label: '悲观',
-    description: '按每位成员的悲观单场张数，查看保守现金流下界。',
+    description: '按成员较保守的单场张数，查看现金流下界。',
   },
   base: {
     label: '基准',
-    description: '按当前最可能发生的张数与排期，作为主判断口径。',
+    description: '按当前最可能发生的排期和销售表现，作为主要判断口径。',
   },
   optimistic: {
     label: '乐观',
-    description: '按成员状态更好时的单场张数，查看经营上界。',
+    description: '按状态更好的销量表现，查看经营上界。',
   },
 }
 
@@ -43,13 +43,8 @@ function getUnitsForScenario(member: TeamMember, key: ScenarioKey, multiplier: n
 
 function getSpecialProjectCost(month: MonthlyPlan) {
   return (
-    clampToNonNegative(month.extraFixedCost) +
     clampToNonNegative(month.vjCost) +
-    clampToNonNegative(month.originalSongCost) +
-    clampToNonNegative(month.makeupCost) +
-    clampToNonNegative(month.travelCost) +
-    clampToNonNegative(month.streamingCost) +
-    clampToNonNegative(month.mealCost)
+    clampToNonNegative(month.originalSongCost)
   )
 }
 
@@ -62,6 +57,7 @@ function getMemberMonthResults(config: ModelConfig, month: MonthlyPlan, key: Sce
     const grossSales = monthlyUnits * clampToNonNegative(config.operating.unitPrice)
     const commissionCost = grossSales * clampToNonNegative(member.commissionRate)
     const basePayCost = clampToNonNegative(member.monthlyBasePay)
+    const travelCost = events * clampToNonNegative(member.perEventTravelCost)
 
     return {
       memberId: member.id,
@@ -72,7 +68,8 @@ function getMemberMonthResults(config: ModelConfig, month: MonthlyPlan, key: Sce
       grossSales,
       commissionCost,
       basePayCost,
-      companyRevenueAfterCommission: grossSales - commissionCost,
+      travelCost,
+      companyNetContribution: grossSales - commissionCost - basePayCost - travelCost,
     }
   })
 }
@@ -95,7 +92,12 @@ function getEmployeeMonthResults(config: ModelConfig, month: MonthlyPlan) {
   })
 }
 
+function getTotalInvestment(config: ModelConfig) {
+  return config.shareholders.reduce((sum, shareholder) => sum + clampToNonNegative(shareholder.investmentAmount), 0)
+}
+
 export function getScenarioResult(config: ModelConfig, key: ScenarioKey): ScenarioResult {
+  const totalInvestment = getTotalInvestment(config)
   const months: MonthlyScenarioResult[] = []
   let cumulativeProfit = 0
   let paybackMonthIndex: number | null = null
@@ -107,38 +109,46 @@ export function getScenarioResult(config: ModelConfig, key: ScenarioKey): Scenar
     const events = clampToNonNegative(month.events)
     const totalUnitsPerEvent = members.reduce((sum, member) => sum + member.unitsPerEvent, 0)
     const totalUnitsPerMonth = members.reduce((sum, member) => sum + member.monthlyUnits, 0)
-    const grossSales = members.reduce((sum, member) => sum + member.grossSales, 0)
+    const memberGrossSales = members.reduce((sum, member) => sum + member.grossSales, 0)
+    const extraChannelRevenue = clampToNonNegative(month.extraChannelRevenue)
+    const grossSales = memberGrossSales + extraChannelRevenue
     const commissionCost = members.reduce((sum, member) => sum + member.commissionCost, 0)
     const basePayCost = members.reduce((sum, member) => sum + member.basePayCost, 0)
+    const memberTravelCost = members.reduce((sum, member) => sum + member.travelCost, 0)
     const employeeBasePayCost = employees.reduce((sum, employee) => sum + employee.basePayCost, 0)
     const employeeEventCost = employees.reduce((sum, employee) => sum + employee.perEventCost, 0)
-    const fixedOperatingCost = clampToNonNegative(config.operating.monthlyFixedCost)
-    const eventOperatingCost = events * clampToNonNegative(config.operating.perEventOperatingCost)
-    const extraPerEventCost = events * clampToNonNegative(month.extraPerEventCost)
+    const monthlyOperatingCost = clampToNonNegative(config.operating.monthlyFixedCost)
+    const perEventOperatingCost = events * clampToNonNegative(config.operating.perEventOperatingCost)
+    const extraPerEventCost =
+      events *
+      (clampToNonNegative(month.extraPerEventCost) +
+        clampToNonNegative(month.makeupPerEventCost) +
+        clampToNonNegative(month.streamingPerEventCost) +
+        clampToNonNegative(month.mealPerEventCost))
+    const extraFixedCost = clampToNonNegative(month.extraFixedCost)
     const rehearsalCost =
       clampToNonNegative(month.rehearsalCount) * clampToNonNegative(month.rehearsalCost)
     const teacherCost =
       clampToNonNegative(month.teacherCount) * clampToNonNegative(month.teacherCost)
     const specialProjectCost = getSpecialProjectCost(month)
-    const materialCost = month.includeMaterialCost
+    const unitLinkedCostTotal = month.includeMaterialCost
       ? totalUnitsPerMonth * clampToNonNegative(config.operating.materialCostPerUnit)
       : 0
-    const fixedCostTotal =
+    const monthlyFixedCostTotal =
       basePayCost +
       employeeBasePayCost +
-      fixedOperatingCost +
+      monthlyOperatingCost +
+      extraFixedCost +
       rehearsalCost +
       teacherCost +
       specialProjectCost
-    const eventLinkedCostTotal =
-      employeeEventCost + eventOperatingCost + extraPerEventCost
-    const unitLinkedCostTotal = materialCost
-    const operatingCostTotal = fixedCostTotal + eventLinkedCostTotal + unitLinkedCostTotal
+    const perEventCostTotal = memberTravelCost + employeeEventCost + perEventOperatingCost + extraPerEventCost
+    const operatingCostTotal = monthlyFixedCostTotal + perEventCostTotal + unitLinkedCostTotal
     const totalCost = commissionCost + operatingCostTotal
     const monthlyProfit = grossSales - totalCost
 
     cumulativeProfit += monthlyProfit
-    const cumulativeCash = cumulativeProfit - clampToNonNegative(config.operating.initialInvestment)
+    const cumulativeCash = cumulativeProfit - totalInvestment
     const hasPaidBack = cumulativeCash >= 0
 
     if (hasPaidBack && paybackMonthIndex === null) {
@@ -152,21 +162,25 @@ export function getScenarioResult(config: ModelConfig, key: ScenarioKey): Scenar
       monthIndex: monthIndex + 1,
       events,
       salesMultiplier: clampToNonNegative(month.salesMultiplier),
+      extraChannelRevenue,
+      memberGrossSales,
       totalUnitsPerEvent,
       totalUnitsPerMonth,
       grossSales,
       commissionCost,
       basePayCost,
+      memberTravelCost,
       employeeBasePayCost,
       employeeEventCost,
-      fixedOperatingCost,
-      eventOperatingCost,
+      monthlyOperatingCost,
+      perEventOperatingCost,
       extraPerEventCost,
+      extraFixedCost,
       rehearsalCost,
       teacherCost,
       specialProjectCost,
-      fixedCostTotal,
-      eventLinkedCostTotal,
+      monthlyFixedCostTotal,
+      perEventCostTotal,
       operatingCostTotal,
       unitLinkedCostTotal,
       totalCost,
@@ -185,18 +199,17 @@ export function getScenarioResult(config: ModelConfig, key: ScenarioKey): Scenar
   const operatingCostTotal = months.reduce((sum, month) => sum + month.operatingCostTotal, 0)
   const totalCost = months.reduce((sum, month) => sum + month.totalCost, 0)
   const totalProfit = months.reduce((sum, month) => sum + month.monthlyProfit, 0)
-  const netCashAfterInvestment = totalProfit - clampToNonNegative(config.operating.initialInvestment)
-  const takeRate = grossSales > 0 ? (grossSales - months.reduce((sum, month) => sum + month.commissionCost, 0)) / grossSales : 0
+  const totalCommissionCost = months.reduce((sum, month) => sum + month.commissionCost, 0)
+  const netCashAfterInvestment = totalProfit - totalInvestment
+  const takeRate = grossSales > 0 ? (grossSales - totalCommissionCost) / grossSales : 0
   const averageUnitsPerEvent = totalEvents > 0 ? totalUnitsPerMonth / totalEvents : 0
-  const roi =
-    clampToNonNegative(config.operating.initialInvestment) > 0
-      ? netCashAfterInvestment / clampToNonNegative(config.operating.initialInvestment)
-      : 0
+  const roi = totalInvestment > 0 ? netCashAfterInvestment / totalInvestment : 0
 
   return {
     key,
     label: scenarioLabels[key].label,
     description: scenarioLabels[key].description,
+    totalInvestment,
     totalEvents,
     averageUnitsPerEvent,
     totalUnitsPerMonth,

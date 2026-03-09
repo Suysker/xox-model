@@ -4,6 +4,7 @@ import type {
   MonthlyPlan,
   MonthlyPlanTemplate,
   PlanningConfig,
+  Shareholder,
   TeamMember,
 } from '../types'
 
@@ -17,6 +18,7 @@ export function createTimelineTemplate(values?: Partial<MonthlyPlanTemplate>): M
   return {
     events: 6,
     salesMultiplier: 1,
+    extraChannelRevenue: 0,
     rehearsalCount: 4,
     rehearsalCost: 300,
     teacherCount: 4,
@@ -25,12 +27,10 @@ export function createTimelineTemplate(values?: Partial<MonthlyPlanTemplate>): M
     extraFixedCost: 0,
     vjCost: 0,
     originalSongCost: 0,
-    makeupCost: 0,
-    travelCost: 0,
-    streamingCost: 0,
-    mealCost: 0,
+    makeupPerEventCost: 0,
+    streamingPerEventCost: 0,
+    mealPerEventCost: 0,
     includeMaterialCost: true,
-    notes: '',
     ...values,
   }
 }
@@ -44,12 +44,23 @@ export function toTimelineTemplate(month?: Partial<MonthlyPlan>): MonthlyPlanTem
   return createTimelineTemplate(templateValues)
 }
 
+export function createShareholder(seed: string, values?: Partial<Shareholder>): Shareholder {
+  return {
+    id: createId('shareholder', seed),
+    name: '股东',
+    investmentAmount: 0,
+    dividendRate: 0,
+    ...values,
+  }
+}
+
 export function createMember(seed: string, values?: Partial<TeamMember>): TeamMember {
   return {
     id: createId('member', seed),
     name: '新成员',
     employmentType: 'partTime',
     monthlyBasePay: 0,
+    perEventTravelCost: 0,
     commissionRate: 0.35,
     unitsPerEvent: {
       pessimistic: 8,
@@ -123,7 +134,7 @@ export function syncMonthsToPlanning(
 }
 
 export function createProductDefaultModel(): ModelConfig {
-  const planning = {
+  const planning: PlanningConfig = {
     startMonth: 3,
     horizonMonths: 6,
   }
@@ -139,8 +150,24 @@ export function createProductDefaultModel(): ModelConfig {
   })
 
   return {
+    shareholders: [
+      createShareholder('a', {
+        name: '股东 A',
+        investmentAmount: 30000,
+        dividendRate: 0.4,
+      }),
+      createShareholder('b', {
+        name: '股东 B',
+        investmentAmount: 30000,
+        dividendRate: 0.35,
+      }),
+      createShareholder('c', {
+        name: '股东 C',
+        investmentAmount: 25000,
+        dividendRate: 0.25,
+      }),
+    ],
     operating: {
-      initialInvestment: 85000,
       unitPrice: 88,
       monthlyFixedCost: 0,
       perEventOperatingCost: 0,
@@ -227,39 +254,40 @@ export function createProductDefaultModel(): ModelConfig {
           label: '3月',
           events: 6,
           salesMultiplier: 0.66,
+          extraChannelRevenue: 0,
           rehearsalCount: 8,
           rehearsalCost: 300,
           teacherCount: 8,
           teacherCost: 200,
           includeMaterialCost: false,
-          notes: '启动月，按单场约 100 张估算。',
         }),
         createMonth('apr', {
           label: '4月',
           events: 6,
           salesMultiplier: 1,
+          extraChannelRevenue: 0,
           rehearsalCount: 4,
           rehearsalCost: 300,
           teacherCount: 4,
           teacherCost: 200,
           includeMaterialCost: false,
-          notes: '按对话中的稳定运营月建模。',
         }),
         createMonth('may', {
           label: '5月',
           events: 6,
           salesMultiplier: 1.3,
+          extraChannelRevenue: 0,
           rehearsalCount: 4,
           rehearsalCost: 300,
           teacherCount: 4,
           teacherCost: 200,
           includeMaterialCost: true,
-          notes: '按单场约 200 张的增长月建模。',
         }),
         createMonth('jun', {
           label: '6月',
           events: 6,
           salesMultiplier: 1.3,
+          extraChannelRevenue: 0,
           rehearsalCount: 4,
           rehearsalCost: 300,
           teacherCount: 4,
@@ -270,6 +298,7 @@ export function createProductDefaultModel(): ModelConfig {
           label: '7月',
           events: 6,
           salesMultiplier: 1.35,
+          extraChannelRevenue: 0,
           rehearsalCount: 4,
           rehearsalCost: 300,
           teacherCount: 4,
@@ -280,6 +309,7 @@ export function createProductDefaultModel(): ModelConfig {
           label: '8月',
           events: 6,
           salesMultiplier: 1.35,
+          extraChannelRevenue: 0,
           rehearsalCount: 4,
           rehearsalCost: 300,
           teacherCount: 4,
