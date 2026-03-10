@@ -6,6 +6,28 @@ export type EmploymentType = 'salary' | 'partTime'
 
 export type ScenarioBand = Record<ScenarioKey, number>
 
+export type CostCategory = 'monthlyFixed' | 'perEvent' | 'perUnit'
+
+export type CostItem = {
+  id: string
+  name: string
+  amount: number
+}
+
+export type StageCostMode = 'monthly' | 'perEvent' | 'perUnit'
+
+export type StageCostItem = {
+  id: string
+  name: string
+  mode: StageCostMode
+}
+
+export type StageCostValue = {
+  itemId: string
+  amount: number
+  count: number
+}
+
 export type Shareholder = {
   id: string
   name: string
@@ -33,9 +55,9 @@ export type Employee = {
 
 export type OperatingConfig = {
   unitPrice: number
-  monthlyFixedCost: number
-  perEventOperatingCost: number
-  materialCostPerUnit: number
+  monthlyFixedCosts: CostItem[]
+  perEventCosts: CostItem[]
+  perUnitCosts: CostItem[]
 }
 
 export type PlanningConfig = {
@@ -55,12 +77,7 @@ export type MonthlyPlan = {
   teacherCost: number
   extraPerEventCost: number
   extraFixedCost: number
-  vjCost: number
-  originalSongCost: number
-  makeupPerEventCost: number
-  streamingPerEventCost: number
-  mealPerEventCost: number
-  includeMaterialCost: boolean
+  specialCosts: StageCostValue[]
 }
 
 export type MonthlyPlanTemplate = Omit<MonthlyPlan, 'id' | 'label'>
@@ -69,6 +86,7 @@ export type ModelConfig = {
   shareholders: Shareholder[]
   operating: OperatingConfig
   planning: PlanningConfig
+  stageCostItems: StageCostItem[]
   timelineTemplate: MonthlyPlanTemplate
   teamMembers: TeamMember[]
   employees: Employee[]

@@ -33,3 +33,13 @@ textarea {
   background: rgba(16, 185, 129, 0.24);
 }
 
+.compact-number-input-field {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.compact-number-input-field::-webkit-outer-spin-button,
+.compact-number-input-field::-webkit-inner-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
+}

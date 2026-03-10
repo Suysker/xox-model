@@ -19,32 +19,42 @@ import { SidebarNav } from './components/layout/SidebarNav'
 import { WorkspacePanel } from './components/workspace/WorkspacePanel'
 import { WorkspaceToolbar } from './components/workspace/WorkspaceToolbar'
 import { useWorkspace } from './hooks/useWorkspace'
-import { createEmployee, createMember, createShareholder } from './lib/defaults'
+import {
+  createCostItem,
+  createEmployee,
+  createMember,
+  createShareholder,
+  createStageCostItem,
+  createStageCostValues,
+  syncMonthsToPlanning,
+} from './lib/defaults'
 import { projectModel } from './lib/model'
 import { parseWorkspaceBundle, serializeWorkspaceBundle } from './lib/storage'
-import { syncMonthsToPlanning } from './lib/defaults'
-import type { ModelConfig, MonthlyPlan, MonthlyPlanTemplate, ScenarioKey, WorkspaceSnapshot } from './types'
+import type {
+  CostCategory,
+  CostItem,
+  ModelConfig,
+  MonthlyPlan,
+  MonthlyPlanTemplate,
+  ScenarioKey,
+  StageCostMode,
+  StageCostValue,
+  WorkspaceSnapshot,
+} from './types'
 
 type MainTab = 'dashboard' | 'inputs'
 type DashboardTab = 'overview' | 'months' | 'members'
 type InputsTab = 'capital' | 'revenue' | 'cost'
 type BannerState = { tone: NoticeTone; message: string }
 type TimelineSection = 'sales' | 'training' | 'special'
-type TimelineTemplateNumberKey =
-  | 'events'
-  | 'salesMultiplier'
-  | 'extraChannelRevenue'
+type RevenueNumberKey = 'events' | 'salesMultiplier' | 'extraChannelRevenue'
+type CostTemplateNumberKey =
   | 'rehearsalCount'
   | 'rehearsalCost'
   | 'teacherCount'
   | 'teacherCost'
   | 'extraPerEventCost'
   | 'extraFixedCost'
-  | 'vjCost'
-  | 'originalSongCost'
-  | 'makeupPerEventCost'
-  | 'streamingPerEventCost'
-  | 'mealPerEventCost'
 
 const mainTabs: Array<{ value: MainTab; label: string; description: string; icon: LucideIcon }> = [
   {
@@ -84,21 +94,66 @@ function sanitizeFilename(name: string) {
   return name.trim().replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, '-').slice(0, 48) || 'workspace'
 }
 
+const costCategoryLabels: Record<CostCategory, string> = {
+  monthlyFixed: '每月成本',
+  perEvent: '每场成本',
+  perUnit: '每张成本',
+}
+
+const costCategoryKeys = {
+  monthlyFixed: 'monthlyFixedCosts',
+  perEvent: 'perEventCosts',
+  perUnit: 'perUnitCosts',
+} as const
+
 function findSnapshot(snapshots: WorkspaceSnapshot[], id: string) {
   return snapshots.find((snapshot) => snapshot.id === id)
 }
 
-const timelineSectionKeys: Record<TimelineSection, TimelineTemplateNumberKey[]> = {
+const timelineSectionKeys: Record<Exclude<TimelineSection, 'special'>, Array<RevenueNumberKey | CostTemplateNumberKey>> = {
   sales: ['events', 'salesMultiplier', 'extraChannelRevenue'],
   training: ['rehearsalCount', 'rehearsalCost', 'teacherCount', 'teacherCost', 'extraPerEventCost', 'extraFixedCost'],
-  special: ['vjCost', 'originalSongCost', 'makeupPerEventCost', 'streamingPerEventCost', 'mealPerEventCost'],
+}
+
+function syncStageCosts(config: ModelConfig, stageCostItems: ModelConfig['stageCostItems']) {
+  return {
+    ...config,
+    stageCostItems,
+    timelineTemplate: {
+      ...config.timelineTemplate,
+      specialCosts: createStageCostValues(stageCostItems, config.timelineTemplate.specialCosts),
+    },
+    months: config.months.map((month) => ({
+      ...month,
+      specialCosts: createStageCostValues(stageCostItems, month.specialCosts),
+    })),
+  }
+}
+
+function updateStageCostValues(
+  values: StageCostValue[],
+  stageCostItems: ModelConfig['stageCostItems'],
+  itemId: string,
+  updater: (value: StageCostValue) => StageCostValue,
+) {
+  return createStageCostValues(stageCostItems, values).map((value) =>
+    value.itemId === itemId ? updater(value) : value,
+  )
 }
 
 function applyTemplateToMonthSection(
   month: MonthlyPlan,
   template: MonthlyPlanTemplate,
   section: TimelineSection,
+  stageCostItems: ModelConfig['stageCostItems'],
 ): MonthlyPlan {
+  if (section === 'special') {
+    return {
+      ...month,
+      specialCosts: createStageCostValues(stageCostItems, template.specialCosts),
+    }
+  }
+
   const nextMonth = {
     ...month,
   }
@@ -106,10 +161,6 @@ function applyTemplateToMonthSection(
   timelineSectionKeys[section].forEach((key) => {
     nextMonth[key] = template[key]
   })
-
-  if (section === 'special') {
-    nextMonth.includeMaterialCost = template.includeMaterialCost
-  }
 
   return nextMonth
 }
@@ -171,12 +222,57 @@ export default function App() {
   const secondaryItems = mainTab === 'dashboard' ? dashboardTabs : inputTabs
   const secondaryValue = mainTab === 'dashboard' ? dashboardTab : inputsTab
 
-  function updateOperating(key: keyof ModelConfig['operating'], value: number) {
+  function updateUnitPrice(value: number) {
     setConfig((current) => ({
       ...current,
       operating: {
         ...current.operating,
-        [key]: value,
+        unitPrice: value,
+      },
+    }))
+  }
+
+  function updateCostItem(
+    category: CostCategory,
+    id: string,
+    updater: (item: CostItem) => CostItem,
+  ) {
+    const categoryKey = costCategoryKeys[category]
+
+    setConfig((current) => ({
+      ...current,
+      operating: {
+        ...current.operating,
+        [categoryKey]: current.operating[categoryKey].map((item) => (item.id === id ? updater(item) : item)),
+      },
+    }))
+  }
+
+  function handleAddCostItem(category: CostCategory) {
+    const categoryKey = costCategoryKeys[category]
+
+    setConfig((current) => ({
+      ...current,
+      operating: {
+        ...current.operating,
+        [categoryKey]: [
+          ...current.operating[categoryKey],
+          createCostItem(`${category}-${Date.now()}`, {
+            name: `${costCategoryLabels[category]} ${current.operating[categoryKey].length + 1}`,
+          }),
+        ],
+      },
+    }))
+  }
+
+  function handleRemoveCostItem(category: CostCategory, id: string) {
+    const categoryKey = costCategoryKeys[category]
+
+    setConfig((current) => ({
+      ...current,
+      operating: {
+        ...current.operating,
+        [categoryKey]: current.operating[categoryKey].filter((item) => item.id !== id),
       },
     }))
   }
@@ -220,22 +316,12 @@ export default function App() {
     }))
   }
 
-  function updateTimelineTemplate(key: TimelineTemplateNumberKey, value: number) {
+  function updateTimelineTemplate(key: RevenueNumberKey | CostTemplateNumberKey, value: number) {
     setConfig((current) => ({
       ...current,
       timelineTemplate: {
         ...current.timelineTemplate,
         [key]: value,
-      },
-    }))
-  }
-
-  function updateTimelineTemplateMaterial(value: boolean) {
-    setConfig((current) => ({
-      ...current,
-      timelineTemplate: {
-        ...current.timelineTemplate,
-        includeMaterialCost: value,
       },
     }))
   }
@@ -256,9 +342,77 @@ export default function App() {
       return {
         ...current,
         planning: nextPlanning,
-        months: syncMonthsToPlanning(current.months, nextPlanning, 'workspace', current.timelineTemplate),
+        months: syncMonthsToPlanning(
+          current.months,
+          nextPlanning,
+          'workspace',
+          current.timelineTemplate,
+          current.stageCostItems,
+        ),
       }
     })
+  }
+
+  function handleAddStageCostItem() {
+    setConfig((current) =>
+      syncStageCosts(current, [
+        ...current.stageCostItems,
+        createStageCostItem(`${Date.now()}`, {
+          name: `专项成本 ${current.stageCostItems.length + 1}`,
+        }),
+      ]),
+    )
+  }
+
+  function handleRemoveStageCostItem(id: string) {
+    setConfig((current) => syncStageCosts(current, current.stageCostItems.filter((item) => item.id !== id)))
+  }
+
+  function updateStageCostItem(
+    id: string,
+    updater: (item: ModelConfig['stageCostItems'][number]) => ModelConfig['stageCostItems'][number],
+  ) {
+    setConfig((current) =>
+      syncStageCosts(
+        current,
+        current.stageCostItems.map((item) => (item.id === id ? updater(item) : item)),
+      ),
+    )
+  }
+
+  function updateTemplateStageCost(itemId: string, key: 'amount' | 'count', value: number) {
+    setConfig((current) => ({
+      ...current,
+      timelineTemplate: {
+        ...current.timelineTemplate,
+        specialCosts: updateStageCostValues(
+          current.timelineTemplate.specialCosts,
+          current.stageCostItems,
+          itemId,
+          (stageCost) => ({
+            ...stageCost,
+            [key]: value,
+          }),
+        ),
+      },
+    }))
+  }
+
+  function updateMonthStageCost(monthId: string, itemId: string, key: 'amount' | 'count', value: number) {
+    setConfig((current) => ({
+      ...current,
+      months: current.months.map((month) =>
+        month.id === monthId
+          ? {
+              ...month,
+              specialCosts: updateStageCostValues(month.specialCosts, current.stageCostItems, itemId, (stageCost) => ({
+                ...stageCost,
+                [key]: value,
+              })),
+            }
+          : month,
+      ),
+    }))
   }
 
   function handleAddMember() {
@@ -432,7 +586,9 @@ export default function App() {
   function handleApplyTemplateToAll(section: TimelineSection) {
     setConfig((current) => ({
       ...current,
-      months: current.months.map((month) => applyTemplateToMonthSection(month, current.timelineTemplate, section)),
+      months: current.months.map((month) =>
+        applyTemplateToMonthSection(month, current.timelineTemplate, section, current.stageCostItems),
+      ),
     }))
 
     setBanner({ tone: 'success', message: '已同步默认基线，接下来只需要改少数例外月份。' })
@@ -442,7 +598,9 @@ export default function App() {
     setConfig((current) => ({
       ...current,
       months: current.months.map((month) =>
-        month.id === id ? applyTemplateToMonthSection(month, current.timelineTemplate, section) : month,
+        month.id === id
+          ? applyTemplateToMonthSection(month, current.timelineTemplate, section, current.stageCostItems)
+          : month,
       ),
     }))
   }
@@ -559,7 +717,7 @@ export default function App() {
                   <div className="space-y-4">
                     <RevenueWorkbench
                       unitPrice={config.operating.unitPrice}
-                      onUnitPriceChange={(value) => updateOperating('unitPrice', value)}
+                      onUnitPriceChange={updateUnitPrice}
                     />
 
                     <TimelineEditor
@@ -612,28 +770,39 @@ export default function App() {
                       operating={config.operating}
                       teamMembers={config.teamMembers}
                       employees={config.employees}
-                      onOperatingChange={updateOperating}
+                      onCostItemAdd={handleAddCostItem}
+                      onCostItemRemove={handleRemoveCostItem}
+                      onCostItemNameChange={(category, id, value) =>
+                        updateCostItem(category, id, (item) => ({ ...item, name: value }))
+                      }
+                      onCostItemAmountChange={(category, id, value) =>
+                        updateCostItem(category, id, (item) => ({ ...item, amount: value }))
+                      }
                     />
 
                     <CostOverridesEditor
                       template={config.timelineTemplate}
                       months={config.months}
-                      onTemplateNumberChange={updateTimelineTemplate}
-                      onNumberChange={(id, key, value) =>
+                      stageCostItems={config.stageCostItems}
+                      onTrainingTemplateChange={updateTimelineTemplate}
+                      onTrainingMonthChange={(id, key, value) =>
                         updateMonth(id, (month) => ({
                           ...month,
                           [key]: value,
                         }))
                       }
-                      onMaterialToggle={(id, value) =>
-                        updateMonth(id, (month) => ({
-                          ...month,
-                          includeMaterialCost: value,
-                        }))
-                      }
-                      onTemplateMaterialToggle={updateTimelineTemplateMaterial}
                       onApplyTemplateToAll={handleApplyTemplateToAll}
                       onResetMonthFromTemplate={handleResetMonthFromTemplate}
+                      onStageCostItemAdd={handleAddStageCostItem}
+                      onStageCostItemRemove={handleRemoveStageCostItem}
+                      onStageCostItemNameChange={(id, value) =>
+                        updateStageCostItem(id, (item) => ({ ...item, name: value }))
+                      }
+                      onStageCostItemModeChange={(id, value) =>
+                        updateStageCostItem(id, (item) => ({ ...item, mode: value }))
+                      }
+                      onTemplateStageCostChange={updateTemplateStageCost}
+                      onMonthStageCostChange={updateMonthStageCost}
                     />
 
                     <EmployeesTable

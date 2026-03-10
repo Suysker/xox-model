@@ -37,6 +37,8 @@
 - In Chinese finance breakdown rows, avoid uppercase/tracking-heavy label styling and give the breakdown pane enough width before accepting label wraps. These rows are scanning aids; they should read as single-line ledger items whenever possible.
 - In split analytics dashboards, reclaim width by reducing inter-panel gutters before shrinking the main chart. Users usually perceive narrow charts sooner than they perceive slightly tighter spacing.
 - When a chart metric toggle only changes the chart lens, style it as a lightweight secondary control close to the chart. Do not let `cash / profit / revenue / cost` read like a top-level page navigation bar.
+- A cost system is not configurable if `monthly fixed / per-event / per-unit` are stored as three scalars. Model baseline costs as editable item lists per cost driver so users can add, rename, and remove items without code changes.
+- Do not label baseline business costs as `default values` in the main cost-structure editor. If the user is editing the long-term cost ledger itself, each row is a real cost item; reserve `template/default` language for month-level exception tables only.
 
 ## Financial Domain Modeling
 
@@ -48,3 +50,17 @@
 - Extra online / e-cut income must be a first-class monthly revenue field. Do not hide it in notes or force it into offline sales assumptions.
 - In monthly idol-group models, member travel may be configured on a member row, but its financial driver is still `per-show cost`. Bucket costs by economic driver, not by which form owns the field.
 - In financial dashboards, never label a subtotal as `totalCost`. If commissions are part of the cost stack, displayed total cost and charts must include commissions too.
+- A stage-cost system is still rigid if `VJ / 推流 / 聚餐` only exist as hardcoded columns in a monthly table. Model stage costs as editable item definitions plus per-month value/count rows so the user can add new items like `团建/场` without code changes.
+- For per-show optional costs, storing only `amount` is insufficient. The model also needs an explicit monthly `count` so users can express cases like “3月聚餐只算 3 场” or “3月化妆不计入”.
+- Migration code should merge legacy scalar fields into new structured arrays even when transitional bundles already contain empty placeholder arrays. Otherwise old values get silently zeroed during schema upgrades.
+- Do not hardcode coarse numeric `step` values on editable cost amounts. Real operating costs like `150` or `300` are valid business inputs; the UI must not mark them invalid just because the spinner was tuned to `100`.
+- In month-difference cost tables, consumables should be edited as a per-unit numeric driver (`/张`), not as a boolean include switch. Users reason about `0` or `6/张`, not about abstract on/off flags.
+- If a cost mode is `monthly`, do not render a fake second column like `计入`. Count-like fields should only exist for modes that genuinely repeat, such as `perEvent`.
+- If a stage-cost table already has a mode selector, keep item names mode-agnostic. Labels like `VJ / 化妆 / 耗材` should stay plain; `/月 /场 /张` belongs in the type dropdown, not in the name itself.
+- When migrating from a transitional cost model, only move legacy per-unit material fields into stage-cost rows if the old bundle actually used month-level material toggles or per-month material amounts. Otherwise preserve baseline `perUnitCosts` as baseline costs instead of silently reclassifying them.
+- For per-unit stage costs like `耗材`, the template row should hold the baseline unit amount and month rows should edit a `0-1` inclusion factor. Users often think in “this month counts or not” rather than retyping the raw unit price every month.
+- In dense monthly cost tables, `单价` and `场次` for per-event items should share one composite cell before adding more columns. Reducing column count is more valuable than giving each tiny numeric field its own header cell.
+- If `按张` costs are modeled as a baseline amount plus a month coefficient, render them as the same kind of composite cell users see for `按场`: show `单价 / 系数` together instead of hiding the baseline amount in one row and the coefficient in another shape.
+- Inside a dense composite cell, the secondary repeater input like `场次` should be visibly narrower than the amount input, and month-reset actions should default to icon-only buttons. Dense cost tables need horizontal space for data, not repeated chrome.
+- In mixed stage-cost tables, automatically sort columns by economic driver priority (`按张 -> 按场 -> 按月`) before rendering. Users compare high-frequency variable costs first; leaving columns in creation order weakens scanability.
+- In compact financial grids, native browser number spinners are layout bugs. Remove them and use tabular figures so narrow numeric inputs show the full value cleanly.

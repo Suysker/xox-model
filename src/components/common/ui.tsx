@@ -197,7 +197,7 @@ export function CompactNumberInput(props: {
     >
       <input
         className={cx(
-          'h-full min-w-0 flex-1 border-none bg-transparent text-sm font-medium text-stone-900 outline-none',
+          'compact-number-input-field h-full min-w-0 flex-1 border-none bg-transparent text-sm font-medium tabular-nums text-stone-900 outline-none',
           props.size === 'sm' ? 'px-2.5' : 'px-3',
           props.align === 'center' && 'text-center',
           props.align === 'right' && 'text-right',

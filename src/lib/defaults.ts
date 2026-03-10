@@ -1,10 +1,14 @@
 import type {
+  CostItem,
   Employee,
   ModelConfig,
   MonthlyPlan,
   MonthlyPlanTemplate,
   PlanningConfig,
   Shareholder,
+  StageCostItem,
+  StageCostMode,
+  StageCostValue,
   TeamMember,
 } from '../types'
 
@@ -12,36 +16,6 @@ export const monthLabelOptions = ['1月', '2月', '3月', '4月', '5月', '6月'
 
 function createId(prefix: string, seed: string) {
   return `${prefix}-${seed}`
-}
-
-export function createTimelineTemplate(values?: Partial<MonthlyPlanTemplate>): MonthlyPlanTemplate {
-  return {
-    events: 6,
-    salesMultiplier: 1,
-    extraChannelRevenue: 0,
-    rehearsalCount: 4,
-    rehearsalCost: 300,
-    teacherCount: 4,
-    teacherCost: 200,
-    extraPerEventCost: 0,
-    extraFixedCost: 0,
-    vjCost: 0,
-    originalSongCost: 0,
-    makeupPerEventCost: 0,
-    streamingPerEventCost: 0,
-    mealPerEventCost: 0,
-    includeMaterialCost: true,
-    ...values,
-  }
-}
-
-export function toTimelineTemplate(month?: Partial<MonthlyPlan>): MonthlyPlanTemplate {
-  if (!month) {
-    return createTimelineTemplate()
-  }
-
-  const { id: _id, label: _label, ...templateValues } = month
-  return createTimelineTemplate(templateValues)
 }
 
 export function createShareholder(seed: string, values?: Partial<Shareholder>): Shareholder {
@@ -52,6 +26,61 @@ export function createShareholder(seed: string, values?: Partial<Shareholder>): 
     dividendRate: 0,
     ...values,
   }
+}
+
+export function createCostItem(seed: string, values?: Partial<CostItem>): CostItem {
+  return {
+    id: createId('cost', seed),
+    name: '新成本项',
+    amount: 0,
+    ...values,
+  }
+}
+
+export function createStageCostItem(seed: string, values?: Partial<StageCostItem>): StageCostItem {
+  return {
+    id: createId('stage-cost', seed),
+    name: '新专项成本',
+    mode: 'perEvent',
+    ...values,
+  }
+}
+
+export function createStageCostValue(
+  itemId: string,
+  mode: StageCostMode,
+  values?: Partial<StageCostValue>,
+): StageCostValue {
+  return {
+    itemId,
+    amount: 0,
+    count: mode === 'perEvent' ? 0 : 1,
+    ...values,
+  }
+}
+
+export function createDefaultStageCostItems() {
+  return [
+    createStageCostItem('vj', { name: 'VJ', mode: 'monthly' }),
+    createStageCostItem('original-song', { name: '原创', mode: 'monthly' }),
+    createStageCostItem('makeup', { name: '化妆', mode: 'perEvent' }),
+    createStageCostItem('streaming', { name: '推流', mode: 'perEvent' }),
+    createStageCostItem('meal', { name: '聚餐', mode: 'perEvent' }),
+    createStageCostItem('team-building', { name: '团建', mode: 'perEvent' }),
+    createStageCostItem('material', { name: '耗材', mode: 'perUnit' }),
+  ] satisfies StageCostItem[]
+}
+
+export function createStageCostValues(items: StageCostItem[], values?: Partial<StageCostValue>[]) {
+  const valueMap = new Map((values ?? []).map((item) => [item.itemId, item]))
+
+  return items.map((item) =>
+    createStageCostValue(item.id, item.mode, {
+      ...(valueMap.get(item.id) ?? {}),
+      itemId: item.id,
+      count: item.mode === 'perEvent' ? valueMap.get(item.id)?.count ?? 0 : 1,
+    }),
+  )
 }
 
 export function createMember(seed: string, values?: Partial<TeamMember>): TeamMember {
@@ -82,12 +111,57 @@ export function createEmployee(seed: string, values?: Partial<Employee>): Employ
   }
 }
 
-export function createMonth(seed: string, values?: Partial<MonthlyPlan>): MonthlyPlan {
+export function createTimelineTemplate(
+  values?: Partial<MonthlyPlanTemplate>,
+  stageCostItems: StageCostItem[] = createDefaultStageCostItems(),
+): MonthlyPlanTemplate {
+  const nextTemplate = {
+    events: 6,
+    salesMultiplier: 1,
+    extraChannelRevenue: 0,
+    rehearsalCount: 4,
+    rehearsalCost: 300,
+    teacherCount: 4,
+    teacherCost: 200,
+    extraPerEventCost: 0,
+    extraFixedCost: 0,
+    specialCosts: createStageCostValues(stageCostItems),
+    ...values,
+  }
+
   return {
+    ...nextTemplate,
+    specialCosts: createStageCostValues(stageCostItems, nextTemplate.specialCosts),
+  }
+}
+
+export function toTimelineTemplate(
+  month?: Partial<MonthlyPlan>,
+  stageCostItems: StageCostItem[] = createDefaultStageCostItems(),
+): MonthlyPlanTemplate {
+  if (!month) {
+    return createTimelineTemplate(undefined, stageCostItems)
+  }
+
+  const { id: _id, label: _label, ...templateValues } = month
+  return createTimelineTemplate(templateValues, stageCostItems)
+}
+
+export function createMonth(
+  seed: string,
+  values?: Partial<MonthlyPlan>,
+  stageCostItems: StageCostItem[] = createDefaultStageCostItems(),
+): MonthlyPlan {
+  const nextMonth = {
     id: createId('month', seed),
     label: '新月份',
-    ...createTimelineTemplate(),
+    ...createTimelineTemplate(undefined, stageCostItems),
     ...values,
+  }
+
+  return {
+    ...nextMonth,
+    specialCosts: createStageCostValues(stageCostItems, nextMonth.specialCosts),
   }
 }
 
@@ -107,6 +181,7 @@ export function syncMonthsToPlanning(
   planning: PlanningConfig,
   seed = 'timeline',
   template: MonthlyPlanTemplate = createTimelineTemplate(),
+  stageCostItems: StageCostItem[] = createDefaultStageCostItems(),
 ): MonthlyPlan[] {
   const horizonMonths = Number.isFinite(planning.horizonMonths)
     ? Math.min(24, Math.max(1, Math.round(planning.horizonMonths)))
@@ -122,32 +197,47 @@ export function syncMonthsToPlanning(
       return {
         ...current,
         label: getMonthLabel(startMonth, index),
+        specialCosts: createStageCostValues(stageCostItems, current.specialCosts),
       }
     }
 
-    return createMonth(createMonthId(seed, index), {
-      ...template,
-      id: createMonthId(seed, index),
-      label: getMonthLabel(startMonth, index),
-    })
+    return createMonth(
+      createMonthId(seed, index),
+      {
+        ...template,
+        id: createMonthId(seed, index),
+        label: getMonthLabel(startMonth, index),
+      },
+      stageCostItems,
+    )
   })
 }
 
 export function createProductDefaultModel(): ModelConfig {
+  const stageCostItems = createDefaultStageCostItems()
   const planning: PlanningConfig = {
     startMonth: 3,
     horizonMonths: 6,
   }
 
-  const timelineTemplate = createTimelineTemplate({
-    events: 6,
-    salesMultiplier: 1,
-    rehearsalCount: 4,
-    rehearsalCost: 300,
-    teacherCount: 4,
-    teacherCost: 200,
-    includeMaterialCost: true,
-  })
+  const timelineTemplate = createTimelineTemplate(
+    {
+      events: 6,
+      salesMultiplier: 1,
+      rehearsalCount: 4,
+      rehearsalCost: 300,
+      teacherCount: 4,
+      teacherCost: 200,
+      specialCosts: [
+        {
+          itemId: 'stage-cost-material',
+          amount: 6,
+          count: 1,
+        },
+      ],
+    },
+    stageCostItems,
+  )
 
   return {
     shareholders: [
@@ -169,11 +259,12 @@ export function createProductDefaultModel(): ModelConfig {
     ],
     operating: {
       unitPrice: 88,
-      monthlyFixedCost: 0,
-      perEventOperatingCost: 0,
-      materialCostPerUnit: 6,
+      monthlyFixedCosts: [],
+      perEventCosts: [],
+      perUnitCosts: [],
     },
     planning,
+    stageCostItems,
     timelineTemplate,
     teamMembers: [
       createMember('wenchen', {
@@ -250,76 +341,137 @@ export function createProductDefaultModel(): ModelConfig {
     ],
     months: syncMonthsToPlanning(
       [
-        createMonth('mar', {
-          label: '3月',
-          events: 6,
-          salesMultiplier: 0.66,
-          extraChannelRevenue: 0,
-          rehearsalCount: 8,
-          rehearsalCost: 300,
-          teacherCount: 8,
-          teacherCost: 200,
-          includeMaterialCost: false,
-        }),
-        createMonth('apr', {
-          label: '4月',
-          events: 6,
-          salesMultiplier: 1,
-          extraChannelRevenue: 0,
-          rehearsalCount: 4,
-          rehearsalCost: 300,
-          teacherCount: 4,
-          teacherCost: 200,
-          includeMaterialCost: false,
-        }),
-        createMonth('may', {
-          label: '5月',
-          events: 6,
-          salesMultiplier: 1.3,
-          extraChannelRevenue: 0,
-          rehearsalCount: 4,
-          rehearsalCost: 300,
-          teacherCount: 4,
-          teacherCost: 200,
-          includeMaterialCost: true,
-        }),
-        createMonth('jun', {
-          label: '6月',
-          events: 6,
-          salesMultiplier: 1.3,
-          extraChannelRevenue: 0,
-          rehearsalCount: 4,
-          rehearsalCost: 300,
-          teacherCount: 4,
-          teacherCost: 200,
-          includeMaterialCost: true,
-        }),
-        createMonth('jul', {
-          label: '7月',
-          events: 6,
-          salesMultiplier: 1.35,
-          extraChannelRevenue: 0,
-          rehearsalCount: 4,
-          rehearsalCost: 300,
-          teacherCount: 4,
-          teacherCost: 200,
-          includeMaterialCost: true,
-        }),
-        createMonth('aug', {
-          label: '8月',
-          events: 6,
-          salesMultiplier: 1.35,
-          extraChannelRevenue: 0,
-          rehearsalCount: 4,
-          rehearsalCost: 300,
-          teacherCount: 4,
-          teacherCost: 200,
-          includeMaterialCost: true,
-        }),
+        createMonth(
+          'mar',
+          {
+            label: '3月',
+            events: 6,
+            salesMultiplier: 0.66,
+            extraChannelRevenue: 0,
+            rehearsalCount: 8,
+            rehearsalCost: 300,
+            teacherCount: 8,
+            teacherCost: 200,
+            specialCosts: createStageCostValues(stageCostItems, [
+              {
+                itemId: 'stage-cost-material',
+                amount: 0,
+                count: 1,
+              },
+            ]),
+          },
+          stageCostItems,
+        ),
+        createMonth(
+          'apr',
+          {
+            label: '4月',
+            events: 6,
+            salesMultiplier: 1,
+            extraChannelRevenue: 0,
+            rehearsalCount: 4,
+            rehearsalCost: 300,
+            teacherCount: 4,
+            teacherCost: 200,
+            specialCosts: createStageCostValues(stageCostItems, [
+              {
+                itemId: 'stage-cost-material',
+                amount: 0,
+                count: 1,
+              },
+            ]),
+          },
+          stageCostItems,
+        ),
+        createMonth(
+          'may',
+          {
+            label: '5月',
+            events: 6,
+            salesMultiplier: 1.3,
+            extraChannelRevenue: 0,
+            rehearsalCount: 4,
+            rehearsalCost: 300,
+            teacherCount: 4,
+            teacherCost: 200,
+            specialCosts: createStageCostValues(stageCostItems, [
+              {
+                itemId: 'stage-cost-material',
+                amount: 6,
+                count: 1,
+              },
+            ]),
+          },
+          stageCostItems,
+        ),
+        createMonth(
+          'jun',
+          {
+            label: '6月',
+            events: 6,
+            salesMultiplier: 1.3,
+            extraChannelRevenue: 0,
+            rehearsalCount: 4,
+            rehearsalCost: 300,
+            teacherCount: 4,
+            teacherCost: 200,
+            specialCosts: createStageCostValues(stageCostItems, [
+              {
+                itemId: 'stage-cost-material',
+                amount: 6,
+                count: 1,
+              },
+            ]),
+          },
+          stageCostItems,
+        ),
+        createMonth(
+          'jul',
+          {
+            label: '7月',
+            events: 6,
+            salesMultiplier: 1.35,
+            extraChannelRevenue: 0,
+            rehearsalCount: 4,
+            rehearsalCost: 300,
+            teacherCount: 4,
+            teacherCost: 200,
+            specialCosts: createStageCostValues(stageCostItems, [
+              {
+                itemId: 'stage-cost-material',
+                amount: 6,
+                count: 1,
+              },
+            ]),
+          },
+          stageCostItems,
+        ),
+        createMonth(
+          'aug',
+          {
+            label: '8月',
+            events: 6,
+            salesMultiplier: 1.35,
+            extraChannelRevenue: 0,
+            rehearsalCount: 4,
+            rehearsalCost: 300,
+            teacherCount: 4,
+            teacherCost: 200,
+            specialCosts: createStageCostValues(stageCostItems, [
+              {
+                itemId: 'stage-cost-material',
+                amount: 6,
+                count: 1,
+              },
+            ]),
+          },
+          stageCostItems,
+        ),
       ],
       planning,
       'default',
       timelineTemplate,
+      stageCostItems,
     ),
   }
 }

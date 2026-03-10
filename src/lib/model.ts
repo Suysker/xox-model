@@ -7,6 +7,8 @@ import type {
   MonthlyScenarioResult,
   ScenarioKey,
   ScenarioResult,
+  StageCostItem,
+  StageCostValue,
   TeamMember,
 } from '../types'
 
@@ -37,14 +39,36 @@ function clampToNonNegative(value: number) {
   return Math.max(0, safeNumber(value))
 }
 
+function sumCostItems(items: Array<{ amount: number }>) {
+  return items.reduce((sum, item) => sum + clampToNonNegative(item.amount), 0)
+}
+
 function getUnitsForScenario(member: TeamMember, key: ScenarioKey, multiplier: number) {
   return clampToNonNegative(member.unitsPerEvent[key]) * clampToNonNegative(multiplier)
 }
 
-function getSpecialProjectCost(month: MonthlyPlan) {
-  return (
-    clampToNonNegative(month.vjCost) +
-    clampToNonNegative(month.originalSongCost)
+function getStageCostValue(values: StageCostValue[], itemId: string) {
+  return values.find((value) => value.itemId === itemId)
+}
+
+function getStageCostTotals(items: StageCostItem[], values: StageCostValue[]) {
+  return items.reduce(
+    (summary, item) => {
+      const value = getStageCostValue(values, item.id)
+      const amount = clampToNonNegative(value?.amount ?? 0)
+      const count = clampToNonNegative(value?.count ?? 0)
+
+      if (item.mode === 'monthly') {
+        summary.monthly += amount
+      } else if (item.mode === 'perEvent') {
+        summary.perEventLike += amount * count
+      } else {
+        summary.perUnitLike += amount
+      }
+
+      return summary
+    },
+    { monthly: 0, perEventLike: 0, perUnitLike: 0 },
   )
 }
 
@@ -117,23 +141,18 @@ export function getScenarioResult(config: ModelConfig, key: ScenarioKey): Scenar
     const memberTravelCost = members.reduce((sum, member) => sum + member.travelCost, 0)
     const employeeBasePayCost = employees.reduce((sum, employee) => sum + employee.basePayCost, 0)
     const employeeEventCost = employees.reduce((sum, employee) => sum + employee.perEventCost, 0)
-    const monthlyOperatingCost = clampToNonNegative(config.operating.monthlyFixedCost)
-    const perEventOperatingCost = events * clampToNonNegative(config.operating.perEventOperatingCost)
-    const extraPerEventCost =
-      events *
-      (clampToNonNegative(month.extraPerEventCost) +
-        clampToNonNegative(month.makeupPerEventCost) +
-        clampToNonNegative(month.streamingPerEventCost) +
-        clampToNonNegative(month.mealPerEventCost))
+    const monthlyOperatingCost = sumCostItems(config.operating.monthlyFixedCosts)
+    const perEventOperatingCost = events * sumCostItems(config.operating.perEventCosts)
+    const perUnitOperatingCost = sumCostItems(config.operating.perUnitCosts)
+    const stageCostTotals = getStageCostTotals(config.stageCostItems, month.specialCosts)
+    const extraPerEventCost = events * clampToNonNegative(month.extraPerEventCost) + stageCostTotals.perEventLike
     const extraFixedCost = clampToNonNegative(month.extraFixedCost)
     const rehearsalCost =
       clampToNonNegative(month.rehearsalCount) * clampToNonNegative(month.rehearsalCost)
     const teacherCost =
       clampToNonNegative(month.teacherCount) * clampToNonNegative(month.teacherCost)
-    const specialProjectCost = getSpecialProjectCost(month)
-    const unitLinkedCostTotal = month.includeMaterialCost
-      ? totalUnitsPerMonth * clampToNonNegative(config.operating.materialCostPerUnit)
-      : 0
+    const specialProjectCost = stageCostTotals.monthly
+    const unitLinkedCostTotal = totalUnitsPerMonth * (perUnitOperatingCost + stageCostTotals.perUnitLike)
     const monthlyFixedCostTotal =
       basePayCost +
       employeeBasePayCost +

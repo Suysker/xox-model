@@ -1,4 +1,4 @@
-import { createProductDefaultModel } from './defaults'
+import { createProductDefaultModel, createStageCostItem, createStageCostValues } from './defaults'
 import { getScenarioResult, projectModel } from './model'
 
 describe('monthly underground-idol investment model', () => {
@@ -70,5 +70,70 @@ describe('monthly underground-idol investment model', () => {
     expect(base.months[0]?.extraChannelRevenue).toBe(8800)
     expect(base.months[0]?.grossSales).toBeCloseTo(61768.96, 2)
     expect(base.months[0]?.monthlyProfit).toBeCloseTo(36360.1, 1)
+  })
+
+  it('aggregates configurable cost items by monthly, per-event and per-unit buckets', () => {
+    const config = createProductDefaultModel()
+    config.operating.monthlyFixedCosts = [
+      { id: 'monthly-rent', name: '场地月租', amount: 2400 },
+      { id: 'monthly-admin', name: '行政杂费', amount: 600 },
+    ]
+    config.operating.perEventCosts = [{ id: 'event-makeup', name: '化妆', amount: 200 }]
+    config.operating.perUnitCosts = [
+      { id: 'unit-film', name: '拍立得相纸', amount: 6 },
+      { id: 'unit-bag', name: '耗材袋', amount: 1 },
+    ]
+    config.timelineTemplate.specialCosts = createStageCostValues(
+      config.stageCostItems,
+      config.timelineTemplate.specialCosts.map((item) =>
+        item.itemId === 'stage-cost-material' ? { ...item, amount: 0, count: 1 } : item,
+      ),
+    )
+    config.months = config.months.map((month) => ({
+      ...month,
+      specialCosts: createStageCostValues(
+        config.stageCostItems,
+        month.specialCosts.map((item) =>
+          item.itemId === 'stage-cost-material' ? { ...item, amount: 0, count: 1 } : item,
+        ),
+      ),
+    }))
+
+    const base = getScenarioResult(config, 'base')
+
+    expect(base.months[1]?.monthlyOperatingCost).toBe(3000)
+    expect(base.months[1]?.perEventOperatingCost).toBe(1200)
+    expect(base.months[2]?.unitLinkedCostTotal).toBeCloseTo((base.months[2]?.totalUnitsPerMonth ?? 0) * 7, 2)
+  })
+
+  it('supports dynamic stage cost items and per-month counted occurrences', () => {
+    const config = createProductDefaultModel()
+    const teamBuilding = createStageCostItem('team-building-custom', { name: '团建', mode: 'perEvent' })
+
+    config.stageCostItems = [...config.stageCostItems, teamBuilding]
+    config.timelineTemplate.specialCosts = createStageCostValues(
+      config.stageCostItems,
+      config.timelineTemplate.specialCosts,
+    )
+    config.months = config.months.map((month) => ({
+      ...month,
+      events: month.id === config.months[0]?.id ? 4 : month.events,
+      specialCosts: createStageCostValues(config.stageCostItems, month.specialCosts),
+    }))
+
+    const march = config.months[0]!
+    march.specialCosts = createStageCostValues(config.stageCostItems, [
+      { itemId: 'stage-cost-makeup', amount: 300, count: 0 },
+      { itemId: 'stage-cost-streaming', amount: 200, count: 4 },
+      { itemId: 'stage-cost-meal', amount: 150, count: 3 },
+      { itemId: teamBuilding.id, amount: 180, count: 1 },
+      { itemId: 'stage-cost-material', amount: 0, count: 1 },
+    ])
+
+    const base = getScenarioResult(config, 'base')
+
+    expect(base.months[0]?.events).toBe(4)
+    expect(base.months[0]?.extraPerEventCost).toBeCloseTo(1430, 2)
+    expect(base.months[0]?.specialProjectCost).toBe(0)
   })
 })
