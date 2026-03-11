@@ -2,7 +2,7 @@ import { Coins, Plus, Trash2 } from 'lucide-react'
 import { monthLabelOptions } from '../../lib/defaults'
 import { formatCurrency, formatPercent } from '../../lib/format'
 import type { PlanningConfig, Shareholder } from '../../types'
-import { CompactNumberInput, Panel, SectionTitle } from '../common/ui'
+import { CompactNumberInput, HeaderCell, Panel, SectionTitle } from '../common/ui'
 
 export function OperatingWorkbench(props: {
   shareholders: Shareholder[]
@@ -85,18 +85,18 @@ export function OperatingWorkbench(props: {
           </colgroup>
           <thead className="bg-stone-100/90 text-stone-700">
             <tr className="border-b border-stone-900/10">
-              <th className="px-3 py-2.5 text-center text-xs font-semibold uppercase tracking-[0.16em]">股东</th>
-              <th className="px-3 py-2.5 text-center text-xs font-semibold uppercase tracking-[0.16em]">投资额</th>
-              <th className="px-3 py-2.5 text-center text-xs font-semibold uppercase tracking-[0.16em]">分红比例</th>
-              <th className="px-3 py-2.5 text-center text-xs font-semibold uppercase tracking-[0.16em]">删除</th>
+              <HeaderCell align="center">股东</HeaderCell>
+              <HeaderCell align="center">投资额</HeaderCell>
+              <HeaderCell align="center">分红比例</HeaderCell>
+              <HeaderCell align="center">删除</HeaderCell>
             </tr>
           </thead>
           <tbody>
             {props.shareholders.map((shareholder) => (
               <tr key={shareholder.id} className="border-b border-stone-900/10 last:border-none">
-                <td className="px-3 py-2.5">
+                <td className="px-3 py-2.5 text-center">
                   <input
-                    className="h-9 w-full rounded-lg border border-stone-900/10 bg-stone-50 px-3 text-sm font-medium text-stone-900 outline-none transition focus:border-emerald-500 focus:bg-white"
+                    className="h-9 w-full rounded-lg border border-stone-900/10 bg-stone-50 px-3 text-center text-sm font-medium text-stone-900 outline-none transition focus:border-emerald-500 focus:bg-white"
                     value={shareholder.name}
                     onChange={(event) => props.onShareholderNameChange(shareholder.id, event.target.value)}
                   />
@@ -107,7 +107,7 @@ export function OperatingWorkbench(props: {
                     min={0}
                     step={1000}
                     size="sm"
-                    align="right"
+                    align="center"
                     onChange={(value) => props.onShareholderInvestmentChange(shareholder.id, value)}
                   />
                 </td>
@@ -116,7 +116,7 @@ export function OperatingWorkbench(props: {
                     value={shareholder.dividendRate * 100}
                     min={0}
                     max={100}
-                    step={1}
+                    step={0.1}
                     size="sm"
                     align="center"
                     onChange={(value) => props.onShareholderDividendChange(shareholder.id, value / 100)}

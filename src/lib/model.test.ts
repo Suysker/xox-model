@@ -6,26 +6,26 @@ describe('monthly underground-idol investment model', () => {
     const config = createProductDefaultModel()
     const result = getScenarioResult(config, 'base')
 
-    expect(result.months).toHaveLength(6)
+    expect(result.months).toHaveLength(12)
 
     expect(result.months[0]?.label).toBe('3月')
     expect(result.months[0]?.totalUnitsPerEvent).toBeCloseTo(100.32, 2)
     expect(result.months[0]?.grossSales).toBeCloseTo(52968.96, 2)
-    expect(result.months[0]?.employeeEventCost).toBeCloseTo(3600, 2)
+    expect(result.months[0]?.employeeEventCost).toBeCloseTo(2400, 2)
     expect(result.months[0]?.members[1]?.basePayCost).toBe(0)
-    expect(result.months[0]?.operatingCostTotal).toBeCloseTo(9100, 2)
-    expect(result.months[0]?.totalCost).toBeCloseTo(25408.86, 2)
-    expect(result.months[0]?.monthlyProfit).toBeCloseTo(27560.1, 1)
+    expect(result.months[0]?.operatingCostTotal).toBeCloseTo(7900, 2)
+    expect(result.months[0]?.totalCost).toBeCloseTo(24208.86, 2)
+    expect(result.months[0]?.monthlyProfit).toBeCloseTo(28760.1, 1)
 
     expect(result.months[1]?.label).toBe('4月')
-    expect(result.months[1]?.grossSales).toBeCloseTo(80256, 2)
+    expect(result.months[1]?.grossSales).toBeCloseTo(105937.92, 2)
     expect(result.months[1]?.monthlyFixedCostTotal).toBeCloseTo(3500, 2)
-    expect(result.months[1]?.perEventCostTotal).toBeCloseTo(3600, 2)
-    expect(result.months[1]?.monthlyProfit).toBeCloseTo(48445.6, 2)
+    expect(result.months[1]?.perEventCostTotal).toBeCloseTo(2400, 2)
+    expect(result.months[1]?.monthlyProfit).toBeCloseTo(67420.19, 2)
 
     expect(result.months[2]?.label).toBe('5月')
-    expect(result.months[2]?.unitLinkedCostTotal).toBeCloseTo(7113.6, 2)
-    expect(result.months[2]?.monthlyProfit).toBeCloseTo(57995.68, 2)
+    expect(result.months[2]?.unitLinkedCostTotal).toBeCloseTo(7223.04, 2)
+    expect(result.months[2]?.monthlyProfit).toBeCloseTo(60197.15, 2)
   })
 
   it('keeps pessimistic, base and optimistic scenarios ordered', () => {
@@ -51,13 +51,13 @@ describe('monthly underground-idol investment model', () => {
     const config = createProductDefaultModel()
     const base = getScenarioResult(config, 'base')
 
-    expect(base.totalInvestment).toBe(85000)
-    expect(base.paybackMonthIndex).toBe(3)
-    expect(base.paybackMonthLabel).toBe('5月')
+    expect(base.totalInvestment).toBe(95000)
+    expect(base.paybackMonthIndex).toBe(2)
+    expect(base.paybackMonthLabel).toBe('4月')
     expect(base.months[0]?.cumulativeCash).toBeLessThan(0)
-    expect(base.months[1]?.cumulativeCash).toBeLessThan(0)
+    expect(base.months[1]?.cumulativeCash).toBeGreaterThan(0)
     expect(base.months[2]?.cumulativeCash).toBeGreaterThan(0)
-    expect(base.months[5]?.cumulativeCash).toBeCloseTo(base.netCashAfterInvestment, 2)
+    expect(base.months[11]?.cumulativeCash).toBeCloseTo(base.netCashAfterInvestment, 2)
   })
 
   it('adds online revenue on top of member-driven offline sales', () => {
@@ -71,7 +71,23 @@ describe('monthly underground-idol investment model', () => {
     expect(base.months[0]?.onlineSalesFactor).toBe(0.2)
     expect(base.months[0]?.onlineRevenue).toBeCloseTo(12038.4, 2)
     expect(base.months[0]?.grossSales).toBeCloseTo(65007.36, 2)
-    expect(base.months[0]?.monthlyProfit).toBeCloseTo(39598.5, 1)
+    expect(base.months[0]?.monthlyProfit).toBeCloseTo(40798.5, 1)
+  })
+
+  it('stops counting a member after the configured departure month', () => {
+    const config = createProductDefaultModel()
+    config.teamMembers[0]!.departureMonthIndex = 4
+
+    const base = getScenarioResult(config, 'base')
+    const june = base.months[3]
+    const july = base.months[4]
+
+    expect(june?.members[0]?.monthlyUnits).toBeGreaterThan(0)
+    expect(june?.members[0]?.basePayCost).toBe(1500)
+    expect(july?.members[0]?.monthlyUnits).toBe(0)
+    expect(july?.members[0]?.grossSales).toBe(0)
+    expect(july?.members[0]?.basePayCost).toBe(0)
+    expect(july?.members[0]?.travelCost).toBe(0)
   })
 
   it('aggregates configurable cost items by monthly, per-event and per-unit buckets', () => {
@@ -135,7 +151,7 @@ describe('monthly underground-idol investment model', () => {
     const base = getScenarioResult(config, 'base')
 
     expect(base.months[0]?.events).toBe(4)
-    expect(base.months[0]?.perEventCostTotal).toBeCloseTo(3830, 2)
+    expect(base.months[0]?.perEventCostTotal).toBeCloseTo(3030, 2)
     expect(base.months[0]?.specialProjectCost).toBe(0)
   })
 })

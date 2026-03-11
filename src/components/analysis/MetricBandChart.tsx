@@ -41,6 +41,9 @@ export function MetricBandChart(props: {
   scenarios: ScenarioResult[]
   metric: ChartMetricKey
   selectedScenarioKey: ScenarioKey
+  monthIds: string[]
+  selectedMonthId: string
+  onSelectMonth: (id: string) => void
 }) {
   const width = 760
   const height = 320
@@ -55,6 +58,7 @@ export function MetricBandChart(props: {
     props.metric === 'cash'
       ? ['投入', ...baseScenario.months.map((month) => month.label)]
       : baseScenario.months.map((month) => month.label)
+  const monthPointIds = props.metric === 'cash' ? [null, ...props.monthIds] : props.monthIds
   const series = scenarioOrder.map((key) => {
     const scenario = props.scenarios.find((item) => item.key === key)
     const values =
@@ -82,6 +86,8 @@ export function MetricBandChart(props: {
   const valueRange = maxValue - minValue || 1
   const xLabelStride = Math.max(1, Math.ceil(labels.length / 8))
   const pointLabelStride = Math.max(1, Math.ceil(labels.length / 6))
+  const selectedMonthIndex = Math.max(0, props.monthIds.findIndex((monthId) => monthId === props.selectedMonthId))
+  const selectedPointIndex = props.metric === 'cash' ? selectedMonthIndex + 1 : selectedMonthIndex
 
   function getX(index: number) {
     return padding.left + xStep * index
@@ -133,6 +139,42 @@ export function MetricBandChart(props: {
       aria-label="悲观、基准、乐观三档场景的月度经营图表"
     >
       <rect x="0" y="0" width={width} height={height} fill="transparent" />
+      {labels.map((_, index) => {
+        const monthId = monthPointIds[index]
+        if (!monthId) {
+          return null
+        }
+
+        const center = getX(index)
+        const previousCenter = index === 0 ? padding.left : getX(index - 1)
+        const nextCenter = index === labels.length - 1 ? width - padding.right : getX(index + 1)
+        const zoneStart = index === 0 ? padding.left : (previousCenter + center) / 2
+        const zoneEnd = index === labels.length - 1 ? width - padding.right : (center + nextCenter) / 2
+
+        return (
+          <g key={`zone-${monthId}`}>
+            {index === selectedPointIndex ? (
+              <rect
+                x={zoneStart}
+                y={padding.top}
+                width={zoneEnd - zoneStart}
+                height={plotHeight}
+                rx="12"
+                fill="rgba(245, 158, 11, 0.08)"
+              />
+            ) : null}
+            <rect
+              x={zoneStart}
+              y={padding.top}
+              width={zoneEnd - zoneStart}
+              height={plotHeight + padding.bottom}
+              fill="transparent"
+              style={{ cursor: 'pointer' }}
+              onClick={() => props.onSelectMonth(monthId)}
+            />
+          </g>
+        )
+      })}
       {ticks.map((tick) => (
         <g key={tick}>
           <line
@@ -166,7 +208,21 @@ export function MetricBandChart(props: {
         .flatMap((item) =>
           item.values.map((value, index) => (
             <g key={`${item.key}-${index}`}>
-              <circle cx={getX(index)} cy={getY(value)} r="4.5" fill={scenarioColors[item.key]} stroke="white" strokeWidth="1.5" />
+              <circle
+                cx={getX(index)}
+                cy={getY(value)}
+                r={index === selectedPointIndex ? '5.5' : '4.5'}
+                fill={scenarioColors[item.key]}
+                stroke="white"
+                strokeWidth={index === selectedPointIndex ? '2' : '1.5'}
+                style={{ cursor: monthPointIds[index] ? 'pointer' : 'default' }}
+                onClick={() => {
+                  const monthId = monthPointIds[index]
+                  if (monthId) {
+                    props.onSelectMonth(monthId)
+                  }
+                }}
+              />
               {shouldShowPointLabel(index) ? (
                 <text
                   x={getX(index)}
@@ -175,6 +231,13 @@ export function MetricBandChart(props: {
                   fontSize="10"
                   fontWeight="700"
                   fill="#292524"
+                  style={{ cursor: monthPointIds[index] ? 'pointer' : 'default' }}
+                  onClick={() => {
+                    const monthId = monthPointIds[index]
+                    if (monthId) {
+                      props.onSelectMonth(monthId)
+                    }
+                  }}
                 >
                   {formatCompactNumber(value)}
                 </text>
@@ -192,7 +255,21 @@ export function MetricBandChart(props: {
             stroke="rgba(120,113,108,0.24)"
           />
           {shouldShowXAxisLabel(index) ? (
-            <text x={getX(index)} y={height - 10} textAnchor="middle" fontSize="11" fill="#57534e">
+            <text
+              x={getX(index)}
+              y={height - 10}
+              textAnchor="middle"
+              fontSize="11"
+              fill={index === selectedPointIndex ? '#b45309' : '#57534e'}
+              fontWeight={index === selectedPointIndex ? '700' : '500'}
+              style={{ cursor: monthPointIds[index] ? 'pointer' : 'default' }}
+              onClick={() => {
+                const monthId = monthPointIds[index]
+                if (monthId) {
+                  props.onSelectMonth(monthId)
+                }
+              }}
+            >
               {label}
             </text>
           ) : null}

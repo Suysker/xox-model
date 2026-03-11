@@ -90,6 +90,7 @@ export function createMember(seed: string, values?: Partial<TeamMember>): TeamMe
     employmentType: 'partTime',
     monthlyBasePay: 0,
     perEventTravelCost: 0,
+    departureMonthIndex: null,
     commissionRate: 0.35,
     unitsPerEvent: {
       pessimistic: 8,
@@ -106,7 +107,7 @@ export function createEmployee(seed: string, values?: Partial<Employee>): Employ
     name: '新员工',
     role: '现场执行',
     monthlyBasePay: 0,
-    perEventCost: 300,
+    perEventCost: 200,
     ...values,
   }
 }
@@ -215,13 +216,16 @@ export function createProductDefaultModel(): ModelConfig {
   const stageCostItems = createDefaultStageCostItems()
   const planning: PlanningConfig = {
     startMonth: 3,
-    horizonMonths: 6,
+    horizonMonths: 12,
   }
+  const startupUnitsPerEvent = 0.66
+  const stableUnitsPerEvent = 1.32
 
   const timelineTemplate = createTimelineTemplate(
     {
       events: 6,
-      salesMultiplier: 1,
+      salesMultiplier: stableUnitsPerEvent,
+      onlineSalesFactor: 0,
       rehearsalCount: 4,
       rehearsalCost: 300,
       teacherCount: 4,
@@ -241,23 +245,18 @@ export function createProductDefaultModel(): ModelConfig {
     shareholders: [
       createShareholder('a', {
         name: '股东 A',
-        investmentAmount: 30000,
-        dividendRate: 0.4,
+        investmentAmount: 65000,
+        dividendRate: 0.684,
       }),
       createShareholder('b', {
         name: '股东 B',
         investmentAmount: 30000,
-        dividendRate: 0.35,
-      }),
-      createShareholder('c', {
-        name: '股东 C',
-        investmentAmount: 25000,
-        dividendRate: 0.25,
+        dividendRate: 0.316,
       }),
     ],
     operating: {
       offlineUnitPrice: 88,
-      onlineUnitPrice: 120,
+      onlineUnitPrice: 88,
       monthlyFixedCosts: [],
       perEventCosts: [],
       perUnitCosts: [],
@@ -330,12 +329,12 @@ export function createProductDefaultModel(): ModelConfig {
       createEmployee('staff-a', {
         name: '员工 A',
         role: '场务',
-        perEventCost: 300,
+        perEventCost: 200,
       }),
       createEmployee('staff-b', {
         name: '员工 B',
         role: '场务',
-        perEventCost: 300,
+        perEventCost: 200,
       }),
     ],
     months: syncMonthsToPlanning(
@@ -345,7 +344,7 @@ export function createProductDefaultModel(): ModelConfig {
           {
             label: '3月',
             events: 6,
-            salesMultiplier: 0.66,
+            salesMultiplier: startupUnitsPerEvent,
             onlineSalesFactor: 0,
             rehearsalCount: 8,
             rehearsalCost: 300,
@@ -366,7 +365,7 @@ export function createProductDefaultModel(): ModelConfig {
           {
             label: '4月',
             events: 6,
-            salesMultiplier: 1,
+            salesMultiplier: stableUnitsPerEvent,
             onlineSalesFactor: 0,
             rehearsalCount: 4,
             rehearsalCost: 300,
@@ -387,7 +386,7 @@ export function createProductDefaultModel(): ModelConfig {
           {
             label: '5月',
             events: 6,
-            salesMultiplier: 1.3,
+            salesMultiplier: stableUnitsPerEvent,
             onlineSalesFactor: 0,
             rehearsalCount: 4,
             rehearsalCost: 300,
@@ -408,7 +407,7 @@ export function createProductDefaultModel(): ModelConfig {
           {
             label: '6月',
             events: 6,
-            salesMultiplier: 1.3,
+            salesMultiplier: stableUnitsPerEvent,
             onlineSalesFactor: 0,
             rehearsalCount: 4,
             rehearsalCost: 300,
@@ -429,7 +428,7 @@ export function createProductDefaultModel(): ModelConfig {
           {
             label: '7月',
             events: 6,
-            salesMultiplier: 1.35,
+            salesMultiplier: stableUnitsPerEvent,
             onlineSalesFactor: 0,
             rehearsalCount: 4,
             rehearsalCost: 300,
@@ -450,7 +449,7 @@ export function createProductDefaultModel(): ModelConfig {
           {
             label: '8月',
             events: 6,
-            salesMultiplier: 1.35,
+            salesMultiplier: stableUnitsPerEvent,
             onlineSalesFactor: 0,
             rehearsalCount: 4,
             rehearsalCost: 300,

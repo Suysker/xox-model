@@ -89,25 +89,18 @@ export function TimelineEditor(props: {
         icon={CalendarRange}
         eyebrow="Inputs"
         title="收入引擎"
-        description="用场次、销售系数和线上系数，配置每个月的收入节奏。"
       />
 
-      <div className="mt-5 flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-        <div>
-          <h3 className="text-lg font-semibold text-stone-950">收入节奏联动图</h3>
-          <p className="mt-1 text-sm text-stone-600">拖点改场次和销售系数，默认行定义整体基线，线上系数在下表按月补入。</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <LegendPill color="bg-amber-400" label="场次" />
-          <LegendPill color="bg-emerald-500" label="销售系数" />
-          <button
-            type="button"
-            onClick={props.onApplyTemplateToAll}
-            className="inline-flex items-center justify-center rounded-full border border-stone-900/10 bg-stone-950 px-4 py-2 text-sm font-medium text-white transition hover:bg-stone-800"
-          >
-            同步默认
-          </button>
-        </div>
+      <div className="mt-5 flex flex-wrap items-center justify-end gap-2">
+        <LegendPill color="bg-amber-400" label="场次" />
+        <LegendPill color="bg-emerald-500" label="销售系数" />
+        <button
+          type="button"
+          onClick={props.onApplyTemplateToAll}
+          className="inline-flex items-center justify-center rounded-full border border-stone-900/10 bg-stone-950 px-4 py-2 text-sm font-medium text-white transition hover:bg-stone-800"
+        >
+          同步默认
+        </button>
       </div>
 
       <div
@@ -179,7 +172,7 @@ export function TimelineEditor(props: {
                   min={0}
                   step={0.01}
                   size="sm"
-                  align="right"
+                  align="center"
                   className="mx-auto max-w-[144px]"
                   onChange={(value) => props.onTemplateNumberChange('onlineSalesFactor', value)}
                 />
@@ -222,7 +215,7 @@ export function TimelineEditor(props: {
                     min={0}
                     step={0.01}
                     size="sm"
-                    align="right"
+                    align="center"
                     className="mx-auto max-w-[144px]"
                     onChange={(value) => props.onNumberChange(month.id, 'onlineSalesFactor', value)}
                   />

@@ -67,6 +67,9 @@ export function OverviewPanel(props: {
             scenarios={props.scenarios}
             metric={props.chartMetric}
             selectedScenarioKey={props.selectedScenarioResult.key}
+            monthIds={props.months.map((month) => month.id)}
+            selectedMonthId={props.selectedMonthPlan.id}
+            onSelectMonth={props.onSelectMonth}
           />
         </div>
 

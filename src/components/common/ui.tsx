@@ -164,7 +164,8 @@ export function BodyCell(props: {
   return (
     <td
       className={cx(
-        'px-3 py-2.5 align-middle text-stone-700',
+        'px-3 py-2.5 align-middle text-center text-stone-700',
+        props.align === 'left' && 'text-left',
         props.align === 'right' && 'text-right',
         props.align === 'center' && 'text-center',
         props.className,

@@ -41,6 +41,7 @@ export type TeamMember = {
   employmentType: EmploymentType
   monthlyBasePay: number
   perEventTravelCost: number
+  departureMonthIndex: number | null
   commissionRate: number
   unitsPerEvent: ScenarioBand
 }

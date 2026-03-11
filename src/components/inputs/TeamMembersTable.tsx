@@ -1,5 +1,5 @@
 import { Plus, Trash2, Users } from 'lucide-react'
-import type { EmploymentType, ScenarioKey, TeamMember } from '../../types'
+import type { EmploymentType, ScenarioKey } from '../../types'
 import { CompactNumberInput, HeaderCell, Panel, SectionTitle } from '../common/ui'
 import { formatCurrency, formatDecimal } from '../../lib/format'
 
@@ -10,20 +10,40 @@ const employmentOptions: Array<{ label: string; value: EmploymentType }> = [
 
 const scenarioOrder: ScenarioKey[] = ['pessimistic', 'base', 'optimistic']
 
-export function TeamMembersTable(props: {
-  members: TeamMember[]
+type TeamMembersTableProps = {
+  members: Array<{
+    id: string
+    name: string
+    employmentType: EmploymentType
+    commissionRate: number
+    monthlyBasePay: number
+    perEventTravelCost: number
+    departureMonthIndex: number | null
+    unitsPerEvent: Record<ScenarioKey, number>
+  }>
+  cycleMonths: Array<{ label: string; value: number }>
   onAdd: () => void
   onNameChange: (id: string, value: string) => void
   onEmploymentTypeChange: (id: string, value: EmploymentType) => void
   onCommissionChange: (id: string, value: number) => void
   onBasePayChange: (id: string, value: number) => void
   onTravelCostChange: (id: string, value: number) => void
+  onDepartureMonthChange: (id: string, value: number | null) => void
   onUnitsChange: (id: string, key: ScenarioKey, value: number) => void
   onRemove: (id: string) => void
-}) {
+}
+
+export function TeamMembersTable(props: TeamMembersTableProps) {
   const salariedCount = props.members.filter((member) => member.employmentType === 'salary').length
   const baseUnitsPerEvent = props.members.reduce((sum, member) => sum + member.unitsPerEvent.base, 0)
   const totalTravel = props.members.reduce((sum, member) => sum + member.perEventTravelCost, 0)
+  const departureMonthOptions = [
+    { label: '在团', value: '' },
+    ...props.cycleMonths.map((month) => ({
+      label: `做到${month.label}`,
+      value: String(month.value),
+    })),
+  ]
 
   return (
     <Panel>
@@ -54,30 +74,36 @@ export function TeamMembersTable(props: {
       <div className="mt-5 rounded-[24px] border border-stone-900/10 bg-white">
         <table className="w-full table-fixed border-collapse text-sm">
           <colgroup>
-            <col className="w-[16%]" />
+            <col className="w-[14%]" />
             <col className="w-[10%]" />
+            <col className="w-[8%]" />
             <col className="w-[10%]" />
-            <col className="w-[12%]" />
-            <col className="w-[12%]" />
+            <col className="w-[9%]" />
             <col className="w-[10%]" />
-            <col className="w-[10%]" />
-            <col className="w-[10%]" />
-            <col className="w-[10%]" />
+            <col className="w-[8%]" />
+            <col className="w-[8%]" />
+            <col className="w-[8%]" />
+            <col className="w-[6%]" />
           </colgroup>
           <thead className="bg-stone-100/90 text-stone-700">
             <tr className="border-b border-stone-900/10">
-              <HeaderCell rowSpan={2}>成员</HeaderCell>
+              <HeaderCell rowSpan={2} align="center">
+                成员
+              </HeaderCell>
               <HeaderCell rowSpan={2} align="center">
                 类型
               </HeaderCell>
               <HeaderCell rowSpan={2} align="center">
-                提成%
+                提成 %
               </HeaderCell>
               <HeaderCell rowSpan={2} align="center">
-                底薪/月
+                底薪 / 月
               </HeaderCell>
               <HeaderCell rowSpan={2} align="center">
-                路费/场
+                路费 / 场
+              </HeaderCell>
+              <HeaderCell rowSpan={2} align="center">
+                离团至
               </HeaderCell>
               <HeaderCell colSpan={3} align="center">
                 单场张数
@@ -95,14 +121,14 @@ export function TeamMembersTable(props: {
           <tbody>
             {props.members.map((member) => (
               <tr key={member.id} className="border-b border-stone-900/10 last:border-none">
-                <td className="px-3 py-2.5">
+                <td className="px-3 py-2.5 text-center">
                   <input
-                    className="h-9 w-full rounded-lg border border-stone-900/10 bg-stone-50 px-3 text-sm font-medium text-stone-900 outline-none transition focus:border-emerald-500 focus:bg-white"
+                    className="h-9 w-full rounded-lg border border-stone-900/10 bg-stone-50 px-3 text-center text-sm font-medium text-stone-900 outline-none transition focus:border-emerald-500 focus:bg-white"
                     value={member.name}
                     onChange={(event) => props.onNameChange(member.id, event.target.value)}
                   />
                 </td>
-                <td className="px-2 py-2.5">
+                <td className="px-2 py-2.5 text-center">
                   <select
                     className={
                       member.employmentType === 'salary'
@@ -138,7 +164,7 @@ export function TeamMembersTable(props: {
                     min={0}
                     step={100}
                     size="sm"
-                    align="right"
+                    align="center"
                     onChange={(value) => props.onBasePayChange(member.id, value)}
                   />
                 </td>
@@ -148,9 +174,27 @@ export function TeamMembersTable(props: {
                     min={0}
                     step={100}
                     size="sm"
-                    align="right"
+                    align="center"
                     onChange={(value) => props.onTravelCostChange(member.id, value)}
                   />
+                </td>
+                <td className="px-2 py-2.5 text-center">
+                  <select
+                    className="h-9 w-full rounded-lg border border-stone-900/10 bg-stone-50 px-2 text-center text-sm font-medium text-stone-900 outline-none transition focus:border-emerald-500 focus:bg-white"
+                    value={member.departureMonthIndex === null ? '' : String(member.departureMonthIndex)}
+                    onChange={(event) =>
+                      props.onDepartureMonthChange(
+                        member.id,
+                        event.target.value === '' ? null : Number(event.target.value),
+                      )
+                    }
+                  >
+                    {departureMonthOptions.map((option) => (
+                      <option key={option.label} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
                 </td>
                 {scenarioOrder.map((key) => (
                   <td key={key} className="px-2 py-2.5">

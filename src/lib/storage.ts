@@ -26,7 +26,7 @@ import type {
 } from '../types'
 
 export const STORAGE_KEY = 'xox-model-workspace-v1'
-export const SCHEMA_VERSION = 7
+export const SCHEMA_VERSION = 9
 
 function createId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -163,10 +163,75 @@ function normalizeTeamMembers(rawMembers: unknown) {
           : typeof member.monthlyTravelCost === 'number'
             ? member.monthlyTravelCost
             : 0,
+      departureMonthIndex:
+        typeof member.departureMonthIndex === 'number' && Number.isFinite(member.departureMonthIndex)
+          ? Math.min(24, Math.max(1, Math.round(member.departureMonthIndex)))
+          : null,
       commissionRate: normalizePercent(member.commissionRate),
       ...(normalizedUnits ? { unitsPerEvent: normalizedUnits } : {}),
     })
   })
+}
+
+function getLegacyDepartureMonth(rawMember: unknown) {
+  if (!isObject(rawMember)) {
+    return null
+  }
+
+  if (typeof rawMember.departureMonth === 'number' && Number.isFinite(rawMember.departureMonth)) {
+    return Math.min(12, Math.max(1, Math.round(rawMember.departureMonth)))
+  }
+
+  return null
+}
+
+function toCycleMonthIndex(label: string) {
+  const matched = label.match(/^(\d{1,2})月/)
+
+  if (!matched) {
+    return null
+  }
+
+  const monthNumber = Number(matched[1])
+  return Number.isFinite(monthNumber) ? monthNumber : null
+}
+
+function migrateLegacyDepartureMonthConfig(
+  config: ModelConfig,
+  rawConfig: unknown,
+  schemaVersion: number,
+): ModelConfig {
+  if (schemaVersion >= 9 || !isObject(rawConfig) || !Array.isArray(rawConfig.teamMembers)) {
+    return config
+  }
+
+  const rawTeamMembers = rawConfig.teamMembers
+  const cycleIndexByMonth = new Map<number, number>()
+
+  config.months.forEach((month, index) => {
+    const monthNumber = toCycleMonthIndex(month.label)
+
+    if (monthNumber !== null && !cycleIndexByMonth.has(monthNumber)) {
+      cycleIndexByMonth.set(monthNumber, index + 1)
+    }
+  })
+
+  return {
+    ...config,
+    teamMembers: config.teamMembers.map((member, index) => {
+      const rawMember = rawTeamMembers[index]
+      const legacyDepartureMonth = getLegacyDepartureMonth(rawMember)
+
+      if (legacyDepartureMonth === null) {
+        return member
+      }
+
+      return {
+        ...member,
+        departureMonthIndex: cycleIndexByMonth.get(legacyDepartureMonth) ?? null,
+      }
+    }),
+  }
 }
 
 function normalizeEmployees(rawEmployees: unknown, rawMembers: unknown) {
@@ -765,10 +830,11 @@ export function parseWorkspaceBundle(raw: string): WorkspaceBundle | null {
       return null
     }
 
+    const schemaVersion = typeof data.schemaVersion === 'number' ? data.schemaVersion : null
     const currentConfig = normalizeModelConfig(data.currentConfig)
 
     if (
-      typeof data.schemaVersion !== 'number' ||
+      schemaVersion === null ||
       typeof data.workspaceName !== 'string' ||
       !currentConfig ||
       !Array.isArray(data.snapshots) ||
@@ -778,12 +844,16 @@ export function parseWorkspaceBundle(raw: string): WorkspaceBundle | null {
     }
 
     return {
-      schemaVersion: data.schemaVersion,
+      schemaVersion: SCHEMA_VERSION,
       workspaceName: data.workspaceName,
-      currentConfig,
+      currentConfig: migrateLegacyDepartureMonthConfig(currentConfig, data.currentConfig, schemaVersion),
       snapshots: data.snapshots.map((snapshot) => ({
         ...snapshot,
-        config: normalizeModelConfig(snapshot.config) ?? cloneConfig(snapshot.config),
+        config: migrateLegacyDepartureMonthConfig(
+          normalizeModelConfig(snapshot.config) ?? cloneConfig(snapshot.config),
+          snapshot.config,
+          schemaVersion,
+        ),
       })),
       lastSavedAt: typeof data.lastSavedAt === 'string' ? data.lastSavedAt : null,
     }

@@ -38,14 +38,37 @@ function clampToNonNegative(value: number) {
   return Math.max(0, safeNumber(value))
 }
 
+function isMemberActiveInMonth(member: TeamMember, monthIndex: number) {
+  if (member.departureMonthIndex === null) {
+    return true
+  }
+
+  return monthIndex + 1 <= member.departureMonthIndex
+}
+
 function getUnitsForScenario(member: TeamMember, key: ScenarioKey, multiplier: number) {
   return clampToNonNegative(member.unitsPerEvent[key]) * clampToNonNegative(multiplier)
 }
 
-function getMemberMonthResults(config: ModelConfig, month: MonthlyPlan, key: ScenarioKey) {
+function getMemberMonthResults(config: ModelConfig, month: MonthlyPlan, key: ScenarioKey, monthIndex: number) {
   const events = clampToNonNegative(month.events)
 
   return config.teamMembers.map<MemberMonthResult>((member) => {
+    if (!isMemberActiveInMonth(member, monthIndex)) {
+      return {
+        memberId: member.id,
+        name: member.name,
+        employmentType: member.employmentType,
+        unitsPerEvent: 0,
+        monthlyUnits: 0,
+        grossSales: 0,
+        commissionCost: 0,
+        basePayCost: 0,
+        travelCost: 0,
+        companyNetContribution: 0,
+      }
+    }
+
     const unitsPerEvent = getUnitsForScenario(member, key, month.salesMultiplier)
     const monthlyUnits = unitsPerEvent * events
     const grossSales = monthlyUnits * clampToNonNegative(config.operating.offlineUnitPrice)
@@ -98,7 +121,7 @@ export function getScenarioResult(config: ModelConfig, key: ScenarioKey): Scenar
   let paybackMonthLabel: string | null = null
 
   config.months.forEach((month, monthIndex) => {
-    const members = getMemberMonthResults(config, month, key)
+    const members = getMemberMonthResults(config, month, key, monthIndex)
     const employees = getEmployeeMonthResults(config, month)
     const events = clampToNonNegative(month.events)
     const onlineSalesFactor = clampToNonNegative(month.onlineSalesFactor)
@@ -130,7 +153,8 @@ export function getScenarioResult(config: ModelConfig, key: ScenarioKey): Scenar
       rehearsalCost +
       teacherCost +
       specialProjectCost
-    const perEventCostTotal = memberTravelCost + employeeEventCost + perEventOperatingCost + stageCostTotals.perEventLike
+    const perEventCostTotal =
+      memberTravelCost + employeeEventCost + perEventOperatingCost + stageCostTotals.perEventLike
     const operatingCostTotal = monthlyFixedCostTotal + perEventCostTotal + unitLinkedCostTotal
     const totalCost = commissionCost + operatingCostTotal
     const monthlyProfit = grossSales - totalCost

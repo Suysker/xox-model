@@ -36,18 +36,18 @@ export function MonthlyResultsTable(props: {
         <table className="w-full table-fixed border-collapse text-sm">
           <thead className="bg-stone-100/90 text-stone-700">
             <tr className="border-b border-stone-900/10">
-              <HeaderCell>月份</HeaderCell>
-              <HeaderCell align="right">场次</HeaderCell>
-              <HeaderCell align="right">单场张数</HeaderCell>
-              <HeaderCell align="right">营收</HeaderCell>
-              {showOnlineRevenue ? <HeaderCell align="right">线上营收</HeaderCell> : null}
-              <HeaderCell align="right">提成</HeaderCell>
-              <HeaderCell align="right">月固定</HeaderCell>
-              <HeaderCell align="right">每场</HeaderCell>
-              <HeaderCell align="right">专项</HeaderCell>
-              <HeaderCell align="right">耗材</HeaderCell>
-              <HeaderCell align="right">月利润</HeaderCell>
-              <HeaderCell align="right">累计现金</HeaderCell>
+              <HeaderCell align="center">月份</HeaderCell>
+              <HeaderCell align="center">场次</HeaderCell>
+              <HeaderCell align="center">单场张数</HeaderCell>
+              <HeaderCell align="center">营收</HeaderCell>
+              {showOnlineRevenue ? <HeaderCell align="center">线上营收</HeaderCell> : null}
+              <HeaderCell align="center">提成</HeaderCell>
+              <HeaderCell align="center">月固定</HeaderCell>
+              <HeaderCell align="center">每场</HeaderCell>
+              <HeaderCell align="center">专项</HeaderCell>
+              <HeaderCell align="center">耗材</HeaderCell>
+              <HeaderCell align="center">月利润</HeaderCell>
+              <HeaderCell align="center">累计现金</HeaderCell>
             </tr>
           </thead>
           <tbody>
@@ -69,24 +69,24 @@ export function MonthlyResultsTable(props: {
                   )}
                   onClick={() => props.onSelectMonth(month.monthId)}
                 >
-                  <BodyCell className="font-semibold text-stone-950">{month.label}</BodyCell>
-                  <BodyCell align="right">{month.events}</BodyCell>
-                  <BodyCell align="right">{formatDecimal(month.totalUnitsPerEvent)}</BodyCell>
-                  <BodyCell align="right">{formatCurrency(month.grossSales)}</BodyCell>
-                  {showOnlineRevenue ? <BodyCell align="right">{formatCurrency(month.onlineRevenue)}</BodyCell> : null}
-                  <BodyCell align="right">{formatCurrency(month.commissionCost)}</BodyCell>
-                  <BodyCell align="right">{formatCurrency(monthlyFixedCost)}</BodyCell>
-                  <BodyCell align="right">{formatCurrency(month.perEventCostTotal)}</BodyCell>
-                  <BodyCell align="right">{formatCurrency(month.specialProjectCost)}</BodyCell>
-                  <BodyCell align="right">{formatCurrency(month.unitLinkedCostTotal)}</BodyCell>
+                  <BodyCell align="center" className="font-semibold text-stone-950">{month.label}</BodyCell>
+                  <BodyCell align="center">{month.events}</BodyCell>
+                  <BodyCell align="center">{formatDecimal(month.totalUnitsPerEvent)}</BodyCell>
+                  <BodyCell align="center">{formatCurrency(month.grossSales)}</BodyCell>
+                  {showOnlineRevenue ? <BodyCell align="center">{formatCurrency(month.onlineRevenue)}</BodyCell> : null}
+                  <BodyCell align="center">{formatCurrency(month.commissionCost)}</BodyCell>
+                  <BodyCell align="center">{formatCurrency(monthlyFixedCost)}</BodyCell>
+                  <BodyCell align="center">{formatCurrency(month.perEventCostTotal)}</BodyCell>
+                  <BodyCell align="center">{formatCurrency(month.specialProjectCost)}</BodyCell>
+                  <BodyCell align="center">{formatCurrency(month.unitLinkedCostTotal)}</BodyCell>
                   <BodyCell
-                    align="right"
+                    align="center"
                     className={month.monthlyProfit >= 0 ? 'font-semibold text-emerald-700' : 'font-semibold text-rose-700'}
                   >
                     {formatCurrency(month.monthlyProfit)}
                   </BodyCell>
                   <BodyCell
-                    align="right"
+                    align="center"
                     className={month.cumulativeCash >= 0 ? 'font-semibold text-emerald-700' : 'font-semibold text-stone-700'}
                   >
                     {formatCurrency(month.cumulativeCash)}
@@ -127,7 +127,8 @@ function BodyCell(props: {
   return (
     <td
       className={cx(
-        'px-4 py-3 align-top text-stone-700',
+        'px-4 py-3 align-top text-center text-stone-700',
+        props.align === 'left' && 'text-left',
         props.align === 'right' && 'text-right',
         props.align === 'center' && 'text-center',
         props.className,

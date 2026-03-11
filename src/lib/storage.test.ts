@@ -5,6 +5,7 @@ import type { WorkspaceBundle } from '../types'
 describe('workspace storage bundle', () => {
   it('serializes and parses a valid workspace bundle', () => {
     const currentConfig = createProductDefaultModel()
+    currentConfig.teamMembers[0]!.departureMonthIndex = 4
     const bundle: WorkspaceBundle = {
       schemaVersion: 1,
       workspaceName: '测试工作区',
@@ -20,10 +21,32 @@ describe('workspace storage bundle', () => {
     expect(parsed?.workspaceName).toBe(bundle.workspaceName)
     expect(parsed?.snapshots).toHaveLength(1)
     expect(parsed?.currentConfig.months[0]?.label).toBe('3月')
-    expect(parsed?.currentConfig.shareholders).toHaveLength(3)
+    expect(parsed?.currentConfig.shareholders).toHaveLength(2)
     expect(parsed?.currentConfig.employees).toHaveLength(2)
     expect(parsed?.currentConfig.stageCostItems).toHaveLength(7)
+    expect(parsed?.currentConfig.teamMembers[0]?.departureMonthIndex).toBe(4)
     expect(parsed?.currentConfig.stageCostItems.some((item) => item.id === 'stage-cost-material')).toBe(true)
+  })
+
+  it('migrates legacy departure months into cycle-linked month indexes', () => {
+    const defaults = createProductDefaultModel()
+    const legacyBundle = {
+      schemaVersion: 8,
+      workspaceName: '离团月份迁移',
+      currentConfig: {
+        ...defaults,
+        teamMembers: defaults.teamMembers.map((member, index) =>
+          index === 0 ? { ...member, departureMonth: 6 } : member,
+        ),
+      },
+      snapshots: [],
+      lastSavedAt: null,
+    }
+
+    const parsed = parseWorkspaceBundle(JSON.stringify(legacyBundle))
+
+    expect(parsed?.schemaVersion).toBe(9)
+    expect(parsed?.currentConfig.teamMembers[0]?.departureMonthIndex).toBe(4)
   })
 
   it('rejects malformed import data', () => {
@@ -57,7 +80,7 @@ describe('workspace storage bundle', () => {
 
     expect(parsed).not.toBeNull()
     expect(parsed?.currentConfig.planning.startMonth).toBe(3)
-    expect(parsed?.currentConfig.planning.horizonMonths).toBe(6)
+    expect(parsed?.currentConfig.planning.horizonMonths).toBe(12)
     expect(parsed?.currentConfig.timelineTemplate.events).toBeGreaterThan(0)
     expect(parsed?.currentConfig.shareholders[0]?.investmentAmount).toBe(85000)
     expect(parsed?.currentConfig.employees).toHaveLength(2)
@@ -109,8 +132,8 @@ describe('workspace storage bundle', () => {
 
     expect(parsed?.currentConfig.operating.offlineUnitPrice).toBe(88)
     expect(parsed?.currentConfig.operating.onlineUnitPrice).toBe(88)
-    expect(parsed?.currentConfig.timelineTemplate.onlineSalesFactor).toBeCloseTo(20 / 912, 6)
-    expect(parsed?.currentConfig.months[0]?.onlineSalesFactor).toBeCloseTo(100 / 601.92, 6)
+    expect(parsed?.currentConfig.timelineTemplate.onlineSalesFactor).toBeCloseTo(20 / (152 * 6 * 1.32), 6)
+    expect(parsed?.currentConfig.months[0]?.onlineSalesFactor).toBeCloseTo(100 / (152 * 6 * 0.66), 6)
   })
 
   it('migrates legacy fixed special-cost fields into dynamic stage cost items and counts', () => {

@@ -746,6 +746,10 @@ export default function App() {
 
                     <TeamMembersTable
                       members={config.teamMembers}
+                      cycleMonths={config.months.map((month, index) => ({
+                        label: month.label,
+                        value: index + 1,
+                      }))}
                       onAdd={handleAddMember}
                       onNameChange={(id, value) => updateMember(id, (member) => ({ ...member, name: value }))}
                       onEmploymentTypeChange={(id, value) =>
@@ -759,6 +763,9 @@ export default function App() {
                       }
                       onTravelCostChange={(id, value) =>
                         updateMember(id, (member) => ({ ...member, perEventTravelCost: value }))
+                      }
+                      onDepartureMonthChange={(id, value) =>
+                        updateMember(id, (member) => ({ ...member, departureMonthIndex: value }))
                       }
                       onUnitsChange={(id, key, value) =>
                         updateMember(id, (member) => ({
