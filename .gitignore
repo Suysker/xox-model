@@ -3,4 +3,5 @@ dist
 coverage
 .DS_Store
 *.log
-
+AGENTS.md
+.agent
