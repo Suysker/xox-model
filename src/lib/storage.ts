@@ -60,10 +60,18 @@ function normalizePercent(value: unknown) {
   }
 
   if (value > 1) {
-    return value / 100
+    return Math.round((value / 100) * 10000) / 10000
   }
 
-  return value
+  return Math.round(value * 10000) / 10000
+}
+
+function roundFactor(value: number) {
+  if (!Number.isFinite(value)) {
+    return 0
+  }
+
+  return Math.round(value * 100) / 100
 }
 
 function guessStartMonth(months: MonthlyPlan[]) {
@@ -631,7 +639,7 @@ function normalizeOnlineSalesFactor(
   onlineUnitPrice: number,
 ) {
   if (typeof source.onlineSalesFactor === 'number' && Number.isFinite(source.onlineSalesFactor)) {
-    return Math.max(0, source.onlineSalesFactor)
+    return roundFactor(Math.max(0, source.onlineSalesFactor))
   }
 
   const baseMonthlyUnits = getBaseMonthlyUnits(teamMembers, events, salesMultiplier)
@@ -641,11 +649,11 @@ function normalizeOnlineSalesFactor(
   }
 
   if (typeof source.onlineUnits === 'number' && Number.isFinite(source.onlineUnits)) {
-    return Math.max(0, source.onlineUnits) / baseMonthlyUnits
+    return roundFactor(Math.max(0, source.onlineUnits) / baseMonthlyUnits)
   }
 
   if (typeof source.extraChannelRevenue === 'number' && Number.isFinite(source.extraChannelRevenue) && onlineUnitPrice > 0) {
-    return Math.max(0, source.extraChannelRevenue) / (baseMonthlyUnits * onlineUnitPrice)
+    return roundFactor(Math.max(0, source.extraChannelRevenue) / (baseMonthlyUnits * onlineUnitPrice))
   }
 
   return 0
@@ -674,7 +682,7 @@ function normalizeMonth(
     id: typeof month.id === 'string' ? month.id : `month-import-${index}`,
     label: typeof month.label === 'string' ? month.label : `${index + 1}月`,
     events,
-    salesMultiplier: typeof month.salesMultiplier === 'number' ? month.salesMultiplier : 0,
+    salesMultiplier: roundFactor(typeof month.salesMultiplier === 'number' ? month.salesMultiplier : 0),
     onlineSalesFactor: normalizeOnlineSalesFactor(
       month,
       teamMembers,
@@ -744,7 +752,9 @@ function normalizeTimelineTemplate(
     }
 
     if (typeof rawTemplate.events === 'number') normalized.events = rawTemplate.events
-    if (typeof rawTemplate.salesMultiplier === 'number') normalized.salesMultiplier = rawTemplate.salesMultiplier
+    if (typeof rawTemplate.salesMultiplier === 'number') {
+      normalized.salesMultiplier = roundFactor(rawTemplate.salesMultiplier)
+    }
     normalized.onlineSalesFactor = normalizeOnlineSalesFactor(
       rawTemplate,
       teamMembers,

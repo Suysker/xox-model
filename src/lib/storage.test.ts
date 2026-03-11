@@ -132,8 +132,8 @@ describe('workspace storage bundle', () => {
 
     expect(parsed?.currentConfig.operating.offlineUnitPrice).toBe(88)
     expect(parsed?.currentConfig.operating.onlineUnitPrice).toBe(88)
-    expect(parsed?.currentConfig.timelineTemplate.onlineSalesFactor).toBeCloseTo(20 / (152 * 6 * 1.32), 6)
-    expect(parsed?.currentConfig.months[0]?.onlineSalesFactor).toBeCloseTo(100 / (152 * 6 * 0.66), 6)
+    expect(parsed?.currentConfig.timelineTemplate.onlineSalesFactor).toBe(0.02)
+    expect(parsed?.currentConfig.months[0]?.onlineSalesFactor).toBe(0.17)
   })
 
   it('migrates legacy fixed special-cost fields into dynamic stage cost items and counts', () => {

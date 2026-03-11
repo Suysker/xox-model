@@ -113,6 +113,20 @@ const timelineSectionKeys: Record<Exclude<TimelineSection, 'special'>, Array<Rev
   training: ['rehearsalCount', 'rehearsalCost', 'teacherCount', 'teacherCost'],
 }
 
+function roundTo(value: number, precision: number) {
+  const safeValue = Number.isFinite(value) ? value : 0
+  const factor = 10 ** precision
+  return Math.round(safeValue * factor) / factor
+}
+
+function normalizeRevenueNumber(key: RevenueNumberKey, value: number) {
+  if (key === 'events') {
+    return Math.max(0, Math.round(Number.isFinite(value) ? value : 0))
+  }
+
+  return Math.max(0, roundTo(value, 2))
+}
+
 function syncStageCosts(config: ModelConfig, stageCostItems: ModelConfig['stageCostItems']) {
   return {
     ...config,
@@ -325,11 +339,15 @@ export default function App() {
   }
 
   function updateTimelineTemplate(key: RevenueNumberKey | CostTemplateNumberKey, value: number) {
+    const nextValue = key === 'events' || key === 'salesMultiplier' || key === 'onlineSalesFactor'
+      ? normalizeRevenueNumber(key, value)
+      : value
+
     setConfig((current) => ({
       ...current,
       timelineTemplate: {
         ...current.timelineTemplate,
-        [key]: value,
+        [key]: nextValue,
       },
     }))
   }
@@ -737,7 +755,7 @@ export default function App() {
                       onNumberChange={(id, key, value) =>
                         updateMonth(id, (month) => ({
                           ...month,
-                          [key]: value,
+                          [key]: normalizeRevenueNumber(key, value),
                         }))
                       }
                       onApplyTemplateToAll={() => handleApplyTemplateToAll('sales')}

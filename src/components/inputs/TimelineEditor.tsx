@@ -126,9 +126,9 @@ export function TimelineEditor(props: {
           <colgroup>
             <col className="w-[18%]" />
             <col className="w-[18%]" />
-            <col className="w-[22%]" />
+            <col className="w-[20%]" />
+            <col className="w-[20%]" />
             <col className="w-[24%]" />
-            <col className="w-[18%]" />
           </colgroup>
           <thead className="bg-stone-100/90 text-stone-700">
             <tr className="border-b border-stone-900/10">
@@ -162,7 +162,7 @@ export function TimelineEditor(props: {
                   step={0.01}
                   size="sm"
                   align="center"
-                  className="mx-auto max-w-[128px]"
+                  className="mx-auto max-w-[120px]"
                   onChange={(value) => props.onTemplateNumberChange('salesMultiplier', value)}
                 />
               </BodyCell>
@@ -173,7 +173,7 @@ export function TimelineEditor(props: {
                   step={0.01}
                   size="sm"
                   align="center"
-                  className="mx-auto max-w-[144px]"
+                  className="mx-auto max-w-[120px]"
                   onChange={(value) => props.onTemplateNumberChange('onlineSalesFactor', value)}
                 />
               </BodyCell>
@@ -205,7 +205,7 @@ export function TimelineEditor(props: {
                     step={0.01}
                     size="sm"
                     align="center"
-                    className="mx-auto max-w-[128px]"
+                    className="mx-auto max-w-[120px]"
                     onChange={(value) => props.onNumberChange(month.id, 'salesMultiplier', value)}
                   />
                 </BodyCell>
@@ -216,7 +216,7 @@ export function TimelineEditor(props: {
                     step={0.01}
                     size="sm"
                     align="center"
-                    className="mx-auto max-w-[144px]"
+                    className="mx-auto max-w-[120px]"
                     onChange={(value) => props.onNumberChange(month.id, 'onlineSalesFactor', value)}
                   />
                 </BodyCell>
