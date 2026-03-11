@@ -4,6 +4,10 @@
 
 - On Windows PowerShell, prefer `npm.cmd` instead of `npm` because execution policies can block `npm.ps1`.
 
+## Deployment
+
+- If the user wants a one-click deploy script that does not touch an existing web server, keep deployment isolated to an app-level `systemd` service. Do not install, rewrite, restart, or delete `nginx` sites as part of that script.
+
 ## TypeScript
 
 - When `exactOptionalPropertyTypes` is enabled, props that may explicitly receive `undefined` need `| undefined` in their types or conditional prop spreading.

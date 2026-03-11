@@ -93,6 +93,35 @@ npm.cmd install
 npm.cmd run dev
 ```
 
+## Ubuntu 部署
+
+仓库内的部署脚本现在只负责启动应用服务，不会安装或修改 `nginx`。
+
+```bash
+sudo APP_PORT=4173 bash scripts/deploy-ubuntu-nginx.sh
+```
+
+脚本会完成这些事情：
+
+- 安装 Node.js 20（如果当前版本不足）
+- 执行 `npm ci` 和 `npm run build`
+- 把 `dist` 和静态服务脚本同步到 `/opt/xox-model`
+- 写入 `systemd` 服务并设置开机自启动
+
+部署完成后可通过以下命令检查：
+
+```bash
+sudo systemctl status xox-model
+sudo journalctl -u xox-model -f
+curl http://127.0.0.1:4173
+```
+
+如果需要调整端口，可以覆盖 `APP_PORT`，例如：
+
+```bash
+sudo APP_PORT=8080 bash scripts/deploy-ubuntu-nginx.sh
+```
+
 ## 验证
 
 ```bash
