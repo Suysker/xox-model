@@ -172,8 +172,9 @@ export function OverviewPanel(props: {
                 { label: '场次', value: `${props.selectedMonthResult.events} 场` },
                 { label: '销售系数', value: `${formatDecimal(props.selectedMonthResult.salesMultiplier)}x` },
                 { label: '单场总张数', value: `${formatDecimal(props.selectedMonthResult.totalUnitsPerEvent)} 张` },
+                { label: '线上系数', value: `${formatDecimal(props.selectedMonthResult.onlineSalesFactor)}x` },
                 { label: '线下营收', value: formatCurrency(props.selectedMonthResult.memberGrossSales) },
-                { label: '电切/线上', value: formatCurrency(props.selectedMonthResult.extraChannelRevenue) },
+                { label: '线上营收', value: formatCurrency(props.selectedMonthResult.onlineRevenue) },
                 { label: '月营收', value: formatCurrency(props.selectedMonthResult.grossSales), emphasis: true },
               ]}
             />
@@ -207,7 +208,6 @@ export function OverviewPanel(props: {
                   { label: '员工场次', value: formatCurrency(props.selectedMonthResult.employeeEventCost) },
                   { label: '经营固定', value: formatCurrency(props.selectedMonthResult.monthlyOperatingCost) },
                   { label: '训练成本', value: formatCurrency(trainingCost) },
-                  { label: '额外月固定', value: formatCurrency(props.selectedMonthResult.extraFixedCost) },
                 ]}
               />
             </div>

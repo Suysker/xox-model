@@ -39,6 +39,8 @@
 - When a chart metric toggle only changes the chart lens, style it as a lightweight secondary control close to the chart. Do not let `cash / profit / revenue / cost` read like a top-level page navigation bar.
 - A cost system is not configurable if `monthly fixed / per-event / per-unit` are stored as three scalars. Model baseline costs as editable item lists per cost driver so users can add, rename, and remove items without code changes.
 - Do not label baseline business costs as `default values` in the main cost-structure editor. If the user is editing the long-term cost ledger itself, each row is a real cost item; reserve `template/default` language for month-level exception tables only.
+- In dense finance editors, do not let the top summary block become a second editor. If users need the top area to understand the effect of lower edits, make it a read-only overview and move all editing controls into a separate lower work area.
+- In cost dashboards with uneven information density, avoid left/right equal-height summary blocks. Stack `baseline` and `current-month impact` vertically so the overview stays compact and does not create dead space.
 
 ## Financial Domain Modeling
 
@@ -48,6 +50,7 @@
 - Project-level framing assumptions such as `start month` and `horizon` belong with the capital/setup model if the user sees them as the premise of the whole investment, not as part of monthly revenue editing.
 - Revenue assumptions and monthly revenue rhythm belong in one `revenue engine` workflow when both are part of the same income judgment in the user’s head.
 - Extra online / e-cut income must be a first-class monthly revenue field. Do not hide it in notes or force it into offline sales assumptions.
+- If online and offline sales have different pricing, do not model online income as a raw monthly amount. Tie it back to the same offline sales engine with an explicit `online sales factor` and `online unit price`, otherwise price changes and sales-strength changes will not propagate together.
 - In monthly idol-group models, member travel may be configured on a member row, but its financial driver is still `per-show cost`. Bucket costs by economic driver, not by which form owns the field.
 - In financial dashboards, never label a subtotal as `totalCost`. If commissions are part of the cost stack, displayed total cost and charts must include commissions too.
 - A stage-cost system is still rigid if `VJ / 推流 / 聚餐` only exist as hardcoded columns in a monthly table. Model stage costs as editable item definitions plus per-month value/count rows so the user can add new items like `团建/场` without code changes.
@@ -64,3 +67,15 @@
 - Inside a dense composite cell, the secondary repeater input like `场次` should be visibly narrower than the amount input, and month-reset actions should default to icon-only buttons. Dense cost tables need horizontal space for data, not repeated chrome.
 - In mixed stage-cost tables, automatically sort columns by economic driver priority (`按张 -> 按场 -> 按月`) before rendering. Users compare high-frequency variable costs first; leaving columns in creation order weakens scanability.
 - In compact financial grids, native browser number spinners are layout bugs. Remove them and use tabular figures so narrow numeric inputs show the full value cleanly.
+- If the top cost block only exists to show the effect of lower edits, make it a single visual summary such as a cumulative monthly chart. Do not turn the summary area into a second editing surface.
+- If users already finish the real cost configuration inside month-difference tables, delete the extra baseline editor instead of inventing a parallel `long-term baseline` workflow.
+- For monthly cost overviews, do not default to cumulative bars if the user needs to compare one month against another. Use independent stacked bars by cost type, and keep total labels visible above each month.
+- If the user reasons about costs in leaf items like `化妆 / 推流 / 聚餐 / 耗材`, do not re-aggregate them into broad buckets in the chart. Show the leaf items directly, narrow the bars, and provide a real hover tooltip for the breakdown.
+- In monthly stacked cost charts, keep the total label hugging the top of each bar and anchor the tooltip to the hovered bar instead of floating it in the middle. The tooltip should also show each item’s share of that month’s total so the stack reads as structure, not just raw amounts.
+- If chart labels live outside the bars, reserve explicit vertical headroom for them in the plot area. Do not rely on overflow luck; otherwise the highest-month labels will get clipped against the chart frame.
+- In dense editors with multiple tables, table-level actions like `同步默认` should live next to the table they affect, not in a shared section header. Global placement blurs ownership and wastes scan effort.
+- In bar-chart dashboards, the tooltip should orbit the hovered bar from the left or right. Do not center it over the active bar; covering the user’s hover target breaks the comparison.
+- If a section already has a clear parent title like `成本编辑`, do not add another wrapper heading such as `月度差异` plus extra explanatory copy. Put the tabs in the main header and let the active table be the content.
+- In dense editors, if tabs are the primary mode switch, place them immediately beside the section title and move tab-specific actions into the same top row. Do not bury the action buttons inside the card body and force the user to scan downward before acting.
+- Do not keep generic training-side fields like `额外每场 / 额外固定` once the same adjustments can be expressed in a dynamic stage-cost table. One editable source of truth is better than parallel knobs.
+- In paired financial price inputs such as `线上单价 / 线下单价`, give both fields the same label/help height and equal-width columns. If the two prices sit in one business block, any vertical drift makes the form look broken even when the data model is correct.

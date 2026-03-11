@@ -296,7 +296,8 @@ function hasLegacyMaterialConfig(value: Record<string, unknown>) {
 function normalizeOperating(rawOperating: unknown, migrateLegacyMaterial: boolean): ModelConfig['operating'] {
   if (!isObject(rawOperating)) {
     return {
-      unitPrice: 88,
+      offlineUnitPrice: 88,
+      onlineUnitPrice: 120,
       monthlyFixedCosts: [],
       perEventCosts: [],
       perUnitCosts: [],
@@ -311,7 +312,18 @@ function normalizeOperating(rawOperating: unknown, migrateLegacyMaterial: boolea
     migrateLegacyMaterial ? 0 : typeof rawOperating.materialCostPerUnit === 'number' ? rawOperating.materialCostPerUnit : 0
 
   return {
-    unitPrice: typeof rawOperating.unitPrice === 'number' ? rawOperating.unitPrice : 88,
+    offlineUnitPrice:
+      typeof rawOperating.offlineUnitPrice === 'number'
+        ? rawOperating.offlineUnitPrice
+        : typeof rawOperating.unitPrice === 'number'
+          ? rawOperating.unitPrice
+          : 88,
+    onlineUnitPrice:
+      typeof rawOperating.onlineUnitPrice === 'number'
+        ? rawOperating.onlineUnitPrice
+        : typeof rawOperating.unitPrice === 'number'
+          ? rawOperating.unitPrice
+          : 120,
     monthlyFixedCosts: normalizeCostItems(
       rawOperating.monthlyFixedCosts,
       'monthly-fixed',
@@ -337,6 +349,69 @@ function normalizeOperating(rawOperating: unknown, migrateLegacyMaterial: boolea
 function normalizeStageCostName(name: string) {
   const normalized = name.replace(/\/(月|场|张)$/u, '').trim()
   return normalized || '专项成本'
+}
+
+const legacyStageCostDefinitions = {
+  perEvent: {
+    id: 'stage-cost-legacy-other-event',
+    name: '其他现场',
+    mode: 'perEvent',
+  },
+  monthly: {
+    id: 'stage-cost-legacy-other-monthly',
+    name: '其他固定',
+    mode: 'monthly',
+  },
+} as const
+
+function hasLegacyExtraPerEventCost(rawConfig: Record<string, unknown>) {
+  if (isObject(rawConfig.timelineTemplate) && typeof rawConfig.timelineTemplate.extraPerEventCost === 'number' && rawConfig.timelineTemplate.extraPerEventCost > 0) {
+    return true
+  }
+
+  return Array.isArray(rawConfig.months)
+    ? rawConfig.months.some(
+        (month) => isObject(month) && typeof month.extraPerEventCost === 'number' && month.extraPerEventCost > 0,
+      )
+    : false
+}
+
+function hasLegacyExtraFixedCost(rawConfig: Record<string, unknown>) {
+  if (isObject(rawConfig.timelineTemplate)) {
+    const timelineTravelCost = typeof rawConfig.timelineTemplate.travelCost === 'number' ? rawConfig.timelineTemplate.travelCost : 0
+    const timelineExtraFixedCost =
+      typeof rawConfig.timelineTemplate.extraFixedCost === 'number' ? rawConfig.timelineTemplate.extraFixedCost : 0
+
+    if (timelineTravelCost + timelineExtraFixedCost > 0) {
+      return true
+    }
+  }
+
+  return Array.isArray(rawConfig.months)
+    ? rawConfig.months.some((month) => {
+        if (!isObject(month)) {
+          return false
+        }
+
+        const monthTravelCost = typeof month.travelCost === 'number' ? month.travelCost : 0
+        const monthExtraFixedCost = typeof month.extraFixedCost === 'number' ? month.extraFixedCost : 0
+        return monthTravelCost + monthExtraFixedCost > 0
+      })
+    : false
+}
+
+function ensureLegacyStageCostItems(items: StageCostItem[], rawConfig: Record<string, unknown>) {
+  const nextItems = [...items]
+
+  if (hasLegacyExtraPerEventCost(rawConfig) && !nextItems.some((item) => item.id === legacyStageCostDefinitions.perEvent.id)) {
+    nextItems.push(createStageCostItem('legacy-other-event', legacyStageCostDefinitions.perEvent))
+  }
+
+  if (hasLegacyExtraFixedCost(rawConfig) && !nextItems.some((item) => item.id === legacyStageCostDefinitions.monthly.id)) {
+    nextItems.push(createStageCostItem('legacy-other-monthly', legacyStageCostDefinitions.monthly))
+  }
+
+  return nextItems
 }
 
 function normalizeStageCostItems(rawItems: unknown) {
@@ -399,6 +474,10 @@ function getLegacyStageCostAmount(
         return source.includeMaterialCost ? legacyMaterialCostPerUnit : 0
       }
       return 0
+    case 'stage-cost-legacy-other-event':
+      return typeof source.extraPerEventCost === 'number' ? source.extraPerEventCost : 0
+    case 'stage-cost-legacy-other-monthly':
+      return typeof source.extraFixedCost === 'number' ? source.extraFixedCost : 0
     default:
       return 0
   }
@@ -466,11 +545,54 @@ function normalizeStageCostValues(
   )
 }
 
+function clampNonNegative(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0
+}
+
+function getBaseMonthlyUnits(teamMembers: TeamMember[], events: number, salesMultiplier: number) {
+  const totalBaseUnitsPerEvent = teamMembers.reduce(
+    (sum, member) => sum + clampNonNegative(member.unitsPerEvent.base),
+    0,
+  )
+
+  return totalBaseUnitsPerEvent * clampNonNegative(events) * clampNonNegative(salesMultiplier)
+}
+
+function normalizeOnlineSalesFactor(
+  source: Record<string, unknown>,
+  teamMembers: TeamMember[],
+  events: number,
+  salesMultiplier: number,
+  onlineUnitPrice: number,
+) {
+  if (typeof source.onlineSalesFactor === 'number' && Number.isFinite(source.onlineSalesFactor)) {
+    return Math.max(0, source.onlineSalesFactor)
+  }
+
+  const baseMonthlyUnits = getBaseMonthlyUnits(teamMembers, events, salesMultiplier)
+
+  if (baseMonthlyUnits <= 0) {
+    return 0
+  }
+
+  if (typeof source.onlineUnits === 'number' && Number.isFinite(source.onlineUnits)) {
+    return Math.max(0, source.onlineUnits) / baseMonthlyUnits
+  }
+
+  if (typeof source.extraChannelRevenue === 'number' && Number.isFinite(source.extraChannelRevenue) && onlineUnitPrice > 0) {
+    return Math.max(0, source.extraChannelRevenue) / (baseMonthlyUnits * onlineUnitPrice)
+  }
+
+  return 0
+}
+
 function normalizeMonth(
   month: unknown,
   index: number,
   stageCostItems: StageCostItem[],
   legacyMaterialCostPerUnit: number,
+  teamMembers: TeamMember[],
+  onlineUnitPrice: number,
 ): MonthlyPlan {
   if (!isObject(month)) {
     return {
@@ -488,18 +610,24 @@ function normalizeMonth(
     label: typeof month.label === 'string' ? month.label : `${index + 1}月`,
     events,
     salesMultiplier: typeof month.salesMultiplier === 'number' ? month.salesMultiplier : 0,
-    extraChannelRevenue: typeof month.extraChannelRevenue === 'number' ? month.extraChannelRevenue : 0,
+    onlineSalesFactor: normalizeOnlineSalesFactor(
+      month,
+      teamMembers,
+      events,
+      typeof month.salesMultiplier === 'number' ? month.salesMultiplier : 0,
+      onlineUnitPrice,
+    ),
     rehearsalCount: typeof month.rehearsalCount === 'number' ? month.rehearsalCount : 0,
     rehearsalCost: typeof month.rehearsalCost === 'number' ? month.rehearsalCost : 0,
     teacherCount: typeof month.teacherCount === 'number' ? month.teacherCount : 0,
     teacherCost: typeof month.teacherCost === 'number' ? month.teacherCost : 0,
-    extraPerEventCost: typeof month.extraPerEventCost === 'number' ? month.extraPerEventCost : 0,
-    extraFixedCost:
-      (typeof month.extraFixedCost === 'number' ? month.extraFixedCost : 0) + legacyTravelCost,
     specialCosts: normalizeStageCostValues(
       month.specialCosts,
       stageCostItems,
-      month,
+      {
+        ...month,
+        extraFixedCost: (typeof month.extraFixedCost === 'number' ? month.extraFixedCost : 0) + legacyTravelCost,
+      },
       events,
       legacyMaterialCostPerUnit,
     ),
@@ -510,13 +638,15 @@ function normalizeMonths(
   rawMonths: unknown,
   stageCostItems: StageCostItem[],
   legacyMaterialCostPerUnit: number,
+  teamMembers: TeamMember[],
+  onlineUnitPrice: number,
 ) {
   if (!Array.isArray(rawMonths)) {
     return [] as MonthlyPlan[]
   }
 
   return rawMonths.map((month, index) =>
-    normalizeMonth(month, index, stageCostItems, legacyMaterialCostPerUnit),
+    normalizeMonth(month, index, stageCostItems, legacyMaterialCostPerUnit, teamMembers, onlineUnitPrice),
   )
 }
 
@@ -525,6 +655,8 @@ function normalizeTimelineTemplate(
   months: MonthlyPlan[],
   stageCostItems: StageCostItem[],
   legacyMaterialCostPerUnit: number,
+  teamMembers: TeamMember[],
+  onlineUnitPrice: number,
 ) {
   if (isObject(rawTemplate)) {
     const templateEvents =
@@ -536,7 +668,11 @@ function normalizeTimelineTemplate(
       specialCosts: normalizeStageCostValues(
         rawTemplate.specialCosts,
         stageCostItems,
-        rawTemplate,
+        {
+          ...rawTemplate,
+          extraFixedCost:
+            (typeof rawTemplate.extraFixedCost === 'number' ? rawTemplate.extraFixedCost : 0) + legacyTravelCost,
+        },
         templateEvents,
         legacyMaterialCostPerUnit,
       ),
@@ -544,16 +680,17 @@ function normalizeTimelineTemplate(
 
     if (typeof rawTemplate.events === 'number') normalized.events = rawTemplate.events
     if (typeof rawTemplate.salesMultiplier === 'number') normalized.salesMultiplier = rawTemplate.salesMultiplier
-    if (typeof rawTemplate.extraChannelRevenue === 'number') normalized.extraChannelRevenue = rawTemplate.extraChannelRevenue
+    normalized.onlineSalesFactor = normalizeOnlineSalesFactor(
+      rawTemplate,
+      teamMembers,
+      typeof rawTemplate.events === 'number' ? rawTemplate.events : months.at(-1)?.events ?? 0,
+      typeof rawTemplate.salesMultiplier === 'number' ? rawTemplate.salesMultiplier : months.at(-1)?.salesMultiplier ?? 0,
+      onlineUnitPrice,
+    )
     if (typeof rawTemplate.rehearsalCount === 'number') normalized.rehearsalCount = rawTemplate.rehearsalCount
     if (typeof rawTemplate.rehearsalCost === 'number') normalized.rehearsalCost = rawTemplate.rehearsalCost
     if (typeof rawTemplate.teacherCount === 'number') normalized.teacherCount = rawTemplate.teacherCount
     if (typeof rawTemplate.teacherCost === 'number') normalized.teacherCost = rawTemplate.teacherCost
-    if (typeof rawTemplate.extraPerEventCost === 'number') normalized.extraPerEventCost = rawTemplate.extraPerEventCost
-    if (typeof rawTemplate.extraFixedCost === 'number' || legacyTravelCost > 0) {
-      normalized.extraFixedCost =
-        (typeof rawTemplate.extraFixedCost === 'number' ? rawTemplate.extraFixedCost : 0) + legacyTravelCost
-    }
 
     return createTimelineTemplate(normalized, stageCostItems)
   }
@@ -568,18 +705,26 @@ function normalizeModelConfig(value: unknown): ModelConfig | null {
 
   const legacyMaterialCostPerUnit = getLegacyMaterialCostPerUnit(value.operating)
   const migrateLegacyMaterial = hasLegacyMaterialConfig(value)
-  const stageCostItems = normalizeStageCostItems(value.stageCostItems)
+  const stageCostItems = ensureLegacyStageCostItems(normalizeStageCostItems(value.stageCostItems), value)
   const operating = normalizeOperating(value.operating, migrateLegacyMaterial)
-  const months = normalizeMonths(value.months, stageCostItems, legacyMaterialCostPerUnit)
-  const planning = normalizePlanning(value.planning, months)
   const shareholders = normalizeShareholders(value.shareholders, value.operating)
   const teamMembers = normalizeTeamMembers(value.teamMembers)
+  const months = normalizeMonths(
+    value.months,
+    stageCostItems,
+    legacyMaterialCostPerUnit,
+    teamMembers,
+    operating.onlineUnitPrice,
+  )
+  const planning = normalizePlanning(value.planning, months)
   const employees = normalizeEmployees(value.employees, value.teamMembers)
   const timelineTemplate = normalizeTimelineTemplate(
     value.timelineTemplate,
     months,
     stageCostItems,
     legacyMaterialCostPerUnit,
+    teamMembers,
+    operating.onlineUnitPrice,
   )
 
   return {

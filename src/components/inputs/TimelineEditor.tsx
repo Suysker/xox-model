@@ -4,7 +4,7 @@ import { cx, formatDecimal } from '../../lib/format'
 import type { MonthlyPlan, MonthlyPlanTemplate } from '../../types'
 import { BodyCell, CompactNumberInput, HeaderCell, Panel, SectionTitle } from '../common/ui'
 
-type RevenueNumberKey = 'events' | 'salesMultiplier' | 'extraChannelRevenue'
+type RevenueNumberKey = 'events' | 'salesMultiplier' | 'onlineSalesFactor'
 type RhythmSeriesKey = 'events' | 'salesMultiplier'
 type DragTarget = { monthId: string; series: RhythmSeriesKey } | null
 
@@ -89,13 +89,13 @@ export function TimelineEditor(props: {
         icon={CalendarRange}
         eyebrow="Inputs"
         title="收入引擎"
-        description="用场次、销售系数和额外渠道收入，配置每个月的收入节奏。"
+        description="用场次、销售系数和线上系数，配置每个月的收入节奏。"
       />
 
       <div className="mt-5 flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
         <div>
           <h3 className="text-lg font-semibold text-stone-950">收入节奏联动图</h3>
-          <p className="mt-1 text-sm text-stone-600">拖点改场次和销售系数，默认行定义整体基线，电切/线上收入在下表按月补入。</p>
+          <p className="mt-1 text-sm text-stone-600">拖点改场次和销售系数，默认行定义整体基线，线上系数在下表按月补入。</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <LegendPill color="bg-amber-400" label="场次" />
@@ -142,7 +142,7 @@ export function TimelineEditor(props: {
               <HeaderCell align="center">月份</HeaderCell>
               <HeaderCell align="center">场次</HeaderCell>
               <HeaderCell align="center">销售系数</HeaderCell>
-              <HeaderCell align="center">电切/线上</HeaderCell>
+              <HeaderCell align="center">线上系数</HeaderCell>
               <HeaderCell align="center">恢复</HeaderCell>
             </tr>
           </thead>
@@ -175,13 +175,13 @@ export function TimelineEditor(props: {
               </BodyCell>
               <BodyCell align="center">
                 <CompactNumberInput
-                  value={props.template.extraChannelRevenue}
+                  value={props.template.onlineSalesFactor}
                   min={0}
-                  step={100}
+                  step={0.01}
                   size="sm"
                   align="right"
                   className="mx-auto max-w-[144px]"
-                  onChange={(value) => props.onTemplateNumberChange('extraChannelRevenue', value)}
+                  onChange={(value) => props.onTemplateNumberChange('onlineSalesFactor', value)}
                 />
               </BodyCell>
               <BodyCell align="center" className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-400">
@@ -218,13 +218,13 @@ export function TimelineEditor(props: {
                 </BodyCell>
                 <BodyCell align="center">
                   <CompactNumberInput
-                    value={month.extraChannelRevenue}
+                    value={month.onlineSalesFactor}
                     min={0}
-                    step={100}
+                    step={0.01}
                     size="sm"
                     align="right"
                     className="mx-auto max-w-[144px]"
-                    onChange={(value) => props.onNumberChange(month.id, 'extraChannelRevenue', value)}
+                    onChange={(value) => props.onNumberChange(month.id, 'onlineSalesFactor', value)}
                   />
                 </BodyCell>
                 <BodyCell align="center">

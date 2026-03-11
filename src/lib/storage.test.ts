@@ -62,9 +62,55 @@ describe('workspace storage bundle', () => {
     expect(parsed?.currentConfig.shareholders[0]?.investmentAmount).toBe(85000)
     expect(parsed?.currentConfig.employees).toHaveLength(2)
     expect(parsed?.currentConfig.employees[0]?.perEventCost).toBe(300)
+    expect(parsed?.currentConfig.operating.offlineUnitPrice).toBe(88)
+    expect(parsed?.currentConfig.operating.onlineUnitPrice).toBe(88)
     expect(parsed?.currentConfig.operating.monthlyFixedCosts[0]?.amount).toBe(1200)
     expect(parsed?.currentConfig.operating.perEventCosts[0]?.amount).toBe(500)
     expect(parsed?.currentConfig.operating.perUnitCosts[0]?.amount).toBe(6)
+  })
+
+  it('migrates legacy extra channel revenue into online units with dual prices', () => {
+    const defaults = createProductDefaultModel()
+    const legacyBundle = {
+      schemaVersion: 1,
+      workspaceName: '线上收入迁移',
+      currentConfig: {
+        shareholders: defaults.shareholders,
+        operating: {
+          unitPrice: 88,
+          monthlyFixedCosts: defaults.operating.monthlyFixedCosts,
+          perEventCosts: defaults.operating.perEventCosts,
+          perUnitCosts: defaults.operating.perUnitCosts,
+        },
+        teamMembers: defaults.teamMembers,
+        employees: defaults.employees,
+        stageCostItems: defaults.stageCostItems,
+        months: defaults.months.map(({ specialCosts: _specialCosts, onlineSalesFactor: _onlineSalesFactor, ...month }, index) =>
+          index === 0
+            ? {
+                ...month,
+                extraChannelRevenue: 8800,
+              }
+            : month,
+        ),
+        timelineTemplate: {
+          ...(() => {
+            const { onlineSalesFactor: _onlineSalesFactor, ...template } = defaults.timelineTemplate
+            return template
+          })(),
+          extraChannelRevenue: 1760,
+        },
+      },
+      snapshots: [],
+      lastSavedAt: null,
+    }
+
+    const parsed = parseWorkspaceBundle(JSON.stringify(legacyBundle))
+
+    expect(parsed?.currentConfig.operating.offlineUnitPrice).toBe(88)
+    expect(parsed?.currentConfig.operating.onlineUnitPrice).toBe(88)
+    expect(parsed?.currentConfig.timelineTemplate.onlineSalesFactor).toBeCloseTo(20 / 912, 6)
+    expect(parsed?.currentConfig.months[0]?.onlineSalesFactor).toBeCloseTo(100 / 601.92, 6)
   })
 
   it('migrates legacy fixed special-cost fields into dynamic stage cost items and counts', () => {
@@ -204,5 +250,68 @@ describe('workspace storage bundle', () => {
     expect(parsed?.currentConfig.stageCostItems.find((item) => item.id === 'stage-cost-streaming')?.name).toBe(
       '推流',
     )
+  })
+
+  it('migrates legacy extra event and fixed fields into dynamic stage-cost columns', () => {
+    const defaults = createProductDefaultModel()
+    const legacyBundle = {
+      schemaVersion: 1,
+      workspaceName: '额外成本迁移',
+      currentConfig: {
+        shareholders: defaults.shareholders,
+        operating: defaults.operating,
+        teamMembers: defaults.teamMembers,
+        employees: defaults.employees,
+        stageCostItems: defaults.stageCostItems,
+        months: defaults.months.map(({ specialCosts: _specialCosts, ...month }, index) =>
+          index === 0
+            ? {
+                ...month,
+                events: 4,
+                extraPerEventCost: 180,
+                extraFixedCost: 900,
+              }
+            : month,
+        ),
+        timelineTemplate: {
+          ...defaults.timelineTemplate,
+          extraPerEventCost: 120,
+          extraFixedCost: 600,
+        },
+      },
+      snapshots: [],
+      lastSavedAt: null,
+    }
+
+    const parsed = parseWorkspaceBundle(JSON.stringify(legacyBundle))
+    const march = parsed?.currentConfig.months[0]
+    const template = parsed?.currentConfig.timelineTemplate
+
+    expect(parsed?.currentConfig.stageCostItems.some((item) => item.id === 'stage-cost-legacy-other-event')).toBe(
+      true,
+    )
+    expect(parsed?.currentConfig.stageCostItems.some((item) => item.id === 'stage-cost-legacy-other-monthly')).toBe(
+      true,
+    )
+    expect(template?.specialCosts.find((item) => item.itemId === 'stage-cost-legacy-other-event')).toEqual({
+      itemId: 'stage-cost-legacy-other-event',
+      amount: 120,
+      count: 6,
+    })
+    expect(template?.specialCosts.find((item) => item.itemId === 'stage-cost-legacy-other-monthly')).toEqual({
+      itemId: 'stage-cost-legacy-other-monthly',
+      amount: 600,
+      count: 1,
+    })
+    expect(march?.specialCosts.find((item) => item.itemId === 'stage-cost-legacy-other-event')).toEqual({
+      itemId: 'stage-cost-legacy-other-event',
+      amount: 180,
+      count: 4,
+    })
+    expect(march?.specialCosts.find((item) => item.itemId === 'stage-cost-legacy-other-monthly')).toEqual({
+      itemId: 'stage-cost-legacy-other-monthly',
+      amount: 900,
+      count: 1,
+    })
   })
 })

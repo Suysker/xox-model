@@ -7,10 +7,9 @@ import type {
   MonthlyScenarioResult,
   ScenarioKey,
   ScenarioResult,
-  StageCostItem,
-  StageCostValue,
   TeamMember,
 } from '../types'
+import { getStageCostTotals, sumCostItems } from './costs'
 
 const scenarioLabels: Record<ScenarioKey, { label: string; description: string }> = {
   pessimistic: {
@@ -39,37 +38,8 @@ function clampToNonNegative(value: number) {
   return Math.max(0, safeNumber(value))
 }
 
-function sumCostItems(items: Array<{ amount: number }>) {
-  return items.reduce((sum, item) => sum + clampToNonNegative(item.amount), 0)
-}
-
 function getUnitsForScenario(member: TeamMember, key: ScenarioKey, multiplier: number) {
   return clampToNonNegative(member.unitsPerEvent[key]) * clampToNonNegative(multiplier)
-}
-
-function getStageCostValue(values: StageCostValue[], itemId: string) {
-  return values.find((value) => value.itemId === itemId)
-}
-
-function getStageCostTotals(items: StageCostItem[], values: StageCostValue[]) {
-  return items.reduce(
-    (summary, item) => {
-      const value = getStageCostValue(values, item.id)
-      const amount = clampToNonNegative(value?.amount ?? 0)
-      const count = clampToNonNegative(value?.count ?? 0)
-
-      if (item.mode === 'monthly') {
-        summary.monthly += amount
-      } else if (item.mode === 'perEvent') {
-        summary.perEventLike += amount * count
-      } else {
-        summary.perUnitLike += amount
-      }
-
-      return summary
-    },
-    { monthly: 0, perEventLike: 0, perUnitLike: 0 },
-  )
 }
 
 function getMemberMonthResults(config: ModelConfig, month: MonthlyPlan, key: ScenarioKey) {
@@ -78,7 +48,7 @@ function getMemberMonthResults(config: ModelConfig, month: MonthlyPlan, key: Sce
   return config.teamMembers.map<MemberMonthResult>((member) => {
     const unitsPerEvent = getUnitsForScenario(member, key, month.salesMultiplier)
     const monthlyUnits = unitsPerEvent * events
-    const grossSales = monthlyUnits * clampToNonNegative(config.operating.unitPrice)
+    const grossSales = monthlyUnits * clampToNonNegative(config.operating.offlineUnitPrice)
     const commissionCost = grossSales * clampToNonNegative(member.commissionRate)
     const basePayCost = clampToNonNegative(member.monthlyBasePay)
     const travelCost = events * clampToNonNegative(member.perEventTravelCost)
@@ -131,11 +101,13 @@ export function getScenarioResult(config: ModelConfig, key: ScenarioKey): Scenar
     const members = getMemberMonthResults(config, month, key)
     const employees = getEmployeeMonthResults(config, month)
     const events = clampToNonNegative(month.events)
+    const onlineSalesFactor = clampToNonNegative(month.onlineSalesFactor)
     const totalUnitsPerEvent = members.reduce((sum, member) => sum + member.unitsPerEvent, 0)
     const totalUnitsPerMonth = members.reduce((sum, member) => sum + member.monthlyUnits, 0)
     const memberGrossSales = members.reduce((sum, member) => sum + member.grossSales, 0)
-    const extraChannelRevenue = clampToNonNegative(month.extraChannelRevenue)
-    const grossSales = memberGrossSales + extraChannelRevenue
+    const onlineRevenue =
+      totalUnitsPerMonth * onlineSalesFactor * clampToNonNegative(config.operating.onlineUnitPrice)
+    const grossSales = memberGrossSales + onlineRevenue
     const commissionCost = members.reduce((sum, member) => sum + member.commissionCost, 0)
     const basePayCost = members.reduce((sum, member) => sum + member.basePayCost, 0)
     const memberTravelCost = members.reduce((sum, member) => sum + member.travelCost, 0)
@@ -145,8 +117,6 @@ export function getScenarioResult(config: ModelConfig, key: ScenarioKey): Scenar
     const perEventOperatingCost = events * sumCostItems(config.operating.perEventCosts)
     const perUnitOperatingCost = sumCostItems(config.operating.perUnitCosts)
     const stageCostTotals = getStageCostTotals(config.stageCostItems, month.specialCosts)
-    const extraPerEventCost = events * clampToNonNegative(month.extraPerEventCost) + stageCostTotals.perEventLike
-    const extraFixedCost = clampToNonNegative(month.extraFixedCost)
     const rehearsalCost =
       clampToNonNegative(month.rehearsalCount) * clampToNonNegative(month.rehearsalCost)
     const teacherCost =
@@ -157,11 +127,10 @@ export function getScenarioResult(config: ModelConfig, key: ScenarioKey): Scenar
       basePayCost +
       employeeBasePayCost +
       monthlyOperatingCost +
-      extraFixedCost +
       rehearsalCost +
       teacherCost +
       specialProjectCost
-    const perEventCostTotal = memberTravelCost + employeeEventCost + perEventOperatingCost + extraPerEventCost
+    const perEventCostTotal = memberTravelCost + employeeEventCost + perEventOperatingCost + stageCostTotals.perEventLike
     const operatingCostTotal = monthlyFixedCostTotal + perEventCostTotal + unitLinkedCostTotal
     const totalCost = commissionCost + operatingCostTotal
     const monthlyProfit = grossSales - totalCost
@@ -181,7 +150,8 @@ export function getScenarioResult(config: ModelConfig, key: ScenarioKey): Scenar
       monthIndex: monthIndex + 1,
       events,
       salesMultiplier: clampToNonNegative(month.salesMultiplier),
-      extraChannelRevenue,
+      onlineSalesFactor,
+      onlineRevenue,
       memberGrossSales,
       totalUnitsPerEvent,
       totalUnitsPerMonth,
@@ -193,8 +163,6 @@ export function getScenarioResult(config: ModelConfig, key: ScenarioKey): Scenar
       employeeEventCost,
       monthlyOperatingCost,
       perEventOperatingCost,
-      extraPerEventCost,
-      extraFixedCost,
       rehearsalCost,
       teacherCost,
       specialProjectCost,

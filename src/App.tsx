@@ -47,14 +47,12 @@ type DashboardTab = 'overview' | 'months' | 'members'
 type InputsTab = 'capital' | 'revenue' | 'cost'
 type BannerState = { tone: NoticeTone; message: string }
 type TimelineSection = 'sales' | 'training' | 'special'
-type RevenueNumberKey = 'events' | 'salesMultiplier' | 'extraChannelRevenue'
+type RevenueNumberKey = 'events' | 'salesMultiplier' | 'onlineSalesFactor'
 type CostTemplateNumberKey =
   | 'rehearsalCount'
   | 'rehearsalCost'
   | 'teacherCount'
   | 'teacherCost'
-  | 'extraPerEventCost'
-  | 'extraFixedCost'
 
 const mainTabs: Array<{ value: MainTab; label: string; description: string; icon: LucideIcon }> = [
   {
@@ -79,8 +77,8 @@ const dashboardTabs: Array<{ value: DashboardTab; label: string; description: st
 
 const inputTabs: Array<{ value: InputsTab; label: string; description: string }> = [
   { value: 'capital', label: '股东投资', description: '配置投资金额、股东结构和分红比例。' },
-  { value: 'revenue', label: '收入引擎', description: '把单价、成员卖张、场次节奏和额外渠道收入放在一起配置。' },
-  { value: 'cost', label: '成本结构', description: '按每月固定、每场固定、每张成本拆开配置，并逐月改成本差异。' },
+  { value: 'revenue', label: '收入引擎', description: '把线上/线下单价、成员卖张、场次节奏和线上系数放在一起配置。' },
+  { value: 'cost', label: '成本结构', description: '先看成本概览，再改成本编辑。' },
 ]
 
 const chartMetricTabs: Array<{ value: ChartMetricKey; label: string }> = [
@@ -111,8 +109,8 @@ function findSnapshot(snapshots: WorkspaceSnapshot[], id: string) {
 }
 
 const timelineSectionKeys: Record<Exclude<TimelineSection, 'special'>, Array<RevenueNumberKey | CostTemplateNumberKey>> = {
-  sales: ['events', 'salesMultiplier', 'extraChannelRevenue'],
-  training: ['rehearsalCount', 'rehearsalCost', 'teacherCount', 'teacherCost', 'extraPerEventCost', 'extraFixedCost'],
+  sales: ['events', 'salesMultiplier', 'onlineSalesFactor'],
+  training: ['rehearsalCount', 'rehearsalCost', 'teacherCount', 'teacherCost'],
 }
 
 function syncStageCosts(config: ModelConfig, stageCostItems: ModelConfig['stageCostItems']) {
@@ -222,12 +220,22 @@ export default function App() {
   const secondaryItems = mainTab === 'dashboard' ? dashboardTabs : inputTabs
   const secondaryValue = mainTab === 'dashboard' ? dashboardTab : inputsTab
 
-  function updateUnitPrice(value: number) {
+  function updateOfflineUnitPrice(value: number) {
     setConfig((current) => ({
       ...current,
       operating: {
         ...current.operating,
-        unitPrice: value,
+        offlineUnitPrice: value,
+      },
+    }))
+  }
+
+  function updateOnlineUnitPrice(value: number) {
+    setConfig((current) => ({
+      ...current,
+      operating: {
+        ...current.operating,
+        onlineUnitPrice: value,
       },
     }))
   }
@@ -716,8 +724,10 @@ export default function App() {
                 {inputsTab === 'revenue' ? (
                   <div className="space-y-4">
                     <RevenueWorkbench
-                      unitPrice={config.operating.unitPrice}
-                      onUnitPriceChange={updateUnitPrice}
+                      offlineUnitPrice={config.operating.offlineUnitPrice}
+                      onlineUnitPrice={config.operating.onlineUnitPrice}
+                      onOfflineUnitPriceChange={updateOfflineUnitPrice}
+                      onOnlineUnitPriceChange={updateOnlineUnitPrice}
                     />
 
                     <TimelineEditor
@@ -770,6 +780,23 @@ export default function App() {
                       operating={config.operating}
                       teamMembers={config.teamMembers}
                       employees={config.employees}
+                      stageCostItems={config.stageCostItems}
+                      months={config.months}
+                      scenarioMonths={selectedScenarioResult.months}
+                      selectedMonthId={selectedMonthId}
+                      selectedMonthPlan={selectedMonthPlan}
+                      selectedMonthResult={selectedMonthResult}
+                      selectedScenarioLabel={selectedScenarioResult.label}
+                      onSelectMonth={setSelectedMonthId}
+                    />
+
+                    <CostOverridesEditor
+                      operating={config.operating}
+                      teamMembers={config.teamMembers}
+                      employees={config.employees}
+                      template={config.timelineTemplate}
+                      months={config.months}
+                      stageCostItems={config.stageCostItems}
                       onCostItemAdd={handleAddCostItem}
                       onCostItemRemove={handleRemoveCostItem}
                       onCostItemNameChange={(category, id, value) =>
@@ -778,12 +805,6 @@ export default function App() {
                       onCostItemAmountChange={(category, id, value) =>
                         updateCostItem(category, id, (item) => ({ ...item, amount: value }))
                       }
-                    />
-
-                    <CostOverridesEditor
-                      template={config.timelineTemplate}
-                      months={config.months}
-                      stageCostItems={config.stageCostItems}
                       onTrainingTemplateChange={updateTimelineTemplate}
                       onTrainingMonthChange={(id, key, value) =>
                         updateMonth(id, (month) => ({

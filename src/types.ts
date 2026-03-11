@@ -54,7 +54,8 @@ export type Employee = {
 }
 
 export type OperatingConfig = {
-  unitPrice: number
+  offlineUnitPrice: number
+  onlineUnitPrice: number
   monthlyFixedCosts: CostItem[]
   perEventCosts: CostItem[]
   perUnitCosts: CostItem[]
@@ -70,13 +71,11 @@ export type MonthlyPlan = {
   label: string
   events: number
   salesMultiplier: number
-  extraChannelRevenue: number
+  onlineSalesFactor: number
   rehearsalCount: number
   rehearsalCost: number
   teacherCount: number
   teacherCost: number
-  extraPerEventCost: number
-  extraFixedCost: number
   specialCosts: StageCostValue[]
 }
 
@@ -121,7 +120,8 @@ export type MonthlyScenarioResult = {
   monthIndex: number
   events: number
   salesMultiplier: number
-  extraChannelRevenue: number
+  onlineSalesFactor: number
+  onlineRevenue: number
   memberGrossSales: number
   totalUnitsPerEvent: number
   totalUnitsPerMonth: number
@@ -133,8 +133,6 @@ export type MonthlyScenarioResult = {
   employeeEventCost: number
   monthlyOperatingCost: number
   perEventOperatingCost: number
-  extraPerEventCost: number
-  extraFixedCost: number
   rehearsalCost: number
   teacherCost: number
   specialProjectCost: number

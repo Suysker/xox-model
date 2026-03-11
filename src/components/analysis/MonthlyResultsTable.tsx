@@ -12,7 +12,7 @@ export function MonthlyResultsTable(props: {
   const profitableMonths = props.months.filter((month) => month.monthlyProfit >= 0).length
   const paybackMonthIndex = props.months.findIndex((month) => month.hasPaidBack)
   const lastCash = props.months.at(-1)?.cumulativeCash ?? 0
-  const showExtraRevenue = props.months.some((month) => month.extraChannelRevenue > 0)
+  const showOnlineRevenue = props.months.some((month) => month.onlineRevenue > 0)
 
   return (
     <Panel>
@@ -40,7 +40,7 @@ export function MonthlyResultsTable(props: {
               <HeaderCell align="right">场次</HeaderCell>
               <HeaderCell align="right">单场张数</HeaderCell>
               <HeaderCell align="right">营收</HeaderCell>
-              {showExtraRevenue ? <HeaderCell align="right">额外渠道</HeaderCell> : null}
+              {showOnlineRevenue ? <HeaderCell align="right">线上营收</HeaderCell> : null}
               <HeaderCell align="right">提成</HeaderCell>
               <HeaderCell align="right">月固定</HeaderCell>
               <HeaderCell align="right">每场</HeaderCell>
@@ -58,8 +58,7 @@ export function MonthlyResultsTable(props: {
                 month.employeeBasePayCost +
                 month.monthlyOperatingCost +
                 month.rehearsalCost +
-                month.teacherCost +
-                month.extraFixedCost
+                month.teacherCost
 
               return (
                 <tr
@@ -74,7 +73,7 @@ export function MonthlyResultsTable(props: {
                   <BodyCell align="right">{month.events}</BodyCell>
                   <BodyCell align="right">{formatDecimal(month.totalUnitsPerEvent)}</BodyCell>
                   <BodyCell align="right">{formatCurrency(month.grossSales)}</BodyCell>
-                  {showExtraRevenue ? <BodyCell align="right">{formatCurrency(month.extraChannelRevenue)}</BodyCell> : null}
+                  {showOnlineRevenue ? <BodyCell align="right">{formatCurrency(month.onlineRevenue)}</BodyCell> : null}
                   <BodyCell align="right">{formatCurrency(month.commissionCost)}</BodyCell>
                   <BodyCell align="right">{formatCurrency(monthlyFixedCost)}</BodyCell>
                   <BodyCell align="right">{formatCurrency(month.perEventCostTotal)}</BodyCell>

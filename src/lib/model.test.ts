@@ -60,16 +60,18 @@ describe('monthly underground-idol investment model', () => {
     expect(base.months[5]?.cumulativeCash).toBeCloseTo(base.netCashAfterInvestment, 2)
   })
 
-  it('adds extra channel revenue on top of member-driven offline sales', () => {
+  it('adds online revenue on top of member-driven offline sales', () => {
     const config = createProductDefaultModel()
-    config.months[0]!.extraChannelRevenue = 8800
+    config.operating.onlineUnitPrice = 100
+    config.months[0]!.onlineSalesFactor = 0.2
 
     const base = getScenarioResult(config, 'base')
 
     expect(base.months[0]?.memberGrossSales).toBeCloseTo(52968.96, 2)
-    expect(base.months[0]?.extraChannelRevenue).toBe(8800)
-    expect(base.months[0]?.grossSales).toBeCloseTo(61768.96, 2)
-    expect(base.months[0]?.monthlyProfit).toBeCloseTo(36360.1, 1)
+    expect(base.months[0]?.onlineSalesFactor).toBe(0.2)
+    expect(base.months[0]?.onlineRevenue).toBeCloseTo(12038.4, 2)
+    expect(base.months[0]?.grossSales).toBeCloseTo(65007.36, 2)
+    expect(base.months[0]?.monthlyProfit).toBeCloseTo(39598.5, 1)
   })
 
   it('aggregates configurable cost items by monthly, per-event and per-unit buckets', () => {
@@ -133,7 +135,7 @@ describe('monthly underground-idol investment model', () => {
     const base = getScenarioResult(config, 'base')
 
     expect(base.months[0]?.events).toBe(4)
-    expect(base.months[0]?.extraPerEventCost).toBeCloseTo(1430, 2)
+    expect(base.months[0]?.perEventCostTotal).toBeCloseTo(3830, 2)
     expect(base.months[0]?.specialProjectCost).toBe(0)
   })
 })
