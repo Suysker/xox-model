@@ -5,3 +5,11 @@ coverage
 *.log
 AGENTS.md
 .agent
+.pytest_cache
+.ruff_cache
+.venv
+__pycache__
+*.pyc
+apps/api/.coverage
+apps/api/data
+apps/web/dist

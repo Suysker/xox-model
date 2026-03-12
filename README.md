@@ -1,140 +1,53 @@
 # xox-model
 
-基于 `Vite + React + TypeScript + Tailwind` 的地下偶像团体 ROI / 现金流建模工具。
+Forecast planning, bookkeeping, and variance analysis for small operating teams.
 
-## 当前产品结构
+## Repository Layout
 
-- 左侧主导航：`经营分析 / 模型输入`
-- 右上角工作区：快照、发布版本、导入、导出
-- 输入模块：`股东投资 / 收入引擎 / 成本结构`
+- `apps/web`: React + Vite frontend.
+- `apps/api`: FastAPI + SQLAlchemy backend.
+- `docs`: architecture, delivery plan, and acceptance criteria.
+- `infra/scripts`: deployment and utility scripts.
 
-## 业务建模方式
+## Product Scope
 
-### 股东投资
+- Authentication: register, login, logout, and account cancellation.
+- Forecast modeling: editable draft, autosave, publish, version rollback, and public release sharing.
+- Bookkeeping: record actual income and cost entries against forecast subjects.
+- Variance analysis: compare actuals with the published baseline version by period and subject.
+- Sharing: generate read-only public links for immutable released versions and revoke them when needed.
 
-- 配置股东名称、投资金额、分红比例
-- 在这里设置经营开始月份和规划月数
-- 回本周期和 ROI 按股东总投入计算
+## Local Development
 
-### 收入引擎
-
-- 收入底盘拆成 `线下单价` 和 `线上单价`
-- 月度收入按以下口径计算：
-  - `线下收入 = 成员单场张数 × 场次 × 销售系数 × 线下单价`
-  - `线上收入 = 成员单场张数 × 场次 × 销售系数 × 线上系数 × 线上单价`
-- 成员表支持配置：
-  - 成员类型
-  - 提成率
-  - 底薪
-  - 路费
-  - 悲观 / 基准 / 乐观单场张数
-  - `离团至`
-- `离团至` 会跟当前经营周期联动。例如当前周期是 `3月 -> 8月`，选择 `做到6月` 后，该成员会算到 `6月` 为止，`7月` 起不再计入卖张、底薪和路费
-
-### 成本结构
-
-- 顶部 `成本概览` 用按月堆叠柱状图展示成本结构
-- 鼠标悬停可查看当月各末级成本项金额和占比
-- 底部 `成本编辑` 分两类：
-  - `专项与耗材`
-  - `训练与补充`
-- `专项与耗材` 支持直接新增成本列，并在列头选择：
-  - `按张`
-  - `按场`
-  - `按月`
-- 录入口径：
-  - `按张`：`单价 / 系数`
-  - `按场`：`单价 / 场次`
-  - `按月`：直接录金额
-
-## 默认测算参数
-
-用户首次进入时，默认模型按下面这组参数建立：
-
-- 经营周期：`12 个月`
-- 经营开始月份：`3月`
-- 股东投入：
-  - 股东 A：`65000`
-  - 股东 B：`30000`
-- 分红比例：按投入占比初始化
-  - 股东 A：`65000 / 95000`
-  - 股东 B：`30000 / 95000`
-- 线下单价：`88`
-- 线上单价：`88`
-- 成员结构：
-  - 1 名底薪成员：`1500 / 月 + 15% 提成`
-  - 其余成员：`35% 提成`
-- 员工结构：
-  - 2 名场务：`200 / 场`
-- 月度节奏：
-  - `3月` 按启动月测算，单场约 `100 张`
-  - `4月` 起按稳定月测算，单场约 `200 张`
-  - 每月 `6 场`
-- 训练成本：
-  - `3月`：排练 `8 次 × 300`，老师 `8 次 × 200`
-  - `4月` 起：排练 `4 次 × 300`，老师 `4 次 × 200`
-- 耗材：
-  - `3月`、`4月` 默认不计入
-  - `5月` 起默认 `6 / 张`
-
-## 使用方式
-
-1. 在 `模型输入 -> 股东投资` 里确认股东金额、分红比例、开始月份和规划周期。
-2. 在 `模型输入 -> 收入引擎` 里配置线上 / 线下单价、成员卖张、场次节奏、销售系数和线上系数。
-3. 在 `模型输入 -> 成本结构` 里查看按月成本概览，并在下方按月编辑训练和专项成本。
-4. 回到 `经营分析` 查看三档场景、月度经营明细、月度表和成员贡献拆解。
-
-## 本地运行
-
-Windows PowerShell 下请使用 `npm.cmd`：
+### Frontend
 
 ```bash
 npm.cmd install
-npm.cmd run dev
+npm.cmd run dev:web
 ```
 
-## Ubuntu 部署
-
-仓库内的部署脚本现在只负责启动应用服务，不会安装或修改 `nginx`。
+### Backend
 
 ```bash
-sudo APP_PORT=4173 bash scripts/deploy-ubuntu-nginx.sh
+python -m pip install -e ./apps/api
+python -m uvicorn app.main:app --app-dir apps/api --reload
 ```
 
-脚本会完成这些事情：
-
-- 安装 Node.js 20（如果当前版本不足）
-- 执行 `npm ci` 和 `npm run build`
-- 把 `dist` 和静态服务脚本同步到 `/opt/xox-model`
-- 写入 `systemd` 服务并设置开机自启动
-
-部署完成后可通过以下命令检查：
+## Validation
 
 ```bash
-sudo systemctl status xox-model
-sudo journalctl -u xox-model -f
-curl http://127.0.0.1:4173
+npm.cmd run test:web
+npm.cmd run build:web
+python -m pytest apps/api/tests
 ```
 
-如果需要调整端口，可以覆盖 `APP_PORT`，例如：
+## Documentation
 
-```bash
-sudo APP_PORT=8080 bash scripts/deploy-ubuntu-nginx.sh
-```
+- Architecture and delivery plan: `docs/project-architecture.md`
+- Detailed project blueprint and acceptance criteria: `docs/project-plan.md`
 
-## 验证
+## Notes
 
-```bash
-npm.cmd run test
-npm.cmd run build
-```
-
-预期结果：
-
-- `npm.cmd run test` 通过
-- `npm.cmd run build` 通过
-
-## 说明
-
-- 本地工作区会保留当前编辑状态；修改默认模型只会影响“首次进入”或新建工作区后的初始值
-- 当前仍是单团模型，尚未展开为多团并行或回本后按股东分红的现金流分配模拟
+- The frontend package lives under `apps/web` so the repository can grow without flattening everything into the root.
+- The backend is centered on mutable drafts, immutable published versions, period-based bookkeeping, and variance analysis against baseline versions.
+- Public sharing is constrained to immutable releases so external links never drift with later draft edits.

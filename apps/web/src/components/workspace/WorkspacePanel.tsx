@@ -1,5 +1,6 @@
 import { Download, FolderUp, Rocket, RotateCcw, Save, Trash2, X } from 'lucide-react'
 import type { ReactNode } from 'react'
+import type { VersionShareResponse } from '../../lib/api'
 import { formatDateTime } from '../../lib/format'
 import type { WorkspaceSnapshot } from '../../types'
 
@@ -7,6 +8,7 @@ export function WorkspacePanel(props: {
   workspaceName: string
   lastSavedAt: string | null
   snapshots: WorkspaceSnapshot[]
+  shareLinks: Record<string, VersionShareResponse | null>
   onNameChange: (value: string) => void
   onSaveSnapshot: () => void
   onPublishRelease: () => void
@@ -16,6 +18,9 @@ export function WorkspacePanel(props: {
   onLoadSnapshot: (id: string) => void
   onDeleteSnapshot: (id: string) => void
   onPromoteToRelease: (id: string) => void
+  onCreateShare: (id: string) => void
+  onCopyShareLink: (id: string) => void
+  onRevokeShare: (id: string) => void
   onClose: () => void
 }) {
   const releaseSnapshots = props.snapshots.filter((snapshot) => snapshot.kind === 'release')
@@ -26,15 +31,15 @@ export function WorkspacePanel(props: {
       <div className="flex items-start justify-between gap-4 border-b border-stone-900/10 px-5 py-5">
         <div className="min-w-0">
           <p className="text-xs font-semibold uppercase tracking-[0.24em] text-stone-500">Workspace</p>
-          <h2 className="mt-2 text-2xl font-bold text-stone-950">版本与工作区</h2>
+          <h2 className="mt-2 text-2xl font-bold text-stone-950">Versions and draft flow</h2>
           <p className="mt-2 text-sm leading-6 text-stone-600">
-            保存草稿、发布版本、导入导出和历史回滚都收在这里，不再占用主画布。
+            Save snapshots, publish releases, export or import bundles, and roll back from version history here.
           </p>
         </div>
         <button
           type="button"
           onClick={props.onClose}
-          aria-label="关闭版本库"
+          aria-label="Close workspace panel"
           className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-stone-900/10 bg-stone-50 text-stone-700 transition hover:bg-stone-100"
         >
           <X className="h-4 w-4" />
@@ -44,45 +49,59 @@ export function WorkspacePanel(props: {
       <div className="flex-1 overflow-y-auto px-5 py-5">
         <div className="grid gap-5">
           <div className="rounded-[24px] border border-stone-900/10 bg-stone-50/90 p-4">
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-stone-500">工作区名称</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-stone-500">Workspace name</p>
             <input
               className="mt-3 h-11 w-full rounded-2xl border border-stone-900/10 bg-white px-4 text-base font-semibold text-stone-950 outline-none transition focus:border-emerald-500"
               value={props.workspaceName}
               onChange={(event) => props.onNameChange(event.target.value)}
-              placeholder="工作区名称"
+              placeholder="Forecast workspace"
             />
             <div className="mt-3 flex flex-wrap gap-2 text-xs">
-              <MetaChip label="最后存档" value={formatDateTime(props.lastSavedAt)} />
-              <MetaChip label="版本总数" value={`${props.snapshots.length} 个`} />
+              <MetaChip label="Last autosave" value={formatDateTime(props.lastSavedAt)} />
+              <MetaChip label="Versions" value={`${props.snapshots.length}`} />
             </div>
           </div>
 
           <div className="grid gap-2 sm:grid-cols-2">
-            <ActionButton icon={Save} label="保存快照" tone="primary" onClick={props.onSaveSnapshot} />
-            <ActionButton icon={Rocket} label="发布版本" tone="primary" onClick={props.onPublishRelease} />
-            <ActionButton icon={Download} label="导出 JSON" onClick={props.onExport} />
-            <ActionButton icon={FolderUp} label="导入 JSON" onClick={props.onImportClick} />
-            <ActionButton icon={RotateCcw} label="新建草稿" onClick={props.onReset} />
+            <ActionButton icon={Save} label="Save snapshot" tone="primary" onClick={props.onSaveSnapshot} />
+            <ActionButton icon={Rocket} label="Publish release" tone="primary" onClick={props.onPublishRelease} />
+            <ActionButton icon={Download} label="Export JSON" onClick={props.onExport} />
+            <ActionButton icon={FolderUp} label="Import JSON" onClick={props.onImportClick} />
+            <ActionButton icon={RotateCcw} label="Reset draft" onClick={props.onReset} />
           </div>
 
           <div className="grid gap-3 sm:grid-cols-3">
-            <StatCard label="发布版本" value={`${releaseSnapshots.length} 个`} />
-            <StatCard label="普通快照" value={`${normalSnapshots.length} 个`} />
-            <StatCard label="当前状态" value={props.lastSavedAt ? '已存档' : '未存档'} />
+            <StatCard label="Releases" value={`${releaseSnapshots.length}`} />
+            <StatCard label="Snapshots" value={`${normalSnapshots.length}`} />
+            <StatCard label="Draft status" value={props.lastSavedAt ? 'Autosaved' : 'Unsaved'} />
           </div>
 
-          <SnapshotSection title="发布版本" emptyText="还没有发布版本。发布版适合作为对外确认或重要基线。">
+          <SnapshotSection
+            title="Published releases"
+            emptyText="No release has been published yet. Publish one when you want to lock a baseline for bookkeeping and variance analysis."
+          >
             {releaseSnapshots.map((snapshot) => (
               <SnapshotCard
                 key={snapshot.id}
                 snapshot={snapshot}
                 onLoad={() => props.onLoadSnapshot(snapshot.id)}
                 onDelete={() => props.onDeleteSnapshot(snapshot.id)}
+                shareDetails={
+                  <ShareCard
+                    share={props.shareLinks[snapshot.id] ?? null}
+                    onCreate={() => props.onCreateShare(snapshot.id)}
+                    onCopy={() => props.onCopyShareLink(snapshot.id)}
+                    onRevoke={() => props.onRevokeShare(snapshot.id)}
+                  />
+                }
               />
             ))}
           </SnapshotSection>
 
-          <SnapshotSection title="普通快照" emptyText="还没有普通快照。先保存一个草稿，再继续调整模型。">
+          <SnapshotSection
+            title="Working snapshots"
+            emptyText="No working snapshot yet. Save one before making a risky change if you want a quick rollback point."
+          >
             {normalSnapshots.map((snapshot) => (
               <SnapshotCard
                 key={snapshot.id}
@@ -96,7 +115,7 @@ export function WorkspacePanel(props: {
                     className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800 transition hover:bg-amber-200"
                   >
                     <Rocket className="h-3.5 w-3.5" />
-                    升级为发布版
+                    Promote
                   </button>
                 }
               />
@@ -184,6 +203,7 @@ function SnapshotCard(props: {
   onLoad: () => void
   onDelete: () => void
   extraAction?: ReactNode
+  shareDetails?: ReactNode
 }) {
   return (
     <div className="rounded-[20px] border border-stone-900/10 bg-white px-4 py-4 shadow-[0_10px_30px_rgba(70,52,17,0.05)]">
@@ -198,7 +218,7 @@ function SnapshotCard(props: {
             onClick={props.onLoad}
             className="rounded-full border border-stone-900/10 bg-stone-950 px-3 py-1 text-xs font-semibold text-white transition hover:bg-stone-800"
           >
-            加载
+            Roll back
           </button>
           {props.extraAction}
           <button
@@ -207,9 +227,64 @@ function SnapshotCard(props: {
             className="inline-flex items-center gap-1 rounded-full border border-stone-900/10 bg-white px-3 py-1 text-xs font-semibold text-stone-700 transition hover:bg-stone-100"
           >
             <Trash2 className="h-3.5 w-3.5" />
-            删除
+            Delete
           </button>
         </div>
+        {props.shareDetails}
+      </div>
+    </div>
+  )
+}
+
+function ShareCard(props: {
+  share: VersionShareResponse | null
+  onCreate: () => void
+  onCopy: () => void
+  onRevoke: () => void
+}) {
+  return (
+    <div className="rounded-[18px] border border-stone-900/10 bg-stone-50/90 p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-stone-500">Share link</p>
+          <p className="mt-1 text-sm text-stone-600">
+            {props.share ? 'A public read-only link is active for this release.' : 'Create a public read-only link for this release.'}
+          </p>
+          {props.share ? (
+            <p className="mt-2 truncate rounded-full border border-stone-900/10 bg-white px-3 py-1 text-xs font-medium text-stone-700">
+              {props.share.sharePath}
+            </p>
+          ) : null}
+        </div>
+        <p className="shrink-0 text-xs text-stone-500">{props.share ? formatDateTime(props.share.updatedAt) : 'Inactive'}</p>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {props.share ? (
+          <>
+            <button
+              type="button"
+              onClick={props.onCopy}
+              className="rounded-full border border-stone-900/10 bg-stone-950 px-3 py-1 text-xs font-semibold text-white transition hover:bg-stone-800"
+            >
+              Copy link
+            </button>
+            <button
+              type="button"
+              onClick={props.onRevoke}
+              className="rounded-full border border-stone-900/10 bg-white px-3 py-1 text-xs font-semibold text-stone-700 transition hover:bg-stone-100"
+            >
+              Revoke
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            onClick={props.onCreate}
+            className="rounded-full border border-stone-900/10 bg-stone-950 px-3 py-1 text-xs font-semibold text-white transition hover:bg-stone-800"
+          >
+            Create share
+          </button>
+        )}
       </div>
     </div>
   )

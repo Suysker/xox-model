@@ -10,8 +10,8 @@ export function WorkspaceToolbar(props: {
   return (
     <button
       type="button"
-      aria-label={props.libraryOpen ? '收起版本库' : '打开版本库'}
-      title={props.libraryOpen ? '收起版本库' : '打开版本库'}
+      aria-label={props.libraryOpen ? 'Close workspace panel' : 'Open workspace panel'}
+      title={props.libraryOpen ? 'Close workspace panel' : 'Open workspace panel'}
       onClick={props.onToggleLibrary}
       className={
         props.libraryOpen

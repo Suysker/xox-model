@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState, type ChangeEvent } from 'react'
-import { LayoutDashboard, LineChart, Settings2, type LucideIcon } from 'lucide-react'
+import { BarChart3, LayoutDashboard, LineChart, LogOut, ReceiptText, Settings2, type LucideIcon } from 'lucide-react'
 import { MemberContributionList } from './components/analysis/MemberContributionList'
+import { AuthScreen } from './components/auth/AuthScreen'
 import { type ChartMetricKey } from './components/analysis/MetricBandChart'
 import { MonthlyResultsTable } from './components/analysis/MonthlyResultsTable'
 import { OverviewPanel } from './components/analysis/OverviewPanel'
 import { ScenarioDeck } from './components/analysis/ScenarioDeck'
+import { BookkeepingPanel } from './components/bookkeeping/BookkeepingPanel'
 import { NoticeBanner, type NoticeTone } from './components/common/NoticeBanner'
 import { Panel, SectionTitle } from './components/common/ui'
 import { CostWorkbench } from './components/inputs/CostWorkbench'
@@ -16,9 +18,12 @@ import { TeamMembersTable } from './components/inputs/TeamMembersTable'
 import { TimelineEditor } from './components/inputs/TimelineEditor'
 import { ProductHero } from './components/layout/ProductHero'
 import { SidebarNav } from './components/layout/SidebarNav'
+import { SharedVersionScreen } from './components/share/SharedVersionScreen'
+import { VariancePanel } from './components/variance/VariancePanel'
 import { WorkspacePanel } from './components/workspace/WorkspacePanel'
 import { WorkspaceToolbar } from './components/workspace/WorkspaceToolbar'
 import { useWorkspace } from './hooks/useWorkspace'
+import { api, type AuthUser, type EntryResponse, type PeriodResponse, type SubjectResponse, type VarianceResponse } from './lib/api'
 import {
   createCostItem,
   createEmployee,
@@ -42,9 +47,11 @@ import type {
   WorkspaceSnapshot,
 } from './types'
 
-type MainTab = 'dashboard' | 'inputs'
+type MainTab = 'dashboard' | 'inputs' | 'bookkeeping' | 'variance'
 type DashboardTab = 'overview' | 'months' | 'members'
 type InputsTab = 'capital' | 'revenue' | 'cost'
+type BookkeepingTab = 'entries'
+type VarianceTab = 'analysis'
 type BannerState = { tone: NoticeTone; message: string }
 type TimelineSection = 'sales' | 'training' | 'special'
 type RevenueNumberKey = 'events' | 'salesMultiplier' | 'onlineSalesFactor'
@@ -67,6 +74,18 @@ const mainTabs: Array<{ value: MainTab; label: string; description: string; icon
     description: '配置股东投资、收入引擎和成本结构。',
     icon: Settings2,
   },
+  {
+    value: 'bookkeeping',
+    label: '记账',
+    description: '按期间登记实际收入和成本。',
+    icon: ReceiptText,
+  },
+  {
+    value: 'variance',
+    label: '预实分析',
+    description: '按预算基线查看计划与实际差异。',
+    icon: BarChart3,
+  },
 ]
 
 const dashboardTabs: Array<{ value: DashboardTab; label: string; description: string }> = [
@@ -81,6 +100,14 @@ const inputTabs: Array<{ value: InputsTab; label: string; description: string }>
   { value: 'cost', label: '成本结构', description: '先看成本概览，再改成本编辑。' },
 ]
 
+const bookkeepingTabs: Array<{ value: BookkeepingTab; label: string; description: string }> = [
+  { value: 'entries', label: '实际分录', description: '登记期间实际发生额。' },
+]
+
+const varianceTabs: Array<{ value: VarianceTab; label: string; description: string }> = [
+  { value: 'analysis', label: '差异分析', description: '对比预算基线和已过账实际。' },
+]
+
 const chartMetricTabs: Array<{ value: ChartMetricKey; label: string }> = [
   { value: 'cash', label: '累计现金' },
   { value: 'profit', label: '利润' },
@@ -90,6 +117,17 @@ const chartMetricTabs: Array<{ value: ChartMetricKey; label: string }> = [
 
 function sanitizeFilename(name: string) {
   return name.trim().replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, '-').slice(0, 48) || 'workspace'
+}
+
+function getSharedTokenFromPath(pathname: string) {
+  const prefix = '/shared/'
+
+  if (!pathname.startsWith(prefix)) {
+    return null
+  }
+
+  const token = pathname.slice(prefix.length).split('/')[0]
+  return token ? decodeURIComponent(token) : null
 }
 
 const costCategoryLabels: Record<CostCategory, string> = {
@@ -179,12 +217,20 @@ function applyTemplateToMonthSection(
 
 export default function App() {
   const importInputRef = useRef<HTMLInputElement>(null)
+  const sharedToken = getSharedTokenFromPath(window.location.pathname)
+  const [authState, setAuthState] = useState<'loading' | 'authenticated' | 'unauthenticated'>('loading')
+  const [authBusy, setAuthBusy] = useState(false)
+  const [authError, setAuthError] = useState<string | null>(null)
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null)
   const {
     bundle,
     workspaceName,
     config,
     snapshots,
+    versionShares,
     lastSavedAt,
+    loading: workspaceLoading,
+    error: workspaceError,
     setWorkspaceName,
     setConfig,
     saveSnapshot,
@@ -192,22 +238,131 @@ export default function App() {
     loadSnapshot,
     deleteSnapshot,
     promoteSnapshotToRelease,
+    createShareLink,
+    revokeShareLink,
     importBundle,
     resetWorkspace,
-  } = useWorkspace()
+  } = useWorkspace(authState === 'authenticated' && !sharedToken)
 
   const [mainTab, setMainTab] = useState<MainTab>('dashboard')
   const [dashboardTab, setDashboardTab] = useState<DashboardTab>('overview')
   const [inputsTab, setInputsTab] = useState<InputsTab>('revenue')
+  const [bookkeepingTab, setBookkeepingTab] = useState<BookkeepingTab>('entries')
+  const [varianceTab, setVarianceTab] = useState<VarianceTab>('analysis')
   const [selectedScenario, setSelectedScenario] = useState<ScenarioKey>('base')
   const [chartMetric, setChartMetric] = useState<ChartMetricKey>('cash')
   const [selectedMonthId, setSelectedMonthId] = useState(config.months[0]?.id ?? '')
+  const [periods, setPeriods] = useState<PeriodResponse[]>([])
+  const [selectedPeriodId, setSelectedPeriodId] = useState('')
+  const [subjects, setSubjects] = useState<SubjectResponse[]>([])
+  const [entries, setEntries] = useState<EntryResponse[]>([])
+  const [variance, setVariance] = useState<VarianceResponse | null>(null)
+  const [ledgerBusy, setLedgerBusy] = useState(false)
+  const [entryForm, setEntryForm] = useState({
+    direction: 'income' as 'income' | 'expense',
+    amount: 0,
+    subjectKey: '',
+    counterparty: '',
+    description: '',
+  })
   const [workspaceOpen, setWorkspaceOpen] = useState(false)
   const [banner, setBanner] = useState<BannerState | null>(null)
 
   const projection = projectModel(config)
   const selectedScenarioResult =
     projection.scenarios.find((scenario) => scenario.key === selectedScenario) ?? projection.scenarios[0]
+
+  async function refreshPeriods() {
+    const nextPeriods = await api.listPeriods()
+    setPeriods(nextPeriods)
+    setSelectedPeriodId((current) => (nextPeriods.some((period) => period.id === current) ? current : (nextPeriods[0]?.id ?? '')))
+  }
+
+  useEffect(() => {
+    if (sharedToken) {
+      setAuthState('unauthenticated')
+      return
+    }
+
+    let active = true
+
+    async function bootstrapAuth() {
+      try {
+        const me = await api.me()
+        if (!active) {
+          return
+        }
+        setCurrentUser(me)
+        setAuthState('authenticated')
+        setAuthError(null)
+      } catch {
+        if (active) {
+          setAuthState('unauthenticated')
+        }
+      }
+    }
+
+    void bootstrapAuth()
+
+    return () => {
+      active = false
+    }
+  }, [sharedToken])
+
+  useEffect(() => {
+    if (!workspaceError) {
+      return
+    }
+
+    setBanner({ tone: 'error', message: workspaceError })
+  }, [workspaceError])
+
+  useEffect(() => {
+    if (authState !== 'authenticated' || workspaceLoading) {
+      return
+    }
+
+    void refreshPeriods()
+  }, [authState, workspaceLoading, snapshots.length])
+
+  useEffect(() => {
+    if (authState !== 'authenticated' || !selectedPeriodId) {
+      return
+    }
+
+    let active = true
+
+    async function loadLedgerData() {
+      try {
+        const [nextSubjects, nextEntries, nextVariance] = await Promise.all([
+          api.listSubjects(selectedPeriodId),
+          api.listEntries(selectedPeriodId),
+          api.getVariance(selectedPeriodId),
+        ])
+
+        if (!active) {
+          return
+        }
+
+        setSubjects(nextSubjects)
+        setEntries(nextEntries)
+        setVariance(nextVariance)
+      } catch (loadError) {
+        if (active) {
+          setBanner({
+            tone: 'error',
+            message: loadError instanceof Error ? loadError.message : String(loadError),
+          })
+        }
+      }
+    }
+
+    void loadLedgerData()
+
+    return () => {
+      active = false
+    }
+  }, [authState, selectedPeriodId])
 
   useEffect(() => {
     const firstMonthId = config.months[0]?.id ?? ''
@@ -216,6 +371,128 @@ export default function App() {
       setSelectedMonthId(firstMonthId)
     }
   }, [config.months, selectedMonthId])
+
+  async function handleLogin(payload: { email: string; password: string }) {
+    setAuthBusy(true)
+    try {
+      const user = await api.login(payload)
+      setCurrentUser(user)
+      setAuthState('authenticated')
+      setAuthError(null)
+    } catch (loginError) {
+      setAuthError(loginError instanceof Error ? loginError.message : String(loginError))
+    } finally {
+      setAuthBusy(false)
+    }
+  }
+
+  async function handleRegister(payload: { email: string; password: string; displayName: string }) {
+    setAuthBusy(true)
+    try {
+      const user = await api.register(payload)
+      setCurrentUser(user)
+      setAuthState('authenticated')
+      setAuthError(null)
+    } catch (registerError) {
+      setAuthError(registerError instanceof Error ? registerError.message : String(registerError))
+    } finally {
+      setAuthBusy(false)
+    }
+  }
+
+  async function handleLogout() {
+    await api.logout()
+    setCurrentUser(null)
+    setAuthState('unauthenticated')
+    setWorkspaceOpen(false)
+  }
+
+  async function handleCancelAccount() {
+    await api.cancelAccount()
+    setCurrentUser(null)
+    setAuthState('unauthenticated')
+    setWorkspaceOpen(false)
+  }
+
+  async function handleSubmitEntry() {
+    const selectedSubject = subjects.find((subject) => subject.subjectKey === entryForm.subjectKey)
+
+    if (!selectedPeriodId || !selectedSubject || entryForm.amount <= 0) {
+      return
+    }
+
+    setLedgerBusy(true)
+    try {
+      await api.createEntry({
+        ledgerPeriodId: selectedPeriodId,
+        direction: entryForm.direction,
+        amount: entryForm.amount,
+        allocations: [
+          {
+            subjectKey: selectedSubject.subjectKey,
+            subjectName: selectedSubject.subjectName,
+            subjectType: selectedSubject.subjectType,
+            amount: entryForm.amount,
+          },
+        ],
+        ...(entryForm.counterparty ? { counterparty: entryForm.counterparty } : {}),
+        ...(entryForm.description ? { description: entryForm.description } : {}),
+      })
+
+      setEntryForm((current) => ({
+        ...current,
+        amount: 0,
+        counterparty: '',
+        description: '',
+      }))
+
+      await refreshPeriods()
+      const [nextEntries, nextVariance] = await Promise.all([
+        api.listEntries(selectedPeriodId),
+        api.getVariance(selectedPeriodId),
+      ])
+      setEntries(nextEntries)
+      setVariance(nextVariance)
+      setBanner({ tone: 'success', message: 'Actual entry posted.' })
+    } catch (entryError) {
+      setBanner({ tone: 'error', message: entryError instanceof Error ? entryError.message : String(entryError) })
+    } finally {
+      setLedgerBusy(false)
+    }
+  }
+
+  async function handleVoidEntry(entryId: string) {
+    setLedgerBusy(true)
+    try {
+      await api.voidEntry(entryId)
+      await refreshPeriods()
+      if (selectedPeriodId) {
+        const [nextEntries, nextVariance] = await Promise.all([
+          api.listEntries(selectedPeriodId),
+          api.getVariance(selectedPeriodId),
+        ])
+        setEntries(nextEntries)
+        setVariance(nextVariance)
+      }
+      setBanner({ tone: 'info', message: 'Entry voided.' })
+    } catch (entryError) {
+      setBanner({ tone: 'error', message: entryError instanceof Error ? entryError.message : String(entryError) })
+    } finally {
+      setLedgerBusy(false)
+    }
+  }
+
+  if (sharedToken) {
+    return <SharedVersionScreen shareToken={sharedToken} />
+  }
+
+  if (authState !== 'authenticated') {
+    return <AuthScreen loading={authBusy || authState === 'loading'} error={authError} onLogin={handleLogin} onRegister={handleRegister} />
+  }
+
+  if (workspaceLoading) {
+    return <AuthScreen loading error={null} onLogin={handleLogin} onRegister={handleRegister} />
+  }
 
   if (!selectedScenarioResult) {
     return null
@@ -516,47 +793,85 @@ export default function App() {
     }))
   }
 
-  function handleSaveSnapshot() {
-    saveSnapshot()
+  async function handleSaveSnapshot() {
+    await saveSnapshot()
     setBanner({ tone: 'success', message: '已保存当前草稿快照。' })
   }
 
-  function handlePublishRelease() {
-    publishRelease()
+  async function handlePublishRelease() {
+    await publishRelease()
+    await refreshPeriods()
     setBanner({ tone: 'success', message: '已发布当前版本，后续可以作为基线继续试算。' })
   }
 
-  function handleLoadSnapshot(id: string) {
+  async function handleLoadSnapshot(id: string) {
     const snapshot = findSnapshot(snapshots, id)
 
-    loadSnapshot(id)
+    const draft = await loadSnapshot(id)
     setMainTab('dashboard')
     setDashboardTab('overview')
-    setSelectedMonthId(snapshot?.config.months[0]?.id ?? '')
+    setSelectedMonthId(draft.config.months[0]?.id ?? snapshot?.config.months[0]?.id ?? '')
     setBanner({
       tone: 'info',
       message: snapshot ? `已加载版本：${snapshot.name}` : '已加载所选版本。',
     })
   }
 
-  function handleDeleteSnapshot(id: string) {
+  async function handleDeleteSnapshot(id: string) {
     const snapshot = findSnapshot(snapshots, id)
 
-    deleteSnapshot(id)
+    await deleteSnapshot(id)
     setBanner({
       tone: 'info',
       message: snapshot ? `已删除版本：${snapshot.name}` : '已删除所选版本。',
     })
   }
 
-  function handlePromoteSnapshot(id: string) {
+  async function handlePromoteSnapshot(id: string) {
     const snapshot = findSnapshot(snapshots, id)
 
-    promoteSnapshotToRelease(id)
+    await promoteSnapshotToRelease(id)
+    await refreshPeriods()
     setBanner({
       tone: 'success',
       message: snapshot ? `已将“${snapshot.name}”升级为发布版本。` : '已升级为发布版本。',
     })
+  }
+
+  async function handleCreateShareLink(id: string) {
+    try {
+      await createShareLink(id)
+      setBanner({ tone: 'success', message: 'Share link created for this release.' })
+    } catch (shareError) {
+      setBanner({ tone: 'error', message: shareError instanceof Error ? shareError.message : String(shareError) })
+    }
+  }
+
+  async function handleCopyShareLink(id: string) {
+    const share = versionShares[id]
+
+    if (!share) {
+      setBanner({ tone: 'error', message: 'No active share link for this release.' })
+      return
+    }
+
+    const shareUrl = new URL(share.sharePath, window.location.origin).toString()
+
+    try {
+      await navigator.clipboard.writeText(shareUrl)
+      setBanner({ tone: 'success', message: 'Share link copied.' })
+    } catch {
+      setBanner({ tone: 'info', message: shareUrl })
+    }
+  }
+
+  async function handleRevokeShareLink(id: string) {
+    try {
+      await revokeShareLink(id)
+      setBanner({ tone: 'info', message: 'Share link revoked.' })
+    } catch (shareError) {
+      setBanner({ tone: 'error', message: shareError instanceof Error ? shareError.message : String(shareError) })
+    }
   }
 
   function handleExportBundle() {
@@ -588,7 +903,7 @@ export default function App() {
         return
       }
 
-      importBundle(parsed)
+      await importBundle(parsed)
       setMainTab('dashboard')
       setDashboardTab('overview')
       setSelectedMonthId(parsed.currentConfig.months[0]?.id ?? '')
@@ -600,8 +915,8 @@ export default function App() {
     }
   }
 
-  function handleResetWorkspace() {
-    resetWorkspace()
+  async function handleResetWorkspace() {
+    await resetWorkspace()
     setMainTab('inputs')
     setInputsTab('revenue')
     setDashboardTab('overview')
@@ -640,6 +955,31 @@ export default function App() {
           </div>
         ) : null}
 
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-[24px] border border-stone-900/10 bg-white/80 px-4 py-3 shadow-[0_12px_35px_rgba(70,52,17,0.05)]">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-stone-500">Account</p>
+            <p className="mt-1 text-sm font-semibold text-stone-900">{currentUser?.displayName ?? currentUser?.email}</p>
+            <p className="text-xs text-stone-500">{currentUser?.email}</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => void handleLogout()}
+              className="inline-flex items-center gap-2 rounded-full border border-stone-900/10 bg-white px-4 py-2 text-sm font-semibold text-stone-700"
+            >
+              <LogOut className="h-4 w-4" />
+              Logout
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleCancelAccount()}
+              className="rounded-full border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-700"
+            >
+              Cancel account
+            </button>
+          </div>
+        </div>
+
         <div className="grid gap-4 xl:grid-cols-[260px_minmax(0,1fr)]">
           <SidebarNav
             title="地下偶像经营工作台"
@@ -647,16 +987,50 @@ export default function App() {
             mainItems={mainTabs}
             mainValue={mainTab}
             onMainChange={setMainTab}
-            secondaryTitle={secondaryTitle}
-            secondaryItems={secondaryItems}
-            secondaryValue={secondaryValue}
+            secondaryTitle={
+              mainTab === 'dashboard'
+                ? '分析视图'
+                : mainTab === 'inputs'
+                  ? '输入模块'
+                  : mainTab === 'bookkeeping'
+                    ? '账务模块'
+                    : '分析模块'
+            }
+            secondaryItems={
+              mainTab === 'dashboard'
+                ? dashboardTabs
+                : mainTab === 'inputs'
+                  ? inputTabs
+                  : mainTab === 'bookkeeping'
+                    ? bookkeepingTabs
+                    : varianceTabs
+            }
+            secondaryValue={
+              mainTab === 'dashboard'
+                ? dashboardTab
+                : mainTab === 'inputs'
+                  ? inputsTab
+                  : mainTab === 'bookkeeping'
+                    ? bookkeepingTab
+                    : varianceTab
+            }
             onSecondaryChange={(value) => {
               if (mainTab === 'dashboard') {
                 setDashboardTab(value as DashboardTab)
                 return
               }
 
-              setInputsTab(value as InputsTab)
+              if (mainTab === 'inputs') {
+                setInputsTab(value as InputsTab)
+                return
+              }
+
+              if (mainTab === 'bookkeeping') {
+                setBookkeepingTab(value as BookkeepingTab)
+                return
+              }
+
+              setVarianceTab(value as VarianceTab)
             }}
           />
 
@@ -869,6 +1243,30 @@ export default function App() {
 
               </>
             ) : null}
+
+            {mainTab === 'bookkeeping' ? (
+              <BookkeepingPanel
+                periods={periods}
+                selectedPeriodId={selectedPeriodId}
+                subjects={subjects}
+                entries={entries}
+                loading={ledgerBusy}
+                form={entryForm}
+                onSelectPeriod={setSelectedPeriodId}
+                onFormChange={(next) => setEntryForm((current) => ({ ...current, ...next }))}
+                onSubmit={handleSubmitEntry}
+                onVoid={handleVoidEntry}
+              />
+            ) : null}
+
+            {mainTab === 'variance' ? (
+              <VariancePanel
+                periods={periods}
+                selectedPeriodId={selectedPeriodId}
+                variance={variance}
+                onSelectPeriod={setSelectedPeriodId}
+              />
+            ) : null}
           </main>
         </div>
       </div>
@@ -894,6 +1292,7 @@ export default function App() {
               workspaceName={workspaceName}
               lastSavedAt={lastSavedAt}
               snapshots={snapshots}
+              shareLinks={versionShares}
               onNameChange={setWorkspaceName}
               onSaveSnapshot={handleSaveSnapshot}
               onPublishRelease={handlePublishRelease}
@@ -903,6 +1302,9 @@ export default function App() {
               onLoadSnapshot={handleLoadSnapshot}
               onDeleteSnapshot={handleDeleteSnapshot}
               onPromoteToRelease={handlePromoteSnapshot}
+              onCreateShare={handleCreateShareLink}
+              onCopyShareLink={handleCopyShareLink}
+              onRevokeShare={handleRevokeShareLink}
               onClose={() => setWorkspaceOpen(false)}
             />
           </div>
