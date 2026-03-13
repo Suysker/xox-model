@@ -32,9 +32,6 @@ export function WorkspacePanel(props: {
         <div className="min-w-0">
           <p className="text-xs font-semibold uppercase tracking-[0.24em] text-stone-500">工作区</p>
           <h2 className="mt-2 text-2xl font-bold text-stone-950">版本与草稿流转</h2>
-          <p className="mt-2 text-sm leading-6 text-stone-600">
-            在这里保存快照、发布版本、导入导出，以及从历史版本回滚。
-          </p>
         </div>
         <button
           type="button"
@@ -78,7 +75,7 @@ export function WorkspacePanel(props: {
 
           <SnapshotSection
             title="已发布版本"
-            emptyText="还没有发布版本。需要锁定预算基线时请先发布。"
+            emptyText="还没有发布版本。"
           >
             {releaseSnapshots.map((snapshot) => (
               <SnapshotCard
@@ -100,7 +97,7 @@ export function WorkspacePanel(props: {
 
           <SnapshotSection
             title="工作快照"
-            emptyText="还没有工作快照。进行高风险修改前建议先保存一个快照。"
+            emptyText="还没有工作快照。"
           >
             {normalSnapshots.map((snapshot) => (
               <SnapshotCard
@@ -247,9 +244,7 @@ function ShareCard(props: {
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-stone-500">分享链接</p>
-          <p className="mt-1 text-sm text-stone-600">
-            {props.share ? '当前版本已有只读公开分享链接。' : '为当前发布版创建只读公开分享链接。'}
-          </p>
+          <p className="mt-1 text-sm text-stone-600">{props.share ? '当前版本已启用公开只读链接。' : '为当前发布版创建公开只读链接。'}</p>
           {props.share ? (
             <p className="mt-2 truncate rounded-full border border-stone-900/10 bg-white px-3 py-1 text-xs font-medium text-stone-700">
               {props.share.sharePath}

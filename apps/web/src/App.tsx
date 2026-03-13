@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState, type ChangeEvent } from 'react'
-import { BarChart3, LayoutDashboard, LineChart, LogOut, ReceiptText, Settings2, type LucideIcon } from 'lucide-react'
+import { BarChart3, LayoutDashboard, LineChart, ReceiptText, Settings2, type LucideIcon } from 'lucide-react'
 import { MemberContributionList } from './components/analysis/MemberContributionList'
 import { AuthScreen } from './components/auth/AuthScreen'
 import { type ChartMetricKey } from './components/analysis/MetricBandChart'
 import { MonthlyResultsTable } from './components/analysis/MonthlyResultsTable'
 import { OverviewPanel } from './components/analysis/OverviewPanel'
 import { ScenarioDeck } from './components/analysis/ScenarioDeck'
-import { BookkeepingPanel } from './components/bookkeeping/BookkeepingPanel'
+import { BookkeepingPanel, type BookkeepingSubmitPayload } from './components/bookkeeping/BookkeepingPanel'
 import { NoticeBanner, type NoticeTone } from './components/common/NoticeBanner'
 import { Panel, SectionTitle } from './components/common/ui'
 import { CostWorkbench } from './components/inputs/CostWorkbench'
@@ -18,10 +18,10 @@ import { TeamMembersTable } from './components/inputs/TeamMembersTable'
 import { TimelineEditor } from './components/inputs/TimelineEditor'
 import { ProductHero } from './components/layout/ProductHero'
 import { SidebarNav } from './components/layout/SidebarNav'
+import { WorkspaceLoadingScreen } from './components/layout/WorkspaceLoadingScreen'
 import { SharedVersionScreen } from './components/share/SharedVersionScreen'
 import { VariancePanel } from './components/variance/VariancePanel'
 import { WorkspacePanel } from './components/workspace/WorkspacePanel'
-import { WorkspaceToolbar } from './components/workspace/WorkspaceToolbar'
 import { useWorkspace } from './hooks/useWorkspace'
 import { api, type AuthUser, type EntryResponse, type PeriodResponse, type SubjectResponse, type VarianceResponse } from './lib/api'
 import {
@@ -158,6 +158,10 @@ function roundTo(value: number, precision: number) {
   return Math.round(safeValue * factor) / factor
 }
 
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error)
+}
+
 function normalizeRevenueNumber(key: RevenueNumberKey, value: number) {
   if (key === 'events') {
     return Math.max(0, Math.round(Number.isFinite(value) ? value : 0))
@@ -259,19 +263,22 @@ export default function App() {
   const [entries, setEntries] = useState<EntryResponse[]>([])
   const [variance, setVariance] = useState<VarianceResponse | null>(null)
   const [ledgerBusy, setLedgerBusy] = useState(false)
-  const [entryForm, setEntryForm] = useState({
-    direction: 'income' as 'income' | 'expense',
-    amount: 0,
-    counterparty: '',
-    description: '',
-    allocations: [{ subjectKey: '', amount: 0 }],
-  })
   const [workspaceOpen, setWorkspaceOpen] = useState(false)
   const [banner, setBanner] = useState<BannerState | null>(null)
 
   const projection = projectModel(config)
   const selectedScenarioResult =
     projection.scenarios.find((scenario) => scenario.key === selectedScenario) ?? projection.scenarios[0]
+  const selectedPeriod = periods.find((period) => period.id === selectedPeriodId) ?? null
+  const selectedBaselineSnapshot =
+    selectedPeriod?.baselineVersionId ? snapshots.find((snapshot) => snapshot.id === selectedPeriod.baselineVersionId) ?? null : null
+  const baselineProjection = selectedBaselineSnapshot ? projectModel(selectedBaselineSnapshot.config) : null
+  const baselineScenarioResult =
+    baselineProjection?.scenarios.find((scenario) => scenario.key === 'base') ?? baselineProjection?.scenarios[0] ?? null
+  const selectedBaselineMonthResult =
+    selectedPeriod && baselineScenarioResult
+      ? baselineScenarioResult.months.find((month) => month.monthIndex === selectedPeriod.monthIndex) ?? null
+      : null
 
   async function refreshPeriods() {
     const nextPeriods = await api.listPeriods()
@@ -414,77 +421,80 @@ export default function App() {
   }
 
   async function handleLogout() {
-    await api.logout()
-    setCurrentUser(null)
-    setAuthState('unauthenticated')
-    setWorkspaceOpen(false)
+    try {
+      await api.logout()
+      setCurrentUser(null)
+      setAuthState('unauthenticated')
+      setWorkspaceOpen(false)
+      setBanner(null)
+    } catch (logoutError) {
+      setBanner({ tone: 'error', message: getErrorMessage(logoutError) })
+    }
   }
 
   async function handleCancelAccount() {
-    await api.cancelAccount()
-    setCurrentUser(null)
-    setAuthState('unauthenticated')
-    setWorkspaceOpen(false)
-  }
+    const confirmed = window.confirm('注销账号后，当前账号的全部会话都会失效。确认继续吗？')
 
-  async function handleSubmitEntry() {
-    if (!selectedPeriodId || entryForm.amount <= 0 || entryForm.allocations.length === 0) {
+    if (!confirmed) {
       return
     }
 
-    const allocations = entryForm.allocations
-      .map((allocation) => {
-        const subject = subjects.find((item) => item.subjectKey === allocation.subjectKey)
-        if (!subject || allocation.amount <= 0) {
-          return null
-        }
+    try {
+      await api.cancelAccount()
+      setCurrentUser(null)
+      setAuthState('unauthenticated')
+      setWorkspaceOpen(false)
+      setBanner({ tone: 'info', message: '账号已注销，当前会话已退出。' })
+    } catch (cancelError) {
+      setBanner({ tone: 'error', message: getErrorMessage(cancelError) })
+    }
+  }
 
-        return {
-          subjectKey: subject.subjectKey,
-          subjectName: subject.subjectName,
-          subjectType: subject.subjectType,
-          amount: allocation.amount,
-        }
-      })
-      .filter((allocation): allocation is NonNullable<typeof allocation> => allocation !== null)
+  async function handleSubmitEntry(payload: BookkeepingSubmitPayload) {
+    if (!selectedPeriodId || payload.amount <= 0 || payload.allocations.length === 0) {
+      return false
+    }
 
-    const allocationTotal = allocations.reduce((sum, allocation) => sum + allocation.amount, 0)
+    const allocations = payload.allocations
 
-    if (allocations.length !== entryForm.allocations.length || Math.abs(allocationTotal - entryForm.amount) >= 0.005) {
+    if (Math.abs(allocations.reduce((sum, allocation) => sum + allocation.amount, 0) - payload.amount) >= 0.005) {
       setBanner({ tone: 'error', message: '分录金额必须与分摊合计一致。' })
-      return
+      return false
     }
 
     setLedgerBusy(true)
     try {
       await api.createEntry({
         ledgerPeriodId: selectedPeriodId,
-        direction: entryForm.direction,
-        amount: entryForm.amount,
+        direction: payload.direction,
+        amount: payload.amount,
         allocations,
-        ...(entryForm.counterparty ? { counterparty: entryForm.counterparty } : {}),
-        ...(entryForm.description ? { description: entryForm.description } : {}),
-      })
-
-      setEntryForm({
-        direction: entryForm.direction,
-        amount: 0,
-        counterparty: '',
-        description: '',
-        allocations: [{ subjectKey: '', amount: 0 }],
+        ...(payload.counterparty ? { counterparty: payload.counterparty } : {}),
+        ...(payload.description ? { description: payload.description } : {}),
+        ...(payload.relatedEntityType ? { relatedEntityType: payload.relatedEntityType } : {}),
+        ...(payload.relatedEntityId ? { relatedEntityId: payload.relatedEntityId } : {}),
+        ...(payload.relatedEntityName ? { relatedEntityName: payload.relatedEntityName } : {}),
       })
 
       await refreshPeriods()
       await refreshSelectedPeriodData(selectedPeriodId)
       setBanner({ tone: 'success', message: '实际分录已过账。' })
+      return true
     } catch (entryError) {
       setBanner({ tone: 'error', message: entryError instanceof Error ? entryError.message : String(entryError) })
+      return false
     } finally {
       setLedgerBusy(false)
     }
   }
 
   async function handleVoidEntry(entryId: string) {
+    const confirmed = window.confirm('作废后这笔分录会保留审计记录，但不会继续参与预实分析。确认继续吗？')
+
+    if (!confirmed) {
+      return false
+    }
+
     setLedgerBusy(true)
     try {
       await api.voidEntry(entryId)
@@ -511,6 +521,16 @@ export default function App() {
       return
     }
 
+    const confirmed = window.confirm(
+      currentPeriod.status === 'locked'
+        ? `确认解锁 ${currentPeriod.monthLabel} 吗？解锁后可以继续修改已过账记录。`
+        : `确认锁定 ${currentPeriod.monthLabel} 吗？锁定后将禁止新增、作废和修改分录。`,
+    )
+
+    if (!confirmed) {
+      return
+    }
+
     setLedgerBusy(true)
     try {
       if (currentPeriod.status === 'locked') {
@@ -533,12 +553,24 @@ export default function App() {
     return <SharedVersionScreen shareToken={sharedToken} />
   }
 
+  if (authState === 'loading') {
+    return <WorkspaceLoadingScreen title="正在恢复登录状态" description="稍等片刻，我们正在恢复你的会话并连接工作区。" />
+  }
+
   if (authState !== 'authenticated') {
-    return <AuthScreen loading={authBusy || authState === 'loading'} error={authError} onLogin={handleLogin} onRegister={handleRegister} />
+    return (
+      <AuthScreen
+        loading={authBusy}
+        error={authError}
+        onLogin={handleLogin}
+        onRegister={handleRegister}
+        onClearError={() => setAuthError(null)}
+      />
+    )
   }
 
   if (workspaceLoading) {
-    return <AuthScreen loading error={null} onLogin={handleLogin} onRegister={handleRegister} />
+    return <WorkspaceLoadingScreen title="正在加载工作区" description="测算草稿、版本和账务基线正在同步，请稍等。" />
   }
 
   if (!selectedScenarioResult) {
@@ -841,48 +873,96 @@ export default function App() {
   }
 
   async function handleSaveSnapshot() {
-    await saveSnapshot()
-    setBanner({ tone: 'success', message: '已保存当前草稿快照。' })
+    try {
+      await saveSnapshot()
+      setBanner({ tone: 'success', message: '已保存当前草稿快照。' })
+    } catch (saveError) {
+      setBanner({ tone: 'error', message: getErrorMessage(saveError) })
+    }
   }
 
   async function handlePublishRelease() {
-    await publishRelease()
-    await refreshPeriods()
-    setBanner({ tone: 'success', message: '已发布当前版本，后续可以作为基线继续试算。' })
+    try {
+      await publishRelease()
+      await refreshPeriods()
+      setBanner({ tone: 'success', message: '已发布当前版本，后续可以继续基于草稿试算。' })
+    } catch (publishError) {
+      setBanner({ tone: 'error', message: getErrorMessage(publishError) })
+    }
   }
 
   async function handleLoadSnapshot(id: string) {
     const snapshot = findSnapshot(snapshots, id)
 
-    const draft = await loadSnapshot(id)
-    setMainTab('dashboard')
-    setDashboardTab('overview')
-    setSelectedMonthId(draft.config.months[0]?.id ?? snapshot?.config.months[0]?.id ?? '')
-    setBanner({
-      tone: 'info',
-      message: snapshot ? `已加载版本：${snapshot.name}` : '已加载所选版本。',
-    })
+    const confirmed = window.confirm(
+      snapshot
+        ? `回滚会用“${snapshot.name}”覆盖当前草稿。确认继续吗？`
+        : '回滚会覆盖当前草稿。确认继续吗？',
+    )
+
+    if (!confirmed) {
+      return
+    }
+
+    try {
+      const draft = await loadSnapshot(id)
+      setMainTab('dashboard')
+      setDashboardTab('overview')
+      setSelectedMonthId(draft.config.months[0]?.id ?? snapshot?.config.months[0]?.id ?? '')
+      setBanner({
+        tone: 'info',
+        message: snapshot ? `已回滚到版本：${snapshot.name}` : '已回滚到所选版本。',
+      })
+    } catch (loadError) {
+      setBanner({ tone: 'error', message: getErrorMessage(loadError) })
+    }
   }
 
   async function handleDeleteSnapshot(id: string) {
     const snapshot = findSnapshot(snapshots, id)
 
-    await deleteSnapshot(id)
-    setBanner({
-      tone: 'info',
-      message: snapshot ? `已删除版本：${snapshot.name}` : '已删除所选版本。',
-    })
+    const confirmed = window.confirm(
+      snapshot ? `确认删除版本“${snapshot.name}”吗？删除后无法恢复。` : '确认删除当前版本吗？删除后无法恢复。',
+    )
+
+    if (!confirmed) {
+      return
+    }
+
+    try {
+      await deleteSnapshot(id)
+      setBanner({
+        tone: 'info',
+        message: snapshot ? `已删除版本：${snapshot.name}` : '已删除所选版本。',
+      })
+    } catch (deleteError) {
+      setBanner({ tone: 'error', message: getErrorMessage(deleteError) })
+    }
   }
 
   async function handlePromoteSnapshot(id: string) {
     const snapshot = findSnapshot(snapshots, id)
 
-    await promoteSnapshotToRelease(id)
-    await refreshPeriods()
-    setBanner({
-      tone: 'success',
-      message: snapshot ? `已将“${snapshot.name}”升级为发布版本。` : '已升级为发布版本。',
-    })
+    const confirmed = window.confirm(
+      snapshot
+        ? `升级会先将“${snapshot.name}”恢复为当前草稿，再发布为新版本。确认继续吗？`
+        : '升级会覆盖当前草稿并发布为新版本。确认继续吗？',
+    )
+
+    if (!confirmed) {
+      return
+    }
+
+    try {
+      await promoteSnapshotToRelease(id)
+      await refreshPeriods()
+      setBanner({
+        tone: 'success',
+        message: snapshot ? `已将“${snapshot.name}”升级为发布版本。` : '已升级为发布版本。',
+      })
+    } catch (promoteError) {
+      setBanner({ tone: 'error', message: getErrorMessage(promoteError) })
+    }
   }
 
   async function handleCreateShareLink(id: string) {
@@ -890,7 +970,7 @@ export default function App() {
       await createShareLink(id)
       setBanner({ tone: 'success', message: '已为当前发布版创建分享链接。' })
     } catch (shareError) {
-      setBanner({ tone: 'error', message: shareError instanceof Error ? shareError.message : String(shareError) })
+      setBanner({ tone: 'error', message: getErrorMessage(shareError) })
     }
   }
 
@@ -913,11 +993,17 @@ export default function App() {
   }
 
   async function handleRevokeShareLink(id: string) {
+    const confirmed = window.confirm('撤销后，旧分享链接会立即失效。确认继续吗？')
+
+    if (!confirmed) {
+      return
+    }
+
     try {
       await revokeShareLink(id)
       setBanner({ tone: 'info', message: '分享链接已撤销。' })
     } catch (shareError) {
-      setBanner({ tone: 'error', message: shareError instanceof Error ? shareError.message : String(shareError) })
+      setBanner({ tone: 'error', message: getErrorMessage(shareError) })
     }
   }
 
@@ -946,7 +1032,7 @@ export default function App() {
       const parsed = parseWorkspaceBundle(raw)
 
       if (!parsed) {
-        setBanner({ tone: 'error', message: '导入失败：文件格式不正确或不是工作区导出文件。' })
+        setBanner({ tone: 'error', message: '导入失败：文件格式不正确，或不是工作区导出文件。' })
         return
       }
 
@@ -963,12 +1049,22 @@ export default function App() {
   }
 
   async function handleResetWorkspace() {
-    await resetWorkspace()
-    setMainTab('inputs')
-    setInputsTab('revenue')
-    setDashboardTab('overview')
-    setWorkspaceOpen(false)
-    setBanner({ tone: 'info', message: '已重置为新的草稿工作区。' })
+    const confirmed = window.confirm('重置会清空当前草稿并恢复默认模型。确认继续吗？')
+
+    if (!confirmed) {
+      return
+    }
+
+    try {
+      await resetWorkspace()
+      setMainTab('inputs')
+      setInputsTab('revenue')
+      setDashboardTab('overview')
+      setWorkspaceOpen(false)
+      setBanner({ tone: 'info', message: '已重置为新的草稿工作区。' })
+    } catch (resetError) {
+      setBanner({ tone: 'error', message: getErrorMessage(resetError) })
+    }
   }
 
   function handleApplyTemplateToAll(section: TimelineSection) {
@@ -1002,35 +1098,18 @@ export default function App() {
           </div>
         ) : null}
 
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-[24px] border border-stone-900/10 bg-white/80 px-4 py-3 shadow-[0_12px_35px_rgba(70,52,17,0.05)]">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-stone-500">账号</p>
-            <p className="mt-1 text-sm font-semibold text-stone-900">{currentUser?.displayName ?? currentUser?.email}</p>
-            <p className="text-xs text-stone-500">{currentUser?.email}</p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => void handleLogout()}
-              className="inline-flex items-center gap-2 rounded-full border border-stone-900/10 bg-white px-4 py-2 text-sm font-semibold text-stone-700"
-            >
-              <LogOut className="h-4 w-4" />
-              退出登录
-            </button>
-            <button
-              type="button"
-              onClick={() => void handleCancelAccount()}
-              className="rounded-full border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-700"
-            >
-              注销账号
-            </button>
-          </div>
-        </div>
-
-        <div className="grid gap-4 xl:grid-cols-[260px_minmax(0,1fr)]">
+        <div className="grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)]">
           <SidebarNav
             title="地下偶像经营工作台"
-            subtitle="左侧切换分析和输入，右上角管理快照、发布版本和导入导出。"
+            subtitle="把测算、发布、记账和预实分析收在同一套经营工作流里。"
+            workspaceName={workspaceName}
+            lastSavedAt={lastSavedAt}
+            snapshotCount={snapshots.length}
+            workspaceOpen={workspaceOpen}
+            currentUser={currentUser}
+            onOpenWorkspace={() => setWorkspaceOpen((current) => !current)}
+            onLogout={() => void handleLogout()}
+            onCancelAccount={() => void handleCancelAccount()}
             mainItems={mainTabs}
             mainValue={mainTab}
             onMainChange={setMainTab}
@@ -1298,43 +1377,8 @@ export default function App() {
                 subjects={subjects}
                 entries={entries}
                 loading={ledgerBusy}
-                form={entryForm}
+                baselineMonthResult={selectedBaselineMonthResult}
                 onSelectPeriod={setSelectedPeriodId}
-                onFormChange={(next) =>
-                  setEntryForm((current) => {
-                    const nextDirection = next.direction ?? current.direction
-                    return {
-                      ...current,
-                      ...next,
-                      allocations:
-                        next.direction && next.direction !== current.direction ? [{ subjectKey: '', amount: 0 }] : current.allocations,
-                      direction: nextDirection,
-                    }
-                  })
-                }
-                onAllocationChange={(index, next) =>
-                  setEntryForm((current) => ({
-                    ...current,
-                    allocations: current.allocations.map((allocation, allocationIndex) =>
-                      allocationIndex === index ? { ...allocation, ...next } : allocation,
-                    ),
-                  }))
-                }
-                onAddAllocation={() =>
-                  setEntryForm((current) => ({
-                    ...current,
-                    allocations: [...current.allocations, { subjectKey: '', amount: 0 }],
-                  }))
-                }
-                onRemoveAllocation={(index) =>
-                  setEntryForm((current) => ({
-                    ...current,
-                    allocations:
-                      current.allocations.length === 1
-                        ? current.allocations
-                        : current.allocations.filter((_, allocationIndex) => allocationIndex !== index),
-                  }))
-                }
                 onSubmit={handleSubmitEntry}
                 onVoid={handleVoidEntry}
                 onToggleLock={handleTogglePeriodLock}
@@ -1351,14 +1395,6 @@ export default function App() {
             ) : null}
           </main>
         </div>
-      </div>
-
-      <div className="fixed right-4 top-4 z-[60] md:right-6 md:top-5">
-        <WorkspaceToolbar
-          snapshotCount={snapshots.length}
-          libraryOpen={workspaceOpen}
-          onToggleLibrary={() => setWorkspaceOpen((current) => !current)}
-        />
       </div>
 
       {workspaceOpen ? (

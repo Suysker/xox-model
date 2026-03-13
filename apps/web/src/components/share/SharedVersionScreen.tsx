@@ -1,16 +1,37 @@
-import { Globe2, LockKeyhole, Table2 } from 'lucide-react'
+import { Globe2, LockKeyhole } from 'lucide-react'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { MemberContributionList } from '../analysis/MemberContributionList'
+import { type ChartMetricKey } from '../analysis/MetricBandChart'
+import { MonthlyResultsTable } from '../analysis/MonthlyResultsTable'
+import { OverviewPanel } from '../analysis/OverviewPanel'
+import { ScenarioDeck } from '../analysis/ScenarioDeck'
+import { Panel, SectionTitle, SegmentTabs, StatCard } from '../common/ui'
+import { SharedInputsPanel } from './SharedInputsPanel'
 import type { PublicShareResponse } from '../../lib/api'
 import { api } from '../../lib/api'
-import { cx, formatCurrency, formatDateTime, formatPaybackMonths, formatPercent } from '../../lib/format'
-import { getScenarioLabel } from '../../lib/scenarios'
+import { formatCurrency, formatDateTime, formatPaybackMonths, formatPercent } from '../../lib/format'
 import type { ScenarioKey } from '../../types'
-import { Panel, SectionTitle, SegmentTabs, StatCard } from '../common/ui'
+
+type SharedView = 'analysis' | 'months' | 'members' | 'inputs'
 
 const scenarioTabs: Array<{ value: ScenarioKey; label: string }> = [
   { value: 'pessimistic', label: '悲观' },
   { value: 'base', label: '基准' },
   { value: 'optimistic', label: '乐观' },
+]
+
+const viewTabs: Array<{ value: SharedView; label: string }> = [
+  { value: 'analysis', label: '经营分析' },
+  { value: 'months', label: '月度结果' },
+  { value: 'members', label: '成员表现' },
+  { value: 'inputs', label: '模型输入' },
+]
+
+const chartMetricTabs: Array<{ value: ChartMetricKey; label: string }> = [
+  { value: 'cash', label: '累计现金' },
+  { value: 'profit', label: '利润' },
+  { value: 'revenue', label: '收入' },
+  { value: 'cost', label: '总成本' },
 ]
 
 export function SharedVersionScreen(props: {
@@ -20,6 +41,9 @@ export function SharedVersionScreen(props: {
   const [error, setError] = useState<string | null>(null)
   const [share, setShare] = useState<PublicShareResponse | null>(null)
   const [selectedScenario, setSelectedScenario] = useState<ScenarioKey>('base')
+  const [selectedView, setSelectedView] = useState<SharedView>('analysis')
+  const [selectedMonthId, setSelectedMonthId] = useState('')
+  const [chartMetric, setChartMetric] = useState<ChartMetricKey>('cash')
 
   useEffect(() => {
     let active = true
@@ -52,23 +76,37 @@ export function SharedVersionScreen(props: {
     }
   }, [props.shareToken])
 
-  const scenario =
-    share?.result.scenarios.find((item) => item.key === selectedScenario) ?? share?.result.scenarios[0] ?? null
+  const scenarios = share?.result.scenarios ?? []
+  const scenario = scenarios.find((item) => item.key === selectedScenario) ?? scenarios[0] ?? null
+  const selectedMonthResult = scenario?.months.find((month) => month.monthId === selectedMonthId) ?? scenario?.months[0] ?? null
+  const selectedMonthPlan = share?.config.months.find((month) => month.id === selectedMonthResult?.monthId) ?? share?.config.months[0] ?? null
 
-  const assumptionRows = useMemo(() => {
-    if (!share) {
+  useEffect(() => {
+    if (!scenario) {
+      return
+    }
+
+    if (!scenario.months.some((month) => month.monthId === selectedMonthId)) {
+      setSelectedMonthId(scenario.months[0]?.monthId ?? '')
+    }
+  }, [scenario, selectedMonthId])
+
+  const heroStats = useMemo(() => {
+    if (!share || !scenario) {
       return []
     }
 
+    const totalInvestment = share.config.shareholders.reduce((sum, shareholder) => sum + shareholder.investmentAmount, 0)
+
     return [
-      { label: '规划周期', value: `${share.config.planning.horizonMonths} 个月` },
-      { label: '股东数', value: `${share.config.shareholders.length}` },
-      { label: '成员数', value: `${share.config.teamMembers.length}` },
-      { label: '员工数', value: `${share.config.employees.length}` },
-      { label: '线下单价', value: formatCurrency(share.config.operating.offlineUnitPrice) },
-      { label: '线上单价', value: formatCurrency(share.config.operating.onlineUnitPrice) },
+      { label: '工作区', value: share.workspaceName },
+      { label: '版本', value: `#${share.versionNo}` },
+      { label: '发布时间', value: formatDateTime(share.createdAt) },
+      { label: '总投资', value: formatCurrency(totalInvestment) },
+      { label: '投资回报率', value: formatPercent(scenario.roi) },
+      { label: '回本周期', value: formatPaybackMonths(scenario.paybackMonthIndex) },
     ]
-  }, [share])
+  }, [scenario, share])
 
   if (loading) {
     return (
@@ -80,7 +118,7 @@ export function SharedVersionScreen(props: {
     )
   }
 
-  if (!share || !scenario) {
+  if (!share || !scenario || !selectedMonthResult || !selectedMonthPlan) {
     return (
       <ShareShell>
         <Panel>
@@ -97,13 +135,13 @@ export function SharedVersionScreen(props: {
 
   return (
     <ShareShell>
-      <div className="grid gap-6">
+      <div className="grid gap-4">
         <Panel className="overflow-hidden bg-[linear-gradient(135deg,rgba(28,25,23,0.96),rgba(68,64,60,0.94))] text-white">
           <SectionTitle
             icon={Globe2}
             eyebrow="分享版本"
             title={share.versionName}
-            description="该链接展示的是只读发布版测算。草稿编辑、记账操作和版本管理仍保持私有。"
+            description="只读查看发布版测算、经营分析和模型输入。"
             dark
             aside={
               <a
@@ -115,92 +153,52 @@ export function SharedVersionScreen(props: {
             }
           />
 
-          <div className="mt-6 grid gap-3 md:grid-cols-4">
-            <StatCard label="工作区" value={share.workspaceName} dark />
-            <StatCard label="版本" value={`#${share.versionNo}`} dark />
-            <StatCard label="发布时间" value={formatDateTime(share.createdAt)} dark />
-            <StatCard label="分享时间" value={formatDateTime(share.sharedAt)} dark />
-          </div>
-        </Panel>
-
-        <Panel>
-          <SectionTitle
-            icon={LockKeyhole}
-            eyebrow="测算假设"
-            title="已发布测算基线"
-            description="访问者看到的是发布时冻结的配置和结果。"
-            aside={<SegmentTabs value={selectedScenario} items={scenarioTabs} onChange={setSelectedScenario} compact />}
-          />
-
-          <div className="mt-5 grid gap-3 md:grid-cols-3 xl:grid-cols-6">
-            {assumptionRows.map((row) => (
-              <StatCard key={row.label} label={row.label} value={row.value} />
+          <div className="mt-6 grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+            {heroStats.map((item) => (
+              <StatCard key={item.label} label={item.label} value={item.value} dark />
             ))}
           </div>
         </Panel>
 
         <Panel>
-          <SectionTitle
-            icon={Globe2}
-            eyebrow="场景"
-            title={`${getScenarioLabel(scenario.key, scenario.label)}场景总览`}
-            description="分享页始终只读，并且永远读取发布时冻结的结果载荷。"
-          />
-
-          <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-            <StatCard label="营收" value={formatCurrency(scenario.grossSales)} />
-            <StatCard label="成本" value={formatCurrency(scenario.totalCost)} />
-            <StatCard label="利润" value={formatCurrency(scenario.totalProfit)} />
-            <StatCard label="期末现金" value={formatCurrency(scenario.netCashAfterInvestment)} />
-            <StatCard label="投资回报率" value={formatPercent(scenario.roi)} />
-          </div>
-
-          <div className="mt-5 grid gap-3 md:grid-cols-3">
-            <StatCard label="回本周期" value={formatPaybackMonths(scenario.paybackMonthIndex)} />
-            <StatCard label="总场次" value={`${scenario.totalEvents}`} />
-            <StatCard label="单场平均张数" value={`${scenario.averageUnitsPerEvent.toFixed(1)}`} />
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+            <SegmentTabs value={selectedView} items={viewTabs} onChange={setSelectedView} />
+            <SegmentTabs value={selectedScenario} items={scenarioTabs} onChange={setSelectedScenario} compact />
           </div>
         </Panel>
 
-        <Panel>
-          <SectionTitle
-            icon={Table2}
-            eyebrow="月度明细"
-            title="发布版月度结果"
-            description="收入、成本、利润和累计现金都固定为该版本发布时的结果。"
-          />
+        {selectedView === 'analysis' ? (
+          <>
+            <ScenarioDeck scenarios={share.result.scenarios} selectedKey={selectedScenario} onSelect={setSelectedScenario} />
+            <OverviewPanel
+              scenarios={share.result.scenarios}
+              selectedScenarioResult={scenario}
+              chartMetric={chartMetric}
+              chartMetricTabs={chartMetricTabs}
+              onChartMetricChange={setChartMetric}
+              months={share.config.months}
+              selectedMonthPlan={selectedMonthPlan}
+              selectedMonthResult={selectedMonthResult}
+              onSelectMonth={setSelectedMonthId}
+            />
+          </>
+        ) : null}
 
-          <div className="mt-5 overflow-hidden rounded-[24px] border border-stone-900/10">
-            <table className="w-full table-fixed border-collapse text-sm">
-              <thead className="bg-stone-100/90 text-stone-700">
-                <tr className="border-b border-stone-900/10">
-                  <HeaderCell>月份</HeaderCell>
-                  <HeaderCell>场次</HeaderCell>
-                  <HeaderCell>营收</HeaderCell>
-                  <HeaderCell>成本</HeaderCell>
-                  <HeaderCell>利润</HeaderCell>
-                  <HeaderCell>累计现金</HeaderCell>
-                </tr>
-              </thead>
-              <tbody>
-                {scenario.months.map((month) => (
-                  <tr key={month.monthId} className="border-b border-stone-900/10 last:border-none">
-                    <BodyCell className="font-semibold text-stone-950">{month.label}</BodyCell>
-                    <BodyCell>{month.events}</BodyCell>
-                    <BodyCell>{formatCurrency(month.grossSales)}</BodyCell>
-                    <BodyCell>{formatCurrency(month.totalCost)}</BodyCell>
-                    <BodyCell className={month.monthlyProfit >= 0 ? 'font-semibold text-emerald-700' : 'font-semibold text-rose-700'}>
-                      {formatCurrency(month.monthlyProfit)}
-                    </BodyCell>
-                    <BodyCell className={month.cumulativeCash >= 0 ? 'font-semibold text-emerald-700' : 'font-semibold text-stone-700'}>
-                      {formatCurrency(month.cumulativeCash)}
-                    </BodyCell>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Panel>
+        {selectedView === 'months' ? (
+          <MonthlyResultsTable months={scenario.months} selectedMonthId={selectedMonthId} onSelectMonth={setSelectedMonthId} />
+        ) : null}
+
+        {selectedView === 'members' ? (
+          <MemberContributionList months={scenario.months} selectedMonthId={selectedMonthId} onSelectMonth={setSelectedMonthId} />
+        ) : null}
+
+        {selectedView === 'inputs' ? (
+          <SharedInputsPanel
+            config={share.config}
+            selectedScenario={selectedScenario}
+            selectedScenarioResult={scenario}
+          />
+        ) : null}
       </div>
     </ShareShell>
   )
@@ -214,17 +212,4 @@ function ShareShell(props: {
       <main className="mx-auto w-full max-w-7xl">{props.children}</main>
     </div>
   )
-}
-
-function HeaderCell(props: {
-  children: string
-}) {
-  return <th className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-[0.16em]">{props.children}</th>
-}
-
-function BodyCell(props: {
-  children: ReactNode
-  className?: string | undefined
-}) {
-  return <td className={cx('px-4 py-3 text-center text-stone-700', props.className)}>{props.children}</td>
 }

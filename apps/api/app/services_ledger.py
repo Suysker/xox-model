@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .audit import record_audit
+from .domain_types import ModelConfig
 from .models import (
     ActualEntry,
     ActualEntryAllocation,
@@ -62,13 +63,35 @@ def _subjects_for_period_by_key(session: Session, period: LedgerPeriod) -> dict[
     ).all()
     subjects: dict[str, dict] = {}
     for row in rows:
-        subjects[row.subject_key] = {
-            "subjectKey": row.subject_key,
-            "subjectName": row.subject_name,
-            "subjectType": row.subject_type,
-            "subjectGroup": row.subject_group,
-        }
+        subject = subjects.setdefault(
+            row.subject_key,
+            {
+                "subjectKey": row.subject_key,
+                "subjectName": row.subject_name,
+                "subjectType": row.subject_type,
+                "subjectGroup": row.subject_group,
+                "entityType": row.entity_type,
+                "entityId": row.entity_id,
+                "plannedAmount": 0.0,
+            },
+        )
+        subject["plannedAmount"] += row.planned_amount
     return subjects
+
+
+def _related_entity_catalog(session: Session, period: LedgerPeriod) -> dict[str, dict[str, str]]:
+    if period.baseline_version_id is None:
+        return {"teamMember": {}, "employee": {}}
+
+    version = session.get(WorkspaceVersion, period.baseline_version_id)
+    if version is None:
+        return {"teamMember": {}, "employee": {}}
+
+    config = ModelConfig.model_validate(version.payload_json)
+    return {
+        "teamMember": {member.id: member.name for member in config.teamMembers},
+        "employee": {employee.id: employee.name for employee in config.employees},
+    }
 
 
 def _period_summary(session: Session, period: LedgerPeriod) -> dict[str, float]:
@@ -189,6 +212,9 @@ def list_entries(session: Session, workspace: Workspace, period_id: str) -> list
                 "occurredAt": entry.occurred_at,
                 "counterparty": entry.counterparty,
                 "description": entry.description,
+                "relatedEntityType": entry.related_entity_type,
+                "relatedEntityId": entry.related_entity_id,
+                "relatedEntityName": entry.related_entity_name,
                 "status": entry.status,
                 "allocations": [
                     {
@@ -215,6 +241,9 @@ def create_actual_entry(
     occurred_at: datetime,
     counterparty: str | None,
     description: str | None,
+    related_entity_type: str | None,
+    related_entity_id: str | None,
+    related_entity_name: str | None,
     allocations: list[AllocationInput],
     timestamp: datetime,
 ) -> dict:
@@ -231,6 +260,7 @@ def create_actual_entry(
         raise ValueError("Allocations must equal the entry amount")
     expected_subject_type = "revenue" if direction == "income" else "cost"
     available_subjects = _subjects_for_period_by_key(session, period)
+    entity_catalog = _related_entity_catalog(session, period)
     normalized_allocations: list[dict] = []
     totals_by_subject = defaultdict(float)
     for item in allocations:
@@ -250,6 +280,19 @@ def create_actual_entry(
                 "amount": round(subject_amount, 2),
             }
         )
+
+    if any([related_entity_type, related_entity_id, related_entity_name]) and not all([related_entity_type, related_entity_id]):
+        raise ValueError("Related entity selection is incomplete")
+
+    canonical_related_name: str | None = None
+    if related_entity_type and related_entity_id:
+        entity_group = entity_catalog.get(related_entity_type)
+        if entity_group is None:
+            raise ValueError("Unsupported related entity type")
+        canonical_related_name = entity_group.get(related_entity_id)
+        if canonical_related_name is None:
+            raise ValueError("Related entity not found in the baseline version")
+
     entry = ActualEntry(
         workspace_id=workspace.id,
         ledger_period_id=period.id,
@@ -258,6 +301,9 @@ def create_actual_entry(
         occurred_at=occurred_at,
         counterparty=counterparty,
         description=description,
+        related_entity_type=related_entity_type,
+        related_entity_id=related_entity_id,
+        related_entity_name=canonical_related_name or related_entity_name,
         status="posted",
         created_by=actor_id,
         posted_at=timestamp,
@@ -283,7 +329,13 @@ def create_actual_entry(
         actor_id=actor_id,
         entity_type="actual_entry",
         entity_id=entry.id,
-        meta={"ledgerPeriodId": period.id, "direction": direction, "amount": amount},
+        meta={
+            "ledgerPeriodId": period.id,
+            "direction": direction,
+            "amount": amount,
+            "relatedEntityType": related_entity_type,
+            "relatedEntityId": related_entity_id,
+        },
     )
     session.commit()
     return list_entries(session, workspace, period.id)[0]

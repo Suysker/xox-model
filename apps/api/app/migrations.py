@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-from sqlalchemy import select
+from sqlalchemy import inspect, select, text
 
 from .core import build_session_factory, get_settings
 from .models import (
@@ -141,6 +141,19 @@ def run_migrations() -> None:
     db_factory = build_session_factory(settings)
     with db_factory() as session:
         Base.metadata.create_all(bind=session.get_bind())
+        bind = session.get_bind()
+        inspector = inspect(bind)
+
+        actual_entry_columns = {column["name"] for column in inspector.get_columns("actual_entries")}
+        actual_entry_alters = {
+            "related_entity_type": "ALTER TABLE actual_entries ADD COLUMN related_entity_type VARCHAR(32)",
+            "related_entity_id": "ALTER TABLE actual_entries ADD COLUMN related_entity_id VARCHAR(128)",
+            "related_entity_name": "ALTER TABLE actual_entries ADD COLUMN related_entity_name VARCHAR(180)",
+        }
+        for column_name, statement in actual_entry_alters.items():
+            if column_name not in actual_entry_columns:
+                session.execute(text(statement))
+
         changed = False
 
         for workspace in session.scalars(select(Workspace)).all():
@@ -189,6 +202,8 @@ def run_migrations() -> None:
                 changed = True
 
         if changed:
+            session.commit()
+        else:
             session.commit()
 
 

@@ -251,6 +251,9 @@ def create_entry(payload: CreateEntryRequest, session: Session = Depends(get_db)
             occurred_at=payload.occurredAt or utc_now(),
             counterparty=payload.counterparty,
             description=payload.description,
+            related_entity_type=payload.relatedEntityType,
+            related_entity_id=payload.relatedEntityId,
+            related_entity_name=payload.relatedEntityName,
             allocations=payload.allocations,
             timestamp=utc_now(),
         )

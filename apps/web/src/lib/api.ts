@@ -56,6 +56,9 @@ export type SubjectResponse = {
   subjectName: string
   subjectType: 'revenue' | 'cost'
   subjectGroup: string
+  entityType?: string | null
+  entityId?: string | null
+  plannedAmount: number
 }
 
 export type EntryAllocation = {
@@ -73,6 +76,9 @@ export type EntryResponse = {
   occurredAt: string
   counterparty: string | null
   description: string | null
+  relatedEntityType?: 'teamMember' | 'employee' | null
+  relatedEntityId?: string | null
+  relatedEntityName?: string | null
   status: string
   allocations: EntryAllocation[]
 }
@@ -300,6 +306,9 @@ export const api = {
     counterparty?: string
     description?: string
     occurredAt?: string
+    relatedEntityType?: 'teamMember' | 'employee'
+    relatedEntityId?: string
+    relatedEntityName?: string
     allocations: EntryAllocation[]
   }) => apiRequest<EntryResponse>('POST', '/api/v1/ledger/entries', payload),
   voidEntry: (entryId: string) =>

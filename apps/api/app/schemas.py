@@ -79,6 +79,9 @@ class SubjectResponse(BaseModel):
     subjectName: str
     subjectType: str
     subjectGroup: str
+    entityType: str | None = None
+    entityId: str | None = None
+    plannedAmount: float = 0
 
 
 class AllocationInput(BaseModel):
@@ -95,6 +98,9 @@ class CreateEntryRequest(BaseModel):
     occurredAt: datetime | None = None
     counterparty: str | None = None
     description: str | None = None
+    relatedEntityType: Literal["teamMember", "employee"] | None = None
+    relatedEntityId: str | None = None
+    relatedEntityName: str | None = None
     allocations: list[AllocationInput]
 
 
@@ -106,6 +112,9 @@ class EntryResponse(BaseModel):
     occurredAt: datetime
     counterparty: str | None
     description: str | None
+    relatedEntityType: str | None = None
+    relatedEntityId: str | None = None
+    relatedEntityName: str | None = None
     status: str
     allocations: list[AllocationInput]
 
