@@ -5,14 +5,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .api import router
 from .core import build_session_factory, get_settings
-from .models import Base
+from .migrations import run_migrations
 
 
 def create_app() -> FastAPI:
     settings = get_settings()
     db_factory = build_session_factory(settings)
-    with db_factory() as session:
-        Base.metadata.create_all(bind=session.get_bind())
+    run_migrations()
 
     app = FastAPI(title="xox API", version="0.1.0")
     app.state.settings = settings

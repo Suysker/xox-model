@@ -3,6 +3,22 @@ import { Panel, SectionTitle } from '../common/ui'
 import { formatCurrency, formatPercent } from '../../lib/format'
 import type { PeriodResponse, VarianceResponse } from '../../lib/api'
 
+function SummaryCard(props: { label: string; value: string; tone?: 'neutral' | 'positive' | 'negative' }) {
+  const toneClass =
+    props.tone === 'positive'
+      ? 'text-emerald-700'
+      : props.tone === 'negative'
+        ? 'text-rose-700'
+        : 'text-stone-950'
+
+  return (
+    <div className="rounded-[22px] border border-stone-900/10 bg-stone-50/90 p-4">
+      <p className="text-xs uppercase tracking-[0.18em] text-stone-500">{props.label}</p>
+      <p className={`mt-2 text-lg font-bold ${toneClass}`}>{props.value}</p>
+    </div>
+  )
+}
+
 export function VariancePanel(props: {
   periods: PeriodResponse[]
   selectedPeriodId: string
@@ -14,9 +30,9 @@ export function VariancePanel(props: {
       <Panel>
         <SectionTitle
           icon={BarChart3}
-          eyebrow="Variance"
-          title="Plan vs actual"
-          description="Compare posted actuals with the baseline released version attached to each period."
+          eyebrow="预实分析"
+          title="计划与实际"
+          description="对比当前期间预算基线与已过账实际。"
         />
         <div className="mt-5 flex flex-wrap gap-2">
           {props.periods.map((period) => (
@@ -39,42 +55,59 @@ export function VariancePanel(props: {
       {props.variance ? (
         <>
           <Panel>
-            <div className="grid gap-3 md:grid-cols-4">
-              <div className="rounded-[22px] border border-stone-900/10 bg-stone-50/90 p-4">
-                <p className="text-xs uppercase tracking-[0.18em] text-stone-500">Planned revenue</p>
-                <p className="mt-2 text-lg font-bold text-stone-950">{formatCurrency(props.variance.plannedRevenue)}</p>
-              </div>
-              <div className="rounded-[22px] border border-stone-900/10 bg-stone-50/90 p-4">
-                <p className="text-xs uppercase tracking-[0.18em] text-stone-500">Actual revenue</p>
-                <p className="mt-2 text-lg font-bold text-stone-950">{formatCurrency(props.variance.actualRevenue)}</p>
-              </div>
-              <div className="rounded-[22px] border border-stone-900/10 bg-stone-50/90 p-4">
-                <p className="text-xs uppercase tracking-[0.18em] text-stone-500">Planned cost</p>
-                <p className="mt-2 text-lg font-bold text-stone-950">{formatCurrency(props.variance.plannedCost)}</p>
-              </div>
-              <div className="rounded-[22px] border border-stone-900/10 bg-stone-50/90 p-4">
-                <p className="text-xs uppercase tracking-[0.18em] text-stone-500">Actual cost</p>
-                <p className="mt-2 text-lg font-bold text-stone-950">{formatCurrency(props.variance.actualCost)}</p>
-              </div>
+            <SectionTitle
+              icon={BarChart3}
+              eyebrow="期间"
+              title={props.variance.baselineVersionName ? `基线 ${props.variance.baselineVersionName}` : '差异汇总'}
+              description={`当前期间：${props.variance.monthLabel}`}
+            />
+            <div className="mt-5 grid gap-3 md:grid-cols-4">
+              <SummaryCard label="计划收入" value={formatCurrency(props.variance.plannedRevenue)} />
+              <SummaryCard label="实际收入" value={formatCurrency(props.variance.actualRevenue)} />
+              <SummaryCard label="收入差异" value={formatCurrency(props.variance.revenueVarianceAmount)} tone={props.variance.revenueVarianceAmount >= 0 ? 'positive' : 'negative'} />
+              <SummaryCard label="收入差异率" value={props.variance.revenueVarianceRate === null ? '-' : formatPercent(props.variance.revenueVarianceRate)} tone={props.variance.revenueVarianceRate !== null && props.variance.revenueVarianceRate >= 0 ? 'positive' : props.variance.revenueVarianceRate !== null ? 'negative' : 'neutral'} />
+              <SummaryCard label="计划成本" value={formatCurrency(props.variance.plannedCost)} />
+              <SummaryCard label="实际成本" value={formatCurrency(props.variance.actualCost)} />
+              <SummaryCard label="成本差异" value={formatCurrency(props.variance.costVarianceAmount)} tone={props.variance.costVarianceAmount <= 0 ? 'positive' : 'negative'} />
+              <SummaryCard label="成本差异率" value={props.variance.costVarianceRate === null ? '-' : formatPercent(props.variance.costVarianceRate)} tone={props.variance.costVarianceRate !== null && props.variance.costVarianceRate <= 0 ? 'positive' : props.variance.costVarianceRate !== null ? 'negative' : 'neutral'} />
             </div>
           </Panel>
 
           <Panel>
             <SectionTitle
               icon={BarChart3}
-              eyebrow="Lines"
-              title={props.variance.baselineVersionName ? `Baseline ${props.variance.baselineVersionName}` : 'Variance lines'}
-              description={`Selected period: ${props.variance.monthLabel}`}
+              eyebrow="累计"
+              title="累计差异"
+              description="按期间基线累计到当前期间。"
+            />
+            <div className="mt-5 grid gap-3 md:grid-cols-4">
+              <SummaryCard label="累计计划收入" value={formatCurrency(props.variance.cumulativePlannedRevenue)} />
+              <SummaryCard label="累计实际收入" value={formatCurrency(props.variance.cumulativeActualRevenue)} />
+              <SummaryCard label="累计收入差异" value={formatCurrency(props.variance.cumulativeRevenueVarianceAmount)} tone={props.variance.cumulativeRevenueVarianceAmount >= 0 ? 'positive' : 'negative'} />
+              <SummaryCard label="累计收入差异率" value={props.variance.cumulativeRevenueVarianceRate === null ? '-' : formatPercent(props.variance.cumulativeRevenueVarianceRate)} tone={props.variance.cumulativeRevenueVarianceRate !== null && props.variance.cumulativeRevenueVarianceRate >= 0 ? 'positive' : props.variance.cumulativeRevenueVarianceRate !== null ? 'negative' : 'neutral'} />
+              <SummaryCard label="累计计划成本" value={formatCurrency(props.variance.cumulativePlannedCost)} />
+              <SummaryCard label="累计实际成本" value={formatCurrency(props.variance.cumulativeActualCost)} />
+              <SummaryCard label="累计成本差异" value={formatCurrency(props.variance.cumulativeCostVarianceAmount)} tone={props.variance.cumulativeCostVarianceAmount <= 0 ? 'positive' : 'negative'} />
+              <SummaryCard label="累计成本差异率" value={props.variance.cumulativeCostVarianceRate === null ? '-' : formatPercent(props.variance.cumulativeCostVarianceRate)} tone={props.variance.cumulativeCostVarianceRate !== null && props.variance.cumulativeCostVarianceRate <= 0 ? 'positive' : props.variance.cumulativeCostVarianceRate !== null ? 'negative' : 'neutral'} />
+            </div>
+          </Panel>
+
+          <Panel>
+            <SectionTitle
+              icon={BarChart3}
+              eyebrow="科目明细"
+              title="差异明细"
+              description="行项目汇总必须与上方期间汇总一致。"
             />
             <div className="mt-5 overflow-x-auto">
               <table className="min-w-full border-separate border-spacing-y-2">
                 <thead>
                   <tr className="text-left text-xs uppercase tracking-[0.16em] text-stone-500">
-                    <th className="px-3 py-2">Subject</th>
-                    <th className="px-3 py-2">Planned</th>
-                    <th className="px-3 py-2">Actual</th>
-                    <th className="px-3 py-2">Variance</th>
-                    <th className="px-3 py-2">Variance rate</th>
+                    <th className="px-3 py-2">科目</th>
+                    <th className="px-3 py-2">计划</th>
+                    <th className="px-3 py-2">实际</th>
+                    <th className="px-3 py-2">差异</th>
+                    <th className="px-3 py-2">差异率</th>
                   </tr>
                 </thead>
                 <tbody>

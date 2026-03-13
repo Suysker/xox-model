@@ -87,7 +87,7 @@ export function TimelineEditor(props: {
     <Panel>
       <SectionTitle
         icon={CalendarRange}
-        eyebrow="Inputs"
+        eyebrow="输入"
         title="收入引擎"
       />
 

@@ -61,7 +61,7 @@ export function createStageCostValue(
 
 export function createDefaultStageCostItems() {
   return [
-    createStageCostItem('vj', { name: 'VJ', mode: 'monthly' }),
+    createStageCostItem('vj', { name: '舞台视觉', mode: 'monthly' }),
     createStageCostItem('original-song', { name: '原创', mode: 'monthly' }),
     createStageCostItem('makeup', { name: '化妆', mode: 'perEvent' }),
     createStageCostItem('streaming', { name: '推流', mode: 'perEvent' }),

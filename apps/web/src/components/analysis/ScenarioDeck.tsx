@@ -1,4 +1,5 @@
 import { formatCurrency, formatPaybackMonths, formatPercent } from '../../lib/format'
+import { getScenarioLabel } from '../../lib/scenarios'
 import type { ScenarioKey, ScenarioResult } from '../../types'
 import { cx } from '../../lib/format'
 
@@ -61,7 +62,7 @@ export function ScenarioDeck(props: {
                   scenarioMeta[key].labelClass,
                 )}
               >
-                {scenario.label}
+                {getScenarioLabel(scenario.key, scenario.label)}
               </span>
               <span className="text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">
                 {props.selectedKey === key ? '当前查看' : '点击查看'}
@@ -73,7 +74,7 @@ export function ScenarioDeck(props: {
               <KeyValue label="总利润" value={formatCurrency(scenario.totalProfit)} />
               <KeyValue label="期末现金" value={formatCurrency(scenario.netCashAfterInvestment)} />
               <KeyValue label="回本周期" value={formatPaybackMonths(scenario.paybackMonthIndex)} />
-              <KeyValue label="ROI" value={formatPercent(scenario.roi)} />
+              <KeyValue label="投资回报率" value={formatPercent(scenario.roi)} />
             </div>
           </button>
         )

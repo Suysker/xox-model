@@ -1,6 +1,7 @@
 import { ReceiptText } from 'lucide-react'
 import type { MonthlyPlan, MonthlyScenarioResult, ScenarioKey, ScenarioResult } from '../../types'
 import { cx, formatCompactNumber, formatCurrency, formatDecimal, formatPaybackMonths } from '../../lib/format'
+import { getScenarioLabel } from '../../lib/scenarios'
 import { MetricBandChart, type ChartMetricKey } from './MetricBandChart'
 import { Panel, SectionTitle, StatCard } from '../common/ui'
 
@@ -35,7 +36,7 @@ export function OverviewPanel(props: {
   const scenarioMonthRows = props.scenarios
     .map((scenario) => ({
       key: scenario.key,
-      label: scenario.label,
+      label: getScenarioLabel(scenario.key, scenario.label),
       revenue: scenario.months[selectedMonthIndex]?.grossSales ?? 0,
       cost: scenario.months[selectedMonthIndex]?.totalCost ?? 0,
       profit: scenario.months[selectedMonthIndex]?.monthlyProfit ?? 0,
@@ -48,8 +49,10 @@ export function OverviewPanel(props: {
       <section className="flex h-full flex-col rounded-[28px] border border-stone-900/10 bg-white/88 p-5 shadow-[0_18px_50px_rgba(70,52,17,0.08)] backdrop-blur md:p-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-stone-500">Metrics</p>
-            <h2 className="mt-2 text-2xl font-bold text-stone-950">{props.selectedScenarioResult.label}场景走势</h2>
+            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-stone-500">指标</p>
+            <h2 className="mt-2 text-2xl font-bold text-stone-950">
+              {getScenarioLabel(props.selectedScenarioResult.key, props.selectedScenarioResult.label)}场景走势
+            </h2>
           </div>
 
           <div className="flex flex-col gap-2 lg:items-end">
@@ -76,7 +79,7 @@ export function OverviewPanel(props: {
         <div className="mt-4 rounded-[24px] border border-stone-900/10 bg-stone-50/80 p-4">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">Selected Month</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">当前月份</p>
               <h3 className="mt-1 text-lg font-semibold text-stone-950">{props.selectedMonthPlan.label} 三档对比</h3>
             </div>
             <span className="rounded-full border border-stone-900/10 bg-white px-3 py-1 text-xs font-semibold text-stone-600">
@@ -110,7 +113,7 @@ export function OverviewPanel(props: {
       </section>
 
       <Panel className="flex h-full flex-col">
-        <SectionTitle icon={ReceiptText} eyebrow="Breakdown" title={`${props.selectedMonthPlan.label} 经营明细`} />
+        <SectionTitle icon={ReceiptText} eyebrow="拆解" title={`${props.selectedMonthPlan.label} 经营明细`} />
 
         <div className="mt-4 rounded-[22px] border border-stone-900/10 bg-stone-50/80 p-3">
           <div className="flex items-center justify-between gap-3">

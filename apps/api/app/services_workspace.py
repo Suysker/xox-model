@@ -3,9 +3,11 @@ from __future__ import annotations
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
+from .audit import record_audit
 from .domain_types import ModelConfig
 from .facts import build_forecast_line_items
 from .models import (
+    ForecastMonthFact,
     ForecastLineItemFact,
     LedgerPeriod,
     User,
@@ -62,6 +64,17 @@ def save_draft(
 ) -> WorkspaceDraft:
     draft = get_workspace_draft(session, workspace)
     if draft.revision != revision:
+        record_audit(
+            session,
+            action="workspace.draft_autosave",
+            status="failed",
+            workspace_id=workspace.id,
+            actor_id=actor.id,
+            entity_type="workspace_draft",
+            entity_id=workspace.id,
+            meta={"expectedRevision": revision, "actualRevision": draft.revision, "reason": "revision_conflict"},
+        )
+        session.commit()
         raise ValueError("Draft revision conflict")
     result = project_model(config)
     workspace.name = workspace_name
@@ -77,6 +90,15 @@ def save_draft(
             event_type="draft_autosaved",
             meta_json={"revision": draft.revision},
         )
+    )
+    record_audit(
+        session,
+        action="workspace.draft_autosave",
+        workspace_id=workspace.id,
+        actor_id=actor.id,
+        entity_type="workspace_draft",
+        entity_id=workspace.id,
+        meta={"revision": draft.revision},
     )
     session.commit()
     session.refresh(draft)
@@ -114,7 +136,7 @@ def publish_version(
     version = WorkspaceVersion(
         workspace_id=workspace.id,
         version_no=version_no,
-        name=name or f"{kind.title()} {version_no}",
+        name=name or (f"快照 {version_no}" if kind == "snapshot" else f"发布版 {version_no}"),
         kind=kind,
         note=note,
         baseline_scenario="base",
@@ -126,6 +148,7 @@ def publish_version(
     )
     session.add(version)
     session.flush()
+    forecast_line_items = build_forecast_line_items(config)
     session.add_all(
         [
             ForecastLineItemFact(
@@ -142,7 +165,23 @@ def publish_version(
                 entity_id=fact.entityId,
                 planned_amount=fact.plannedAmount,
             )
-            for fact in build_forecast_line_items(config)
+            for fact in forecast_line_items
+        ]
+    )
+    session.add_all(
+        [
+            ForecastMonthFact(
+                workspace_id=workspace.id,
+                version_id=version.id,
+                scenario_key=scenario.key,
+                month_index=month.monthIndex,
+                month_label=month.label,
+                planned_revenue=month.grossSales,
+                planned_cost=month.totalCost,
+                planned_profit=month.monthlyProfit,
+            )
+            for scenario in result.scenarios
+            for month in scenario.months
         ]
     )
     if kind == "release":
@@ -175,6 +214,15 @@ def publish_version(
             meta_json={"versionId": version.id, "versionNo": version_no},
         )
     )
+    record_audit(
+        session,
+        action=f"workspace.version_{kind}",
+        workspace_id=workspace.id,
+        actor_id=actor.id,
+        entity_type="workspace_version",
+        entity_id=version.id,
+        meta={"versionNo": version_no, "sourceDraftRevision": draft.revision},
+    )
     session.commit()
     session.refresh(version)
     return version
@@ -182,8 +230,10 @@ def publish_version(
 
 def rollback_to_version(session: Session, *, workspace: Workspace, actor: User, version_id: str, timestamp) -> WorkspaceDraft:
     version = session.get(WorkspaceVersion, version_id)
-    if version is None or version.workspace_id != workspace.id:
+    if version is None:
         raise LookupError("Version not found")
+    if version.workspace_id != workspace.id:
+        raise PermissionError("Forbidden")
     draft = get_workspace_draft(session, workspace)
     draft.revision += 1
     draft.config_json = version.payload_json
@@ -198,6 +248,15 @@ def rollback_to_version(session: Session, *, workspace: Workspace, actor: User, 
             meta_json={"versionId": version.id, "revision": draft.revision},
         )
     )
+    record_audit(
+        session,
+        action="workspace.rollback",
+        workspace_id=workspace.id,
+        actor_id=actor.id,
+        entity_type="workspace_version",
+        entity_id=version.id,
+        meta={"draftRevision": draft.revision},
+    )
     session.commit()
     session.refresh(draft)
     return draft
@@ -205,8 +264,10 @@ def rollback_to_version(session: Session, *, workspace: Workspace, actor: User, 
 
 def delete_version(session: Session, *, workspace: Workspace, version_id: str) -> None:
     version = session.get(WorkspaceVersion, version_id)
-    if version is None or version.workspace_id != workspace.id:
+    if version is None:
         raise LookupError("Version not found")
+    if version.workspace_id != workspace.id:
+        raise PermissionError("Forbidden")
     if workspace.active_version_id == version.id:
         raise ValueError("Active release cannot be deleted")
     active_share = session.scalar(
@@ -220,6 +281,15 @@ def delete_version(session: Session, *, workspace: Workspace, version_id: str) -
     linked_period = session.scalar(select(LedgerPeriod).where(LedgerPeriod.baseline_version_id == version.id))
     if linked_period is not None:
         raise ValueError("Version is used by a ledger period")
+    session.execute(delete(ForecastMonthFact).where(ForecastMonthFact.version_id == version.id))
     session.execute(delete(ForecastLineItemFact).where(ForecastLineItemFact.version_id == version.id))
+    record_audit(
+        session,
+        action="workspace.version_deleted",
+        workspace_id=workspace.id,
+        entity_type="workspace_version",
+        entity_id=version.id,
+        meta={"versionNo": version.version_no, "kind": version.kind},
+    )
     session.delete(version)
     session.commit()

@@ -183,6 +183,7 @@ describe('workspace storage bundle', () => {
     const template = parsed?.currentConfig.timelineTemplate
 
     expect(parsed).not.toBeNull()
+    expect(parsed?.currentConfig.stageCostItems.some((item) => item.name === '舞台视觉')).toBe(true)
     expect(parsed?.currentConfig.stageCostItems.some((item) => item.name === '化妆')).toBe(true)
     expect(parsed?.currentConfig.stageCostItems.some((item) => item.name === '团建')).toBe(true)
     expect(parsed?.currentConfig.stageCostItems.some((item) => item.name === '耗材')).toBe(true)

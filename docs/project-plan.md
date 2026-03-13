@@ -1,147 +1,151 @@
-# xox-model Project Plan
+# xox-model 项目规划
 
-## 1. Project Positioning
+## 1. 项目定位
 
-`xox-model` is no longer just a frontend calculator. It is a versioned forecasting and actuals analysis platform with four core product loops:
+`xox-model` 不再只是一个前端测算器，而是一个带版本管理、实际记账和预实分析的平台，围绕四条核心业务闭环展开：
 
-1. `Forecast`: edit a mutable draft, autosave continuously, and publish immutable baseline versions.
-2. `Bookkeeping`: post actual income and expense entries against forecast subjects by period.
-3. `Variance`: compare posted actuals with the baseline release bound to each accounting period.
-4. `Sharing`: expose a read-only public link for an immutable released version.
+1. `测算`：编辑可变草稿、持续自动保存、发布不可变预算版本
+2. `记账`：按期间把实际收入和成本分录挂到预测科目
+3. `预实分析`：按期间把预算基线与实际结果做差异分析
+4. `分享`：把某个不可变发布版通过只读链接对外分享
 
-The design goal is not only to "add a backend", but to keep forecasting data, version data, and ledger data consistent over time.
+目标不是简单“加一个后端”，而是让测算、版本、账务、分析这四类数据在时间维度上保持一致。
 
-## 2. Repository Structure
+## 2. 仓库结构
 
-The repository should stay layered and deployable. Frontend, backend, docs, and infrastructure must not be flattened into the root.
+仓库必须保持分层和可部署，不能把前端、后端、脚本、文档继续平铺到根目录。
 
 ```text
 xox-model/
 ├─ apps/
-│  ├─ web/              # React + Vite client
-│  └─ api/              # FastAPI + SQLAlchemy service
-├─ docs/                # Architecture, project plan, acceptance, operations
+│  ├─ web/              # React + Vite 前端
+│  └─ api/              # FastAPI + SQLAlchemy 后端
+├─ docs/                # 架构、规划、验收、接口、运维文档
 ├─ infra/
-│  └─ scripts/          # Deploy and utility scripts
-├─ .agent/              # Planning and lessons for engineering workflow
-├─ package.json         # Workspace-level frontend orchestration only
+│  └─ scripts/          # 部署与辅助脚本
+├─ .agent/              # 工程计划与 lessons
+├─ package.json         # 前端工作区编排
 └─ README.md
 ```
 
-Recommended long-term expansion paths:
+建议的长期扩展方向：
 
-- `apps/web/src/features/*` for domain-focused frontend modules.
-- `apps/api/app/services/*` or `apps/api/app/modules/*` when backend module count grows.
-- `apps/api/alembic/` when formal migrations are introduced.
-- `tests/e2e/` only if browser automation becomes repo-owned instead of agent-run.
+- `apps/web/src/features/*`：按业务域拆分前端模块
+- `apps/api/app/services/*` 或 `apps/api/app/modules/*`：按领域拆分后端
+- `apps/api/alembic/`：正式数据库迁移体系
+- `tests/e2e/`：如果后续把浏览器自动化固化到仓库中
 
-## 3. Runtime Architecture
+## 3. 运行时架构
 
-### Frontend
+### 前端
 
-- Stack: `React 19 + TypeScript + Vite`
-- Responsibility:
-  - authentication UI and session bootstrap
-  - forecasting workbench
-  - version workspace interactions
-  - bookkeeping and variance screens
-  - client-side autosave orchestration
+- 技术栈：`React 19 + TypeScript + Vite`
+- 负责：
+  - 认证界面与会话初始化
+  - 测算工作台
+  - 版本库与分享交互
+  - 记账与预实分析界面
+  - 自动保存编排
 
-### Backend
+### 后端
 
-- Stack: `FastAPI + SQLAlchemy 2.0 + Pydantic`
-- Current local profile: `SQLite`
-- Production target: `PostgreSQL`
-- Responsibility:
-  - auth/session management
-  - draft persistence with optimistic revision control
-  - version publish / rollback
-  - normalized forecast facts
-  - ledger periods and entries
-  - variance aggregation APIs
+- 技术栈：`FastAPI + SQLAlchemy 2.0 + Pydantic`
+- 当前本地环境：`SQLite`
+- 生产目标：`PostgreSQL`
+- 负责：
+  - 认证与会话管理
+  - 带乐观锁的草稿持久化
+  - 版本发布与回滚
+  - 预测事实表固化
+  - 期间与分录管理
+  - 预实聚合接口
 
-### Deployment Boundary
+### 部署边界
 
-- `apps/web` is deployable as a static asset bundle.
-- `apps/api` is deployable as an application service.
-- Infra scripts belong under `infra/scripts`, not root.
-- In production, frontend and backend should be independently releasable.
+- `apps/web` 可独立作为静态资源部署
+- `apps/api` 可独立作为应用服务部署
+- 基础设施脚本统一放在 `infra/scripts`
+- 生产环境中前后端应支持独立发布
 
-## 4. Domain Architecture
+## 4. 领域架构
 
-### 4.1 Identity Domain
+### 4.1 认证域
 
 - `users`
 - `user_credentials`
 - `user_sessions`
 - `workspace_members`
 
-Rules:
+规则：
 
-- `register`: create user, credential, default workspace, default draft, session cookie.
-- `login`: create session cookie.
-- `logout`: revoke current session only.
-- `cancel account`: revoke all active sessions and deactivate the account.
-- Workspace data access is always scoped through membership.
+- `register`：创建用户、密码、默认工作区、默认草稿、会话 Cookie
+- `login`：创建新会话
+- `logout`：只撤销当前会话
+- `cancel account`：撤销全部会话并停用账号
+- 任何工作区数据访问都必须经过成员关系校验
 
-### 4.2 Workspace Domain
+### 4.2 工作区域
 
 - `workspaces`
 - `workspace_drafts`
 - `workspace_events`
 
-Rules:
+规则：
 
-- A workspace always has one mutable draft.
-- The draft carries a `revision` for optimistic locking.
-- Every autosave writes a workspace event.
-- Frontend autosave must debounce, but snapshot/publish actions must flush pending draft changes first.
+- 一个工作区始终只有一份可变草稿
+- 草稿带 `revision`，用于乐观锁
+- 每次自动保存都记录工作区事件
+- 前端自动保存可以防抖，但快照 / 发布前必须先刷掉脏草稿
 
-### 4.3 Version Domain
+### 4.3 版本域
 
 - `workspace_versions`
+- `forecast_month_facts`
 - `forecast_line_item_facts`
 - `workspace_version_shares`
 
-Rules:
+规则：
 
-- `snapshot`: immutable checkpoint for working rollback.
-- `release`: immutable checkpoint used as bookkeeping/variance baseline.
-- `share`: public read-only access to a released version only.
-- `rollback`: copy a historical version back into the mutable draft.
-- Historical versions are never edited in place.
-- Version APIs must return the real version payload, not the current draft, otherwise export/import semantics break.
-- Public share pages must read the frozen released result payload, not a live recomputation from the latest frontend code.
+- `snapshot`：工作快照，用于阶段性保存
+- `release`：发布版，可作为记账和预实分析基线
+- `share`：只能公开分享发布版
+- `rollback`：从历史版本复制出新草稿
+- 历史版本永远不允许原地修改
+- 发布时必须同时固化月度事实表和行项目事实表
+- 版本接口必须返回真实版本载荷，不能误返回当前草稿
+- 公开分享页必须读取发布时冻结的结果载荷，不能按当前前端逻辑实时重算
 
-### 4.4 Ledger Domain
+### 4.4 账务域
 
 - `ledger_periods`
 - `actual_entries`
 - `actual_entry_allocations`
+- `audit_logs`
 
-Rules:
+规则：
 
-- Ledger data is period-based, not workspace-global.
-- Each period points to one baseline release.
-- Actual entries post against normalized forecast subjects.
-- A single actual entry may be allocated across multiple subjects.
-- Allocation totals must equal the original entry amount.
+- 账务按期间管理，不是工作区级散账
+- 每个期间绑定一个预算基线发布版
+- 实际分录必须落到标准化预测科目
+- 一笔分录可以分摊到多个科目
+- 分摊合计必须等于分录金额
+- 锁定期间拒绝新增记账和作废
 
-### 4.5 Variance Domain
+### 4.5 预实分析域
 
-- Derived from `forecast_line_item_facts + actual_entry_allocations + ledger_periods`
+- 由 `forecast_line_item_facts + actual_entry_allocations + ledger_periods` 派生
 
-Rules:
+规则：
 
-- Planned values come from the period baseline release.
-- Actual values come only from posted, non-voided ledger allocations.
-- Variance must be stable even after future replanning.
+- 计划值来自该期间绑定的基线发布版
+- 实际值只来自已过账且未作废的分摊
+- 即使后续重做测算，历史预实口径也必须稳定
 
-## 5. Core Data Model
+## 5. 核心数据模型
 
-The current codebase implements a pragmatic subset of the target data architecture.
+当前代码库已实现一版务实的数据结构。
 
-### Operational Tables
+### 事务表
 
 - `users(id, email, display_name, status, cancelled_at, created_at, updated_at)`
 - `user_credentials(user_id, password_hash, created_at, updated_at)`
@@ -151,23 +155,25 @@ The current codebase implements a pragmatic subset of the target data architectu
 - `workspace_drafts(workspace_id, revision, config_json, result_json, last_autosaved_at, updated_by)`
 - `workspace_events(id, workspace_id, actor_id, event_type, meta_json, created_at)`
 
-### Planning Tables
+### 计划表
 
 - `workspace_versions(id, workspace_id, version_no, name, kind, note, baseline_scenario, source_draft_revision, source_version_id, payload_json, result_json, created_by, created_at)`
 - `workspace_version_shares(id, workspace_id, version_id, share_token, created_by, revoked_at, created_at, updated_at)`
+- `forecast_month_facts(id, workspace_id, version_id, scenario_key, month_index, month_label, planned_revenue, planned_cost, planned_profit)`
 - `forecast_line_item_facts(id, workspace_id, version_id, scenario_key, month_index, month_label, subject_key, subject_name, subject_type, subject_group, entity_type, entity_id, planned_amount)`
 
-### Ledger Tables
+### 账务表
 
 - `ledger_periods(id, workspace_id, baseline_version_id, month_index, month_label, status, created_at, updated_at)`
 - `actual_entries(id, workspace_id, ledger_period_id, direction, amount, occurred_at, counterparty, description, status, created_by, posted_at, created_at, updated_at)`
 - `actual_entry_allocations(id, actual_entry_id, subject_key, subject_name, subject_type, amount)`
+- `audit_logs(id, workspace_id, actor_id, action, status, entity_type, entity_id, meta_json, created_at)`
 
-## 6. Forecast Subject Strategy
+## 6. 预测科目策略
 
-Forecast-to-actual mapping only works if forecast items are normalized into stable subject keys.
+预实分析能否稳定，关键不在图表，而在预测项是否被规范化成稳定的 `subject_key`。
 
-Examples:
+示例：
 
 - `revenue.offline_sales`
 - `revenue.online_sales`
@@ -177,11 +183,11 @@ Examples:
 - `cost.training.rehearsal`
 - `cost.stage.perEvent.stage-cost-makeup`
 
-This subject layer is the bridge between forecasting and bookkeeping. Without it, variance analysis becomes string matching and will fail after renames or refactors.
+这一层是“测算”和“记账”之间的桥。如果没有它，后续一旦改名或重构，预实分析就会退化成脆弱的字符串匹配。
 
-## 7. API Boundaries
+## 7. API 边界
 
-### Auth
+### 认证
 
 - `POST /api/v1/auth/register`
 - `POST /api/v1/auth/login`
@@ -189,7 +195,7 @@ This subject layer is the bridge between forecasting and bookkeeping. Without it
 - `POST /api/v1/auth/logout`
 - `DELETE /api/v1/auth/me`
 
-### Workspace
+### 工作区
 
 - `GET /api/v1/workspace/draft`
 - `PATCH /api/v1/workspace/draft`
@@ -200,124 +206,90 @@ This subject layer is the bridge between forecasting and bookkeeping. Without it
 - `POST /api/v1/workspace/versions/{id}/rollback`
 - `DELETE /api/v1/workspace/versions/{id}`
 
-### Public Share
+### 公开分享
 
 - `GET /api/v1/public/shares/{token}`
 
-### Ledger
+### 账务
 
 - `GET /api/v1/ledger/periods`
 - `GET /api/v1/ledger/periods/{id}/subjects`
+- `POST /api/v1/ledger/periods/{id}/lock`
+- `POST /api/v1/ledger/periods/{id}/unlock`
 - `GET /api/v1/ledger/entries?periodId=...`
 - `POST /api/v1/ledger/entries`
 - `POST /api/v1/ledger/entries/{id}/void`
 
-### Variance
+### 预实分析
 
 - `GET /api/v1/variance/periods/{id}`
 
-## 8. Delivery Roadmap
+## 8. 交付路线图
 
-### Phase 1: Foundation
+### 第一阶段：基础能力
 
-- repository split into `apps / docs / infra`
-- Python backend bootstrapped
-- auth and session persistence working
-- default workspace and draft created at registration
+- 仓库拆分为 `apps / docs / infra`
+- Python 后端初始化完成
+- 认证与会话打通
+- 注册时自动创建默认工作区和草稿
 
-### Phase 2: Forecast Persistence
+### 第二阶段：测算持久化
 
-- draft moved from browser-only storage to backend persistence
-- autosave with revision conflict protection
-- import/export still available as workspace bundle flow
+- 草稿从浏览器本地存储迁移到后端
+- 自动保存支持版本冲突保护
+- 导入 / 导出仍保留工作区 Bundle 能力
 
-### Phase 3: Version Management
+### 第三阶段：版本管理
 
-- snapshot and release publishing
-- immutable version storage
-- rollback from historical versions
-- forecast facts materialized on publish
+- 快照与发布
+- 不可变版本持久化
+- 从历史版本回滚
+- 发布时生成预测事实表
 
-### Phase 4: Ledger
+### 第四阶段：账务
 
-- period generation from released forecast
-- subject list generation per period
-- entry posting, listing, and voiding
+- 根据发布版生成期间
+- 按期间生成预测科目
+- 支持记账、列表、作废
 
-### Phase 5: Sharing
+### 第五阶段：分享
 
-- release-only share link creation
-- public read-only share page
-- share revoke flow
+- 只允许对发布版生成分享链接
+- 公开只读分享页
+- 撤销分享流程
 
-### Phase 6: Variance
+### 第六阶段：预实分析
 
-- plan vs actual summary by period
-- line-level subject comparison
-- browser-verified end-to-end acceptance
+- 期间级预实汇总
+- 科目级差异明细
+- 累计预实对账
+- 浏览器验收覆盖完整主链路
 
-## 9. Acceptance Criteria
+## 9. 验收原则
 
-### Authentication
+### 草稿与自动保存
 
-- user can register, login, and logout successfully
-- refresh preserves session via cookie
-- account cancellation deactivates the user and revokes access
-- one user cannot read another user's workspace data
+- 任意测算字段修改后都能自动保存
+- 刷新后能恢复最近一次成功保存的草稿
+- 旧 `revision` 会被拒绝，前端能感知冲突
 
-### Drafts and Autosave
+### 发布、回滚、分享
 
-- editing any forecast input writes back to the server automatically
-- refresh restores the latest autosaved draft
-- stale draft revisions are rejected by the API
-- snapshot/publish actions include the latest unsaved local edits
+- 发布版不可变
+- 回滚生成新草稿，不篡改历史
+- 分享页只展示冻结的发布版配置和结果
 
-### Versioning
+### 账务与预实
 
-- snapshot creates an immutable working checkpoint
-- release creates an immutable baseline version
-- only released versions can be shared publicly
-- revoked share links stop resolving immediately
-- rollback restores draft state from a historical version
-- deleting a release in active use is rejected
+- 记账直接挂预测科目
+- 多分摊金额合计必须等于原始金额
+- 锁定期间后禁止新增和作废
+- 预实分析必须与发布基线和已过账实际逐项对齐
 
-### Ledger
+### 非功能
 
-- released versions create periods with baseline links
-- users can post actual entries against forecast subjects
-- voided entries no longer contribute to actual totals
-- period totals equal the sum of posted allocations
-
-### Variance
-
-- planned totals match the selected baseline release facts
-- actual totals match posted ledger entries
-- subject-level variance lines reconcile to summary totals
-- changing future draft assumptions does not mutate historical baseline comparisons
-
-### Repository Quality
-
-- frontend builds successfully
-- frontend unit tests pass
-- backend API tests pass
-- browser smoke flow passes: register -> edit/autosave -> publish -> create share -> open public share -> edit draft -> verify shared release frozen -> revoke share
-
-## 10. Current Status
-
-Implemented in the current repository:
-
-- Python backend introduced under `apps/api`
-- modular repo structure introduced under `apps/`, `docs/`, `infra/`
-- auth, workspace draft autosave, snapshot, release, rollback
-- release sharing with public read-only page and revoke
-- bookkeeping and variance UI/API
-- browser-verified end-to-end flow for core acceptance path
-
-Remaining medium-term improvements:
-
-- formal Alembic migrations
-- PostgreSQL production profile
-- richer allocation UI for multi-subject entry splits
-- period lock / close workflow
-- audit views and export/reporting APIs
-- accessibility cleanup for form metadata and labels
+- 核心接口必须写审计日志
+- 迁移入口必须可重复执行
+- 前端单测 / 构建通过
+- 后端 API 集成测试通过
+- 浏览器验收通过

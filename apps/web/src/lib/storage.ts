@@ -421,7 +421,16 @@ function normalizeOperating(rawOperating: unknown, migrateLegacyMaterial: boolea
 
 function normalizeStageCostName(name: string) {
   const normalized = name.replace(/\/(月|场|张)$/u, '').trim()
-  return normalized || '专项成本'
+  const localizedNames: Record<string, string> = {
+    VJ: '舞台视觉',
+    'Original Song': '原创',
+    Makeup: '化妆',
+    Streaming: '推流',
+    Meal: '聚餐',
+    'Team Building': '团建',
+    Material: '耗材',
+  }
+  return (localizedNames[normalized] ?? normalized) || '专项成本'
 }
 
 const legacyStageCostDefinitions = {

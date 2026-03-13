@@ -3,13 +3,14 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { PublicShareResponse } from '../../lib/api'
 import { api } from '../../lib/api'
 import { cx, formatCurrency, formatDateTime, formatPaybackMonths, formatPercent } from '../../lib/format'
+import { getScenarioLabel } from '../../lib/scenarios'
 import type { ScenarioKey } from '../../types'
 import { Panel, SectionTitle, SegmentTabs, StatCard } from '../common/ui'
 
 const scenarioTabs: Array<{ value: ScenarioKey; label: string }> = [
-  { value: 'pessimistic', label: 'Conservative' },
-  { value: 'base', label: 'Base' },
-  { value: 'optimistic', label: 'Upside' },
+  { value: 'pessimistic', label: '悲观' },
+  { value: 'base', label: '基准' },
+  { value: 'optimistic', label: '乐观' },
 ]
 
 export function SharedVersionScreen(props: {
@@ -60,12 +61,12 @@ export function SharedVersionScreen(props: {
     }
 
     return [
-      { label: 'Horizon', value: `${share.config.planning.horizonMonths} months` },
-      { label: 'Shareholders', value: `${share.config.shareholders.length}` },
-      { label: 'Team members', value: `${share.config.teamMembers.length}` },
-      { label: 'Employees', value: `${share.config.employees.length}` },
-      { label: 'Offline price', value: formatCurrency(share.config.operating.offlineUnitPrice) },
-      { label: 'Online price', value: formatCurrency(share.config.operating.onlineUnitPrice) },
+      { label: '规划周期', value: `${share.config.planning.horizonMonths} 个月` },
+      { label: '股东数', value: `${share.config.shareholders.length}` },
+      { label: '成员数', value: `${share.config.teamMembers.length}` },
+      { label: '员工数', value: `${share.config.employees.length}` },
+      { label: '线下单价', value: formatCurrency(share.config.operating.offlineUnitPrice) },
+      { label: '线上单价', value: formatCurrency(share.config.operating.onlineUnitPrice) },
     ]
   }, [share])
 
@@ -73,7 +74,7 @@ export function SharedVersionScreen(props: {
     return (
       <ShareShell>
         <Panel>
-          <SectionTitle icon={Globe2} eyebrow="Shared release" title="Loading shared forecast" />
+          <SectionTitle icon={Globe2} eyebrow="分享版本" title="正在加载分享测算" />
         </Panel>
       </ShareShell>
     )
@@ -85,9 +86,9 @@ export function SharedVersionScreen(props: {
         <Panel>
           <SectionTitle
             icon={LockKeyhole}
-            eyebrow="Shared release"
-            title="Share link unavailable"
-            description={error ?? 'This share link is invalid, revoked, or no longer available.'}
+            eyebrow="分享版本"
+            title="分享链接不可用"
+            description={error ?? '该分享链接无效、已撤销或已失效。'}
           />
         </Panel>
       </ShareShell>
@@ -100,34 +101,34 @@ export function SharedVersionScreen(props: {
         <Panel className="overflow-hidden bg-[linear-gradient(135deg,rgba(28,25,23,0.96),rgba(68,64,60,0.94))] text-white">
           <SectionTitle
             icon={Globe2}
-            eyebrow="Shared release"
+            eyebrow="分享版本"
             title={share.versionName}
-            description="This link exposes a read-only published forecast. Draft edits, bookkeeping operations, and version actions stay private."
+            description="该链接展示的是只读发布版测算。草稿编辑、记账操作和版本管理仍保持私有。"
             dark
             aside={
               <a
                 href="/"
                 className="inline-flex items-center rounded-full border border-white/15 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/15"
               >
-                Open app
+                打开应用
               </a>
             }
           />
 
           <div className="mt-6 grid gap-3 md:grid-cols-4">
-            <StatCard label="Workspace" value={share.workspaceName} dark />
-            <StatCard label="Version" value={`#${share.versionNo}`} dark />
-            <StatCard label="Published" value={formatDateTime(share.createdAt)} dark />
-            <StatCard label="Shared" value={formatDateTime(share.sharedAt)} dark />
+            <StatCard label="工作区" value={share.workspaceName} dark />
+            <StatCard label="版本" value={`#${share.versionNo}`} dark />
+            <StatCard label="发布时间" value={formatDateTime(share.createdAt)} dark />
+            <StatCard label="分享时间" value={formatDateTime(share.sharedAt)} dark />
           </div>
         </Panel>
 
         <Panel>
           <SectionTitle
             icon={LockKeyhole}
-            eyebrow="Assumptions"
-            title="Published planning baseline"
-            description="The recipient sees the exact released configuration and its frozen result set."
+            eyebrow="测算假设"
+            title="已发布测算基线"
+            description="访问者看到的是发布时冻结的配置和结果。"
             aside={<SegmentTabs value={selectedScenario} items={scenarioTabs} onChange={setSelectedScenario} compact />}
           />
 
@@ -141,44 +142,44 @@ export function SharedVersionScreen(props: {
         <Panel>
           <SectionTitle
             icon={Globe2}
-            eyebrow="Scenario"
-            title={`${scenario.label} scenario summary`}
-            description="The shared page stays read-only and always reads from the published result payload."
+            eyebrow="场景"
+            title={`${getScenarioLabel(scenario.key, scenario.label)}场景总览`}
+            description="分享页始终只读，并且永远读取发布时冻结的结果载荷。"
           />
 
           <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-            <StatCard label="Revenue" value={formatCurrency(scenario.grossSales)} />
-            <StatCard label="Cost" value={formatCurrency(scenario.totalCost)} />
-            <StatCard label="Profit" value={formatCurrency(scenario.totalProfit)} />
-            <StatCard label="Ending cash" value={formatCurrency(scenario.netCashAfterInvestment)} />
-            <StatCard label="ROI" value={formatPercent(scenario.roi)} />
+            <StatCard label="营收" value={formatCurrency(scenario.grossSales)} />
+            <StatCard label="成本" value={formatCurrency(scenario.totalCost)} />
+            <StatCard label="利润" value={formatCurrency(scenario.totalProfit)} />
+            <StatCard label="期末现金" value={formatCurrency(scenario.netCashAfterInvestment)} />
+            <StatCard label="投资回报率" value={formatPercent(scenario.roi)} />
           </div>
 
           <div className="mt-5 grid gap-3 md:grid-cols-3">
-            <StatCard label="Payback" value={formatPaybackMonths(scenario.paybackMonthIndex)} />
-            <StatCard label="Total events" value={`${scenario.totalEvents}`} />
-            <StatCard label="Average units/event" value={`${scenario.averageUnitsPerEvent.toFixed(1)}`} />
+            <StatCard label="回本周期" value={formatPaybackMonths(scenario.paybackMonthIndex)} />
+            <StatCard label="总场次" value={`${scenario.totalEvents}`} />
+            <StatCard label="单场平均张数" value={`${scenario.averageUnitsPerEvent.toFixed(1)}`} />
           </div>
         </Panel>
 
         <Panel>
           <SectionTitle
             icon={Table2}
-            eyebrow="Monthly view"
-            title="Monthly released results"
-            description="Revenue, cost, profit, and cumulative cash are frozen at the moment this release was published."
+            eyebrow="月度明细"
+            title="发布版月度结果"
+            description="收入、成本、利润和累计现金都固定为该版本发布时的结果。"
           />
 
           <div className="mt-5 overflow-hidden rounded-[24px] border border-stone-900/10">
             <table className="w-full table-fixed border-collapse text-sm">
               <thead className="bg-stone-100/90 text-stone-700">
                 <tr className="border-b border-stone-900/10">
-                  <HeaderCell>Month</HeaderCell>
-                  <HeaderCell>Events</HeaderCell>
-                  <HeaderCell>Revenue</HeaderCell>
-                  <HeaderCell>Cost</HeaderCell>
-                  <HeaderCell>Profit</HeaderCell>
-                  <HeaderCell>Cumulative cash</HeaderCell>
+                  <HeaderCell>月份</HeaderCell>
+                  <HeaderCell>场次</HeaderCell>
+                  <HeaderCell>营收</HeaderCell>
+                  <HeaderCell>成本</HeaderCell>
+                  <HeaderCell>利润</HeaderCell>
+                  <HeaderCell>累计现金</HeaderCell>
                 </tr>
               </thead>
               <tbody>

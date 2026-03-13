@@ -34,6 +34,7 @@ import {
   syncMonthsToPlanning,
 } from './lib/defaults'
 import { projectModel } from './lib/model'
+import { getScenarioLabel } from './lib/scenarios'
 import { parseWorkspaceBundle, serializeWorkspaceBundle } from './lib/storage'
 import type {
   CostCategory,
@@ -89,7 +90,7 @@ const mainTabs: Array<{ value: MainTab; label: string; description: string; icon
 ]
 
 const dashboardTabs: Array<{ value: DashboardTab; label: string; description: string }> = [
-  { value: 'overview', label: '总览', description: '先看上下界、ROI 和当前月透视。' },
+  { value: 'overview', label: '总览', description: '先看上下界、回报率和当前月透视。' },
   { value: 'months', label: '月度表', description: '逐月展开营收、成本、利润与累计现金。' },
   { value: 'members', label: '成员拆解', description: '按月份看每个成员的收入贡献。' },
 ]
@@ -261,9 +262,9 @@ export default function App() {
   const [entryForm, setEntryForm] = useState({
     direction: 'income' as 'income' | 'expense',
     amount: 0,
-    subjectKey: '',
     counterparty: '',
     description: '',
+    allocations: [{ subjectKey: '', amount: 0 }],
   })
   const [workspaceOpen, setWorkspaceOpen] = useState(false)
   const [banner, setBanner] = useState<BannerState | null>(null)
@@ -276,6 +277,18 @@ export default function App() {
     const nextPeriods = await api.listPeriods()
     setPeriods(nextPeriods)
     setSelectedPeriodId((current) => (nextPeriods.some((period) => period.id === current) ? current : (nextPeriods[0]?.id ?? '')))
+  }
+
+  async function refreshSelectedPeriodData(periodId: string) {
+    const [nextSubjects, nextEntries, nextVariance] = await Promise.all([
+      api.listSubjects(periodId),
+      api.listEntries(periodId),
+      api.getVariance(periodId),
+    ])
+
+    setSubjects(nextSubjects)
+    setEntries(nextEntries)
+    setVariance(nextVariance)
   }
 
   useEffect(() => {
@@ -415,9 +428,30 @@ export default function App() {
   }
 
   async function handleSubmitEntry() {
-    const selectedSubject = subjects.find((subject) => subject.subjectKey === entryForm.subjectKey)
+    if (!selectedPeriodId || entryForm.amount <= 0 || entryForm.allocations.length === 0) {
+      return
+    }
 
-    if (!selectedPeriodId || !selectedSubject || entryForm.amount <= 0) {
+    const allocations = entryForm.allocations
+      .map((allocation) => {
+        const subject = subjects.find((item) => item.subjectKey === allocation.subjectKey)
+        if (!subject || allocation.amount <= 0) {
+          return null
+        }
+
+        return {
+          subjectKey: subject.subjectKey,
+          subjectName: subject.subjectName,
+          subjectType: subject.subjectType,
+          amount: allocation.amount,
+        }
+      })
+      .filter((allocation): allocation is NonNullable<typeof allocation> => allocation !== null)
+
+    const allocationTotal = allocations.reduce((sum, allocation) => sum + allocation.amount, 0)
+
+    if (allocations.length !== entryForm.allocations.length || Math.abs(allocationTotal - entryForm.amount) >= 0.005) {
+      setBanner({ tone: 'error', message: '分录金额必须与分摊合计一致。' })
       return
     }
 
@@ -427,33 +461,22 @@ export default function App() {
         ledgerPeriodId: selectedPeriodId,
         direction: entryForm.direction,
         amount: entryForm.amount,
-        allocations: [
-          {
-            subjectKey: selectedSubject.subjectKey,
-            subjectName: selectedSubject.subjectName,
-            subjectType: selectedSubject.subjectType,
-            amount: entryForm.amount,
-          },
-        ],
+        allocations,
         ...(entryForm.counterparty ? { counterparty: entryForm.counterparty } : {}),
         ...(entryForm.description ? { description: entryForm.description } : {}),
       })
 
-      setEntryForm((current) => ({
-        ...current,
+      setEntryForm({
+        direction: entryForm.direction,
         amount: 0,
         counterparty: '',
         description: '',
-      }))
+        allocations: [{ subjectKey: '', amount: 0 }],
+      })
 
       await refreshPeriods()
-      const [nextEntries, nextVariance] = await Promise.all([
-        api.listEntries(selectedPeriodId),
-        api.getVariance(selectedPeriodId),
-      ])
-      setEntries(nextEntries)
-      setVariance(nextVariance)
-      setBanner({ tone: 'success', message: 'Actual entry posted.' })
+      await refreshSelectedPeriodData(selectedPeriodId)
+      setBanner({ tone: 'success', message: '实际分录已过账。' })
     } catch (entryError) {
       setBanner({ tone: 'error', message: entryError instanceof Error ? entryError.message : String(entryError) })
     } finally {
@@ -467,16 +490,40 @@ export default function App() {
       await api.voidEntry(entryId)
       await refreshPeriods()
       if (selectedPeriodId) {
-        const [nextEntries, nextVariance] = await Promise.all([
-          api.listEntries(selectedPeriodId),
-          api.getVariance(selectedPeriodId),
-        ])
-        setEntries(nextEntries)
-        setVariance(nextVariance)
+        await refreshSelectedPeriodData(selectedPeriodId)
       }
-      setBanner({ tone: 'info', message: 'Entry voided.' })
+      setBanner({ tone: 'info', message: '分录已作废。' })
     } catch (entryError) {
       setBanner({ tone: 'error', message: entryError instanceof Error ? entryError.message : String(entryError) })
+    } finally {
+      setLedgerBusy(false)
+    }
+  }
+
+  async function handleTogglePeriodLock() {
+    if (!selectedPeriodId) {
+      return
+    }
+
+    const currentPeriod = periods.find((period) => period.id === selectedPeriodId)
+
+    if (!currentPeriod) {
+      return
+    }
+
+    setLedgerBusy(true)
+    try {
+      if (currentPeriod.status === 'locked') {
+        await api.unlockPeriod(selectedPeriodId)
+        setBanner({ tone: 'success', message: '期间已解锁。' })
+      } else {
+        await api.lockPeriod(selectedPeriodId)
+        setBanner({ tone: 'info', message: '期间已锁定。' })
+      }
+      await refreshPeriods()
+      await refreshSelectedPeriodData(selectedPeriodId)
+    } catch (periodError) {
+      setBanner({ tone: 'error', message: periodError instanceof Error ? periodError.message : String(periodError) })
     } finally {
       setLedgerBusy(false)
     }
@@ -841,7 +888,7 @@ export default function App() {
   async function handleCreateShareLink(id: string) {
     try {
       await createShareLink(id)
-      setBanner({ tone: 'success', message: 'Share link created for this release.' })
+      setBanner({ tone: 'success', message: '已为当前发布版创建分享链接。' })
     } catch (shareError) {
       setBanner({ tone: 'error', message: shareError instanceof Error ? shareError.message : String(shareError) })
     }
@@ -851,7 +898,7 @@ export default function App() {
     const share = versionShares[id]
 
     if (!share) {
-      setBanner({ tone: 'error', message: 'No active share link for this release.' })
+      setBanner({ tone: 'error', message: '当前发布版没有可用的分享链接。' })
       return
     }
 
@@ -859,7 +906,7 @@ export default function App() {
 
     try {
       await navigator.clipboard.writeText(shareUrl)
-      setBanner({ tone: 'success', message: 'Share link copied.' })
+      setBanner({ tone: 'success', message: '分享链接已复制。' })
     } catch {
       setBanner({ tone: 'info', message: shareUrl })
     }
@@ -868,7 +915,7 @@ export default function App() {
   async function handleRevokeShareLink(id: string) {
     try {
       await revokeShareLink(id)
-      setBanner({ tone: 'info', message: 'Share link revoked.' })
+      setBanner({ tone: 'info', message: '分享链接已撤销。' })
     } catch (shareError) {
       setBanner({ tone: 'error', message: shareError instanceof Error ? shareError.message : String(shareError) })
     }
@@ -957,7 +1004,7 @@ export default function App() {
 
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-[24px] border border-stone-900/10 bg-white/80 px-4 py-3 shadow-[0_12px_35px_rgba(70,52,17,0.05)]">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-stone-500">Account</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-stone-500">账号</p>
             <p className="mt-1 text-sm font-semibold text-stone-900">{currentUser?.displayName ?? currentUser?.email}</p>
             <p className="text-xs text-stone-500">{currentUser?.email}</p>
           </div>
@@ -968,14 +1015,14 @@ export default function App() {
               className="inline-flex items-center gap-2 rounded-full border border-stone-900/10 bg-white px-4 py-2 text-sm font-semibold text-stone-700"
             >
               <LogOut className="h-4 w-4" />
-              Logout
+              退出登录
             </button>
             <button
               type="button"
               onClick={() => void handleCancelAccount()}
               className="rounded-full border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-700"
             >
-              Cancel account
+              注销账号
             </button>
           </div>
         </div>
@@ -1047,7 +1094,7 @@ export default function App() {
                 <Panel>
                   <SectionTitle
                     icon={LineChart}
-                    eyebrow="Analysis"
+                    eyebrow="分析"
                     title="三档场景总览"
                     description="先选一档主判断口径。"
                   />
@@ -1185,7 +1232,7 @@ export default function App() {
                       selectedMonthId={selectedMonthId}
                       selectedMonthPlan={selectedMonthPlan}
                       selectedMonthResult={selectedMonthResult}
-                      selectedScenarioLabel={selectedScenarioResult.label}
+                      selectedScenarioLabel={getScenarioLabel(selectedScenarioResult.key, selectedScenarioResult.label)}
                       onSelectMonth={setSelectedMonthId}
                     />
 
@@ -1253,9 +1300,44 @@ export default function App() {
                 loading={ledgerBusy}
                 form={entryForm}
                 onSelectPeriod={setSelectedPeriodId}
-                onFormChange={(next) => setEntryForm((current) => ({ ...current, ...next }))}
+                onFormChange={(next) =>
+                  setEntryForm((current) => {
+                    const nextDirection = next.direction ?? current.direction
+                    return {
+                      ...current,
+                      ...next,
+                      allocations:
+                        next.direction && next.direction !== current.direction ? [{ subjectKey: '', amount: 0 }] : current.allocations,
+                      direction: nextDirection,
+                    }
+                  })
+                }
+                onAllocationChange={(index, next) =>
+                  setEntryForm((current) => ({
+                    ...current,
+                    allocations: current.allocations.map((allocation, allocationIndex) =>
+                      allocationIndex === index ? { ...allocation, ...next } : allocation,
+                    ),
+                  }))
+                }
+                onAddAllocation={() =>
+                  setEntryForm((current) => ({
+                    ...current,
+                    allocations: [...current.allocations, { subjectKey: '', amount: 0 }],
+                  }))
+                }
+                onRemoveAllocation={(index) =>
+                  setEntryForm((current) => ({
+                    ...current,
+                    allocations:
+                      current.allocations.length === 1
+                        ? current.allocations
+                        : current.allocations.filter((_, allocationIndex) => allocationIndex !== index),
+                  }))
+                }
                 onSubmit={handleSubmitEntry}
                 onVoid={handleVoidEntry}
+                onToggleLock={handleTogglePeriodLock}
               />
             ) : null}
 

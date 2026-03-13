@@ -1,6 +1,7 @@
 import { Sparkles, Target, TrendingUp, Vault } from 'lucide-react'
 import type { ScenarioResult } from '../../types'
 import { formatCurrency, formatDecimal, formatPaybackMonths, formatPercent } from '../../lib/format'
+import { getScenarioLabel } from '../../lib/scenarios'
 import { StatCard } from '../common/ui'
 
 export function ProductHero(props: {
@@ -26,13 +27,13 @@ export function ProductHero(props: {
         </div>
 
         <div className="grid grid-cols-3 gap-2 sm:gap-3 xl:min-w-[360px]">
-          <Highlight icon={Target} label="当前场景" value={props.scenario.label} />
+          <Highlight icon={Target} label="当前场景" value={getScenarioLabel(props.scenario.key, props.scenario.label)} />
           <Highlight
             icon={Vault}
             label="回本周期"
             value={formatPaybackMonths(props.scenario.paybackMonthIndex)}
           />
-          <Highlight icon={TrendingUp} label="当前 ROI" value={formatPercent(props.scenario.roi)} />
+          <Highlight icon={TrendingUp} label="当前回报率" value={formatPercent(props.scenario.roi)} />
         </div>
       </div>
 

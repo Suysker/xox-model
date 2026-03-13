@@ -4,126 +4,454 @@ import os
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from sqlalchemy import func, select
 
 
-def build_client(tmp_path: Path) -> TestClient:
-    os.environ["XOX_DATABASE_URL"] = f"sqlite:///{(tmp_path / 'test.db').as_posix()}"
+def build_client(database_path: Path) -> TestClient:
+    os.environ["XOX_DATABASE_URL"] = f"sqlite:///{database_path.as_posix()}"
+    from app.core import get_settings
+
+    get_settings.cache_clear()
+
     from app.main import create_app
 
-    app = create_app()
-    return TestClient(app)
+    return TestClient(create_app())
 
 
-def test_auth_and_draft_roundtrip(tmp_path: Path) -> None:
-    client = build_client(tmp_path)
+def register_user(client: TestClient, *, email: str, display_name: str = "User") -> dict:
+    response = client.post(
+        "/api/v1/auth/register",
+        json={"email": email, "password": "password123", "displayName": display_name},
+    )
+    assert response.status_code == 200
+    return response.json()
+
+
+def login_user(client: TestClient, *, email: str) -> dict:
+    response = client.post(
+        "/api/v1/auth/login",
+        json={"email": email, "password": "password123"},
+    )
+    assert response.status_code == 200
+    return response.json()
+
+
+def app_session(client: TestClient):
+    return client.app.state.db_factory()
+
+
+def test_run_migrations_is_repeatable(tmp_path: Path) -> None:
+    database_path = tmp_path / "migrations.db"
+    os.environ["XOX_DATABASE_URL"] = f"sqlite:///{database_path.as_posix()}"
+
+    from app.core import get_settings
+    from app.migrations import run_migrations
+
+    get_settings.cache_clear()
+    run_migrations()
+    run_migrations()
+
+    client = build_client(database_path)
     register = client.post(
         "/api/v1/auth/register",
-        json={"email": "owner@example.com", "password": "password123", "displayName": "Owner"},
+        json={"email": "repeatable@example.com", "password": "password123", "displayName": "Repeatable"},
     )
     assert register.status_code == 200
+
+
+def test_auth_session_lifecycle_and_audit(tmp_path: Path) -> None:
+    client = build_client(tmp_path / "auth.db")
+
+    register_user(client, email="owner@example.com", display_name="Owner")
 
     me = client.get("/api/v1/auth/me")
     assert me.status_code == 200
     assert me.json()["email"] == "owner@example.com"
+    assert "xox_session" in me.headers.get("set-cookie", "")
+
+    logout = client.post("/api/v1/auth/logout")
+    assert logout.status_code == 200
+    assert client.get("/api/v1/auth/me").status_code == 401
+
+    login_user(client, email="owner@example.com")
+    assert client.get("/api/v1/auth/me").status_code == 200
+
+    cancel = client.delete("/api/v1/auth/me")
+    assert cancel.status_code == 200
+    assert client.get("/api/v1/auth/me").status_code == 401
+
+    invalid_login = client.post(
+        "/api/v1/auth/login",
+        json={"email": "owner@example.com", "password": "password123"},
+    )
+    assert invalid_login.status_code == 401
+
+    with app_session(client) as session:
+        from app.models import AuditLog, UserSession
+
+        actions = set(session.scalars(select(AuditLog.action)).all())
+        assert {"auth.register", "auth.login", "auth.logout", "auth.cancel_account", "auth.session_refreshed"} <= actions
+        active_sessions = session.scalar(
+            select(func.count()).select_from(UserSession).where(UserSession.revoked_at.is_(None))
+        )
+        assert active_sessions == 0
+
+
+def test_draft_autosave_conflict_and_release_fact_tables(tmp_path: Path) -> None:
+    client = build_client(tmp_path / "draft.db")
+    register_user(client, email="planner@example.com", display_name="Planner")
 
     draft = client.get("/api/v1/workspace/draft")
     assert draft.status_code == 200
-    body = draft.json()
-    assert body["revision"] == 1
-    assert body["workspaceName"] == "Default Workspace"
+    payload = draft.json()
 
-    body["config"]["operating"]["offlineUnitPrice"] = 99
+    payload["config"]["operating"]["offlineUnitPrice"] = 99
     save = client.patch(
         "/api/v1/workspace/draft",
-        json={"revision": body["revision"], "workspaceName": "Updated Workspace", "config": body["config"]},
+        json={"revision": payload["revision"], "workspaceName": "Updated Workspace", "config": payload["config"]},
     )
     assert save.status_code == 200
-    assert save.json()["workspaceName"] == "Updated Workspace"
-    assert save.json()["revision"] == 2
+    assert save.json()["revision"] == payload["revision"] + 1
 
-
-def test_publish_bookkeeping_and_variance(tmp_path: Path) -> None:
-    client = build_client(tmp_path)
-    client.post(
-        "/api/v1/auth/register",
-        json={"email": "finance@example.com", "password": "password123", "displayName": "Finance"},
+    stale_save = client.patch(
+        "/api/v1/workspace/draft",
+        json={"revision": payload["revision"], "workspaceName": "Stale", "config": payload["config"]},
     )
+    assert stale_save.status_code == 409
+    assert stale_save.json()["detail"] == "Draft revision conflict"
+
+    snapshot = client.post("/api/v1/workspace/versions", json={"kind": "snapshot", "name": "Draft Snapshot"})
+    assert snapshot.status_code == 200
+    release = client.post("/api/v1/workspace/versions", json={"kind": "release", "name": "Budget V1"})
+    assert release.status_code == 200
+    assert snapshot.json()["versionNo"] == 1
+    assert release.json()["versionNo"] == 2
+
+    versions = client.get("/api/v1/workspace/versions")
+    assert versions.status_code == 200
+    assert [item["versionNo"] for item in versions.json()] == [2, 1]
+
+    with app_session(client) as session:
+        from app.models import AuditLog, ForecastLineItemFact, ForecastMonthFact
+
+        release_id = release.json()["id"]
+        month_fact_count = session.scalar(
+            select(func.count()).select_from(ForecastMonthFact).where(ForecastMonthFact.version_id == release_id)
+        )
+        line_fact_count = session.scalar(
+            select(func.count()).select_from(ForecastLineItemFact).where(ForecastLineItemFact.version_id == release_id)
+        )
+        assert month_fact_count and month_fact_count > 0
+        assert line_fact_count and line_fact_count > 0
+        draft_audits = session.scalar(
+            select(func.count()).select_from(AuditLog).where(AuditLog.action == "workspace.draft_autosave")
+        )
+        assert draft_audits and draft_audits >= 2
+
+
+def test_release_rollback_and_share_lifecycle(tmp_path: Path) -> None:
+    client = build_client(tmp_path / "rollback.db")
+    register_user(client, email="share@example.com", display_name="Sharer")
+
+    draft = client.get("/api/v1/workspace/draft").json()
+    draft["config"]["operating"]["offlineUnitPrice"] = 88
+    save = client.patch(
+        "/api/v1/workspace/draft",
+        json={"revision": draft["revision"], "workspaceName": draft["workspaceName"], "config": draft["config"]},
+    )
+    assert save.status_code == 200
+
+    release_v1 = client.post("/api/v1/workspace/versions", json={"kind": "release", "name": "Budget V1"})
+    assert release_v1.status_code == 200
+
+    refreshed = client.get("/api/v1/workspace/draft").json()
+    refreshed["config"]["operating"]["offlineUnitPrice"] = 120
+    save_v2 = client.patch(
+        "/api/v1/workspace/draft",
+        json={"revision": refreshed["revision"], "workspaceName": refreshed["workspaceName"], "config": refreshed["config"]},
+    )
+    assert save_v2.status_code == 200
+
+    release_v2 = client.post("/api/v1/workspace/versions", json={"kind": "release", "name": "Budget V2"})
+    assert release_v2.status_code == 200
+
+    rolled_back = client.post(f"/api/v1/workspace/versions/{release_v1.json()['id']}/rollback")
+    assert rolled_back.status_code == 200
+    assert rolled_back.json()["config"]["operating"]["offlineUnitPrice"] == 88
+
+    version_list = client.get("/api/v1/workspace/versions")
+    assert version_list.status_code == 200
+    assert [item["versionNo"] for item in version_list.json()] == [2, 1]
+
+    snapshot_share = client.post(f"/api/v1/workspace/versions/{release_v1.json()['id']}/share")
+    assert snapshot_share.status_code == 200
+    token = snapshot_share.json()["shareToken"]
+
+    public_payload = client.get(f"/api/v1/public/shares/{token}")
+    assert public_payload.status_code == 200
+    assert public_payload.json()["config"]["operating"]["offlineUnitPrice"] == 88
+    assert public_payload.json()["result"]["scenarios"][1]["label"] == "基准"
+
+    revoke = client.delete(f"/api/v1/workspace/versions/{release_v1.json()['id']}/share")
+    assert revoke.status_code == 200
+    assert client.get(f"/api/v1/public/shares/{token}").status_code == 404
+
+    reshared = client.post(f"/api/v1/workspace/versions/{release_v1.json()['id']}/share")
+    assert reshared.status_code == 200
+    assert reshared.json()["shareToken"] != token
+
+    with app_session(client) as session:
+        from app.models import AuditLog
+
+        actions = set(session.scalars(select(AuditLog.action)).all())
+        assert {"workspace.rollback", "version_shared", "version_share_revoked", "version_share_reissued"} <= actions
+
+
+def test_cross_workspace_access_returns_403(tmp_path: Path) -> None:
+    database_path = tmp_path / "access.db"
+    owner_client = build_client(database_path)
+    outsider_client = build_client(database_path)
+
+    register_user(owner_client, email="owner@example.com", display_name="Owner")
+    register_user(outsider_client, email="outsider@example.com", display_name="Outsider")
+
+    release = owner_client.post("/api/v1/workspace/versions", json={"kind": "release", "name": "Owner Budget"})
+    assert release.status_code == 200
+
+    owner_period = owner_client.get("/api/v1/ledger/periods").json()[0]
+    owner_version_id = release.json()["id"]
+
+    forbidden_requests = [
+        outsider_client.get(f"/api/v1/ledger/periods/{owner_period['id']}/subjects"),
+        outsider_client.get(f"/api/v1/ledger/entries?periodId={owner_period['id']}"),
+        outsider_client.get(f"/api/v1/variance/periods/{owner_period['id']}"),
+        outsider_client.post(f"/api/v1/workspace/versions/{owner_version_id}/rollback"),
+        outsider_client.delete(f"/api/v1/workspace/versions/{owner_version_id}"),
+        outsider_client.post(f"/api/v1/workspace/versions/{owner_version_id}/share"),
+    ]
+
+    for response in forbidden_requests:
+        assert response.status_code == 403
+
+
+def test_multi_allocation_locking_and_variance_reconciliation(tmp_path: Path) -> None:
+    client = build_client(tmp_path / "ledger.db")
+    register_user(client, email="finance@example.com", display_name="Finance")
 
     release = client.post("/api/v1/workspace/versions", json={"kind": "release", "name": "Budget V1"})
     assert release.status_code == 200
 
     periods = client.get("/api/v1/ledger/periods")
     assert periods.status_code == 200
-    first_period = periods.json()[0]
-    assert first_period["baselineVersionId"] == release.json()["id"]
+    first_period, second_period = periods.json()[:2]
 
     subjects = client.get(f"/api/v1/ledger/periods/{first_period['id']}/subjects")
     assert subjects.status_code == 200
-    revenue_subject = next(item for item in subjects.json() if item["subjectKey"] == "revenue.offline_sales")
+    subject_map = {item["subjectKey"]: item for item in subjects.json()}
 
-    create_entry = client.post(
+    income_entry = client.post(
         "/api/v1/ledger/entries",
         json={
             "ledgerPeriodId": first_period["id"],
             "direction": "income",
             "amount": 1000,
-            "counterparty": "Test Customer",
-            "description": "Walk-in sales",
+            "counterparty": "Walk-in",
+            "description": "Split income",
             "allocations": [
                 {
-                    "subjectKey": revenue_subject["subjectKey"],
-                    "subjectName": revenue_subject["subjectName"],
-                    "subjectType": revenue_subject["subjectType"],
-                    "amount": 1000,
+                    "subjectKey": "revenue.offline_sales",
+                    "subjectName": subject_map["revenue.offline_sales"]["subjectName"],
+                    "subjectType": "revenue",
+                    "amount": 700,
+                },
+                {
+                    "subjectKey": "revenue.online_sales",
+                    "subjectName": subject_map["revenue.online_sales"]["subjectName"],
+                    "subjectType": "revenue",
+                    "amount": 300,
+                },
+            ],
+        },
+    )
+    assert income_entry.status_code == 200
+    assert len(income_entry.json()["allocations"]) == 2
+
+    mismatch = client.post(
+        "/api/v1/ledger/entries",
+        json={
+            "ledgerPeriodId": first_period["id"],
+            "direction": "income",
+            "amount": 100,
+            "allocations": [
+                {
+                    "subjectKey": "cost.member.commission",
+                    "subjectName": subject_map["cost.member.commission"]["subjectName"],
+                    "subjectType": "cost",
+                    "amount": 100,
+                }
+            ],
+        },
+    )
+    assert mismatch.status_code == 422
+
+    cost_entry = client.post(
+        "/api/v1/ledger/entries",
+        json={
+            "ledgerPeriodId": second_period["id"],
+            "direction": "expense",
+            "amount": 450,
+            "allocations": [
+                {
+                    "subjectKey": "cost.member.commission",
+                    "subjectName": subject_map["cost.member.commission"]["subjectName"],
+                    "subjectType": "cost",
+                    "amount": 200,
+                },
+                {
+                    "subjectKey": "cost.member.base_pay",
+                    "subjectName": subject_map["cost.member.base_pay"]["subjectName"],
+                    "subjectType": "cost",
+                    "amount": 250,
+                },
+            ],
+        },
+    )
+    assert cost_entry.status_code == 200
+
+    first_variance = client.get(f"/api/v1/variance/periods/{first_period['id']}")
+    assert first_variance.status_code == 200
+    first_payload = first_variance.json()
+    revenue_line_total = sum(line["actualAmount"] for line in first_payload["lines"] if line["subjectType"] == "revenue")
+    cost_line_total = sum(line["actualAmount"] for line in first_payload["lines"] if line["subjectType"] == "cost")
+    assert first_payload["actualRevenue"] == revenue_line_total
+    assert first_payload["actualCost"] == cost_line_total
+    assert first_payload["revenueVarianceAmount"] == first_payload["actualRevenue"] - first_payload["plannedRevenue"]
+
+    second_variance = client.get(f"/api/v1/variance/periods/{second_period['id']}")
+    assert second_variance.status_code == 200
+    second_payload = second_variance.json()
+    assert second_payload["cumulativeActualRevenue"] == first_payload["actualRevenue"] + second_payload["actualRevenue"]
+    assert second_payload["cumulativeActualCost"] == first_payload["actualCost"] + second_payload["actualCost"]
+    assert second_payload["cumulativeRevenueVarianceAmount"] == (
+        second_payload["cumulativeActualRevenue"] - second_payload["cumulativePlannedRevenue"]
+    )
+
+    lock = client.post(f"/api/v1/ledger/periods/{first_period['id']}/lock")
+    assert lock.status_code == 200
+    assert lock.json()["status"] == "locked"
+
+    blocked_create = client.post(
+        "/api/v1/ledger/entries",
+        json={
+            "ledgerPeriodId": first_period["id"],
+            "direction": "income",
+            "amount": 50,
+            "allocations": [
+                {
+                    "subjectKey": "revenue.offline_sales",
+                    "subjectName": subject_map["revenue.offline_sales"]["subjectName"],
+                    "subjectType": "revenue",
+                    "amount": 50,
+                }
+            ],
+        },
+    )
+    assert blocked_create.status_code == 422
+
+    blocked_void = client.post(f"/api/v1/ledger/entries/{income_entry.json()['id']}/void")
+    assert blocked_void.status_code == 409
+
+    unlock = client.post(f"/api/v1/ledger/periods/{first_period['id']}/unlock")
+    assert unlock.status_code == 200
+    assert unlock.json()["status"] == "open"
+
+    voided = client.post(f"/api/v1/ledger/entries/{income_entry.json()['id']}/void")
+    assert voided.status_code == 200
+
+    after_void = client.get(f"/api/v1/variance/periods/{first_period['id']}")
+    assert after_void.status_code == 200
+    assert after_void.json()["actualRevenue"] == 0
+
+
+def test_subject_mapping_survives_rename_and_delete(tmp_path: Path) -> None:
+    client = build_client(tmp_path / "mapping.db")
+    register_user(client, email="mapping@example.com", display_name="Mapping")
+
+    draft = client.get("/api/v1/workspace/draft").json()
+    cost_item_id = "custom-rent"
+    draft["config"]["operating"]["monthlyFixedCosts"].append({"id": cost_item_id, "name": "Studio Rent", "amount": 600})
+    save_v1 = client.patch(
+        "/api/v1/workspace/draft",
+        json={"revision": draft["revision"], "workspaceName": draft["workspaceName"], "config": draft["config"]},
+    )
+    assert save_v1.status_code == 200
+
+    release_v1 = client.post("/api/v1/workspace/versions", json={"kind": "release", "name": "Budget V1"})
+    assert release_v1.status_code == 200
+
+    period = client.get("/api/v1/ledger/periods").json()[0]
+    subjects = client.get(f"/api/v1/ledger/periods/{period['id']}/subjects").json()
+    target_subject = next(item for item in subjects if item["subjectKey"] == f"cost.operating.monthly.{cost_item_id}")
+    assert target_subject["subjectName"] == "Studio Rent"
+
+    create_entry = client.post(
+        "/api/v1/ledger/entries",
+        json={
+            "ledgerPeriodId": period["id"],
+            "direction": "expense",
+            "amount": 600,
+            "allocations": [
+                {
+                    "subjectKey": target_subject["subjectKey"],
+                    "subjectName": target_subject["subjectName"],
+                    "subjectType": target_subject["subjectType"],
+                    "amount": 600,
                 }
             ],
         },
     )
     assert create_entry.status_code == 200
 
-    variance = client.get(f"/api/v1/variance/periods/{first_period['id']}")
-    assert variance.status_code == 200
-    assert variance.json()["actualRevenue"] == 1000
-    assert variance.json()["plannedRevenue"] > 0
-
-
-def test_release_share_lifecycle(tmp_path: Path) -> None:
-    client = build_client(tmp_path)
-    client.post(
-        "/api/v1/auth/register",
-        json={"email": "share@example.com", "password": "password123", "displayName": "Sharer"},
+    draft_v2 = client.get("/api/v1/workspace/draft").json()
+    draft_v2["config"]["operating"]["monthlyFixedCosts"] = [
+        item for item in draft_v2["config"]["operating"]["monthlyFixedCosts"] if item["id"] != cost_item_id
+    ]
+    save_v2 = client.patch(
+        "/api/v1/workspace/draft",
+        json={"revision": draft_v2["revision"], "workspaceName": draft_v2["workspaceName"], "config": draft_v2["config"]},
     )
+    assert save_v2.status_code == 200
 
-    snapshot = client.post("/api/v1/workspace/versions", json={"kind": "snapshot", "name": "Draft Checkpoint"})
-    assert snapshot.status_code == 200
+    release_v2 = client.post("/api/v1/workspace/versions", json={"kind": "release", "name": "Budget V2"})
+    assert release_v2.status_code == 200
 
-    snapshot_share = client.post(f"/api/v1/workspace/versions/{snapshot.json()['id']}/share")
-    assert snapshot_share.status_code == 422
+    variance = client.get(f"/api/v1/variance/periods/{period['id']}")
+    assert variance.status_code == 200
+    historical_line = next(line for line in variance.json()["lines"] if line["subjectKey"] == target_subject["subjectKey"])
+    assert historical_line["subjectName"] == "Studio Rent"
+    assert historical_line["actualAmount"] == 600
 
-    release = client.post("/api/v1/workspace/versions", json={"kind": "release", "name": "Board Budget"})
-    assert release.status_code == 200
+    with app_session(client) as session:
+        from app.models import ActualEntryAllocation, ForecastLineItemFact
 
-    share = client.post(f"/api/v1/workspace/versions/{release.json()['id']}/share")
-    assert share.status_code == 200
-    token = share.json()["shareToken"]
-
-    version_list = client.get("/api/v1/workspace/versions")
-    assert version_list.status_code == 200
-    release_item = next(item for item in version_list.json() if item["id"] == release.json()["id"])
-    assert release_item["activeShare"]["shareToken"] == token
-
-    public_payload = client.get(f"/api/v1/public/shares/{token}")
-    assert public_payload.status_code == 200
-    assert public_payload.json()["versionId"] == release.json()["id"]
-    assert public_payload.json()["versionName"] == "Board Budget"
-    assert public_payload.json()["result"]["scenarios"][1]["key"] == "base"
-
-    revoke = client.delete(f"/api/v1/workspace/versions/{release.json()['id']}/share")
-    assert revoke.status_code == 200
-
-    revoked_public = client.get(f"/api/v1/public/shares/{token}")
-    assert revoked_public.status_code == 404
-
-    reshared = client.post(f"/api/v1/workspace/versions/{release.json()['id']}/share")
-    assert reshared.status_code == 200
-    assert reshared.json()["shareToken"] != token
+        v1_name = session.scalar(
+            select(ForecastLineItemFact.subject_name).where(
+                ForecastLineItemFact.version_id == release_v1.json()["id"],
+                ForecastLineItemFact.subject_key == target_subject["subjectKey"],
+            )
+        )
+        v2_count = session.scalar(
+            select(func.count()).select_from(ForecastLineItemFact).where(
+                ForecastLineItemFact.version_id == release_v2.json()["id"],
+                ForecastLineItemFact.subject_key == target_subject["subjectKey"],
+            )
+        )
+        allocation_name = session.scalar(
+            select(ActualEntryAllocation.subject_name).where(
+                ActualEntryAllocation.actual_entry_id == create_entry.json()["id"],
+                ActualEntryAllocation.subject_key == target_subject["subjectKey"],
+            )
+        )
+        assert v1_name == "Studio Rent"
+        assert v2_count == 0
+        assert allocation_name == "Studio Rent"

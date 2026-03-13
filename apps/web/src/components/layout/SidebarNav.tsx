@@ -24,7 +24,7 @@ export function SidebarNav<T extends string, U extends string>(props: {
       <Panel className="p-4">
         <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">
           <Compass className="h-4 w-4 text-amber-500" />
-          Navigation
+          导航
         </div>
         <h2 className="mt-3 text-lg font-semibold text-stone-950">{props.title}</h2>
         <p className="mt-2 text-sm leading-6 text-stone-600">{props.subtitle}</p>

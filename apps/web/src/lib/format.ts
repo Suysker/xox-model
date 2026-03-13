@@ -58,13 +58,13 @@ export function formatCompactNumber(value: number) {
 
 export function formatDateTime(value: string | null) {
   if (!value) {
-    return 'Not saved'
+    return '未保存'
   }
 
   const date = new Date(value)
 
   if (Number.isNaN(date.getTime())) {
-    return 'Not saved'
+    return '未保存'
   }
 
   return dateTimeFormatter.format(date)
@@ -72,8 +72,8 @@ export function formatDateTime(value: string | null) {
 
 export function formatPaybackMonths(paybackMonthIndex: number | null) {
   if (paybackMonthIndex === null) {
-    return 'Not paid back in horizon'
+    return '规划期内未回本'
   }
 
-  return `${paybackMonthIndex} months to payback`
+  return `第 ${paybackMonthIndex} 个月回本`
 }

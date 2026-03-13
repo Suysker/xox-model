@@ -17,9 +17,9 @@ from .domain_types import (
 
 
 SCENARIO_LABELS: dict[ScenarioKey, tuple[str, str]] = {
-    "pessimistic": ("Pessimistic", "Lower-bound scenario"),
-    "base": ("Base", "Primary operating scenario"),
-    "optimistic": ("Optimistic", "Upper-bound scenario"),
+    "pessimistic": ("悲观", "按更保守的销量与排期预估，查看现金流下界。"),
+    "base": ("基准", "按当前最可能发生的经营方案，作为主要判断口径。"),
+    "optimistic": ("乐观", "按更好的销量与排期表现，查看经营上界。"),
 }
 
 

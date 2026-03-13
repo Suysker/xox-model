@@ -4,7 +4,7 @@ import { api, type DraftResponse, type VersionResponse, type VersionShareRespons
 import { SCHEMA_VERSION, cloneConfig } from '../lib/storage'
 import type { ModelConfig, WorkspaceBundle, WorkspaceSnapshot } from '../types'
 
-const defaultWorkspaceName = 'Forecast Workspace'
+const defaultWorkspaceName = '默认工作区'
 
 function createLocalBundle(config = createProductDefaultModel()): WorkspaceBundle {
   return {
@@ -37,6 +37,14 @@ export function useWorkspace(enabled = true) {
   const [error, setError] = useState<string | null>(null)
   const dirtyRef = useRef(false)
   const loadedRef = useRef(false)
+
+  function toUserFacingError(error: unknown) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (message === 'Draft revision conflict') {
+      return '草稿已在其他会话中更新，请先刷新到最新草稿再继续。'
+    }
+    return message
+  }
 
   function applyVersions(versions: VersionResponse[]) {
     setSnapshots(versions.map((version) => toSnapshot(version)))
@@ -78,7 +86,7 @@ export function useWorkspace(enabled = true) {
         dirtyRef.current = false
       } catch (loadError) {
         if (active) {
-          setError(loadError instanceof Error ? loadError.message : String(loadError))
+          setError(toUserFacingError(loadError))
         }
       } finally {
         if (active) {
@@ -112,7 +120,7 @@ export function useWorkspace(enabled = true) {
         dirtyRef.current = false
         await refreshVersions()
       } catch (saveError) {
-        setError(saveError instanceof Error ? saveError.message : String(saveError))
+        setError(toUserFacingError(saveError))
       }
     }, 900)
 

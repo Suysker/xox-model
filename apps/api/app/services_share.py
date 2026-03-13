@@ -5,6 +5,7 @@ import secrets
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from .audit import record_audit
 from .models import User, Workspace, WorkspaceEvent, WorkspaceVersion, WorkspaceVersionShare
 
 
@@ -42,8 +43,10 @@ def create_version_share(
     timestamp,
 ) -> WorkspaceVersionShare:
     version = session.get(WorkspaceVersion, version_id)
-    if version is None or version.workspace_id != workspace.id:
+    if version is None:
         raise LookupError("Version not found")
+    if version.workspace_id != workspace.id:
+        raise PermissionError("Forbidden")
     if version.kind != "release":
         raise ValueError("Only release versions can be shared")
 
@@ -75,6 +78,15 @@ def create_version_share(
             meta_json={"versionId": version.id, "shareId": share.id},
         )
     )
+    record_audit(
+        session,
+        action=event_type,
+        workspace_id=workspace.id,
+        actor_id=actor.id,
+        entity_type="workspace_version_share",
+        entity_id=share.id,
+        meta={"versionId": version.id},
+    )
     session.commit()
     session.refresh(share)
     return share
@@ -89,8 +101,10 @@ def revoke_version_share(
     timestamp,
 ) -> WorkspaceVersionShare:
     version = session.get(WorkspaceVersion, version_id)
-    if version is None or version.workspace_id != workspace.id:
+    if version is None:
         raise LookupError("Version not found")
+    if version.workspace_id != workspace.id:
+        raise PermissionError("Forbidden")
 
     share = session.scalar(select(WorkspaceVersionShare).where(WorkspaceVersionShare.version_id == version.id))
     if share is None or share.revoked_at is not None:
@@ -105,6 +119,15 @@ def revoke_version_share(
             event_type="version_share_revoked",
             meta_json={"versionId": version.id, "shareId": share.id},
         )
+    )
+    record_audit(
+        session,
+        action="version_share_revoked",
+        workspace_id=workspace.id,
+        actor_id=actor.id,
+        entity_type="workspace_version_share",
+        entity_id=share.id,
+        meta={"versionId": version.id},
     )
     session.commit()
     session.refresh(share)

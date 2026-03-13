@@ -32,6 +32,7 @@ const namedColors: Record<string, string> = {
   聚餐: '#f97316',
   团建: '#22c55e',
   VJ: '#a855f7',
+  舞台视觉: '#a855f7',
   原创: '#d946ef',
   耗材: '#eab308',
 }
@@ -183,7 +184,7 @@ export function CostWorkbench(props: {
     <Panel>
       <SectionTitle
         icon={Coins}
-        eyebrow="Inputs"
+        eyebrow="输入"
         title="成本概览"
         description="按月看成本结构，点击柱子切换当前查看月份。"
       />

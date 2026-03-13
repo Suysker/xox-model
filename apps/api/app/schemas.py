@@ -130,6 +130,18 @@ class VarianceSummaryResponse(BaseModel):
     plannedCost: float
     actualRevenue: float
     actualCost: float
+    revenueVarianceAmount: float
+    revenueVarianceRate: float | None
+    costVarianceAmount: float
+    costVarianceRate: float | None
+    cumulativePlannedRevenue: float
+    cumulativePlannedCost: float
+    cumulativeActualRevenue: float
+    cumulativeActualCost: float
+    cumulativeRevenueVarianceAmount: float
+    cumulativeRevenueVarianceRate: float | None
+    cumulativeCostVarianceAmount: float
+    cumulativeCostVarianceRate: float | None
 
 
 class PublicShareResponse(BaseModel):

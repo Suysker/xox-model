@@ -124,6 +124,23 @@ class WorkspaceVersionShare(Base, TimestampMixin):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class ForecastMonthFact(Base):
+    __tablename__ = "forecast_month_facts"
+    __table_args__ = (
+        UniqueConstraint("version_id", "scenario_key", "month_index", name="uq_forecast_month_fact"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), index=True)
+    version_id: Mapped[str] = mapped_column(ForeignKey("workspace_versions.id", ondelete="CASCADE"), index=True)
+    scenario_key: Mapped[str] = mapped_column(String(16), index=True)
+    month_index: Mapped[int] = mapped_column(Integer, index=True)
+    month_label: Mapped[str] = mapped_column(String(32))
+    planned_revenue: Mapped[float] = mapped_column(Float, default=0)
+    planned_cost: Mapped[float] = mapped_column(Float, default=0)
+    planned_profit: Mapped[float] = mapped_column(Float, default=0)
+
+
 class ForecastLineItemFact(Base):
     __tablename__ = "forecast_line_item_facts"
 
@@ -179,3 +196,17 @@ class ActualEntryAllocation(Base):
     subject_name: Mapped[str] = mapped_column(String(180))
     subject_type: Mapped[str] = mapped_column(String(32))
     amount: Mapped[float] = mapped_column(Float)
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    workspace_id: Mapped[str | None] = mapped_column(ForeignKey("workspaces.id", ondelete="SET NULL"), index=True)
+    actor_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    action: Mapped[str] = mapped_column(String(96), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="success", index=True)
+    entity_type: Mapped[str | None] = mapped_column(String(64))
+    entity_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    meta_json: Mapped[dict | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)

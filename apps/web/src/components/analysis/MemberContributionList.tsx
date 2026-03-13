@@ -38,7 +38,7 @@ export function MemberContributionList(props: {
 
   return (
     <Panel>
-      <SectionTitle icon={Users2} eyebrow="Dashboard" title="成员贡献拆解" />
+      <SectionTitle icon={Users2} eyebrow="分析" title="成员贡献拆解" />
 
       <div className="mt-5 grid gap-3 md:grid-cols-4">
         <StatCard label="当前月份" value={selectedMonth.label} />
@@ -53,7 +53,7 @@ export function MemberContributionList(props: {
             <div className="flex items-center justify-between gap-3">
               <h3 className="text-lg font-semibold text-stone-950">成员营收趋势</h3>
               <span className="rounded-full border border-stone-900/10 bg-stone-50 px-3 py-1 text-xs font-semibold text-stone-600">
-                Top 5
+                前 5 名
               </span>
             </div>
             <div className="mt-4">

@@ -27,10 +27,19 @@ from .services_auth import (
     cancel_account,
     create_session_cookie,
     create_user_with_workspace,
+    refresh_current_session,
     require_current_user,
     revoke_current_session,
 )
-from .services_ledger import create_actual_entry, list_entries, list_periods, list_subjects_for_period, variance_for_period, void_entry
+from .services_ledger import (
+    create_actual_entry,
+    list_entries,
+    list_periods,
+    list_subjects_for_period,
+    set_period_status,
+    variance_for_period,
+    void_entry,
+)
 from .services_workspace import (
     delete_version,
     get_workspace_draft,
@@ -89,7 +98,8 @@ def login(payload: LoginRequest, request: Request, response: Response, session: 
 
 
 @router.get("/auth/me", response_model=UserResponse)
-def me(user: User = Depends(current_user)) -> dict:
+def me(request: Request, response: Response, session: Session = Depends(get_db), user: User = Depends(current_user)) -> dict:
+    refresh_current_session(session, request, response, user)
     return {"id": user.id, "email": user.email, "displayName": user.display_name, "status": user.status}
 
 
@@ -154,6 +164,8 @@ def share_version(version_id: str, session: Session = Depends(get_db), user: Use
         share = create_version_share(session, workspace=workspace, actor=user, version_id=version_id, timestamp=utc_now())
     except LookupError as error:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+    except PermissionError as error:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(error)) from error
     except ValueError as error:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from error
     return serialize_share(share)
@@ -166,6 +178,8 @@ def unshare_version(version_id: str, session: Session = Depends(get_db), user: U
         revoke_version_share(session, workspace=workspace, actor=user, version_id=version_id, timestamp=utc_now())
     except LookupError as error:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+    except PermissionError as error:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(error)) from error
     return {"ok": True}
 
 
@@ -176,6 +190,8 @@ def rollback(version_id: str, session: Session = Depends(get_db), user: User = D
         draft = rollback_to_version(session, workspace=workspace, actor=user, version_id=version_id, timestamp=utc_now())
     except LookupError as error:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+    except PermissionError as error:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(error)) from error
     return serialize_draft(workspace, draft)
 
 
@@ -186,6 +202,8 @@ def destroy_version(version_id: str, session: Session = Depends(get_db), user: U
         delete_version(session, workspace=workspace, version_id=version_id)
     except LookupError as error:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+    except PermissionError as error:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(error)) from error
     except ValueError as error:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
     return {"ok": True}
@@ -200,7 +218,12 @@ def periods(session: Session = Depends(get_db), user: User = Depends(current_use
 @router.get("/ledger/periods/{period_id}/subjects", response_model=list[SubjectResponse])
 def subjects(period_id: str, session: Session = Depends(get_db), user: User = Depends(current_user)) -> list[dict]:
     workspace = get_workspace_for_user(session, user)
-    return list_subjects_for_period(session, workspace, period_id)
+    try:
+        return list_subjects_for_period(session, workspace, period_id)
+    except LookupError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+    except PermissionError as error:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(error)) from error
 
 
 @router.get("/ledger/entries", response_model=list[EntryResponse])
@@ -210,6 +233,8 @@ def entries(periodId: str, session: Session = Depends(get_db), user: User = Depe
         return list_entries(session, workspace, periodId)
     except LookupError as error:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+    except PermissionError as error:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(error)) from error
 
 
 @router.post("/ledger/entries", response_model=EntryResponse)
@@ -231,20 +256,50 @@ def create_entry(payload: CreateEntryRequest, session: Session = Depends(get_db)
         )
     except LookupError as error:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+    except PermissionError as error:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(error)) from error
     except ValueError as error:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from error
 
 
 @router.post("/ledger/entries/{entry_id}/void")
 def remove_entry(entry_id: str, session: Session = Depends(get_db), user: User = Depends(current_user)) -> dict:
     workspace = get_workspace_for_user(session, user)
     try:
-        void_entry(session, workspace, entry_id)
+        void_entry(session, workspace, entry_id, actor_id=user.id)
     except LookupError as error:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+    except PermissionError as error:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(error)) from error
     except ValueError as error:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
     return {"ok": True}
+
+
+@router.post("/ledger/periods/{period_id}/lock", response_model=PeriodResponse)
+def lock_period(period_id: str, session: Session = Depends(get_db), user: User = Depends(current_user)) -> dict:
+    workspace = get_workspace_for_user(session, user)
+    try:
+        return set_period_status(session, workspace, period_id, actor_id=user.id, status_value="locked")
+    except LookupError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+    except PermissionError as error:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from error
+
+
+@router.post("/ledger/periods/{period_id}/unlock", response_model=PeriodResponse)
+def unlock_period(period_id: str, session: Session = Depends(get_db), user: User = Depends(current_user)) -> dict:
+    workspace = get_workspace_for_user(session, user)
+    try:
+        return set_period_status(session, workspace, period_id, actor_id=user.id, status_value="open")
+    except LookupError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+    except PermissionError as error:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from error
 
 
 @router.get("/variance/periods/{period_id}", response_model=VarianceSummaryResponse)
@@ -254,6 +309,8 @@ def variance(period_id: str, session: Session = Depends(get_db), user: User = De
         return variance_for_period(session, workspace, period_id)
     except LookupError as error:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+    except PermissionError as error:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(error)) from error
 
 
 @router.get("/public/shares/{share_token}", response_model=PublicShareResponse)

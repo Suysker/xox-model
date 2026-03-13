@@ -30,22 +30,22 @@ export function AuthScreen(props: {
         <Panel className="p-8">
           <SectionTitle
             icon={LockKeyhole}
-            eyebrow="Platform"
-            title="Forecast, actuals, and versioned planning"
-            description="Sign in to continue editing your forecast draft, publish baseline versions, record actual entries, and review variance by month."
+            eyebrow="平台"
+            title="测算、实账与版本化经营规划"
+            description="登录后继续编辑测算草稿、发布预算版本、登记实账，并按月份查看预实差异。"
           />
           <div className="mt-8 grid gap-4 text-sm leading-7 text-stone-600 md:grid-cols-2">
             <div className="rounded-[22px] border border-stone-900/10 bg-stone-50/90 p-4">
-              Forecast drafts autosave to the backend and keep a mutable working copy.
+              测算草稿会自动保存到后端，并保留一份可继续编辑的工作副本。
             </div>
             <div className="rounded-[22px] border border-stone-900/10 bg-stone-50/90 p-4">
-              Published versions stay immutable and can be used as variance baselines.
+              已发布版本保持不可变，可直接作为预实分析的预算基线。
             </div>
             <div className="rounded-[22px] border border-stone-900/10 bg-stone-50/90 p-4">
-              Bookkeeping entries can be posted against forecast income and cost subjects.
+              记账分录可以直接挂到预测收入项和成本项之下。
             </div>
             <div className="rounded-[22px] border border-stone-900/10 bg-stone-50/90 p-4">
-              Variance analysis compares actuals with the current period baseline.
+              预实分析会将实际结果与当前期间的预算基线进行对比。
             </div>
           </div>
         </Panel>
@@ -53,9 +53,9 @@ export function AuthScreen(props: {
         <Panel className="p-6">
           <SectionTitle
             icon={UserRoundPlus}
-            eyebrow="Access"
-            title={mode === 'login' ? 'Login' : 'Create account'}
-            description={mode === 'login' ? 'Use your existing account.' : 'A default workspace will be created for you.'}
+            eyebrow="访问"
+            title={mode === 'login' ? '登录' : '创建账号'}
+            description={mode === 'login' ? '使用已有账号登录。' : '系统会自动为你创建默认工作区。'}
           />
 
           <div className="mt-6 inline-flex rounded-full border border-stone-900/10 bg-stone-100/80 p-1">
@@ -64,22 +64,31 @@ export function AuthScreen(props: {
               onClick={() => setMode('login')}
               className={mode === 'login' ? 'rounded-full bg-stone-950 px-4 py-2 text-sm font-semibold text-white' : 'rounded-full px-4 py-2 text-sm font-semibold text-stone-600'}
             >
-              Login
+              登录
             </button>
             <button
               type="button"
               onClick={() => setMode('register')}
               className={mode === 'register' ? 'rounded-full bg-stone-950 px-4 py-2 text-sm font-semibold text-white' : 'rounded-full px-4 py-2 text-sm font-semibold text-stone-600'}
             >
-              Register
+              注册
             </button>
           </div>
 
-          <div className="mt-6 grid gap-4">
+          <form
+            className="mt-6 grid gap-4"
+            onSubmit={(event) => {
+              event.preventDefault()
+              void handleSubmit()
+            }}
+          >
             {mode === 'register' ? (
-              <label className="grid gap-2">
-                <span className="text-sm font-semibold text-stone-700">Display name</span>
+              <label className="grid gap-2" htmlFor="auth-display-name">
+                <span className="text-sm font-semibold text-stone-700">显示名称</span>
                 <input
+                  id="auth-display-name"
+                  name="displayName"
+                  autoComplete="name"
                   className="h-11 rounded-2xl border border-stone-900/10 bg-stone-50 px-4 text-sm font-medium text-stone-900 outline-none focus:border-emerald-500 focus:bg-white"
                   value={displayName}
                   onChange={(event) => setDisplayName(event.target.value)}
@@ -87,9 +96,12 @@ export function AuthScreen(props: {
               </label>
             ) : null}
 
-            <label className="grid gap-2">
-              <span className="text-sm font-semibold text-stone-700">Email</span>
+            <label className="grid gap-2" htmlFor="auth-email">
+              <span className="text-sm font-semibold text-stone-700">邮箱</span>
               <input
+                id="auth-email"
+                name="email"
+                autoComplete="email"
                 className="h-11 rounded-2xl border border-stone-900/10 bg-stone-50 px-4 text-sm font-medium text-stone-900 outline-none focus:border-emerald-500 focus:bg-white"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
@@ -97,9 +109,12 @@ export function AuthScreen(props: {
               />
             </label>
 
-            <label className="grid gap-2">
-              <span className="text-sm font-semibold text-stone-700">Password</span>
+            <label className="grid gap-2" htmlFor="auth-password">
+              <span className="text-sm font-semibold text-stone-700">密码</span>
               <input
+                id="auth-password"
+                name="password"
+                autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
                 className="h-11 rounded-2xl border border-stone-900/10 bg-stone-50 px-4 text-sm font-medium text-stone-900 outline-none focus:border-emerald-500 focus:bg-white"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
@@ -110,14 +125,13 @@ export function AuthScreen(props: {
             {props.error ? <p className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{props.error}</p> : null}
 
             <button
-              type="button"
-              onClick={() => void handleSubmit()}
+              type="submit"
               disabled={props.loading}
               className="rounded-2xl bg-stone-950 px-4 py-3 text-sm font-semibold text-white transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {props.loading ? 'Working...' : mode === 'login' ? 'Login' : 'Register'}
+              {props.loading ? '提交中...' : mode === 'login' ? '登录' : '注册'}
             </button>
-          </div>
+          </form>
         </Panel>
       </div>
     </div>

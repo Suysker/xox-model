@@ -24,13 +24,13 @@ def create_stage_cost_item(seed: str, *, name: str, mode: StageCostMode) -> Stag
 
 def create_default_stage_cost_items() -> list[StageCostItem]:
     return [
-        create_stage_cost_item("vj", name="VJ", mode="monthly"),
-        create_stage_cost_item("original-song", name="Original Song", mode="monthly"),
-        create_stage_cost_item("makeup", name="Makeup", mode="perEvent"),
-        create_stage_cost_item("streaming", name="Streaming", mode="perEvent"),
-        create_stage_cost_item("meal", name="Meal", mode="perEvent"),
-        create_stage_cost_item("team-building", name="Team Building", mode="perEvent"),
-        create_stage_cost_item("material", name="Material", mode="perUnit"),
+        create_stage_cost_item("vj", name="舞台视觉", mode="monthly"),
+        create_stage_cost_item("original-song", name="原创", mode="monthly"),
+        create_stage_cost_item("makeup", name="化妆", mode="perEvent"),
+        create_stage_cost_item("streaming", name="推流", mode="perEvent"),
+        create_stage_cost_item("meal", name="聚餐", mode="perEvent"),
+        create_stage_cost_item("team-building", name="团建", mode="perEvent"),
+        create_stage_cost_item("material", name="耗材", mode="perUnit"),
     ]
 
 
@@ -98,8 +98,8 @@ def create_default_model() -> ModelConfig:
 
     return ModelConfig(
         shareholders=[
-            Shareholder(id="shareholder-a", name="Shareholder A", investmentAmount=65000, dividendRate=0.684),
-            Shareholder(id="shareholder-b", name="Shareholder B", investmentAmount=30000, dividendRate=0.316),
+            Shareholder(id="shareholder-a", name="股东 A", investmentAmount=65000, dividendRate=0.684),
+            Shareholder(id="shareholder-b", name="股东 B", investmentAmount=30000, dividendRate=0.316),
         ],
         operating=OperatingConfig(
             offlineUnitPrice=88,
@@ -114,7 +114,7 @@ def create_default_model() -> ModelConfig:
         teamMembers=[
             TeamMember(
                 id="member-lead",
-                name="Lead",
+                name="主成员",
                 employmentType="salary",
                 monthlyBasePay=1500,
                 perEventTravelCost=0,
@@ -124,7 +124,7 @@ def create_default_model() -> ModelConfig:
             ),
             TeamMember(
                 id="member-a",
-                name="Member A",
+                name="成员 A",
                 employmentType="partTime",
                 monthlyBasePay=0,
                 perEventTravelCost=0,
@@ -134,7 +134,7 @@ def create_default_model() -> ModelConfig:
             ),
             TeamMember(
                 id="member-b",
-                name="Member B",
+                name="成员 B",
                 employmentType="partTime",
                 monthlyBasePay=0,
                 perEventTravelCost=0,
@@ -144,7 +144,7 @@ def create_default_model() -> ModelConfig:
             ),
             TeamMember(
                 id="member-c",
-                name="Member C",
+                name="成员 C",
                 employmentType="partTime",
                 monthlyBasePay=0,
                 perEventTravelCost=0,
@@ -154,7 +154,7 @@ def create_default_model() -> ModelConfig:
             ),
             TeamMember(
                 id="member-d",
-                name="Member D",
+                name="成员 D",
                 employmentType="partTime",
                 monthlyBasePay=0,
                 perEventTravelCost=0,
@@ -164,7 +164,7 @@ def create_default_model() -> ModelConfig:
             ),
             TeamMember(
                 id="member-e",
-                name="Member E",
+                name="成员 E",
                 employmentType="partTime",
                 monthlyBasePay=0,
                 perEventTravelCost=0,
@@ -174,7 +174,7 @@ def create_default_model() -> ModelConfig:
             ),
             TeamMember(
                 id="member-f",
-                name="Member F",
+                name="成员 F",
                 employmentType="partTime",
                 monthlyBasePay=0,
                 perEventTravelCost=0,
@@ -184,8 +184,8 @@ def create_default_model() -> ModelConfig:
             ),
         ],
         employees=[
-            Employee(id="employee-a", name="Staff A", role="Operations", monthlyBasePay=0, perEventCost=200),
-            Employee(id="employee-b", name="Staff B", role="Operations", monthlyBasePay=0, perEventCost=200),
+            Employee(id="employee-a", name="员工 A", role="场务", monthlyBasePay=0, perEventCost=200),
+            Employee(id="employee-b", name="员工 B", role="场务", monthlyBasePay=0, perEventCost=200),
         ],
         months=months,
     )

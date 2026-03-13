@@ -49,7 +49,7 @@ export function TeamMembersTable(props: TeamMembersTableProps) {
     <Panel>
       <SectionTitle
         icon={Users}
-        eyebrow="Inputs"
+        eyebrow="输入"
         title="团队成员假设"
         description="这里只录偶像成员本身的收入参数。员工场补和执行成本已经拆到下面的员工配置，不再混在成员表里。"
         aside={

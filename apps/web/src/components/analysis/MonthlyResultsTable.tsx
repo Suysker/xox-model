@@ -18,7 +18,7 @@ export function MonthlyResultsTable(props: {
     <Panel>
       <SectionTitle
         icon={Table2}
-        eyebrow="Dashboard"
+        eyebrow="月度表"
         title="月度经营结果表"
         description="按月份展开营收、固定成本、每场成本、专项、耗材和累计现金。"
       />

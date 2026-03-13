@@ -19,7 +19,7 @@ export function EmployeesTable(props: {
     <Panel>
       <SectionTitle
         icon={BriefcaseBusiness}
-        eyebrow="Inputs"
+        eyebrow="输入"
         title="运营员工配置"
         description="员工和成员分开建模。这里录场务、执行、助理等不直接卖张、但会跟月薪或场次挂钩的人力成本。"
         aside={

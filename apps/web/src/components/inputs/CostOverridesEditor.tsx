@@ -188,7 +188,7 @@ export function CostOverridesEditor(props: {
             <Receipt className="h-5 w-5" />
           </div>
           <div className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-stone-500">Inputs</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-stone-500">输入</p>
             <div className="flex flex-wrap items-center gap-3">
               <h2 className="text-2xl font-bold text-stone-950">成本编辑</h2>
               <SegmentTabs<CostTab>

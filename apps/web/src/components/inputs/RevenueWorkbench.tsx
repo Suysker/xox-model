@@ -11,7 +11,7 @@ export function RevenueWorkbench(props: {
     <Panel>
       <SectionTitle
         icon={BadgeDollarSign}
-        eyebrow="Inputs"
+        eyebrow="输入"
         title="收入底盘"
         description="先确定线上和线下的单价，再把场次、销售系数和线上系数拼成同一套收入口径。"
       />

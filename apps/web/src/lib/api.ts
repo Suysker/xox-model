@@ -97,6 +97,18 @@ export type VarianceResponse = {
   plannedCost: number
   actualRevenue: number
   actualCost: number
+  revenueVarianceAmount: number
+  revenueVarianceRate: number | null
+  costVarianceAmount: number
+  costVarianceRate: number | null
+  cumulativePlannedRevenue: number
+  cumulativePlannedCost: number
+  cumulativeActualRevenue: number
+  cumulativeActualCost: number
+  cumulativeRevenueVarianceAmount: number
+  cumulativeRevenueVarianceRate: number | null
+  cumulativeCostVarianceAmount: number
+  cumulativeCostVarianceRate: number | null
 }
 
 export type PublicShareResponse = {
@@ -114,6 +126,116 @@ export type PublicShareResponse = {
   result: ModelResult
 }
 
+type ApiValidationError = {
+  loc?: Array<string | number>
+  msg?: string
+}
+
+type ApiErrorPayload = {
+  detail?: string | ApiValidationError[]
+  message?: string
+}
+
+const fieldLabels: Record<string, string> = {
+  email: '邮箱',
+  password: '密码',
+  displayName: '显示名称',
+  revision: '修订号',
+  workspaceName: '工作区名称',
+  ledgerPeriodId: '记账期间',
+  periodId: '期间',
+  amount: '金额',
+  counterparty: '对方单位',
+  description: '摘要说明',
+  allocations: '分摊明细',
+  subjectKey: '预算科目',
+  occurredAt: '发生时间',
+  request: '请求参数',
+}
+
+const exactMessageTranslations: Record<string, string> = {
+  'Invalid credentials': '邮箱或密码错误。',
+  'Email already exists': '邮箱已被注册。',
+  'Not authenticated': '请先登录。',
+  Forbidden: '无权访问该资源。',
+  'Workspace not found': '未找到工作区。',
+  'Draft not found': '未找到草稿。',
+  'Draft revision conflict': '草稿已在其他会话中更新，请先刷新到最新草稿再继续。',
+  'Version not found': '未找到版本。',
+  'Share link not found': '未找到分享链接。',
+  'Ledger period not found': '未找到该记账期间。',
+  'Ledger period has no baseline version': '当前期间尚未绑定预算基线版本。',
+  'Entry not found': '未找到该分录。',
+  'Ledger period is locked': '当前期间已锁定，不能修改。',
+  'Amount must be positive': '金额必须大于 0。',
+  'At least one allocation is required': '至少需要一条分摊记录。',
+  'Allocation amounts must be positive': '分摊金额必须大于 0。',
+  'Allocations must equal the entry amount': '分摊金额合计必须等于分录金额。',
+  'Active release cannot be deleted': '当前活动发布版本不能删除。',
+  'Version has an active share link': '当前版本仍有有效分享链接，不能删除。',
+  'Version is used by a ledger period': '当前版本已被记账期间引用，不能删除。',
+}
+
+function titleCase(value: string) {
+  if (!value) {
+    return value
+  }
+
+  return value.charAt(0).toUpperCase() + value.slice(1)
+}
+
+function translateField(rawField: string) {
+  return fieldLabels[rawField] ?? titleCase(rawField)
+}
+
+function translateValidationMessage(message: string) {
+  if (message === 'Field required') {
+    return '必填项'
+  }
+
+  if (message.includes('valid email address')) {
+    return '邮箱格式不正确'
+  }
+
+  const minStringMatch = message.match(/^String should have at least (\d+) characters$/)
+  if (minStringMatch) {
+    return `长度不能少于 ${minStringMatch[1]} 个字符`
+  }
+
+  const maxStringMatch = message.match(/^String should have at most (\d+) characters$/)
+  if (maxStringMatch) {
+    return `长度不能超过 ${maxStringMatch[1]} 个字符`
+  }
+
+  return exactMessageTranslations[message] ?? message
+}
+
+function translateKnownMessage(message: string) {
+  return exactMessageTranslations[message] ?? message
+}
+
+function formatValidationError(issue: ApiValidationError) {
+  const rawPath = issue.loc?.filter((segment) => segment !== 'body').join('.')
+  const path = translateField(rawPath ? rawPath.split('.').at(-1) ?? rawPath : 'request')
+  return issue.msg ? `${path}：${translateValidationMessage(issue.msg)}` : `${path}：无效值`
+}
+
+export function formatApiErrorMessage(payload: ApiErrorPayload | null, statusCode: number) {
+  if (typeof payload?.detail === 'string' && payload.detail.trim()) {
+    return translateKnownMessage(payload.detail.trim())
+  }
+
+  if (Array.isArray(payload?.detail) && payload.detail.length > 0) {
+    return payload.detail.map(formatValidationError).join('；')
+  }
+
+  if (typeof payload?.message === 'string' && payload.message.trim()) {
+    return translateKnownMessage(payload.message.trim())
+  }
+
+  return `请求失败（状态码 ${statusCode}）`
+}
+
 async function apiRequest<T>(method: ApiMethod, path: string, body?: unknown): Promise<T> {
   const init: RequestInit = {
     method,
@@ -128,8 +250,8 @@ async function apiRequest<T>(method: ApiMethod, path: string, body?: unknown): P
   const response = await fetch(path, init)
 
   if (!response.ok) {
-    const payload = (await response.json().catch(() => null)) as { detail?: string } | null
-    throw new Error(payload?.detail ?? `Request failed with status ${response.status}`)
+    const payload = (await response.json().catch(() => null)) as ApiErrorPayload | null
+    throw new Error(formatApiErrorMessage(payload, response.status))
   }
 
   if (response.status === 204) {
@@ -165,6 +287,10 @@ export const api = {
   listPeriods: () => apiRequest<PeriodResponse[]>('GET', '/api/v1/ledger/periods'),
   listSubjects: (periodId: string) =>
     apiRequest<SubjectResponse[]>('GET', `/api/v1/ledger/periods/${periodId}/subjects`),
+  lockPeriod: (periodId: string) =>
+    apiRequest<PeriodResponse>('POST', `/api/v1/ledger/periods/${periodId}/lock`),
+  unlockPeriod: (periodId: string) =>
+    apiRequest<PeriodResponse>('POST', `/api/v1/ledger/periods/${periodId}/unlock`),
   listEntries: (periodId: string) =>
     apiRequest<EntryResponse[]>('GET', `/api/v1/ledger/entries?periodId=${encodeURIComponent(periodId)}`),
   createEntry: (payload: {
