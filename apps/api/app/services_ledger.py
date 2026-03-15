@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .audit import record_audit
-from .domain_types import ModelConfig
+from .domain_types import ModelConfig, TeamMember, clamp_non_negative
 from .models import (
     ActualEntry,
     ActualEntryAllocation,
@@ -80,18 +80,65 @@ def _subjects_for_period_by_key(session: Session, period: LedgerPeriod) -> dict[
 
 
 def _related_entity_catalog(session: Session, period: LedgerPeriod) -> dict[str, dict[str, str]]:
-    if period.baseline_version_id is None:
+    config = _config_for_period(session, period)
+    if config is None:
         return {"teamMember": {}, "employee": {}}
 
-    version = session.get(WorkspaceVersion, period.baseline_version_id)
-    if version is None:
-        return {"teamMember": {}, "employee": {}}
-
-    config = ModelConfig.model_validate(version.payload_json)
     return {
         "teamMember": {member.id: member.name for member in config.teamMembers},
         "employee": {employee.id: employee.name for employee in config.employees},
     }
+
+
+def _config_for_period(session: Session, period: LedgerPeriod) -> ModelConfig | None:
+    if period.baseline_version_id is None:
+        return None
+
+    version = session.get(WorkspaceVersion, period.baseline_version_id)
+    if version is None:
+        return None
+
+    return ModelConfig.model_validate(version.payload_json)
+
+
+def _serialize_entry(session: Session, entry: ActualEntry) -> dict:
+    allocations = list(
+        session.scalars(select(ActualEntryAllocation).where(ActualEntryAllocation.actual_entry_id == entry.id)).all()
+    )
+    return {
+        "id": entry.id,
+        "ledgerPeriodId": entry.ledger_period_id,
+        "direction": entry.direction,
+        "amount": entry.amount,
+        "occurredAt": entry.occurred_at,
+        "postedAt": entry.posted_at,
+        "counterparty": entry.counterparty,
+        "description": entry.description,
+        "relatedEntityType": entry.related_entity_type,
+        "relatedEntityId": entry.related_entity_id,
+        "relatedEntityName": entry.related_entity_name,
+        "sourceEntryId": entry.source_entry_id,
+        "entryOrigin": entry.entry_origin,
+        "derivedKind": entry.derived_kind,
+        "status": entry.status,
+        "allocations": [
+            {
+                "subjectKey": allocation.subject_key,
+                "subjectName": allocation.subject_name,
+                "subjectType": allocation.subject_type,
+                "amount": allocation.amount,
+            }
+            for allocation in allocations
+        ],
+    }
+
+
+def _member_for_period(session: Session, period: LedgerPeriod, member_id: str) -> TeamMember | None:
+    config = _config_for_period(session, period)
+    if config is None:
+        return None
+
+    return next((member for member in config.teamMembers if member.id == member_id), None)
 
 
 def _period_summary(session: Session, period: LedgerPeriod) -> dict[str, float]:
@@ -196,38 +243,91 @@ def list_subjects_for_period(session: Session, workspace: Workspace, period_id: 
 def list_entries(session: Session, workspace: Workspace, period_id: str) -> list[dict]:
     period = _get_period(session, workspace, period_id)
     entries = session.scalars(
-        select(ActualEntry).where(ActualEntry.ledger_period_id == period_id).order_by(ActualEntry.occurred_at.desc())
+        select(ActualEntry)
+        .where(ActualEntry.ledger_period_id == period_id)
+        .order_by(ActualEntry.posted_at.desc(), ActualEntry.occurred_at.desc(), ActualEntry.created_at.desc())
     ).all()
-    serialized: list[dict] = []
-    for entry in entries:
-        allocations = list(
-            session.scalars(select(ActualEntryAllocation).where(ActualEntryAllocation.actual_entry_id == entry.id)).all()
+    return [_serialize_entry(session, entry) for entry in entries]
+
+
+def _create_derived_member_commission_entry(
+    session: Session,
+    *,
+    workspace: Workspace,
+    period: LedgerPeriod,
+    actor_id: str,
+    source_entry: ActualEntry,
+    source_amount: float,
+    related_entity_id: str,
+    related_entity_name: str,
+    available_subjects: dict[str, dict],
+    timestamp: datetime,
+) -> ActualEntry | None:
+    if source_amount <= 0:
+        return None
+
+    member = _member_for_period(session, period, related_entity_id)
+    if member is None:
+        raise ValueError("Related entity not found in the baseline version")
+
+    commission_subject = available_subjects.get("cost.member.commission")
+    if commission_subject is None:
+        raise ValueError("Baseline version does not expose member commission subject")
+
+    commission_amount = round(source_amount * clamp_non_negative(member.commissionRate), 2)
+    if commission_amount <= 0:
+        return None
+
+    entry = ActualEntry(
+        workspace_id=workspace.id,
+        ledger_period_id=period.id,
+        direction="expense",
+        amount=commission_amount,
+        occurred_at=source_entry.occurred_at,
+        description=f"{related_entity_name} 提成自动计提",
+        related_entity_type="teamMember",
+        related_entity_id=related_entity_id,
+        related_entity_name=related_entity_name,
+        source_entry_id=source_entry.id,
+        entry_origin="derived",
+        derived_kind="member_commission",
+        status="posted",
+        created_by=actor_id,
+        posted_at=timestamp,
+    )
+    session.add(entry)
+    session.flush()
+    session.add(
+        ActualEntryAllocation(
+            actual_entry_id=entry.id,
+            subject_key=commission_subject["subjectKey"],
+            subject_name=commission_subject["subjectName"],
+            subject_type=commission_subject["subjectType"],
+            amount=commission_amount,
         )
-        serialized.append(
-            {
-                "id": entry.id,
-                "ledgerPeriodId": entry.ledger_period_id,
-                "direction": entry.direction,
-                "amount": entry.amount,
-                "occurredAt": entry.occurred_at,
-                "counterparty": entry.counterparty,
-                "description": entry.description,
-                "relatedEntityType": entry.related_entity_type,
-                "relatedEntityId": entry.related_entity_id,
-                "relatedEntityName": entry.related_entity_name,
-                "status": entry.status,
-                "allocations": [
-                    {
-                        "subjectKey": allocation.subject_key,
-                        "subjectName": allocation.subject_name,
-                        "subjectType": allocation.subject_type,
-                        "amount": allocation.amount,
-                    }
-                    for allocation in allocations
-                ],
-            }
-        )
-    return serialized
+    )
+    record_audit(
+        session,
+        action="ledger.entry_auto_derived",
+        workspace_id=workspace.id,
+        actor_id=actor_id,
+        entity_type="actual_entry",
+        entity_id=entry.id,
+        meta={
+            "ledgerPeriodId": period.id,
+            "sourceEntryId": source_entry.id,
+            "derivedKind": "member_commission",
+            "amount": commission_amount,
+        },
+    )
+    return entry
+
+
+def _member_income_total(totals_by_subject: dict[str, float]) -> float:
+    return round(
+        totals_by_subject.get("revenue.offline_sales", 0.0) + totals_by_subject.get("revenue.online_sales", 0.0),
+        2,
+    )
 
 
 def create_actual_entry(
@@ -269,6 +369,8 @@ def create_actual_entry(
             raise ValueError(f"Unknown forecast subject: {item.subjectKey}")
         if canonical_subject["subjectType"] != expected_subject_type:
             raise ValueError("Entry direction does not match allocation subject type")
+        if direction == "expense" and item.subjectKey == "cost.member.commission":
+            raise ValueError("Member commission is derived automatically from posted member revenue")
         totals_by_subject[item.subjectKey] += item.amount
     for subject_key, subject_amount in totals_by_subject.items():
         canonical_subject = available_subjects[subject_key]
@@ -304,6 +406,9 @@ def create_actual_entry(
         related_entity_type=related_entity_type,
         related_entity_id=related_entity_id,
         related_entity_name=canonical_related_name or related_entity_name,
+        source_entry_id=None,
+        entry_origin="manual",
+        derived_kind=None,
         status="posted",
         created_by=actor_id,
         posted_at=timestamp,
@@ -337,8 +442,23 @@ def create_actual_entry(
             "relatedEntityId": related_entity_id,
         },
     )
+
+    if direction == "income" and related_entity_type == "teamMember" and related_entity_id:
+        _create_derived_member_commission_entry(
+            session,
+            workspace=workspace,
+            period=period,
+            actor_id=actor_id,
+            source_entry=entry,
+            source_amount=_member_income_total(totals_by_subject),
+            related_entity_id=related_entity_id,
+            related_entity_name=canonical_related_name or related_entity_name or "",
+            available_subjects=available_subjects,
+            timestamp=timestamp,
+        )
+
     session.commit()
-    return list_entries(session, workspace, period.id)[0]
+    return _serialize_entry(session, entry)
 
 
 def void_entry(session: Session, workspace: Workspace, entry_id: str, *, actor_id: str) -> None:
@@ -346,7 +466,14 @@ def void_entry(session: Session, workspace: Workspace, entry_id: str, *, actor_i
     period = session.get(LedgerPeriod, entry.ledger_period_id)
     if period and period.status == "locked":
         raise ValueError("Ledger period is locked")
+    if entry.entry_origin == "derived":
+        raise ValueError("System-generated entry must be voided from its source entry")
     entry.status = "voided"
+    derived_entries = session.scalars(
+        select(ActualEntry).where(ActualEntry.source_entry_id == entry.id, ActualEntry.status == "posted")
+    ).all()
+    for derived_entry in derived_entries:
+        derived_entry.status = "voided"
     record_audit(
         session,
         action="ledger.entry_voided",
@@ -354,7 +481,10 @@ def void_entry(session: Session, workspace: Workspace, entry_id: str, *, actor_i
         actor_id=actor_id,
         entity_type="actual_entry",
         entity_id=entry.id,
-        meta={"ledgerPeriodId": entry.ledger_period_id},
+        meta={
+            "ledgerPeriodId": entry.ledger_period_id,
+            "derivedEntryIds": [derived_entry.id for derived_entry in derived_entries],
+        },
     )
     session.commit()
 

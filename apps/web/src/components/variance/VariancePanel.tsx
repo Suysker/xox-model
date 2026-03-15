@@ -25,10 +25,25 @@ export function VariancePanel(props: {
 }) {
   const [metric, setMetric] = useState<VarianceMetric>('revenue')
   const [scope, setScope] = useState<VarianceScope>('current')
+  const [showOnlyVariance, setShowOnlyVariance] = useState(true)
 
   const trendRows = useMemo(() => buildTrendRows(props.periods, metric, scope), [metric, props.periods, scope])
   const selectedPeriod = props.periods.find((period) => period.id === props.selectedPeriodId) ?? props.periods[0] ?? null
   const topDrivers = useMemo(() => getTopVarianceDrivers(props.variance), [props.variance])
+  const visibleLines = useMemo(
+    () =>
+      props.variance
+        ? props.variance.lines.filter((line) => !showOnlyVariance || Math.abs(line.varianceAmount) >= 0.005)
+        : [],
+    [props.variance, showOnlyVariance],
+  )
+  const netVarianceAmount = props.variance
+    ? props.variance.revenueVarianceAmount - props.variance.costVarianceAmount
+    : 0
+  const revenueCompletion =
+    props.variance && props.variance.plannedRevenue > 0 ? props.variance.actualRevenue / props.variance.plannedRevenue : null
+  const costExecution =
+    props.variance && props.variance.plannedCost > 0 ? props.variance.actualCost / props.variance.plannedCost : null
 
   return (
     <div className="space-y-4">
@@ -56,6 +71,31 @@ export function VariancePanel(props: {
             </button>
           ))}
         </div>
+
+        {props.variance ? (
+          <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <QuickStat
+              label="收入达成"
+              value={revenueCompletion === null ? '-' : formatPercent(revenueCompletion)}
+              tone={revenueCompletion !== null && revenueCompletion < 1 ? 'warning' : 'success'}
+            />
+            <QuickStat
+              label="成本执行"
+              value={costExecution === null ? '-' : formatPercent(costExecution)}
+              tone={costExecution !== null && costExecution > 1 ? 'warning' : 'success'}
+            />
+            <QuickStat
+              label="净经营偏差"
+              value={formatCurrency(netVarianceAmount)}
+              tone={netVarianceAmount < 0 ? 'warning' : 'success'}
+            />
+            <QuickStat
+              label="首要原因"
+              value={topDrivers[0]?.label ?? '暂无'}
+              tone="default"
+            />
+          </div>
+        ) : null}
       </Panel>
 
       {props.variance ? (
@@ -124,37 +164,88 @@ export function VariancePanel(props: {
               icon={BarChart3}
               eyebrow="明细"
               title="科目对账"
+              aside={
+                <button
+                  type="button"
+                  onClick={() => setShowOnlyVariance((current) => !current)}
+                  className={cx(
+                    'rounded-full border px-3 py-2 text-xs font-semibold transition',
+                    showOnlyVariance
+                      ? 'border-amber-300 bg-amber-100 text-amber-800'
+                      : 'border-stone-900/10 bg-stone-50 text-stone-600 hover:bg-white',
+                  )}
+                >
+                  {showOnlyVariance ? '只看有差异' : '显示全部科目'}
+                </button>
+              }
             />
 
-            <div className="mt-5 overflow-hidden rounded-[24px] border border-stone-900/10">
-              <table className="w-full table-fixed border-collapse text-sm">
-                <thead className="bg-stone-100/90 text-stone-700">
-                  <tr className="border-b border-stone-900/10">
-                    <HeaderCell>科目</HeaderCell>
-                    <HeaderCell>计划</HeaderCell>
-                    <HeaderCell>实际</HeaderCell>
-                    <HeaderCell>差异</HeaderCell>
-                    <HeaderCell>差异率</HeaderCell>
-                  </tr>
-                </thead>
-                <tbody>
-                  {props.variance.lines.map((line) => (
-                    <tr key={line.subjectKey} className="border-b border-stone-900/10 last:border-none">
-                      <BodyCell className="font-semibold text-stone-950">{line.subjectName}</BodyCell>
-                      <BodyCell>{formatCurrency(line.plannedAmount)}</BodyCell>
-                      <BodyCell>{formatCurrency(line.actualAmount)}</BodyCell>
-                      <BodyCell className={getVarianceToneClass(line.subjectType, line.varianceAmount)}>
-                        {formatCurrency(line.varianceAmount)}
-                      </BodyCell>
-                      <BodyCell>{line.varianceRate === null ? '-' : formatPercent(line.varianceRate)}</BodyCell>
+            {visibleLines.length > 0 ? (
+              <div className="mt-5 overflow-hidden rounded-[24px] border border-stone-900/10">
+                <table className="w-full table-fixed border-collapse text-sm">
+                  <thead className="bg-stone-100/90 text-stone-700">
+                    <tr className="border-b border-stone-900/10">
+                      <HeaderCell>科目</HeaderCell>
+                      <HeaderCell>计划</HeaderCell>
+                      <HeaderCell>实际</HeaderCell>
+                      <HeaderCell>差异</HeaderCell>
+                      <HeaderCell>差异率</HeaderCell>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {visibleLines.map((line) => (
+                      <tr key={line.subjectKey} className="border-b border-stone-900/10 last:border-none">
+                        <BodyCell className="font-semibold text-stone-950">{line.subjectName}</BodyCell>
+                        <BodyCell>{formatCurrency(line.plannedAmount)}</BodyCell>
+                        <BodyCell>{formatCurrency(line.actualAmount)}</BodyCell>
+                        <BodyCell className={getVarianceToneClass(line.subjectType, line.varianceAmount)}>
+                          {formatCurrency(line.varianceAmount)}
+                        </BodyCell>
+                        <BodyCell>{line.varianceRate === null ? '-' : formatPercent(line.varianceRate)}</BodyCell>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="mt-5 rounded-[24px] border border-dashed border-stone-900/10 bg-stone-50/80 px-4 py-10 text-center text-sm text-stone-500">
+                当前筛选下没有需要关注的差异科目。
+              </div>
+            )}
           </Panel>
         </>
       ) : null}
+    </div>
+  )
+}
+
+function QuickStat(props: {
+  label: string
+  value: string
+  tone: 'default' | 'success' | 'warning'
+}) {
+  return (
+    <div
+      className={
+        props.tone === 'success'
+          ? 'rounded-[22px] border border-emerald-200 bg-emerald-50 p-4'
+          : props.tone === 'warning'
+            ? 'rounded-[22px] border border-rose-200 bg-rose-50 p-4'
+            : 'rounded-[22px] border border-stone-900/10 bg-stone-50/90 p-4'
+      }
+    >
+      <p className="text-xs font-semibold tracking-[0.16em] text-stone-500">{props.label}</p>
+      <p
+        className={
+          props.tone === 'success'
+            ? 'mt-2 text-xl font-bold text-emerald-700'
+            : props.tone === 'warning'
+              ? 'mt-2 text-xl font-bold text-rose-700'
+              : 'mt-2 text-xl font-bold text-stone-950'
+        }
+      >
+        {props.value}
+      </p>
     </div>
   )
 }

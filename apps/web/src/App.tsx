@@ -65,48 +65,48 @@ type CostTemplateNumberKey =
 const mainTabs: Array<{ value: MainTab; label: string; description: string; icon: LucideIcon }> = [
   {
     value: 'dashboard',
-    label: '经营分析',
-    description: '看三档场景、月度现金流和回本进度。',
+    label: '看测算',
+    description: '判断场景、现金流和回本速度。',
     icon: LayoutDashboard,
   },
   {
     value: 'inputs',
-    label: '模型输入',
-    description: '配置股东投资、收入引擎和成本结构。',
+    label: '调模型',
+    description: '修改投资、收入和成本假设。',
     icon: Settings2,
   },
   {
     value: 'bookkeeping',
-    label: '记账',
-    description: '按期间登记实际收入和成本。',
+    label: '记实际',
+    description: '把当期真实发生额挂到预算科目。',
     icon: ReceiptText,
   },
   {
     value: 'variance',
-    label: '预实分析',
-    description: '按预算基线查看计划与实际差异。',
+    label: '看偏差',
+    description: '对比预算基线和已过账结果。',
     icon: BarChart3,
   },
 ]
 
 const dashboardTabs: Array<{ value: DashboardTab; label: string; description: string }> = [
-  { value: 'overview', label: '总览', description: '先看上下界、回报率和当前月透视。' },
-  { value: 'months', label: '月度表', description: '逐月展开营收、成本、利润与累计现金。' },
-  { value: 'members', label: '成员拆解', description: '按月份看每个成员的收入贡献。' },
+  { value: 'overview', label: '经营总览', description: '先看上下界、回报率和当前月透视。' },
+  { value: 'months', label: '按月看', description: '逐月展开营收、成本、利润与累计现金。' },
+  { value: 'members', label: '看成员', description: '按月份看每个成员的收入贡献。' },
 ]
 
 const inputTabs: Array<{ value: InputsTab; label: string; description: string }> = [
-  { value: 'capital', label: '股东投资', description: '配置投资金额、股东结构和分红比例。' },
-  { value: 'revenue', label: '收入引擎', description: '把线上/线下单价、成员卖张、场次节奏和线上系数放在一起配置。' },
-  { value: 'cost', label: '成本结构', description: '先看成本概览，再改成本编辑。' },
+  { value: 'capital', label: '资金', description: '配置投资金额、股东结构和分红比例。' },
+  { value: 'revenue', label: '收入', description: '把线上/线下单价、成员卖张、场次节奏和线上系数放在一起配置。' },
+  { value: 'cost', label: '成本', description: '先看成本概览，再改成本编辑。' },
 ]
 
 const bookkeepingTabs: Array<{ value: BookkeepingTab; label: string; description: string }> = [
-  { value: 'entries', label: '实际分录', description: '登记期间实际发生额。' },
+  { value: 'entries', label: '实际录入', description: '登记期间实际发生额。' },
 ]
 
 const varianceTabs: Array<{ value: VarianceTab; label: string; description: string }> = [
-  { value: 'analysis', label: '差异分析', description: '对比预算基线和已过账实际。' },
+  { value: 'analysis', label: '偏差复盘', description: '对比预算基线和已过账实际。' },
 ]
 
 const chartMetricTabs: Array<{ value: ChartMetricKey; label: string }> = [
@@ -458,7 +458,7 @@ export default function App() {
     const allocations = payload.allocations
 
     if (Math.abs(allocations.reduce((sum, allocation) => sum + allocation.amount, 0) - payload.amount) >= 0.005) {
-      setBanner({ tone: 'error', message: '分录金额必须与分摊合计一致。' })
+      setBanner({ tone: 'error', message: '金额校验失败，请重新确认录入金额。' })
       return false
     }
 
@@ -469,6 +469,7 @@ export default function App() {
         direction: payload.direction,
         amount: payload.amount,
         allocations,
+        ...(payload.occurredAt ? { occurredAt: payload.occurredAt } : {}),
         ...(payload.counterparty ? { counterparty: payload.counterparty } : {}),
         ...(payload.description ? { description: payload.description } : {}),
         ...(payload.relatedEntityType ? { relatedEntityType: payload.relatedEntityType } : {}),
@@ -581,12 +582,13 @@ export default function App() {
     selectedScenarioResult.months.find((month) => month.monthId === selectedMonthId) ??
     selectedScenarioResult.months[0]
   const selectedMonthPlan = config.months.find((month) => month.id === selectedMonthId) ?? config.months[0]
-
+  const activeReleaseCount = snapshots.filter((snapshot) => snapshot.kind === 'release').length
+  const selectedScenarioLabel = getScenarioLabel(selectedScenarioResult.key, selectedScenarioResult.label)
   if (!selectedMonthResult || !selectedMonthPlan) {
     return null
   }
 
-  const secondaryTitle = mainTab === 'dashboard' ? '分析视图' : '输入模块'
+  const secondaryTitle = mainTab === 'dashboard' ? '怎么看' : '调什么'
   const secondaryItems = mainTab === 'dashboard' ? dashboardTabs : inputTabs
   const secondaryValue = mainTab === 'dashboard' ? dashboardTab : inputsTab
 
@@ -896,8 +898,8 @@ export default function App() {
 
     const confirmed = window.confirm(
       snapshot
-        ? `回滚会用“${snapshot.name}”覆盖当前草稿。确认继续吗？`
-        : '回滚会覆盖当前草稿。确认继续吗？',
+        ? `恢复草稿会用“${snapshot.name}”覆盖当前草稿。确认继续吗？`
+        : '恢复草稿会覆盖当前草稿。确认继续吗？',
     )
 
     if (!confirmed) {
@@ -911,7 +913,7 @@ export default function App() {
       setSelectedMonthId(draft.config.months[0]?.id ?? snapshot?.config.months[0]?.id ?? '')
       setBanner({
         tone: 'info',
-        message: snapshot ? `已回滚到版本：${snapshot.name}` : '已回滚到所选版本。',
+        message: snapshot ? `已恢复到版本：${snapshot.name}` : '已恢复到所选版本。',
       })
     } catch (loadError) {
       setBanner({ tone: 'error', message: getErrorMessage(loadError) })
@@ -945,8 +947,8 @@ export default function App() {
 
     const confirmed = window.confirm(
       snapshot
-        ? `升级会先将“${snapshot.name}”恢复为当前草稿，再发布为新版本。确认继续吗？`
-        : '升级会覆盖当前草稿并发布为新版本。确认继续吗？',
+        ? `会先将“${snapshot.name}”恢复为当前草稿，再发布为新版本。确认继续吗？`
+        : '会覆盖当前草稿并发布为新版本。确认继续吗？',
     )
 
     if (!confirmed) {
@@ -958,7 +960,7 @@ export default function App() {
       await refreshPeriods()
       setBanner({
         tone: 'success',
-        message: snapshot ? `已将“${snapshot.name}”升级为发布版本。` : '已升级为发布版本。',
+        message: snapshot ? `已将“${snapshot.name}”发布为正式版本。` : '已发布为正式版本。',
       })
     } catch (promoteError) {
       setBanner({ tone: 'error', message: getErrorMessage(promoteError) })
@@ -1091,17 +1093,15 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(245,158,11,0.12),_transparent_28%),linear-gradient(180deg,_#fbf8f1_0%,_#f3ede3_100%)] px-4 py-5 text-stone-900 md:px-6 lg:px-8">
-      <div className="mx-auto max-w-[1600px]">
+      <div className="mx-auto max-w-[1520px]">
         {banner ? (
           <div className="mb-4">
             <NoticeBanner tone={banner.tone} message={banner.message} onDismiss={() => setBanner(null)} />
           </div>
         ) : null}
 
-        <div className="grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)]">
+        <div className="grid gap-4 xl:grid-cols-[244px_minmax(0,1fr)]">
           <SidebarNav
-            title="地下偶像经营工作台"
-            subtitle="把测算、发布、记账和预实分析收在同一套经营工作流里。"
             workspaceName={workspaceName}
             lastSavedAt={lastSavedAt}
             snapshotCount={snapshots.length}
@@ -1168,6 +1168,8 @@ export default function App() {
                   scenario={selectedScenarioResult}
                   memberCount={config.teamMembers.length}
                   monthCount={config.months.length}
+                  selectedMonthLabel={selectedMonthPlan.label}
+                  releaseCount={activeReleaseCount}
                 />
 
                 <Panel>
@@ -1175,7 +1177,6 @@ export default function App() {
                     icon={LineChart}
                     eyebrow="分析"
                     title="三档场景总览"
-                    description="先选一档主判断口径。"
                   />
                   <div className="mt-5">
                     <ScenarioDeck
@@ -1311,7 +1312,7 @@ export default function App() {
                       selectedMonthId={selectedMonthId}
                       selectedMonthPlan={selectedMonthPlan}
                       selectedMonthResult={selectedMonthResult}
-                      selectedScenarioLabel={getScenarioLabel(selectedScenarioResult.key, selectedScenarioResult.label)}
+                      selectedScenarioLabel={selectedScenarioLabel}
                       onSelectMonth={setSelectedMonthId}
                     />
 
@@ -1378,6 +1379,8 @@ export default function App() {
                 entries={entries}
                 loading={ledgerBusy}
                 baselineMonthResult={selectedBaselineMonthResult}
+                offlineUnitPrice={selectedBaselineSnapshot?.config.operating.offlineUnitPrice ?? config.operating.offlineUnitPrice}
+                onlineUnitPrice={selectedBaselineSnapshot?.config.operating.onlineUnitPrice ?? config.operating.onlineUnitPrice}
                 onSelectPeriod={setSelectedPeriodId}
                 onSubmit={handleSubmitEntry}
                 onVoid={handleVoidEntry}
@@ -1405,7 +1408,7 @@ export default function App() {
             className="fixed inset-0 z-40 bg-stone-950/20 backdrop-blur-[2px]"
             onClick={() => setWorkspaceOpen(false)}
           />
-          <div className="fixed inset-y-4 right-4 z-50 w-[420px] max-w-[calc(100vw-1.5rem)] md:right-6">
+          <div className="fixed inset-y-2 left-2 right-2 z-50 md:inset-y-4 md:left-auto md:right-4 md:w-[440px] md:max-w-[calc(100vw-2rem)] lg:right-6">
             <WorkspacePanel
               workspaceName={workspaceName}
               lastSavedAt={lastSavedAt}

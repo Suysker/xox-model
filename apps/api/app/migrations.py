@@ -149,6 +149,9 @@ def run_migrations() -> None:
             "related_entity_type": "ALTER TABLE actual_entries ADD COLUMN related_entity_type VARCHAR(32)",
             "related_entity_id": "ALTER TABLE actual_entries ADD COLUMN related_entity_id VARCHAR(128)",
             "related_entity_name": "ALTER TABLE actual_entries ADD COLUMN related_entity_name VARCHAR(180)",
+            "source_entry_id": "ALTER TABLE actual_entries ADD COLUMN source_entry_id VARCHAR(36)",
+            "entry_origin": "ALTER TABLE actual_entries ADD COLUMN entry_origin VARCHAR(32) DEFAULT 'manual'",
+            "derived_kind": "ALTER TABLE actual_entries ADD COLUMN derived_kind VARCHAR(32)",
         }
         for column_name, statement in actual_entry_alters.items():
             if column_name not in actual_entry_columns:

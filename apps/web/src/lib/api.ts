@@ -74,11 +74,15 @@ export type EntryResponse = {
   direction: 'income' | 'expense'
   amount: number
   occurredAt: string
+  postedAt: string | null
   counterparty: string | null
   description: string | null
   relatedEntityType?: 'teamMember' | 'employee' | null
   relatedEntityId?: string | null
   relatedEntityName?: string | null
+  sourceEntryId?: string | null
+  entryOrigin?: 'manual' | 'derived' | string
+  derivedKind?: string | null
   status: string
   allocations: EntryAllocation[]
 }
@@ -153,7 +157,7 @@ const fieldLabels: Record<string, string> = {
   amount: '金额',
   counterparty: '对方单位',
   description: '摘要说明',
-  allocations: '分摊明细',
+  allocations: '预算科目',
   subjectKey: '预算科目',
   occurredAt: '发生时间',
   request: '请求参数',
@@ -174,9 +178,12 @@ const exactMessageTranslations: Record<string, string> = {
   'Entry not found': '未找到该分录。',
   'Ledger period is locked': '当前期间已锁定，不能修改。',
   'Amount must be positive': '金额必须大于 0。',
-  'At least one allocation is required': '至少需要一条分摊记录。',
-  'Allocation amounts must be positive': '分摊金额必须大于 0。',
-  'Allocations must equal the entry amount': '分摊金额合计必须等于分录金额。',
+  'At least one allocation is required': '请先选择预算科目。',
+  'Allocation amounts must be positive': '预算科目金额必须大于 0。',
+  'Allocations must equal the entry amount': '预算科目金额必须与录入金额一致。',
+  'Member commission is derived automatically from posted member revenue': '成员提成会随成员收入自动计提，不需要手动录入。',
+  'System-generated entry must be voided from its source entry': '自动生成的提成分录需要从对应收入记录里一起作废。',
+  'Baseline version does not expose member commission subject': '当前预算基线缺少成员提成科目，无法自动计提。',
   'Active release cannot be deleted': '当前活动发布版本不能删除。',
   'Version has an active share link': '当前版本仍有有效分享链接，不能删除。',
   'Version is used by a ledger period': '当前版本已被记账期间引用，不能删除。',

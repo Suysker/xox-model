@@ -23,7 +23,6 @@ export function OperatingWorkbench(props: {
         icon={Coins}
         eyebrow="输入"
         title="股东投资"
-        description="先定经营起点和周期，再录股东资金来源与分红结构。"
         aside={
           <button
             type="button"

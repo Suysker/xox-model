@@ -9,6 +9,8 @@ export function ProductHero(props: {
   scenario: ScenarioResult
   memberCount: number
   monthCount: number
+  selectedMonthLabel: string
+  releaseCount: number
 }) {
   return (
     <section className="overflow-hidden rounded-[32px] bg-stone-950 p-6 text-white shadow-[0_24px_80px_rgba(41,37,36,0.28)]">
@@ -22,8 +24,13 @@ export function ProductHero(props: {
             {props.workspaceName}
           </h1>
           <p className="mt-3 max-w-2xl text-sm leading-7 text-stone-300 md:text-base">
-            围绕场次、成员单场张数和成本结构，直接判断月度现金流与回本节奏。
+            月度现金、回本节奏和成员产出一屏查看。
           </p>
+        </div>
+
+        <div className="flex flex-wrap gap-2 xl:justify-end">
+          <HeroChip label="当前月份" value={props.selectedMonthLabel} />
+          <HeroChip label="发布版本" value={props.releaseCount > 0 ? `${props.releaseCount} 个` : '未发布'} />
         </div>
 
         <div className="grid grid-cols-3 gap-2 sm:gap-3 xl:min-w-[360px]">
@@ -44,6 +51,18 @@ export function ProductHero(props: {
         <StatCard dark label="期末现金" value={formatCurrency(props.scenario.netCashAfterInvestment)} />
       </div>
     </section>
+  )
+}
+
+function HeroChip(props: {
+  label: string
+  value: string
+}) {
+  return (
+    <div className="rounded-full border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-stone-200">
+      <span className="text-stone-400">{props.label}</span>
+      <span className="ml-2 text-white">{props.value}</span>
+    </div>
   )
 }
 

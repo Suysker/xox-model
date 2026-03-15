@@ -21,8 +21,7 @@ export function SharedInputsPanel(props: {
           <SectionTitle
             icon={Settings2}
             eyebrow="模型输入"
-            title="核心经营假设"
-            description={`${getScenarioLabel(props.selectedScenario, props.selectedScenarioResult.label)}场景按发布版冻结配置展示。`}
+            title={`核心经营假设 · ${getScenarioLabel(props.selectedScenario, props.selectedScenarioResult.label)}`}
           />
 
           <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -159,7 +158,6 @@ export function SharedInputsPanel(props: {
           icon={CalendarRange}
           eyebrow="排期"
           title="月度经营输入"
-          description="这里展示发布时冻结的月度场次、销量系数、线上系数和训练安排。"
         />
 
         <div className="mt-5 overflow-hidden rounded-[24px] border border-stone-900/10">

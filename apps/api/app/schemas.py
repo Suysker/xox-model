@@ -110,11 +110,15 @@ class EntryResponse(BaseModel):
     direction: str
     amount: float
     occurredAt: datetime
+    postedAt: datetime | None = None
     counterparty: str | None
     description: str | None
     relatedEntityType: str | None = None
     relatedEntityId: str | None = None
     relatedEntityName: str | None = None
+    sourceEntryId: str | None = None
+    entryOrigin: str = "manual"
+    derivedKind: str | None = None
     status: str
     allocations: list[AllocationInput]
 

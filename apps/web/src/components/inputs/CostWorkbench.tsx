@@ -186,14 +186,13 @@ export function CostWorkbench(props: {
         icon={Coins}
         eyebrow="输入"
         title="成本概览"
-        description="按月看成本结构，点击柱子切换当前查看月份。"
       />
 
       <section className="mt-5 rounded-[24px] border border-stone-900/10 bg-white p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="text-lg font-semibold text-stone-950">按月成本结构</h3>
-            <p className="mt-1 text-sm leading-6 text-stone-600">每个月独立成柱，直接展示化妆、推流、聚餐这类末级成本项。</p>
+            <p className="mt-1 text-sm leading-6 text-stone-600">点击柱子切换月份，右侧细项会跟着变化。</p>
           </div>
           <div className="rounded-full border border-stone-900/10 bg-stone-50 px-4 py-2 text-sm font-semibold text-stone-700">
             {props.selectedMonthPlan.label} · 月总成本 {formatCurrency(props.selectedMonthResult.totalCost)}

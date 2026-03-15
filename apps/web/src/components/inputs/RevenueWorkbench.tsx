@@ -13,7 +13,6 @@ export function RevenueWorkbench(props: {
         icon={BadgeDollarSign}
         eyebrow="输入"
         title="收入底盘"
-        description="先确定线上和线下的单价，再把场次、销售系数和线上系数拼成同一套收入口径。"
       />
 
       <div className="mt-5 grid gap-4 xl:grid-cols-12 xl:items-stretch">
@@ -34,8 +33,7 @@ export function RevenueWorkbench(props: {
         </div>
 
         <div className="rounded-[22px] border border-stone-900/10 bg-stone-50/80 px-4 py-4 text-sm leading-7 text-stone-600 xl:col-span-5">
-          线下收入由「成员单场张数 × 场次 × 销售系数 × 线下单价」驱动；
-          线上 / 电切收入由「成员单场张数 × 场次 × 销售系数 × 线上系数 × 线上单价」驱动。
+          线下看单价，线上看系数。两侧改完，月度排期会同步刷新收入结果。
         </div>
       </div>
     </Panel>

@@ -234,6 +234,122 @@ def test_cross_workspace_access_returns_403(tmp_path: Path) -> None:
         assert response.status_code == 403
 
 
+def test_member_income_uses_occurred_date_and_auto_derives_commission(tmp_path: Path) -> None:
+    client = build_client(tmp_path / "member-income.db")
+    register_user(client, email="member-income@example.com", display_name="Finance")
+
+    release = client.post("/api/v1/workspace/versions", json={"kind": "release", "name": "Budget V1"})
+    assert release.status_code == 200
+
+    period = client.get("/api/v1/ledger/periods").json()[0]
+    subjects = client.get(f"/api/v1/ledger/periods/{period['id']}/subjects").json()
+    subject_map = {item["subjectKey"]: item for item in subjects}
+    occurred_at = "2026-03-05T10:00:00+00:00"
+
+    income_entry = client.post(
+        "/api/v1/ledger/entries",
+        json={
+            "ledgerPeriodId": period["id"],
+            "direction": "income",
+            "amount": 880,
+            "occurredAt": occurred_at,
+            "relatedEntityType": "teamMember",
+            "relatedEntityId": "member-a",
+            "allocations": [
+                {
+                    "subjectKey": "revenue.offline_sales",
+                    "subjectName": subject_map["revenue.offline_sales"]["subjectName"],
+                    "subjectType": "revenue",
+                    "amount": 880,
+                }
+            ],
+        },
+    )
+    assert income_entry.status_code == 200
+    assert income_entry.json()["occurredAt"].startswith("2026-03-05T10:00:00")
+    assert income_entry.json()["entryOrigin"] == "manual"
+
+    entries = client.get(f"/api/v1/ledger/entries?periodId={period['id']}")
+    assert entries.status_code == 200
+    payload = entries.json()
+    manual_entry = next(item for item in payload if item["id"] == income_entry.json()["id"])
+    derived_entry = next(item for item in payload if item["sourceEntryId"] == manual_entry["id"])
+
+    assert manual_entry["postedAt"] is not None
+    assert derived_entry["entryOrigin"] == "derived"
+    assert derived_entry["derivedKind"] == "member_commission"
+    assert derived_entry["direction"] == "expense"
+    assert derived_entry["amount"] == 308
+    assert derived_entry["occurredAt"].startswith("2026-03-05T10:00:00")
+    assert derived_entry["allocations"][0]["subjectKey"] == "cost.member.commission"
+
+    variance = client.get(f"/api/v1/variance/periods/{period['id']}")
+    assert variance.status_code == 200
+    variance_payload = variance.json()
+    assert variance_payload["actualRevenue"] == 880
+    assert variance_payload["actualCost"] == 308
+
+    blocked_direct_void = client.post(f"/api/v1/ledger/entries/{derived_entry['id']}/void")
+    assert blocked_direct_void.status_code == 409
+
+    voided = client.post(f"/api/v1/ledger/entries/{manual_entry['id']}/void")
+    assert voided.status_code == 200
+
+    after_void = client.get(f"/api/v1/variance/periods/{period['id']}")
+    assert after_void.status_code == 200
+    assert after_void.json()["actualRevenue"] == 0
+    assert after_void.json()["actualCost"] == 0
+
+
+def test_member_income_combines_offline_and_online_for_commission(tmp_path: Path) -> None:
+    client = build_client(tmp_path / "member-income-combo.db")
+    register_user(client, email="member-income-combo@example.com", display_name="Finance")
+
+    release = client.post("/api/v1/workspace/versions", json={"kind": "release", "name": "Budget V1"})
+    assert release.status_code == 200
+
+    period = client.get("/api/v1/ledger/periods").json()[0]
+    subjects = client.get(f"/api/v1/ledger/periods/{period['id']}/subjects").json()
+    subject_map = {item["subjectKey"]: item for item in subjects}
+
+    income_entry = client.post(
+        "/api/v1/ledger/entries",
+        json={
+            "ledgerPeriodId": period["id"],
+            "direction": "income",
+            "amount": 1000,
+            "relatedEntityType": "teamMember",
+            "relatedEntityId": "member-a",
+            "allocations": [
+                {
+                    "subjectKey": "revenue.offline_sales",
+                    "subjectName": subject_map["revenue.offline_sales"]["subjectName"],
+                    "subjectType": "revenue",
+                    "amount": 700,
+                },
+                {
+                    "subjectKey": "revenue.online_sales",
+                    "subjectName": subject_map["revenue.online_sales"]["subjectName"],
+                    "subjectType": "revenue",
+                    "amount": 300,
+                },
+            ],
+        },
+    )
+    assert income_entry.status_code == 200
+
+    entries = client.get(f"/api/v1/ledger/entries?periodId={period['id']}")
+    assert entries.status_code == 200
+    payload = entries.json()
+    manual_entry = next(item for item in payload if item["id"] == income_entry.json()["id"])
+    derived_entry = next(item for item in payload if item["sourceEntryId"] == manual_entry["id"])
+
+    assert len(manual_entry["allocations"]) == 2
+    assert derived_entry["direction"] == "expense"
+    assert derived_entry["amount"] == 350
+    assert derived_entry["allocations"][0]["subjectKey"] == "cost.member.commission"
+
+
 def test_multi_allocation_locking_and_variance_reconciliation(tmp_path: Path) -> None:
     client = build_client(tmp_path / "ledger.db")
     register_user(client, email="finance@example.com", display_name="Finance")
@@ -294,6 +410,24 @@ def test_multi_allocation_locking_and_variance_reconciliation(tmp_path: Path) ->
     )
     assert mismatch.status_code == 422
 
+    manual_commission = client.post(
+        "/api/v1/ledger/entries",
+        json={
+            "ledgerPeriodId": second_period["id"],
+            "direction": "expense",
+            "amount": 200,
+            "allocations": [
+                {
+                    "subjectKey": "cost.member.commission",
+                    "subjectName": subject_map["cost.member.commission"]["subjectName"],
+                    "subjectType": "cost",
+                    "amount": 200,
+                }
+            ],
+        },
+    )
+    assert manual_commission.status_code == 422
+
     cost_entry = client.post(
         "/api/v1/ledger/entries",
         json={
@@ -302,14 +436,14 @@ def test_multi_allocation_locking_and_variance_reconciliation(tmp_path: Path) ->
             "amount": 450,
             "allocations": [
                 {
-                    "subjectKey": "cost.member.commission",
-                    "subjectName": subject_map["cost.member.commission"]["subjectName"],
+                    "subjectKey": "cost.member.base_pay",
+                    "subjectName": subject_map["cost.member.base_pay"]["subjectName"],
                     "subjectType": "cost",
                     "amount": 200,
                 },
                 {
-                    "subjectKey": "cost.member.base_pay",
-                    "subjectName": subject_map["cost.member.base_pay"]["subjectName"],
+                    "subjectKey": "cost.employee.base_pay",
+                    "subjectName": subject_map["cost.employee.base_pay"]["subjectName"],
                     "subjectType": "cost",
                     "amount": 250,
                 },

@@ -21,10 +21,10 @@ const scenarioTabs: Array<{ value: ScenarioKey; label: string }> = [
 ]
 
 const viewTabs: Array<{ value: SharedView; label: string }> = [
-  { value: 'analysis', label: '经营分析' },
-  { value: 'months', label: '月度结果' },
-  { value: 'members', label: '成员表现' },
-  { value: 'inputs', label: '模型输入' },
+  { value: 'analysis', label: '看经营' },
+  { value: 'months', label: '看月份' },
+  { value: 'members', label: '看成员' },
+  { value: 'inputs', label: '看输入' },
 ]
 
 const chartMetricTabs: Array<{ value: ChartMetricKey; label: string }> = [
