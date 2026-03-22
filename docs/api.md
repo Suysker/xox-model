@@ -27,8 +27,9 @@
   - 发布时会固化 `forecast_month_facts` 与 `forecast_line_item_facts`
 - `POST /api/v1/workspace/versions/{id}/rollback`
   - 从历史不可变版本生成新草稿
+  - 回滚后账期、科目与预实分析口径会同步切到该版本对应的草稿
 - `DELETE /api/v1/workspace/versions/{id}`
-  - 若版本已激活、已分享或已被期间基线引用，则拒绝删除
+  - 若版本已激活或已分享，则拒绝删除
 
 ## 分享
 
@@ -43,8 +44,9 @@
 
 - `GET /api/v1/ledger/periods`
   - 返回期间列表，以及计划 / 实际汇总
+  - 若当前草稿已有月份但账期尚未生成，会按草稿自动补齐
 - `GET /api/v1/ledger/periods/{id}/subjects`
-  - 返回该期间预算基线对应的标准化预测科目
+  - 返回该期间当前草稿计划对应的标准化预测科目
 - `POST /api/v1/ledger/periods/{id}/lock`
 - `POST /api/v1/ledger/periods/{id}/unlock`
 - `GET /api/v1/ledger/entries?periodId=...`

@@ -6,10 +6,10 @@ from sqlalchemy.orm import Session
 from .audit import record_audit
 from .domain_types import ModelConfig
 from .facts import build_forecast_line_items
+from .services_ledger import sync_periods_with_current_draft
 from .models import (
     ForecastMonthFact,
     ForecastLineItemFact,
-    LedgerPeriod,
     User,
     Workspace,
     WorkspaceDraft,
@@ -83,6 +83,7 @@ def save_draft(
     draft.result_json = result.model_dump()
     draft.last_autosaved_at = timestamp
     draft.updated_by = actor.id
+    sync_periods_with_current_draft(session, workspace, result=result)
     session.add(
         WorkspaceEvent(
             workspace_id=workspace.id,
@@ -184,28 +185,9 @@ def publish_version(
             for month in scenario.months
         ]
     )
+    sync_periods_with_current_draft(session, workspace, result=result)
     if kind == "release":
         workspace.active_version_id = version.id
-        base_months = next(item for item in result.scenarios if item.key == "base").months
-        existing_periods = {
-            period.month_index: period
-            for period in session.scalars(select(LedgerPeriod).where(LedgerPeriod.workspace_id == workspace.id)).all()
-        }
-        for month in base_months:
-            period = existing_periods.get(month.monthIndex)
-            if period is None:
-                session.add(
-                    LedgerPeriod(
-                        workspace_id=workspace.id,
-                        baseline_version_id=version.id,
-                        month_index=month.monthIndex,
-                        month_label=month.label,
-                        status="open",
-                    )
-                )
-            elif period.baseline_version_id is None:
-                period.baseline_version_id = version.id
-                period.month_label = month.label
     session.add(
         WorkspaceEvent(
             workspace_id=workspace.id,
@@ -234,12 +216,14 @@ def rollback_to_version(session: Session, *, workspace: Workspace, actor: User, 
         raise LookupError("Version not found")
     if version.workspace_id != workspace.id:
         raise PermissionError("Forbidden")
+    result = project_model(ModelConfig.model_validate(version.payload_json))
     draft = get_workspace_draft(session, workspace)
     draft.revision += 1
     draft.config_json = version.payload_json
-    draft.result_json = version.result_json
+    draft.result_json = result.model_dump()
     draft.last_autosaved_at = timestamp
     draft.updated_by = actor.id
+    sync_periods_with_current_draft(session, workspace, result=result)
     session.add(
         WorkspaceEvent(
             workspace_id=workspace.id,
@@ -278,9 +262,6 @@ def delete_version(session: Session, *, workspace: Workspace, version_id: str) -
     )
     if active_share is not None:
         raise ValueError("Version has an active share link")
-    linked_period = session.scalar(select(LedgerPeriod).where(LedgerPeriod.baseline_version_id == version.id))
-    if linked_period is not None:
-        raise ValueError("Version is used by a ledger period")
     session.execute(delete(ForecastMonthFact).where(ForecastMonthFact.version_id == version.id))
     session.execute(delete(ForecastLineItemFact).where(ForecastLineItemFact.version_id == version.id))
     record_audit(

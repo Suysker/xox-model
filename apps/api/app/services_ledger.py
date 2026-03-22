@@ -7,38 +7,72 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .audit import record_audit
-from .domain_types import ModelConfig, TeamMember, clamp_non_negative
-from .models import (
-    ActualEntry,
-    ActualEntryAllocation,
-    ForecastLineItemFact,
-    ForecastMonthFact,
-    LedgerPeriod,
-    Workspace,
-    WorkspaceVersion,
-)
+from .domain_types import ModelConfig, ModelResult, TeamMember, clamp_non_negative
+from .facts import build_forecast_line_items
+from .models import ActualEntry, ActualEntryAllocation, LedgerPeriod, Workspace, WorkspaceDraft
+from .projection import project_model
 from .schemas import AllocationInput
 
 
-def _versions_by_id(session: Session, workspace: Workspace) -> dict[str, WorkspaceVersion]:
-    return {
-        version.id: version
-        for version in session.scalars(
-            select(WorkspaceVersion)
-            .where(WorkspaceVersion.workspace_id == workspace.id)
-            .order_by(WorkspaceVersion.version_no.desc())
-        ).all()
+def _get_workspace_draft(session: Session, workspace: Workspace) -> WorkspaceDraft:
+    draft = session.get(WorkspaceDraft, workspace.id)
+    if draft is None:
+        raise LookupError("Draft not found")
+    return draft
+
+
+def _current_draft_context(session: Session, workspace: Workspace) -> tuple[ModelConfig, ModelResult]:
+    draft = _get_workspace_draft(session, workspace)
+    config = ModelConfig.model_validate(draft.config_json)
+    result = ModelResult.model_validate(draft.result_json) if draft.result_json is not None else project_model(config)
+    return config, result
+
+
+def _base_months(result: ModelResult):
+    scenario = next((item for item in result.scenarios if item.key == "base"), None) or (result.scenarios[0] if result.scenarios else None)
+    return scenario.months if scenario is not None else []
+
+
+def sync_periods_with_current_draft(
+    session: Session, workspace: Workspace, *, result: ModelResult | None = None
+) -> list[LedgerPeriod]:
+    if result is None:
+        _, result = _current_draft_context(session, workspace)
+
+    existing_periods = {
+        period.month_index: period
+        for period in session.scalars(select(LedgerPeriod).where(LedgerPeriod.workspace_id == workspace.id)).all()
     }
 
+    for period in existing_periods.values():
+        if period.baseline_version_id is not None:
+            period.baseline_version_id = None
 
-def _get_period(session: Session, workspace: Workspace, period_id: str, *, require_baseline: bool = False) -> LedgerPeriod:
+    for month in _base_months(result):
+        period = existing_periods.get(month.monthIndex)
+        if period is None:
+            period = LedgerPeriod(
+                workspace_id=workspace.id,
+                baseline_version_id=None,
+                month_index=month.monthIndex,
+                month_label=month.label,
+                status="open",
+            )
+            session.add(period)
+            existing_periods[month.monthIndex] = period
+            continue
+
+        period.month_label = month.label
+
+    return sorted(existing_periods.values(), key=lambda item: item.month_index)
+
+
+def _get_period(session: Session, workspace: Workspace, period_id: str) -> LedgerPeriod:
     period = session.get(LedgerPeriod, period_id)
     if period is None:
         raise LookupError("Ledger period not found")
     if period.workspace_id != workspace.id:
         raise PermissionError("Forbidden")
-    if require_baseline and period.baseline_version_id is None:
-        raise ValueError("Ledger period has no baseline version")
     return period
 
 
@@ -51,54 +85,37 @@ def _get_entry(session: Session, workspace: Workspace, entry_id: str) -> ActualE
     return entry
 
 
-def _subjects_for_period_by_key(session: Session, period: LedgerPeriod) -> dict[str, dict]:
-    if period.baseline_version_id is None:
-        return {}
-    rows = session.scalars(
-        select(ForecastLineItemFact).where(
-            ForecastLineItemFact.version_id == period.baseline_version_id,
-            ForecastLineItemFact.scenario_key == "base",
-            ForecastLineItemFact.month_index == period.month_index,
-        )
-    ).all()
+def _subjects_for_period_by_key(session: Session, workspace: Workspace, period: LedgerPeriod) -> dict[str, dict]:
+    config, _ = _current_draft_context(session, workspace)
     subjects: dict[str, dict] = {}
-    for row in rows:
+    for row in build_forecast_line_items(config):
+        if row.scenarioKey != "base" or row.monthIndex != period.month_index:
+            continue
         subject = subjects.setdefault(
-            row.subject_key,
+            row.subjectKey,
             {
-                "subjectKey": row.subject_key,
-                "subjectName": row.subject_name,
-                "subjectType": row.subject_type,
-                "subjectGroup": row.subject_group,
-                "entityType": row.entity_type,
-                "entityId": row.entity_id,
+                "subjectKey": row.subjectKey,
+                "subjectName": row.subjectName,
+                "subjectType": row.subjectType,
+                "subjectGroup": row.subjectGroup,
+                "entityType": row.entityType,
+                "entityId": row.entityId,
                 "plannedAmount": 0.0,
             },
         )
-        subject["plannedAmount"] += row.planned_amount
+        subject["plannedAmount"] += row.plannedAmount
     return subjects
 
 
-def _related_entity_catalog(session: Session, period: LedgerPeriod) -> dict[str, dict[str, str]]:
-    config = _config_for_period(session, period)
-    if config is None:
-        return {"teamMember": {}, "employee": {}}
-
+def _related_entity_catalog(config: ModelConfig) -> dict[str, dict[str, str]]:
     return {
         "teamMember": {member.id: member.name for member in config.teamMembers},
         "employee": {employee.id: employee.name for employee in config.employees},
     }
 
 
-def _config_for_period(session: Session, period: LedgerPeriod) -> ModelConfig | None:
-    if period.baseline_version_id is None:
-        return None
-
-    version = session.get(WorkspaceVersion, period.baseline_version_id)
-    if version is None:
-        return None
-
-    return ModelConfig.model_validate(version.payload_json)
+def _month_result_for_period(result: ModelResult, period: LedgerPeriod):
+    return next((month for month in _base_months(result) if month.monthIndex == period.month_index), None)
 
 
 def _serialize_entry(session: Session, entry: ActualEntry) -> dict:
@@ -133,43 +150,19 @@ def _serialize_entry(session: Session, entry: ActualEntry) -> dict:
     }
 
 
-def _member_for_period(session: Session, period: LedgerPeriod, member_id: str) -> TeamMember | None:
-    config = _config_for_period(session, period)
-    if config is None:
-        return None
-
+def _member_for_config(config: ModelConfig, member_id: str) -> TeamMember | None:
     return next((member for member in config.teamMembers if member.id == member_id), None)
 
 
-def _period_summary(session: Session, period: LedgerPeriod) -> dict[str, float]:
-    planned_revenue = 0.0
-    planned_cost = 0.0
+def _period_summary(session: Session, workspace: Workspace, period: LedgerPeriod, *, result: ModelResult | None = None) -> dict[str, float]:
+    if result is None:
+        _, result = _current_draft_context(session, workspace)
+
+    month_result = _month_result_for_period(result, period)
+    planned_revenue = month_result.grossSales if month_result is not None else 0.0
+    planned_cost = month_result.totalCost if month_result is not None else 0.0
     actual_revenue = 0.0
     actual_cost = 0.0
-    if period.baseline_version_id:
-        month_fact = session.scalar(
-            select(ForecastMonthFact).where(
-                ForecastMonthFact.version_id == period.baseline_version_id,
-                ForecastMonthFact.scenario_key == "base",
-                ForecastMonthFact.month_index == period.month_index,
-            )
-        )
-        if month_fact is not None:
-            planned_revenue = month_fact.planned_revenue
-            planned_cost = month_fact.planned_cost
-        else:
-            facts = session.scalars(
-                select(ForecastLineItemFact).where(
-                    ForecastLineItemFact.version_id == period.baseline_version_id,
-                    ForecastLineItemFact.scenario_key == "base",
-                    ForecastLineItemFact.month_index == period.month_index,
-                )
-            ).all()
-            for fact in facts:
-                if fact.subject_type == "revenue":
-                    planned_revenue += fact.planned_amount
-                else:
-                    planned_cost += fact.planned_amount
     allocation_rows = session.scalars(
         select(ActualEntryAllocation)
         .join(ActualEntry, ActualEntryAllocation.actual_entry_id == ActualEntry.id)
@@ -188,7 +181,12 @@ def _period_summary(session: Session, period: LedgerPeriod) -> dict[str, float]:
     }
 
 
-def _cumulative_summary(session: Session, workspace: Workspace, through_month_index: int) -> dict[str, float]:
+def _cumulative_summary(
+    session: Session, workspace: Workspace, through_month_index: int, *, result: ModelResult | None = None
+) -> dict[str, float]:
+    if result is None:
+        _, result = _current_draft_context(session, workspace)
+
     periods = session.scalars(
         select(LedgerPeriod)
         .where(LedgerPeriod.workspace_id == workspace.id, LedgerPeriod.month_index <= through_month_index)
@@ -201,30 +199,25 @@ def _cumulative_summary(session: Session, workspace: Workspace, through_month_in
         "actualCost": 0.0,
     }
     for period in periods:
-        summary = _period_summary(session, period)
+        summary = _period_summary(session, workspace, period, result=result)
         for key, value in summary.items():
             totals[key] += value
     return totals
 
 
 def list_periods(session: Session, workspace: Workspace) -> list[dict]:
-    versions = _versions_by_id(session, workspace)
-    periods = list(
-        session.scalars(
-            select(LedgerPeriod)
-            .where(LedgerPeriod.workspace_id == workspace.id)
-            .order_by(LedgerPeriod.month_index.asc())
-        ).all()
-    )
+    _, result = _current_draft_context(session, workspace)
+    periods = sync_periods_with_current_draft(session, workspace, result=result)
+    session.commit()
     return [
         {
             "id": period.id,
             "monthIndex": period.month_index,
             "monthLabel": period.month_label,
             "status": period.status,
-            "baselineVersionId": period.baseline_version_id,
-            "baselineVersionName": versions[period.baseline_version_id].name if period.baseline_version_id in versions else None,
-            **_period_summary(session, period),
+            "baselineVersionId": None,
+            "baselineVersionName": None,
+            **_period_summary(session, workspace, period, result=result),
         }
         for period in periods
     ]
@@ -232,10 +225,8 @@ def list_periods(session: Session, workspace: Workspace) -> list[dict]:
 
 def list_subjects_for_period(session: Session, workspace: Workspace, period_id: str) -> list[dict]:
     period = _get_period(session, workspace, period_id)
-    if period.baseline_version_id is None:
-        return []
     return sorted(
-        _subjects_for_period_by_key(session, period).values(),
+        _subjects_for_period_by_key(session, workspace, period).values(),
         key=lambda item: (item["subjectType"], item["subjectGroup"], item["subjectName"]),
     )
 
@@ -266,13 +257,14 @@ def _create_derived_member_commission_entry(
     if source_amount <= 0:
         return None
 
-    member = _member_for_period(session, period, related_entity_id)
+    config, _ = _current_draft_context(session, workspace)
+    member = _member_for_config(config, related_entity_id)
     if member is None:
-        raise ValueError("Related entity not found in the baseline version")
+        raise ValueError("Related entity not found in the current draft")
 
     commission_subject = available_subjects.get("cost.member.commission")
     if commission_subject is None:
-        raise ValueError("Baseline version does not expose member commission subject")
+        raise ValueError("Current draft does not expose member commission subject")
 
     commission_amount = round(source_amount * clamp_non_negative(member.commissionRate), 2)
     if commission_amount <= 0:
@@ -347,7 +339,7 @@ def create_actual_entry(
     allocations: list[AllocationInput],
     timestamp: datetime,
 ) -> dict:
-    period = _get_period(session, workspace, ledger_period_id, require_baseline=True)
+    period = _get_period(session, workspace, ledger_period_id)
     if period.status == "locked":
         raise ValueError("Ledger period is locked")
     if amount <= 0:
@@ -359,8 +351,9 @@ def create_actual_entry(
     if round(sum(item.amount for item in allocations), 2) != round(amount, 2):
         raise ValueError("Allocations must equal the entry amount")
     expected_subject_type = "revenue" if direction == "income" else "cost"
-    available_subjects = _subjects_for_period_by_key(session, period)
-    entity_catalog = _related_entity_catalog(session, period)
+    config, _ = _current_draft_context(session, workspace)
+    available_subjects = _subjects_for_period_by_key(session, workspace, period)
+    entity_catalog = _related_entity_catalog(config)
     normalized_allocations: list[dict] = []
     totals_by_subject = defaultdict(float)
     for item in allocations:
@@ -393,7 +386,7 @@ def create_actual_entry(
             raise ValueError("Unsupported related entity type")
         canonical_related_name = entity_group.get(related_entity_id)
         if canonical_related_name is None:
-            raise ValueError("Related entity not found in the baseline version")
+            raise ValueError("Related entity not found in the current draft")
 
     entry = ActualEntry(
         workspace_id=workspace.id,
@@ -501,38 +494,32 @@ def set_period_status(session: Session, workspace: Workspace, period_id: str, *,
         actor_id=actor_id,
         entity_type="ledger_period",
         entity_id=period.id,
-        meta={"monthIndex": period.month_index, "baselineVersionId": period.baseline_version_id},
+        meta={"monthIndex": period.month_index, "baselineSource": "draft"},
     )
     session.commit()
-    summary = _period_summary(session, period)
-    version = session.get(WorkspaceVersion, period.baseline_version_id) if period.baseline_version_id else None
+    _, result = _current_draft_context(session, workspace)
+    summary = _period_summary(session, workspace, period, result=result)
     return {
         "id": period.id,
         "monthIndex": period.month_index,
         "monthLabel": period.month_label,
         "status": period.status,
-        "baselineVersionId": period.baseline_version_id,
-        "baselineVersionName": version.name if version is not None else None,
+        "baselineVersionId": None,
+        "baselineVersionName": None,
         **summary,
     }
 
 
 def variance_for_period(session: Session, workspace: Workspace, period_id: str) -> dict:
     period = _get_period(session, workspace, period_id)
-    versions = _versions_by_id(session, workspace)
+    config, result = _current_draft_context(session, workspace)
     planned = defaultdict(float)
     labels: dict[str, tuple[str, str]] = {}
-    if period.baseline_version_id:
-        rows = session.scalars(
-            select(ForecastLineItemFact).where(
-                ForecastLineItemFact.version_id == period.baseline_version_id,
-                ForecastLineItemFact.scenario_key == "base",
-                ForecastLineItemFact.month_index == period.month_index,
-            )
-        ).all()
-        for row in rows:
-            planned[row.subject_key] += row.planned_amount
-            labels[row.subject_key] = (row.subject_name, row.subject_type)
+    for row in build_forecast_line_items(config):
+        if row.scenarioKey != "base" or row.monthIndex != period.month_index:
+            continue
+        planned[row.subjectKey] += row.plannedAmount
+        labels[row.subjectKey] = (row.subjectName, row.subjectType)
     actual = defaultdict(float)
     allocation_rows = session.scalars(
         select(ActualEntryAllocation)
@@ -562,14 +549,13 @@ def variance_for_period(session: Session, workspace: Workspace, period_id: str) 
             }
         )
 
-    summary = _period_summary(session, period)
-    cumulative = _cumulative_summary(session, workspace, period.month_index)
-    baseline = versions.get(period.baseline_version_id or "")
+    summary = _period_summary(session, workspace, period, result=result)
+    cumulative = _cumulative_summary(session, workspace, period.month_index, result=result)
     return {
         "periodId": period.id,
         "monthLabel": period.month_label,
-        "baselineVersionId": period.baseline_version_id,
-        "baselineVersionName": baseline.name if baseline else None,
+        "baselineVersionId": None,
+        "baselineVersionName": None,
         "lines": lines,
         **summary,
         "revenueVarianceAmount": summary["actualRevenue"] - summary["plannedRevenue"],

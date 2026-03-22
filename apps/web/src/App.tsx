@@ -270,14 +270,11 @@ export default function App() {
   const selectedScenarioResult =
     projection.scenarios.find((scenario) => scenario.key === selectedScenario) ?? projection.scenarios[0]
   const selectedPeriod = periods.find((period) => period.id === selectedPeriodId) ?? null
-  const selectedBaselineSnapshot =
-    selectedPeriod?.baselineVersionId ? snapshots.find((snapshot) => snapshot.id === selectedPeriod.baselineVersionId) ?? null : null
-  const baselineProjection = selectedBaselineSnapshot ? projectModel(selectedBaselineSnapshot.config) : null
-  const baselineScenarioResult =
-    baselineProjection?.scenarios.find((scenario) => scenario.key === 'base') ?? baselineProjection?.scenarios[0] ?? null
-  const selectedBaselineMonthResult =
-    selectedPeriod && baselineScenarioResult
-      ? baselineScenarioResult.months.find((month) => month.monthIndex === selectedPeriod.monthIndex) ?? null
+  const plannedScenarioResult =
+    projection.scenarios.find((scenario) => scenario.key === 'base') ?? projection.scenarios[0] ?? null
+  const selectedPlannedMonthResult =
+    selectedPeriod && plannedScenarioResult
+      ? plannedScenarioResult.months.find((month) => month.monthIndex === selectedPeriod.monthIndex) ?? null
       : null
 
   async function refreshPeriods() {
@@ -343,7 +340,7 @@ export default function App() {
     }
 
     void refreshPeriods()
-  }, [authState, workspaceLoading, snapshots.length])
+  }, [authState, lastSavedAt, workspaceLoading, snapshots.length])
 
   useEffect(() => {
     if (authState !== 'authenticated' || !selectedPeriodId) {
@@ -382,7 +379,7 @@ export default function App() {
     return () => {
       active = false
     }
-  }, [authState, selectedPeriodId])
+  }, [authState, lastSavedAt, selectedPeriodId])
 
   useEffect(() => {
     const firstMonthId = config.months[0]?.id ?? ''
@@ -1378,9 +1375,9 @@ export default function App() {
                 subjects={subjects}
                 entries={entries}
                 loading={ledgerBusy}
-                baselineMonthResult={selectedBaselineMonthResult}
-                offlineUnitPrice={selectedBaselineSnapshot?.config.operating.offlineUnitPrice ?? config.operating.offlineUnitPrice}
-                onlineUnitPrice={selectedBaselineSnapshot?.config.operating.onlineUnitPrice ?? config.operating.onlineUnitPrice}
+                plannedMonthResult={selectedPlannedMonthResult}
+                offlineUnitPrice={config.operating.offlineUnitPrice}
+                onlineUnitPrice={config.operating.onlineUnitPrice}
                 onSelectPeriod={setSelectedPeriodId}
                 onSubmit={handleSubmitEntry}
                 onVoid={handleVoidEntry}

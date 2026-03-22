@@ -183,6 +183,8 @@ const exactMessageTranslations: Record<string, string> = {
   'Allocations must equal the entry amount': '预算科目金额必须与录入金额一致。',
   'Member commission is derived automatically from posted member revenue': '成员提成会随成员收入自动计提，不需要手动录入。',
   'System-generated entry must be voided from its source entry': '自动生成的提成分录需要从对应收入记录里一起作废。',
+  'Related entity not found in the current draft': '当前草稿里找不到这个关联对象，请先同步测算后再记账。',
+  'Current draft does not expose member commission subject': '当前草稿缺少成员提成科目，无法自动计提。',
   'Baseline version does not expose member commission subject': '当前预算基线缺少成员提成科目，无法自动计提。',
   'Active release cannot be deleted': '当前活动发布版本不能删除。',
   'Version has an active share link': '当前版本仍有有效分享链接，不能删除。',

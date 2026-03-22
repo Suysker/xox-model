@@ -45,6 +45,12 @@ type MemberRevenueRow = {
   draftCommission: number
 }
 
+type MemberExpenseRow = {
+  option: RelatedEntityOption
+  postedAmount: number
+  draftAmount: number
+}
+
 type HistoryDirectionFilter = 'all' | 'income' | 'expense'
 
 type HistoryStatusFilter = 'all' | 'posted' | 'voided'
@@ -87,7 +93,7 @@ export function BookkeepingPanel(props: {
   subjects: SubjectResponse[]
   entries: EntryResponse[]
   loading: boolean
-  baselineMonthResult: MonthlyScenarioResult | null
+  plannedMonthResult: MonthlyScenarioResult | null
   offlineUnitPrice: number
   onlineUnitPrice: number
   onSelectPeriod: (id: string) => void
@@ -104,9 +110,17 @@ export function BookkeepingPanel(props: {
   const [description, setDescription] = useState('')
   const [showDetails, setShowDetails] = useState(false)
   const [memberIncomeDrafts, setMemberIncomeDrafts] = useState<Record<string, MemberIncomeDraft>>({})
+  const [memberExpenseDrafts, setMemberExpenseDrafts] = useState<Record<string, number>>({})
   const [incomeOccurredOn, setIncomeOccurredOn] = useState(() => getTodayInputDate())
+  const [otherIncomeOccurredOn, setOtherIncomeOccurredOn] = useState(() => getTodayInputDate())
+  const [otherIncomeSubjectKey, setOtherIncomeSubjectKey] = useState('')
+  const [otherIncomeAmount, setOtherIncomeAmount] = useState(0)
+  const [otherIncomeCounterparty, setOtherIncomeCounterparty] = useState('')
+  const [otherIncomeDescription, setOtherIncomeDescription] = useState('')
+  const [showOtherIncomeDetails, setShowOtherIncomeDetails] = useState(false)
   const [expenseOccurredOn, setExpenseOccurredOn] = useState(() => getTodayInputDate())
   const incomeOccurredOnInputRef = useRef<HTMLInputElement | null>(null)
+  const otherIncomeOccurredOnInputRef = useRef<HTMLInputElement | null>(null)
   const expenseOccurredOnInputRef = useRef<HTMLInputElement | null>(null)
 
   const selectedPeriod = props.periods.find((period) => period.id === props.selectedPeriodId) ?? null
@@ -169,8 +183,8 @@ export function BookkeepingPanel(props: {
   }, [props.entries])
 
   const relatedOptions = useMemo(
-    () => buildRelatedEntityOptions(selectedSubjectKey, props.baselineMonthResult),
-    [props.baselineMonthResult, selectedSubjectKey],
+    () => buildRelatedEntityOptions(selectedSubjectKey, props.plannedMonthResult),
+    [props.plannedMonthResult, selectedSubjectKey],
   )
   const selectedRelatedEntity = relatedOptions.find((item) => item.id === relatedEntityId) ?? null
   const relatedSelectionRequired = relatedOptions.length > 0
@@ -187,13 +201,44 @@ export function BookkeepingPanel(props: {
 
   const offlineRevenueSubject = subjectOptions.find((subject) => subject.subjectKey === 'revenue.offline_sales') ?? null
   const onlineRevenueSubject = subjectOptions.find((subject) => subject.subjectKey === 'revenue.online_sales') ?? null
+  const selectedOtherIncomeSubject = subjectOptions.find((subject) => subject.subjectKey === otherIncomeSubjectKey) ?? null
+  const otherIncomePostedAmount = selectedOtherIncomeSubject
+    ? postedAmountsBySubject.get(selectedOtherIncomeSubject.subjectKey) ?? 0
+    : 0
+  const otherIncomeCanSubmit = Boolean(selectedOtherIncomeSubject && otherIncomeAmount > 0 && !props.loading && !isLocked)
+  const showMemberExpenseTable = direction === 'expense' && getRelatedEntityType(selectedSubjectKey) === 'teamMember' && Boolean(selectedSubject)
+
+  const memberExpenseRows = useMemo<MemberExpenseRow[]>(
+    () =>
+      !showMemberExpenseTable
+        ? []
+        : relatedOptions.map((option) => ({
+            option,
+            postedAmount: postedAmountsBySubjectAndEntity.get(getEntityAllocationKey(selectedSubjectKey, option.id)) ?? 0,
+            draftAmount: memberExpenseDrafts[getEntityAllocationKey(selectedSubjectKey, option.id)] ?? 0,
+          })),
+    [memberExpenseDrafts, postedAmountsBySubjectAndEntity, relatedOptions, selectedSubjectKey, showMemberExpenseTable],
+  )
+
+  const memberExpenseSummary = useMemo(
+    () =>
+      memberExpenseRows.reduce(
+        (sum, row) => ({
+          plannedAmount: sum.plannedAmount + row.option.plannedAmount,
+          postedAmount: sum.postedAmount + row.postedAmount,
+          draftAmount: sum.draftAmount + row.draftAmount,
+        }),
+        { plannedAmount: 0, postedAmount: 0, draftAmount: 0 },
+      ),
+    [memberExpenseRows],
+  )
 
   const memberRevenueRows = useMemo<MemberRevenueRow[]>(
     () =>
-      (props.baselineMonthResult?.members ?? []).map((member) => {
+      (props.plannedMonthResult?.members ?? []).map((member) => {
         const draft = memberIncomeDrafts[member.memberId] ?? { offlineUnits: 0, onlineUnits: 0 }
         const plannedOfflineUnits = member.monthlyUnits
-        const plannedOnlineUnits = member.monthlyUnits * (props.baselineMonthResult?.onlineSalesFactor ?? 0)
+        const plannedOnlineUnits = member.monthlyUnits * (props.plannedMonthResult?.onlineSalesFactor ?? 0)
         const plannedAmount = roundMoney(member.grossSales + plannedOnlineUnits * props.onlineUnitPrice)
         const postedAmount =
           (postedAmountsBySubjectAndEntity.get(`revenue.offline_sales:${member.memberId}`) ?? 0) +
@@ -217,7 +262,7 @@ export function BookkeepingPanel(props: {
     [
       memberIncomeDrafts,
       postedAmountsBySubjectAndEntity,
-      props.baselineMonthResult,
+      props.plannedMonthResult,
       props.offlineUnitPrice,
       props.onlineUnitPrice,
     ],
@@ -276,7 +321,36 @@ export function BookkeepingPanel(props: {
 
   useEffect(() => {
     setMemberIncomeDrafts({})
+    setMemberExpenseDrafts({})
   }, [props.selectedPeriodId])
+
+  useEffect(() => {
+    if (direction !== 'income') {
+      return
+    }
+
+    if (subjectOptions.length === 0) {
+      if (otherIncomeSubjectKey) {
+        setOtherIncomeSubjectKey('')
+      }
+      return
+    }
+
+    if (!subjectOptions.some((subject) => subject.subjectKey === otherIncomeSubjectKey)) {
+      setOtherIncomeSubjectKey(subjectOptions[0]?.subjectKey ?? '')
+    }
+  }, [direction, otherIncomeSubjectKey, subjectOptions])
+
+  useEffect(() => {
+    if (direction !== 'income') {
+      return
+    }
+
+    setOtherIncomeAmount(0)
+    setOtherIncomeCounterparty('')
+    setOtherIncomeDescription('')
+    setShowOtherIncomeDetails(false)
+  }, [direction, props.selectedPeriodId])
 
   useEffect(() => {
     if (relatedOptions.length === 0) {
@@ -328,10 +402,26 @@ export function BookkeepingPanel(props: {
     }))
   }
 
+  function setMemberExpenseDraft(subjectKey: string, entityId: string, value: number) {
+    const key = getEntityAllocationKey(subjectKey, entityId)
+    setMemberExpenseDrafts((current) => ({
+      ...current,
+      [key]: Math.max(0, roundMoney(value)),
+    }))
+  }
+
+  function fillPlannedMemberExpense(subjectKey: string, entityId: string, plannedAmount: number) {
+    const key = getEntityAllocationKey(subjectKey, entityId)
+    setMemberExpenseDrafts((current) => ({
+      ...current,
+      [key]: Math.max(0, roundMoney(plannedAmount)),
+    }))
+  }
+
   async function handleSubmitMemberIncome(memberId: string) {
     if (!offlineRevenueSubject) return
 
-    const member = props.baselineMonthResult?.members.find((item) => item.memberId === memberId)
+    const member = props.plannedMonthResult?.members.find((item) => item.memberId === memberId)
     const draft = memberIncomeDrafts[memberId] ?? { offlineUnits: 0, onlineUnits: 0 }
     if (!member || (draft.offlineUnits <= 0 && draft.onlineUnits <= 0)) return
     if (draft.onlineUnits > 0 && !onlineRevenueSubject) return
@@ -379,6 +469,84 @@ export function BookkeepingPanel(props: {
         ...current,
         [memberId]: { offlineUnits: 0, onlineUnits: 0 },
       }))
+    }
+  }
+
+  async function handleSubmitOtherIncome() {
+    if (!selectedOtherIncomeSubject || otherIncomeAmount <= 0) return
+
+    const occurredAt = resolveOccurredAt({
+      ref: otherIncomeOccurredOnInputRef,
+      value: otherIncomeOccurredOn,
+      onResolved: setOtherIncomeOccurredOn,
+    })
+
+    const success = await props.onSubmit({
+      direction: 'income',
+      amount: roundMoney(otherIncomeAmount),
+      occurredAt,
+      ...(otherIncomeCounterparty ? { counterparty: otherIncomeCounterparty } : {}),
+      ...(otherIncomeDescription ? { description: otherIncomeDescription } : {}),
+      allocations: [
+        {
+          subjectKey: selectedOtherIncomeSubject.subjectKey,
+          subjectName: selectedOtherIncomeSubject.subjectName,
+          subjectType: selectedOtherIncomeSubject.subjectType,
+          amount: roundMoney(otherIncomeAmount),
+        },
+      ],
+    })
+
+    if (success) {
+      setOtherIncomeAmount(0)
+      setOtherIncomeCounterparty('')
+      setOtherIncomeDescription('')
+      setShowOtherIncomeDetails(false)
+    }
+  }
+
+  async function handleSubmitMemberExpense(entityId: string) {
+    if (!selectedSubject || !showMemberExpenseTable) return
+
+    const option = relatedOptions.find((item) => item.id === entityId)
+    const draftKey = getEntityAllocationKey(selectedSubject.subjectKey, entityId)
+    const draftAmount = memberExpenseDrafts[draftKey] ?? 0
+    if (!option || draftAmount <= 0) return
+
+    const occurredAt = resolveOccurredAt({
+      ref: expenseOccurredOnInputRef,
+      value: expenseOccurredOn,
+      onResolved: setExpenseOccurredOn,
+    })
+
+    const success = await props.onSubmit({
+      direction: 'expense',
+      amount: roundMoney(draftAmount),
+      occurredAt,
+      ...(counterparty.trim() ? { counterparty: counterparty.trim() } : {}),
+      ...(description.trim() ? { description: description.trim() } : {}),
+      relatedEntityType: option.type,
+      relatedEntityId: option.id,
+      relatedEntityName: option.name,
+      allocations: [
+        {
+          subjectKey: selectedSubject.subjectKey,
+          subjectName: selectedSubject.subjectName,
+          subjectType: selectedSubject.subjectType,
+          amount: roundMoney(draftAmount),
+        },
+      ],
+    })
+
+    if (success) {
+      setMemberExpenseDrafts((current) => {
+        const next = { ...current }
+        delete next[draftKey]
+        return next
+      })
+      setCounterparty('')
+      setDescription('')
+      setShowDetails(false)
     }
   }
 
@@ -475,22 +643,46 @@ export function BookkeepingPanel(props: {
           <SegmentTabs value={direction} items={directionTabs} onChange={setDirection} />
 
           {direction === 'income' ? (
-            <IncomeEntrySection
-              rows={memberRevenueRows}
-              occurredOn={incomeOccurredOn}
-              occurredOnInputRef={incomeOccurredOnInputRef}
-              plannedRevenue={memberRevenueSummary.plannedRevenue}
-              plannedOfflineUnits={memberRevenueSummary.plannedOfflineUnits}
-              plannedOnlineUnits={memberRevenueSummary.plannedOnlineUnits}
-              postedAmount={memberRevenueSummary.postedAmount}
-              draftCommission={memberRevenueSummary.draftCommission}
-              isLocked={isLocked}
-              loading={props.loading}
-              onOccurredOnChange={setIncomeOccurredOn}
-              onMemberUnitsChange={setMemberDraftUnits}
-              onFillPlannedMember={fillPlannedMemberUnits}
-              onSubmitMember={(memberId) => void handleSubmitMemberIncome(memberId)}
-            />
+            <>
+              <IncomeEntrySection
+                rows={memberRevenueRows}
+                occurredOn={incomeOccurredOn}
+                occurredOnInputRef={incomeOccurredOnInputRef}
+                plannedRevenue={memberRevenueSummary.plannedRevenue}
+                plannedOfflineUnits={memberRevenueSummary.plannedOfflineUnits}
+                plannedOnlineUnits={memberRevenueSummary.plannedOnlineUnits}
+                postedAmount={memberRevenueSummary.postedAmount}
+                draftCommission={memberRevenueSummary.draftCommission}
+                isLocked={isLocked}
+                loading={props.loading}
+                onOccurredOnChange={setIncomeOccurredOn}
+                onMemberUnitsChange={setMemberDraftUnits}
+                onFillPlannedMember={fillPlannedMemberUnits}
+                onSubmitMember={(memberId) => void handleSubmitMemberIncome(memberId)}
+              />
+              <OtherIncomeComposer
+                subjects={subjectOptions}
+                selectedSubjectKey={otherIncomeSubjectKey}
+                selectedSubject={selectedOtherIncomeSubject}
+                postedAmount={otherIncomePostedAmount}
+                occurredOn={otherIncomeOccurredOn}
+                occurredOnInputRef={otherIncomeOccurredOnInputRef}
+                onOccurredOnChange={setOtherIncomeOccurredOn}
+                amount={otherIncomeAmount}
+                onAmountChange={setOtherIncomeAmount}
+                counterparty={otherIncomeCounterparty}
+                onCounterpartyChange={setOtherIncomeCounterparty}
+                description={otherIncomeDescription}
+                onDescriptionChange={setOtherIncomeDescription}
+                showDetails={showOtherIncomeDetails}
+                onToggleDetails={() => setShowOtherIncomeDetails((current) => !current)}
+                isLocked={isLocked}
+                loading={props.loading}
+                canSubmit={otherIncomeCanSubmit}
+                onSelectSubject={setOtherIncomeSubjectKey}
+                onSubmit={() => void handleSubmitOtherIncome()}
+              />
+            </>
           ) : (
             <ExpenseComposer
               isLocked={isLocked}
@@ -511,6 +703,11 @@ export function BookkeepingPanel(props: {
               plannedReference={plannedReference}
               selectedPostedAmount={selectedPostedAmount}
               selectedGapAmount={selectedGapAmount}
+              showMemberExpenseTable={showMemberExpenseTable}
+              memberExpenseRows={memberExpenseRows}
+              memberExpensePlannedAmount={memberExpenseSummary.plannedAmount}
+              memberExpensePostedAmount={memberExpenseSummary.postedAmount}
+              memberExpenseDraftAmount={memberExpenseSummary.draftAmount}
               expenseOccurredOn={expenseOccurredOn}
               expenseOccurredOnInputRef={expenseOccurredOnInputRef}
               onExpenseOccurredOnChange={setExpenseOccurredOn}
@@ -523,6 +720,9 @@ export function BookkeepingPanel(props: {
               showDetails={showDetails}
               onToggleDetails={() => setShowDetails((current) => !current)}
               canSubmit={canSubmit}
+              onMemberAmountChange={setMemberExpenseDraft}
+              onFillPlannedMemberExpense={fillPlannedMemberExpense}
+              onSubmitMemberExpense={(entityId) => void handleSubmitMemberExpense(entityId)}
               onSubmit={() => void handleSubmitExpense()}
             />
           )}
@@ -553,6 +753,11 @@ function ExpenseComposer(props: {
   plannedReference: number
   selectedPostedAmount: number
   selectedGapAmount: number
+  showMemberExpenseTable: boolean
+  memberExpenseRows: MemberExpenseRow[]
+  memberExpensePlannedAmount: number
+  memberExpensePostedAmount: number
+  memberExpenseDraftAmount: number
   expenseOccurredOn: string
   expenseOccurredOnInputRef: RefObject<HTMLInputElement | null>
   onExpenseOccurredOnChange: (value: string) => void
@@ -565,6 +770,9 @@ function ExpenseComposer(props: {
   showDetails: boolean
   onToggleDetails: () => void
   canSubmit: boolean
+  onMemberAmountChange: (subjectKey: string, entityId: string, value: number) => void
+  onFillPlannedMemberExpense: (subjectKey: string, entityId: string, plannedAmount: number) => void
+  onSubmitMemberExpense: (entityId: string) => void
   onSubmit: () => void
 }) {
   return (
@@ -641,136 +849,164 @@ function ExpenseComposer(props: {
         </div>
       </section>
 
-      {props.relatedOptions.length > 0 ? (
-        <section className="rounded-[24px] border border-stone-900/10 bg-stone-50/80 p-4">
-          <div className="flex items-center justify-between gap-3">
-            <h3 className="text-lg font-semibold text-stone-950">
-              {props.selectedRelatedEntity?.type === 'employee' || getRelatedEntityType(props.selectedSubjectKey) === 'employee'
-                ? '再挂到员工'
-                : '再挂到成员'}
-            </h3>
-            <span className="rounded-full border border-stone-900/10 bg-white px-3 py-1 text-xs font-semibold text-stone-600">
-              选中后自动带入对应计划
-            </span>
-          </div>
+      {props.showMemberExpenseTable ? (
+        <MemberExpenseEntrySection
+          subject={props.selectedSubject}
+          rows={props.memberExpenseRows}
+          plannedAmount={props.memberExpensePlannedAmount}
+          postedAmount={props.memberExpensePostedAmount}
+          draftAmount={props.memberExpenseDraftAmount}
+          occurredOn={props.expenseOccurredOn}
+          occurredOnInputRef={props.expenseOccurredOnInputRef}
+          onOccurredOnChange={props.onExpenseOccurredOnChange}
+          showDetails={props.showDetails}
+          onToggleDetails={props.onToggleDetails}
+          counterparty={props.counterparty}
+          onCounterpartyChange={props.onCounterpartyChange}
+          description={props.description}
+          onDescriptionChange={props.onDescriptionChange}
+          isLocked={props.isLocked}
+          loading={props.loading}
+          subjectKey={props.selectedSubjectKey}
+          onAmountChange={props.onMemberAmountChange}
+          onFillPlanned={props.onFillPlannedMemberExpense}
+          onSubmitRow={props.onSubmitMemberExpense}
+        />
+      ) : (
+        <>
+          {props.relatedOptions.length > 0 ? (
+            <section className="rounded-[24px] border border-stone-900/10 bg-stone-50/80 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-lg font-semibold text-stone-950">
+                  {props.selectedRelatedEntity?.type === 'employee' || getRelatedEntityType(props.selectedSubjectKey) === 'employee'
+                    ? '再挂到员工'
+                    : '再挂到成员'}
+                </h3>
+                <span className="rounded-full border border-stone-900/10 bg-white px-3 py-1 text-xs font-semibold text-stone-600">
+                  选中后自动带入对应计划
+                </span>
+              </div>
 
-          <div className="mt-4 grid gap-2 lg:grid-cols-2 xl:grid-cols-4">
-            {props.relatedOptions.map((option) => (
+              <div className="mt-4 grid gap-2 lg:grid-cols-2 xl:grid-cols-4">
+                {props.relatedOptions.map((option) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    disabled={props.isLocked}
+                    onClick={() => props.onSelectEntity(option)}
+                    className={cx(
+                      'rounded-[18px] border px-3 py-2.5 text-left transition',
+                      props.relatedEntityId === option.id
+                        ? 'border-amber-300 bg-amber-50'
+                        : 'border-stone-900/10 bg-white hover:bg-stone-100',
+                      props.isLocked && 'cursor-not-allowed opacity-60',
+                    )}
+                  >
+                    <div className="text-sm font-semibold text-stone-950">{option.name}</div>
+                    <div className="mt-2 flex items-center justify-between gap-3 text-xs text-stone-500">
+                      <span>{option.caption}</span>
+                      <span className="font-semibold text-stone-700">{formatCurrency(option.plannedAmount)}</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </section>
+          ) : null}
+
+          <section className="rounded-[28px] border border-amber-200/70 bg-[linear-gradient(135deg,rgba(255,251,235,0.94),rgba(255,255,255,0.98))] p-4 shadow-[0_18px_42px_rgba(245,158,11,0.12)]">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="flex flex-wrap gap-2">
+                <LedgerPill label="科目" value={props.selectedSubject?.subjectName ?? '待选择'} />
+                <LedgerPill
+                  label={props.relatedSelectionRequired ? '归属对象' : '归属'}
+                  value={props.selectedRelatedEntity?.name ?? (props.relatedSelectionRequired ? '待选择' : '无需')}
+                />
+                <LedgerPill label="计划参考" value={props.plannedReference > 0 ? formatCurrency(props.plannedReference) : '无'} />
+                <LedgerPill label="本期已记" value={props.selectedSubject ? formatCurrency(props.selectedPostedAmount) : '无'} />
+                <LedgerPill label="剩余预算" value={props.selectedSubject ? formatCurrency(props.selectedGapAmount) : '无'} tone="accent" />
+              </div>
+
               <button
-                key={option.id}
                 type="button"
                 disabled={props.isLocked}
-                onClick={() => props.onSelectEntity(option)}
-                className={cx(
-                  'rounded-[18px] border px-3 py-2.5 text-left transition',
-                  props.relatedEntityId === option.id
-                    ? 'border-amber-300 bg-amber-50'
-                    : 'border-stone-900/10 bg-white hover:bg-stone-100',
-                  props.isLocked && 'cursor-not-allowed opacity-60',
-                )}
+                onClick={props.onToggleDetails}
+                className="rounded-full border border-stone-900/10 bg-white px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                <div className="text-sm font-semibold text-stone-950">{option.name}</div>
-                <div className="mt-2 flex items-center justify-between gap-3 text-xs text-stone-500">
-                  <span>{option.caption}</span>
-                  <span className="font-semibold text-stone-700">{formatCurrency(option.plannedAmount)}</span>
-                </div>
+                {props.showDetails ? '收起对方与备注' : '补充对方与备注'}
               </button>
-            ))}
-          </div>
-        </section>
-      ) : null}
+            </div>
 
-      <section className="rounded-[28px] border border-amber-200/70 bg-[linear-gradient(135deg,rgba(255,251,235,0.94),rgba(255,255,255,0.98))] p-4 shadow-[0_18px_42px_rgba(245,158,11,0.12)]">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="flex flex-wrap gap-2">
-            <LedgerPill label="科目" value={props.selectedSubject?.subjectName ?? '待选择'} />
-            <LedgerPill
-              label={props.relatedSelectionRequired ? '归属对象' : '归属'}
-              value={props.selectedRelatedEntity?.name ?? (props.relatedSelectionRequired ? '待选择' : '无需')}
-            />
-            <LedgerPill label="计划参考" value={props.plannedReference > 0 ? formatCurrency(props.plannedReference) : '无'} />
-            <LedgerPill label="本期已记" value={props.selectedSubject ? formatCurrency(props.selectedPostedAmount) : '无'} />
-            <LedgerPill label="剩余预算" value={props.selectedSubject ? formatCurrency(props.selectedGapAmount) : '无'} tone="accent" />
-          </div>
-
-          <button
-            type="button"
-            disabled={props.isLocked}
-            onClick={props.onToggleDetails}
-            className="rounded-full border border-stone-900/10 bg-white px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {props.showDetails ? '收起补充信息' : '补充对方与备注'}
-          </button>
-        </div>
-
-        <div className="mt-4 grid gap-3 xl:grid-cols-[170px_170px_minmax(0,1fr)_144px] xl:items-end">
-          <label className="grid gap-2">
-            <span className="text-sm font-semibold text-stone-700">业务发生日</span>
-            <input
-              ref={props.expenseOccurredOnInputRef}
-              type="date"
-              value={props.expenseOccurredOn}
-              disabled={props.isLocked}
-              onInput={(event) => props.onExpenseOccurredOnChange((event.target as HTMLInputElement).value)}
-              onChange={(event) => props.onExpenseOccurredOnChange(event.target.value)}
-              className="h-11 rounded-2xl border border-stone-900/10 bg-white px-4 text-sm font-semibold text-stone-900 outline-none transition focus:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
-            />
-          </label>
-
-          <label className="grid gap-2">
-            <span className="text-sm font-semibold text-stone-700">金额</span>
-            <CompactNumberInput
-              value={props.amount}
-              onChange={props.onAmountChange}
-              min={0}
-              step={0.01}
-              className="h-11 rounded-2xl bg-white"
-              inputClassName="text-lg font-semibold"
-              align="right"
-            />
-          </label>
-
-          <div className="flex min-h-11 items-center text-sm font-medium text-stone-500">
-            {props.selectedSubject ? '金额会直接挂到当前科目；需要时再补对方单位和备注。' : '先选一个预算科目，再录金额。'}
-          </div>
-
-          <button
-            type="button"
-            onClick={props.onSubmit}
-            disabled={!props.canSubmit}
-            className="inline-flex h-11 items-center justify-center rounded-2xl bg-stone-950 px-4 text-sm font-semibold text-white transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400"
-          >
-            {props.loading ? '保存中...' : '确认入账'}
-          </button>
-        </div>
-
-        {props.showDetails ? (
-          <div className="mt-4 grid gap-3 md:grid-cols-[220px_minmax(0,1fr)]">
-            <label className="grid gap-2">
-              <span className="text-sm font-semibold text-stone-700">对方单位</span>
-              <div className="relative">
-                <Building2 className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
+            <div className="mt-4 grid gap-3 xl:grid-cols-[170px_170px_minmax(0,1fr)_144px] xl:items-end">
+              <label className="grid gap-2">
+                <span className="text-sm font-semibold text-stone-700">业务发生日</span>
                 <input
+                  ref={props.expenseOccurredOnInputRef}
+                  type="date"
+                  value={props.expenseOccurredOn}
                   disabled={props.isLocked}
-                  value={props.counterparty}
-                  onChange={(event) => props.onCounterpartyChange(event.target.value)}
-                  className="h-11 w-full rounded-2xl border border-stone-900/10 bg-white px-11 pr-4 text-sm font-medium text-stone-900 outline-none transition focus:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
+                  onInput={(event) => props.onExpenseOccurredOnChange((event.target as HTMLInputElement).value)}
+                  onChange={(event) => props.onExpenseOccurredOnChange(event.target.value)}
+                  className="h-11 rounded-2xl border border-stone-900/10 bg-white px-4 text-sm font-semibold text-stone-900 outline-none transition focus:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
                 />
-              </div>
-            </label>
+              </label>
 
-            <label className="grid gap-2">
-              <span className="text-sm font-semibold text-stone-700">备注</span>
-              <textarea
-                disabled={props.isLocked}
-                value={props.description}
-                onChange={(event) => props.onDescriptionChange(event.target.value)}
-                className="min-h-24 rounded-2xl border border-stone-900/10 bg-white px-4 py-3 text-sm font-medium text-stone-900 outline-none transition focus:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
-              />
-            </label>
-          </div>
-        ) : null}
-      </section>
+              <label className="grid gap-2">
+                <span className="text-sm font-semibold text-stone-700">金额</span>
+                <CompactNumberInput
+                  value={props.amount}
+                  onChange={props.onAmountChange}
+                  min={0}
+                  step={0.01}
+                  className="h-11 rounded-2xl bg-white"
+                  inputClassName="text-lg font-semibold"
+                  align="right"
+                />
+              </label>
+
+              <div className="flex min-h-11 items-center text-sm font-medium text-stone-500">
+                {props.selectedSubject ? '金额会直接挂到当前科目；需要时再补对方单位和备注。' : '先选一个预算科目，再录金额。'}
+              </div>
+
+              <button
+                type="button"
+                onClick={props.onSubmit}
+                disabled={!props.canSubmit}
+                className="inline-flex h-11 items-center justify-center rounded-2xl bg-stone-950 px-4 text-sm font-semibold text-white transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400"
+              >
+                {props.loading ? '保存中...' : '确认入账'}
+              </button>
+            </div>
+
+            {props.showDetails ? (
+              <div className="mt-4 grid gap-3 md:grid-cols-[220px_minmax(0,1fr)] md:items-end">
+                <label className="grid gap-2">
+                  <span className="text-sm font-semibold text-stone-700">对方单位</span>
+                  <div className="relative">
+                    <Building2 className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
+                    <input
+                      disabled={props.isLocked}
+                      value={props.counterparty}
+                      onChange={(event) => props.onCounterpartyChange(event.target.value)}
+                      className="h-11 w-full rounded-2xl border border-stone-900/10 bg-white px-11 pr-4 text-sm font-medium text-stone-900 outline-none transition focus:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
+                    />
+                  </div>
+                </label>
+
+                <label className="grid gap-2">
+                  <span className="text-sm font-semibold text-stone-700">备注</span>
+                  <input
+                    type="text"
+                    disabled={props.isLocked}
+                    value={props.description}
+                    onChange={(event) => props.onDescriptionChange(event.target.value)}
+                    className="h-11 rounded-2xl border border-stone-900/10 bg-white px-4 text-sm font-medium text-stone-900 outline-none transition focus:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
+                  />
+                </label>
+              </div>
+            ) : null}
+          </section>
+        </>
+      )}
     </>
   )
 }
@@ -976,6 +1212,342 @@ function IncomeEntrySection(props: {
           当前期间没有可按团员记录的收入计划。
         </div>
       )}
+    </section>
+  )
+}
+
+function MemberExpenseEntrySection(props: {
+  subject: SubjectResponse | null
+  subjectKey: string
+  rows: MemberExpenseRow[]
+  plannedAmount: number
+  postedAmount: number
+  draftAmount: number
+  occurredOn: string
+  occurredOnInputRef: RefObject<HTMLInputElement | null>
+  onOccurredOnChange: (value: string) => void
+  showDetails: boolean
+  onToggleDetails: () => void
+  counterparty: string
+  onCounterpartyChange: (value: string) => void
+  description: string
+  onDescriptionChange: (value: string) => void
+  isLocked: boolean
+  loading: boolean
+  onAmountChange: (subjectKey: string, entityId: string, value: number) => void
+  onFillPlanned: (subjectKey: string, entityId: string, plannedAmount: number) => void
+  onSubmitRow: (entityId: string) => void
+}) {
+  return (
+    <section className="rounded-[24px] border border-stone-900/10 bg-stone-50/80 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h3 className="text-lg font-semibold text-stone-950">{props.subject ? `${props.subject.subjectName}台账` : '成员支出台账'}</h3>
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="grid gap-1">
+            <span className="text-xs font-semibold tracking-[0.16em] text-stone-500">业务发生日</span>
+            <input
+              ref={props.occurredOnInputRef}
+              type="date"
+              value={props.occurredOn}
+              disabled={props.isLocked}
+              onInput={(event) => props.onOccurredOnChange((event.target as HTMLInputElement).value)}
+              onChange={(event) => props.onOccurredOnChange(event.target.value)}
+              className="h-10 rounded-2xl border border-stone-900/10 bg-white px-3 text-sm font-semibold text-stone-900 outline-none transition focus:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
+            />
+          </label>
+          <LedgerPill label="计划合计" value={formatCurrency(props.plannedAmount)} />
+          <LedgerPill label="本期已记" value={formatCurrency(props.postedAmount)} />
+          <LedgerPill label="待入账" value={formatCurrency(props.draftAmount)} tone="accent" />
+          <button
+            type="button"
+            disabled={props.isLocked}
+            onClick={props.onToggleDetails}
+            className="rounded-full border border-stone-900/10 bg-white px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {props.showDetails ? '收起对方与备注' : '补充对方与备注'}
+          </button>
+        </div>
+      </div>
+
+      {props.rows.length > 0 ? (
+        <>
+          <div className="mt-4 hidden overflow-hidden rounded-[20px] border border-stone-900/10 bg-white md:block">
+            <table className="w-full table-fixed border-collapse text-[12px]">
+              <colgroup>
+                <col className="w-[32%]" />
+                <col className="w-[16%]" />
+                <col className="w-[16%]" />
+                <col className="w-[16%]" />
+                <col className="w-[20%]" />
+              </colgroup>
+              <thead className="bg-stone-100/90 text-stone-600">
+                <tr className="border-b border-stone-900/10">
+                  <HistoryHeader>成员</HistoryHeader>
+                  <HistoryHeader align="right">计划参考</HistoryHeader>
+                  <HistoryHeader align="right">本期已记</HistoryHeader>
+                  <HistoryHeader align="center">本次支出</HistoryHeader>
+                  <HistoryHeader align="center">操作</HistoryHeader>
+                </tr>
+              </thead>
+              <tbody>
+                {props.rows.map((row) => (
+                  <tr key={row.option.id} className="border-b border-stone-900/10 last:border-none">
+                    <HistoryCell className="whitespace-nowrap font-semibold text-stone-950">{row.option.name}</HistoryCell>
+                    <HistoryCell align="right" className="whitespace-nowrap font-semibold tabular-nums text-stone-950">
+                      {formatCurrency(row.option.plannedAmount)}
+                    </HistoryCell>
+                    <HistoryCell align="right" className="whitespace-nowrap tabular-nums text-stone-700">
+                      {formatCurrency(row.postedAmount)}
+                    </HistoryCell>
+                    <HistoryCell align="center">
+                      <CompactNumberInput
+                        value={row.draftAmount}
+                        onChange={(value) => props.onAmountChange(props.subjectKey, row.option.id, value)}
+                        min={0}
+                        step={0.01}
+                        size="sm"
+                        className="mx-auto h-8 max-w-[116px] rounded-xl bg-stone-50"
+                        align="right"
+                        inputClassName="text-sm font-semibold"
+                      />
+                    </HistoryCell>
+                    <HistoryCell align="center">
+                      <div className="flex items-center justify-center gap-1.5 whitespace-nowrap">
+                        <button
+                          type="button"
+                          disabled={props.isLocked}
+                          onClick={() => props.onFillPlanned(props.subjectKey, row.option.id, row.option.plannedAmount)}
+                          className="rounded-full border border-stone-900/10 bg-stone-50 px-2.5 py-1 text-[11px] font-semibold text-stone-700 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          计划
+                        </button>
+                        <button
+                          type="button"
+                          disabled={props.isLocked || row.draftAmount <= 0 || props.loading}
+                          onClick={() => props.onSubmitRow(row.option.id)}
+                          className="rounded-full border border-stone-900/10 bg-amber-400 px-2.5 py-1 text-[11px] font-semibold text-stone-950 transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400"
+                        >
+                          入账
+                        </button>
+                      </div>
+                    </HistoryCell>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="mt-4 grid gap-3 md:hidden">
+            {props.rows.map((row) => (
+              <article key={row.option.id} className="rounded-[20px] border border-stone-900/10 bg-white p-4">
+                <div className="truncate text-base font-semibold text-stone-950">{row.option.name}</div>
+                <div className="mt-3 grid grid-cols-3 gap-2">
+                  <LedgerPill label="计划参考" value={formatCurrency(row.option.plannedAmount)} />
+                  <LedgerPill label="本期已记" value={formatCurrency(row.postedAmount)} />
+                  <LedgerPill label="本次支出" value={formatCurrency(row.draftAmount)} tone="accent" />
+                </div>
+                <label className="mt-3 grid gap-1">
+                  <span className="text-xs font-semibold tracking-[0.16em] text-stone-500">本次支出</span>
+                  <CompactNumberInput
+                    value={row.draftAmount}
+                    onChange={(value) => props.onAmountChange(props.subjectKey, row.option.id, value)}
+                    min={0}
+                    step={0.01}
+                    className="h-11 rounded-2xl bg-stone-50"
+                    align="right"
+                    inputClassName="font-semibold"
+                  />
+                </label>
+                <div className="mt-3 flex gap-2">
+                  <button
+                    type="button"
+                    disabled={props.isLocked}
+                    onClick={() => props.onFillPlanned(props.subjectKey, row.option.id, row.option.plannedAmount)}
+                    className="flex-1 rounded-2xl border border-stone-900/10 bg-stone-50 px-3 py-2.5 text-sm font-semibold text-stone-700 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    计划
+                  </button>
+                  <button
+                    type="button"
+                    disabled={props.isLocked || row.draftAmount <= 0 || props.loading}
+                    onClick={() => props.onSubmitRow(row.option.id)}
+                    className="flex-1 rounded-2xl border border-stone-900/10 bg-amber-400 px-3 py-2.5 text-sm font-semibold text-stone-950 transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400"
+                  >
+                    入账
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </>
+      ) : (
+        <div className="mt-4 rounded-[20px] border border-dashed border-stone-900/10 bg-white/80 px-4 py-10 text-center text-sm text-stone-500">
+          当前期间没有可按成员记录的支出计划。
+        </div>
+      )}
+
+      {props.showDetails ? (
+        <div className="mt-4 grid gap-3 md:grid-cols-[220px_minmax(0,1fr)] md:items-end">
+          <label className="grid gap-2">
+            <span className="text-sm font-semibold text-stone-700">对方单位</span>
+            <div className="relative">
+              <Building2 className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
+              <input
+                disabled={props.isLocked}
+                value={props.counterparty}
+                onChange={(event) => props.onCounterpartyChange(event.target.value)}
+                className="h-11 w-full rounded-2xl border border-stone-900/10 bg-white px-11 pr-4 text-sm font-medium text-stone-900 outline-none transition focus:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
+              />
+            </div>
+          </label>
+
+          <label className="grid gap-2">
+            <span className="text-sm font-semibold text-stone-700">备注</span>
+            <input
+              type="text"
+              disabled={props.isLocked}
+              value={props.description}
+              onChange={(event) => props.onDescriptionChange(event.target.value)}
+              className="h-11 rounded-2xl border border-stone-900/10 bg-white px-4 text-sm font-medium text-stone-900 outline-none transition focus:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
+            />
+          </label>
+        </div>
+      ) : null}
+    </section>
+  )
+}
+
+function OtherIncomeComposer(props: {
+  subjects: SubjectResponse[]
+  selectedSubjectKey: string
+  selectedSubject: SubjectResponse | null
+  postedAmount: number
+  occurredOn: string
+  occurredOnInputRef: RefObject<HTMLInputElement | null>
+  onOccurredOnChange: (value: string) => void
+  amount: number
+  onAmountChange: (value: number) => void
+  counterparty: string
+  onCounterpartyChange: (value: string) => void
+  description: string
+  onDescriptionChange: (value: string) => void
+  showDetails: boolean
+  onToggleDetails: () => void
+  isLocked: boolean
+  loading: boolean
+  canSubmit: boolean
+  onSelectSubject: (subjectKey: string) => void
+  onSubmit: () => void
+}) {
+  return (
+    <section className="rounded-[24px] border border-stone-900/10 bg-stone-50/80 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="text-lg font-semibold text-stone-950">其他收入</h3>
+        </div>
+        <button
+          type="button"
+          disabled={props.isLocked}
+          onClick={props.onToggleDetails}
+          className="rounded-full border border-stone-900/10 bg-white px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {props.showDetails ? '收起对方与备注' : '补充对方与备注'}
+        </button>
+      </div>
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        <LedgerPill label="本期已记" value={props.selectedSubject ? formatCurrency(props.postedAmount) : '无'} />
+        <LedgerPill
+          label="口径说明"
+          value="商业演出 / 一次性收入 / 赞助回款；不挂团员，不自动计提提成"
+          tone="accent"
+        />
+      </div>
+
+      <div className="mt-4 grid gap-3 xl:grid-cols-[200px_170px_170px_minmax(0,1fr)_144px] xl:items-end">
+        <label className="grid gap-2">
+          <span className="text-sm font-semibold text-stone-700">挂账科目</span>
+          <select
+            value={props.selectedSubjectKey}
+            disabled={props.isLocked}
+            onChange={(event) => props.onSelectSubject(event.target.value)}
+            className="h-11 rounded-2xl border border-stone-900/10 bg-white px-4 text-sm font-semibold text-stone-900 outline-none transition focus:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {props.subjects.map((subject) => (
+              <option key={subject.subjectKey} value={subject.subjectKey}>
+                {subject.subjectName}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="grid gap-2">
+          <span className="text-sm font-semibold text-stone-700">业务发生日</span>
+          <input
+            ref={props.occurredOnInputRef}
+            type="date"
+            value={props.occurredOn}
+            disabled={props.isLocked}
+            onInput={(event) => props.onOccurredOnChange((event.target as HTMLInputElement).value)}
+            onChange={(event) => props.onOccurredOnChange(event.target.value)}
+            className="h-11 rounded-2xl border border-stone-900/10 bg-white px-4 text-sm font-semibold text-stone-900 outline-none transition focus:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
+          />
+        </label>
+
+        <label className="grid gap-2">
+          <span className="text-sm font-semibold text-stone-700">金额</span>
+          <CompactNumberInput
+            value={props.amount}
+            onChange={props.onAmountChange}
+            min={0}
+            step={0.01}
+            className="h-11 rounded-2xl bg-white"
+            inputClassName="text-lg font-semibold"
+            align="right"
+          />
+        </label>
+
+        <div className="flex min-h-11 items-center text-sm font-medium text-stone-500">
+          {props.selectedSubject ? '这笔收入会直接挂到所选营收科目，适合录商业演出或一次性回款。' : '先选择一个营收科目，再录入金额。'}
+        </div>
+
+        <button
+          type="button"
+          onClick={props.onSubmit}
+          disabled={!props.canSubmit}
+          className="inline-flex h-11 items-center justify-center rounded-2xl bg-stone-950 px-4 text-sm font-semibold text-white transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400"
+        >
+          {props.loading ? '保存中...' : '确认入账'}
+        </button>
+      </div>
+
+      {props.showDetails ? (
+        <div className="mt-4 grid gap-3 md:grid-cols-[220px_minmax(0,1fr)] md:items-end">
+          <label className="grid gap-2">
+            <span className="text-sm font-semibold text-stone-700">对方单位</span>
+            <div className="relative">
+              <Building2 className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
+              <input
+                disabled={props.isLocked}
+                value={props.counterparty}
+                onChange={(event) => props.onCounterpartyChange(event.target.value)}
+                className="h-11 w-full rounded-2xl border border-stone-900/10 bg-white px-11 pr-4 text-sm font-medium text-stone-900 outline-none transition focus:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
+              />
+            </div>
+          </label>
+
+          <label className="grid gap-2">
+            <span className="text-sm font-semibold text-stone-700">备注</span>
+            <input
+              type="text"
+              disabled={props.isLocked}
+              value={props.description}
+              onChange={(event) => props.onDescriptionChange(event.target.value)}
+              className="h-11 rounded-2xl border border-stone-900/10 bg-white px-4 text-sm font-medium text-stone-900 outline-none transition focus:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
+            />
+          </label>
+        </div>
+      ) : null}
     </section>
   )
 }
@@ -1294,6 +1866,10 @@ function getRelatedEntityType(subjectKey: string): 'teamMember' | 'employee' | n
   if (subjectKey.startsWith('cost.member.')) return 'teamMember'
   if (subjectKey.startsWith('cost.employee.')) return 'employee'
   return null
+}
+
+function getEntityAllocationKey(subjectKey: string, entityId: string) {
+  return `${subjectKey}:${entityId}`
 }
 
 function buildRelatedEntityOptions(subjectKey: string, month: MonthlyScenarioResult | null) {

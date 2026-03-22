@@ -149,6 +149,88 @@ def test_draft_autosave_conflict_and_release_fact_tables(tmp_path: Path) -> None
         assert draft_audits and draft_audits >= 2
 
 
+def test_ledger_is_available_from_current_draft_without_release(tmp_path: Path) -> None:
+    client = build_client(tmp_path / "draft-ledger.db")
+    register_user(client, email="draft-ledger@example.com", display_name="Finance")
+
+    periods = client.get("/api/v1/ledger/periods")
+    assert periods.status_code == 200
+    period = periods.json()[0]
+    assert period["plannedRevenue"] > 0
+
+    subjects = client.get(f"/api/v1/ledger/periods/{period['id']}/subjects")
+    assert subjects.status_code == 200
+    subject_map = {item["subjectKey"]: item for item in subjects.json()}
+    assert "revenue.offline_sales" in subject_map
+    assert "cost.training.rehearsal" in subject_map
+
+    create_entry = client.post(
+        "/api/v1/ledger/entries",
+        json={
+            "ledgerPeriodId": period["id"],
+            "direction": "expense",
+            "amount": 120,
+            "allocations": [
+                {
+                    "subjectKey": "cost.training.rehearsal",
+                    "subjectName": subject_map["cost.training.rehearsal"]["subjectName"],
+                    "subjectType": subject_map["cost.training.rehearsal"]["subjectType"],
+                    "amount": 120,
+                }
+            ],
+        },
+    )
+    assert create_entry.status_code == 200
+
+    variance = client.get(f"/api/v1/variance/periods/{period['id']}")
+    assert variance.status_code == 200
+    assert variance.json()["actualCost"] == 120
+
+
+def test_rollback_resyncs_ledger_plan_to_current_draft(tmp_path: Path) -> None:
+    client = build_client(tmp_path / "rollback-ledger.db")
+    register_user(client, email="rollback-ledger@example.com", display_name="Planner")
+
+    cost_item_id = "custom-rent"
+    draft = client.get("/api/v1/workspace/draft").json()
+    draft["config"]["operating"]["monthlyFixedCosts"].append({"id": cost_item_id, "name": "Studio Rent", "amount": 600})
+    save_v1 = client.patch(
+        "/api/v1/workspace/draft",
+        json={"revision": draft["revision"], "workspaceName": draft["workspaceName"], "config": draft["config"]},
+    )
+    assert save_v1.status_code == 200
+
+    release_v1 = client.post("/api/v1/workspace/versions", json={"kind": "release", "name": "Budget V1"})
+    assert release_v1.status_code == 200
+
+    period_before = client.get("/api/v1/ledger/periods").json()[0]
+    subjects_before = client.get(f"/api/v1/ledger/periods/{period_before['id']}/subjects").json()
+    assert any(item["subjectKey"] == f"cost.operating.monthly.{cost_item_id}" for item in subjects_before)
+
+    draft_v2 = client.get("/api/v1/workspace/draft").json()
+    draft_v2["config"]["operating"]["monthlyFixedCosts"] = [
+        item for item in draft_v2["config"]["operating"]["monthlyFixedCosts"] if item["id"] != cost_item_id
+    ]
+    save_v2 = client.patch(
+        "/api/v1/workspace/draft",
+        json={"revision": draft_v2["revision"], "workspaceName": draft_v2["workspaceName"], "config": draft_v2["config"]},
+    )
+    assert save_v2.status_code == 200
+
+    period_after_save = client.get("/api/v1/ledger/periods").json()[0]
+    subjects_after_save = client.get(f"/api/v1/ledger/periods/{period_after_save['id']}/subjects").json()
+    assert not any(item["subjectKey"] == f"cost.operating.monthly.{cost_item_id}" for item in subjects_after_save)
+    assert period_after_save["plannedCost"] < period_before["plannedCost"]
+
+    rolled_back = client.post(f"/api/v1/workspace/versions/{release_v1.json()['id']}/rollback")
+    assert rolled_back.status_code == 200
+
+    period_after_rollback = client.get("/api/v1/ledger/periods").json()[0]
+    subjects_after_rollback = client.get(f"/api/v1/ledger/periods/{period_after_rollback['id']}/subjects").json()
+    assert any(item["subjectKey"] == f"cost.operating.monthly.{cost_item_id}" for item in subjects_after_rollback)
+    assert period_after_rollback["plannedCost"] == period_before["plannedCost"]
+
+
 def test_release_rollback_and_share_lifecycle(tmp_path: Path) -> None:
     client = build_client(tmp_path / "rollback.db")
     register_user(client, email="share@example.com", display_name="Sharer")
