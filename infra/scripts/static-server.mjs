@@ -8,6 +8,19 @@ import path from "node:path";
 const host = process.env.HOST ?? "0.0.0.0";
 const port = Number.parseInt(process.env.PORT ?? "4173", 10);
 const rootDir = path.resolve(process.env.STATIC_ROOT ?? path.join(process.cwd(), "dist"));
+const apiUpstream = normalizeUpstream(process.env.API_UPSTREAM ?? "http://127.0.0.1:8000");
+const hopByHopHeaders = new Set([
+  "connection",
+  "content-length",
+  "host",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+]);
 
 const mimeTypes = new Map([
   [".css", "text/css; charset=utf-8"],
@@ -30,6 +43,10 @@ const mimeTypes = new Map([
 function send(res, statusCode, headers, body) {
   res.writeHead(statusCode, headers);
   res.end(body);
+}
+
+function normalizeUpstream(value) {
+  return value.endsWith("/") ? value.slice(0, -1) : value;
 }
 
 function isInsideRoot(filePath) {
@@ -93,7 +110,120 @@ async function resolveFile(pathname) {
   return { filePath, fileStat, statusCode: 200 };
 }
 
+async function readRequestBody(req) {
+  const chunks = [];
+
+  for await (const chunk of req) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+
+  return Buffer.concat(chunks);
+}
+
+function buildProxyHeaders(req) {
+  const headers = new Headers();
+
+  for (const [key, value] of Object.entries(req.headers)) {
+    const normalizedKey = key.toLowerCase();
+    if (hopByHopHeaders.has(normalizedKey) || value == null) {
+      continue;
+    }
+
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        headers.append(normalizedKey, entry);
+      }
+      continue;
+    }
+
+    headers.set(normalizedKey, value);
+  }
+
+  const forwardedFor = req.socket.remoteAddress;
+  if (forwardedFor) {
+    const existing = headers.get("x-forwarded-for");
+    headers.set("x-forwarded-for", existing ? `${existing}, ${forwardedFor}` : forwardedFor);
+  }
+
+  headers.set("x-forwarded-host", req.headers.host ?? `127.0.0.1:${port}`);
+  headers.set("x-forwarded-proto", "http");
+  return headers;
+}
+
+function applyProxyResponseHeaders(res, upstreamResponse) {
+  const responseHeaders = {};
+
+  for (const [key, value] of upstreamResponse.headers.entries()) {
+    const normalizedKey = key.toLowerCase();
+    if (hopByHopHeaders.has(normalizedKey) || normalizedKey === "set-cookie") {
+      continue;
+    }
+
+    responseHeaders[key] = value;
+  }
+
+  const getSetCookie = upstreamResponse.headers.getSetCookie?.bind(upstreamResponse.headers);
+  const setCookies = typeof getSetCookie === "function" ? getSetCookie() : [];
+  if (setCookies.length > 0) {
+    responseHeaders["Set-Cookie"] = setCookies;
+  }
+
+  return responseHeaders;
+}
+
+async function proxyRequest(req, res, url) {
+  try {
+    const upstreamUrl = `${apiUpstream}${url.pathname}${url.search}`;
+    const init = {
+      method: req.method,
+      headers: buildProxyHeaders(req),
+    };
+
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      init.body = await readRequestBody(req);
+    }
+
+    const upstreamResponse = await fetch(upstreamUrl, init);
+    const responseHeaders = applyProxyResponseHeaders(res, upstreamResponse);
+    const body =
+      req.method === "HEAD" || upstreamResponse.status === 204
+        ? null
+        : Buffer.from(await upstreamResponse.arrayBuffer());
+
+    if (body && !("content-length" in responseHeaders) && !("Content-Length" in responseHeaders)) {
+      responseHeaders["Content-Length"] = String(body.length);
+    }
+
+    res.writeHead(upstreamResponse.status, responseHeaders);
+
+    if (body == null) {
+      res.end();
+      return;
+    }
+
+    res.end(body);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[static-server] proxy error: ${message}`);
+    send(res, 502, { "Content-Type": "text/plain; charset=utf-8" }, "Bad Gateway");
+  }
+}
+
 const server = createServer(async (req, res) => {
+  try {
+    const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+
+    if (url.pathname.startsWith("/api/")) {
+      await proxyRequest(req, res, url);
+      return;
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[static-server] ${message}`);
+    send(res, 400, { "Content-Type": "text/plain; charset=utf-8" }, "Bad Request");
+    return;
+  }
+
   if (req.method !== "GET" && req.method !== "HEAD") {
     send(res, 405, { Allow: "GET, HEAD" }, "Method Not Allowed");
     return;

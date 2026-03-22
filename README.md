@@ -33,6 +33,34 @@ python -m pip install -e ./apps/api
 python -m uvicorn app.main:app --app-dir apps/api --reload
 ```
 
+## Linux 部署
+
+在 Linux 服务器上可以直接使用 `infra/scripts/deploy-linux.sh` 完成前后端部署。这个脚本不会修改 nginx 配置，而是：
+
+- 安装 Node.js 20 和 Python 3.12+
+- 构建前端并安装后端依赖
+- 创建 `xox-model-web` 和 `xox-model-api` 两个 systemd 服务
+- 让前端静态服务在同源下代理 `/api/*` 到本机 FastAPI
+
+在仓库工作树里执行：
+
+```bash
+sudo bash infra/scripts/deploy-linux.sh
+```
+
+如果脚本是单独拷到目标机器当前目录的，需要额外提供仓库地址：
+
+```bash
+sudo REPO_URL=<git-url> bash ./deploy-linux.sh
+```
+
+常用参数：
+
+```bash
+sudo WEB_PORT=4173 API_PORT=8000 PUBLIC_ORIGIN=http://127.0.0.1:4173 bash infra/scripts/deploy-linux.sh
+sudo RUN_TESTS=1 bash infra/scripts/deploy-linux.sh
+```
+
 ## 验证命令
 
 ```bash
