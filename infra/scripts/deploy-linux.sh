@@ -317,8 +317,9 @@ ensure_app_user() {
 
 publish_runtime_files() {
   log "Publishing runtime files into $APP_ROOT"
+  [[ -d "$SOURCE_DIR/apps/web/dist" ]] || fail "Missing built web assets in $SOURCE_DIR/apps/web/dist"
   install -d -m 0755 "$APP_ROOT" "$WEB_ROOT" "$DATA_ROOT"
-  rsync -a --delete "$SOURCE_DIR/dist/" "$WEB_ROOT/"
+  rsync -a --delete "$SOURCE_DIR/apps/web/dist/" "$WEB_ROOT/"
   install -m 0755 "$SOURCE_DIR/infra/scripts/static-server.mjs" "$APP_ROOT/static-server.mjs"
   chown -R "$APP_USER:$APP_USER" "$APP_ROOT"
 }
