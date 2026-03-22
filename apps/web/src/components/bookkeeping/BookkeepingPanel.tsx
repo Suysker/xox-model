@@ -1,4 +1,4 @@
-import { Building2, Lock, LockOpen, ReceiptText, WalletCards } from 'lucide-react'
+import { Building2, Lock, LockOpen, ReceiptText, Search, WalletCards } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode, RefObject } from 'react'
 import type { EntryAllocation, EntryResponse, PeriodResponse, SubjectResponse } from '../../lib/api'
@@ -45,6 +45,15 @@ type MemberRevenueRow = {
   draftCommission: number
 }
 
+type HistoryDirectionFilter = 'all' | 'income' | 'expense'
+
+type HistoryStatusFilter = 'all' | 'posted' | 'voided'
+
+type HistoryGroup = {
+  entry: EntryResponse
+  derivedEntries: EntryResponse[]
+}
+
 const directionTabs: Array<{ value: 'income' | 'expense'; label: string }> = [
   { value: 'income', label: '记收入' },
   { value: 'expense', label: '记支出' },
@@ -59,6 +68,18 @@ const categoryLabels: Record<SubjectCategory, string> = {
   stage: '舞台',
   other: '其他',
 }
+
+const historyDirectionTabs: Array<{ value: HistoryDirectionFilter; label: string }> = [
+  { value: 'all', label: '全部方向' },
+  { value: 'income', label: '收入' },
+  { value: 'expense', label: '支出' },
+]
+
+const historyStatusTabs: Array<{ value: HistoryStatusFilter; label: string }> = [
+  { value: 'all', label: '全部状态' },
+  { value: 'posted', label: '已过账' },
+  { value: 'voided', label: '已作废' },
+]
 
 export function BookkeepingPanel(props: {
   periods: PeriodResponse[]
@@ -207,15 +228,17 @@ export function BookkeepingPanel(props: {
       memberRevenueRows.reduce(
         (sum, row) => ({
           plannedRevenue: sum.plannedRevenue + row.plannedAmount,
+          plannedOfflineUnits: sum.plannedOfflineUnits + row.plannedOfflineUnits,
+          plannedOnlineUnits: sum.plannedOnlineUnits + row.plannedOnlineUnits,
           postedAmount: sum.postedAmount + row.postedAmount,
           draftCommission: sum.draftCommission + row.draftCommission,
         }),
-        { plannedRevenue: 0, postedAmount: 0, draftCommission: 0 },
+        { plannedRevenue: 0, plannedOfflineUnits: 0, plannedOnlineUnits: 0, postedAmount: 0, draftCommission: 0 },
       ),
     [memberRevenueRows],
   )
 
-  const historyGroups = useMemo(() => {
+  const historyGroups = useMemo<HistoryGroup[]>(() => {
     const groupedDerived = new Map<string, EntryResponse[]>()
     const manualEntries: EntryResponse[] = []
 
@@ -457,6 +480,8 @@ export function BookkeepingPanel(props: {
               occurredOn={incomeOccurredOn}
               occurredOnInputRef={incomeOccurredOnInputRef}
               plannedRevenue={memberRevenueSummary.plannedRevenue}
+              plannedOfflineUnits={memberRevenueSummary.plannedOfflineUnits}
+              plannedOnlineUnits={memberRevenueSummary.plannedOnlineUnits}
               postedAmount={memberRevenueSummary.postedAmount}
               draftCommission={memberRevenueSummary.draftCommission}
               isLocked={isLocked}
@@ -568,7 +593,7 @@ function ExpenseComposer(props: {
 
       <section className="rounded-[24px] border border-stone-900/10 bg-stone-50/80 p-4">
         <div className="flex items-center justify-between gap-3">
-          <h3 className="text-lg font-semibold text-stone-950">选择科目</h3>
+          <h3 className="text-lg font-semibold text-stone-950">先选预算科目</h3>
           <span className="rounded-full border border-stone-900/10 bg-white px-3 py-1 text-xs font-semibold text-stone-600">
             {props.visibleSubjects.length} 项
           </span>
@@ -584,7 +609,7 @@ function ExpenseComposer(props: {
               className={cx(
                 'rounded-[18px] border px-3 py-2.5 text-left transition',
                 props.selectedSubjectKey === subject.subjectKey
-                  ? 'border-stone-950 bg-stone-950 text-white shadow-[0_12px_28px_rgba(41,37,36,0.14)]'
+                  ? 'border-amber-300 bg-amber-50 text-stone-950 shadow-[0_12px_28px_rgba(245,158,11,0.12)]'
                   : 'border-stone-900/10 bg-white text-stone-900 hover:bg-stone-100',
                 props.isLocked && 'cursor-not-allowed opacity-60',
               )}
@@ -594,7 +619,7 @@ function ExpenseComposer(props: {
                 <span
                   className={
                     props.selectedSubjectKey === subject.subjectKey
-                      ? 'rounded-full border border-white/10 bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-amber-100'
+                      ? 'rounded-full border border-amber-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-amber-700'
                       : 'rounded-full border border-stone-900/10 bg-stone-50 px-2.5 py-1 text-[11px] font-semibold text-stone-500'
                   }
                 >
@@ -604,7 +629,7 @@ function ExpenseComposer(props: {
               <div
                 className={
                   props.selectedSubjectKey === subject.subjectKey
-                    ? 'mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-stone-200'
+                    ? 'mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-stone-600'
                     : 'mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-stone-500'
                 }
               >
@@ -621,11 +646,11 @@ function ExpenseComposer(props: {
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-lg font-semibold text-stone-950">
               {props.selectedRelatedEntity?.type === 'employee' || getRelatedEntityType(props.selectedSubjectKey) === 'employee'
-                ? '归属员工'
-                : '归属成员'}
+                ? '再挂到员工'
+                : '再挂到成员'}
             </h3>
             <span className="rounded-full border border-stone-900/10 bg-white px-3 py-1 text-xs font-semibold text-stone-600">
-              选中后带入计划金额
+              选中后自动带入对应计划
             </span>
           </div>
 
@@ -655,18 +680,32 @@ function ExpenseComposer(props: {
         </section>
       ) : null}
 
-      <section className="rounded-[28px] border border-stone-900/10 bg-stone-950 p-4 text-white shadow-[0_18px_50px_rgba(41,37,36,0.18)]">
-        <div className="flex flex-wrap gap-2">
-          <LedgerPill dark label="科目" value={props.selectedSubject?.subjectName ?? '待选择'} />
-          <LedgerPill dark label={props.relatedSelectionRequired ? '归属对象' : '归属'} value={props.selectedRelatedEntity?.name ?? (props.relatedSelectionRequired ? '待选择' : '无需')} />
-          <LedgerPill dark label="计划参考" value={props.plannedReference > 0 ? formatCurrency(props.plannedReference) : '无'} />
-          <LedgerPill dark label="本期已记" value={props.selectedSubject ? formatCurrency(props.selectedPostedAmount) : '无'} />
-          <LedgerPill dark label="剩余" value={props.selectedSubject ? formatCurrency(props.selectedGapAmount) : '无'} tone="accent" />
+      <section className="rounded-[28px] border border-amber-200/70 bg-[linear-gradient(135deg,rgba(255,251,235,0.94),rgba(255,255,255,0.98))] p-4 shadow-[0_18px_42px_rgba(245,158,11,0.12)]">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex flex-wrap gap-2">
+            <LedgerPill label="科目" value={props.selectedSubject?.subjectName ?? '待选择'} />
+            <LedgerPill
+              label={props.relatedSelectionRequired ? '归属对象' : '归属'}
+              value={props.selectedRelatedEntity?.name ?? (props.relatedSelectionRequired ? '待选择' : '无需')}
+            />
+            <LedgerPill label="计划参考" value={props.plannedReference > 0 ? formatCurrency(props.plannedReference) : '无'} />
+            <LedgerPill label="本期已记" value={props.selectedSubject ? formatCurrency(props.selectedPostedAmount) : '无'} />
+            <LedgerPill label="剩余预算" value={props.selectedSubject ? formatCurrency(props.selectedGapAmount) : '无'} tone="accent" />
+          </div>
+
+          <button
+            type="button"
+            disabled={props.isLocked}
+            onClick={props.onToggleDetails}
+            className="rounded-full border border-stone-900/10 bg-white px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {props.showDetails ? '收起补充信息' : '补充对方与备注'}
+          </button>
         </div>
 
-        <div className="mt-4 grid gap-3 xl:grid-cols-[180px_minmax(0,1fr)_220px_132px] xl:items-end">
+        <div className="mt-4 grid gap-3 xl:grid-cols-[170px_170px_minmax(0,1fr)_144px] xl:items-end">
           <label className="grid gap-2">
-            <span className="text-sm font-semibold text-stone-200">业务发生日</span>
+            <span className="text-sm font-semibold text-stone-700">业务发生日</span>
             <input
               ref={props.expenseOccurredOnInputRef}
               type="date"
@@ -674,40 +713,32 @@ function ExpenseComposer(props: {
               disabled={props.isLocked}
               onInput={(event) => props.onExpenseOccurredOnChange((event.target as HTMLInputElement).value)}
               onChange={(event) => props.onExpenseOccurredOnChange(event.target.value)}
-              className="h-11 rounded-2xl border border-white/10 bg-white px-4 text-sm font-semibold text-stone-900 outline-none transition focus:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
+              className="h-11 rounded-2xl border border-stone-900/10 bg-white px-4 text-sm font-semibold text-stone-900 outline-none transition focus:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
             />
           </label>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              disabled={props.isLocked}
-              onClick={props.onToggleDetails}
-              className="rounded-full border border-white/10 bg-white/8 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/12 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {props.showDetails ? '收起补充信息' : '补充对方与备注'}
-            </button>
-            {!props.selectedSubject ? <span className="text-xs font-medium text-stone-300">先选科目，再录金额。</span> : null}
-          </div>
-
           <label className="grid gap-2">
-            <span className="text-sm font-semibold text-stone-200">金额</span>
+            <span className="text-sm font-semibold text-stone-700">金额</span>
             <CompactNumberInput
               value={props.amount}
               onChange={props.onAmountChange}
               min={0}
               step={0.01}
-              className="h-11 rounded-2xl border-white/10 bg-white"
+              className="h-11 rounded-2xl bg-white"
               inputClassName="text-lg font-semibold"
               align="right"
             />
           </label>
 
+          <div className="flex min-h-11 items-center text-sm font-medium text-stone-500">
+            {props.selectedSubject ? '金额会直接挂到当前科目；需要时再补对方单位和备注。' : '先选一个预算科目，再录金额。'}
+          </div>
+
           <button
             type="button"
             onClick={props.onSubmit}
             disabled={!props.canSubmit}
-            className="inline-flex h-11 items-center justify-center rounded-2xl bg-amber-300 px-4 text-sm font-semibold text-stone-950 transition hover:bg-amber-200 disabled:cursor-not-allowed disabled:bg-white/15 disabled:text-stone-400"
+            className="inline-flex h-11 items-center justify-center rounded-2xl bg-stone-950 px-4 text-sm font-semibold text-white transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400"
           >
             {props.loading ? '保存中...' : '确认入账'}
           </button>
@@ -716,25 +747,25 @@ function ExpenseComposer(props: {
         {props.showDetails ? (
           <div className="mt-4 grid gap-3 md:grid-cols-[220px_minmax(0,1fr)]">
             <label className="grid gap-2">
-              <span className="text-sm font-semibold text-stone-200">对方单位</span>
+              <span className="text-sm font-semibold text-stone-700">对方单位</span>
               <div className="relative">
                 <Building2 className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
                 <input
                   disabled={props.isLocked}
                   value={props.counterparty}
                   onChange={(event) => props.onCounterpartyChange(event.target.value)}
-                  className="h-11 w-full rounded-2xl border border-white/10 bg-white px-11 pr-4 text-sm font-medium text-stone-900 outline-none transition focus:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="h-11 w-full rounded-2xl border border-stone-900/10 bg-white px-11 pr-4 text-sm font-medium text-stone-900 outline-none transition focus:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
                 />
               </div>
             </label>
 
             <label className="grid gap-2">
-              <span className="text-sm font-semibold text-stone-200">备注</span>
+              <span className="text-sm font-semibold text-stone-700">备注</span>
               <textarea
                 disabled={props.isLocked}
                 value={props.description}
                 onChange={(event) => props.onDescriptionChange(event.target.value)}
-                className="min-h-24 rounded-2xl border border-white/10 bg-white px-4 py-3 text-sm font-medium text-stone-900 outline-none transition focus:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
+                className="min-h-24 rounded-2xl border border-stone-900/10 bg-white px-4 py-3 text-sm font-medium text-stone-900 outline-none transition focus:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
               />
             </label>
           </div>
@@ -749,6 +780,8 @@ function IncomeEntrySection(props: {
   occurredOn: string
   occurredOnInputRef: RefObject<HTMLInputElement | null>
   plannedRevenue: number
+  plannedOfflineUnits: number
+  plannedOnlineUnits: number
   postedAmount: number
   draftCommission: number
   isLocked: boolean
@@ -775,9 +808,11 @@ function IncomeEntrySection(props: {
               className="h-10 rounded-2xl border border-stone-900/10 bg-white px-3 text-sm font-semibold text-stone-900 outline-none transition focus:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
             />
           </label>
-          <LedgerPill label="计划收入" value={formatCurrency(props.plannedRevenue)} />
-          <LedgerPill label="已记收入" value={formatCurrency(props.postedAmount)} />
-          <LedgerPill label="待计提提成" value={formatCurrency(props.draftCommission)} tone="accent" />
+          <LedgerPill label="计划总收入" value={formatCurrency(props.plannedRevenue)} />
+          <LedgerPill label="线下计划" value={`${formatUnits(props.plannedOfflineUnits)} 张`} />
+          <LedgerPill label="线上计划" value={`${formatUnits(props.plannedOnlineUnits)} 张`} />
+          <LedgerPill label="已记总收入" value={formatCurrency(props.postedAmount)} />
+          <LedgerPill label="待生成提成" value={formatCurrency(props.draftCommission)} tone="accent" />
         </div>
       </div>
 
@@ -786,20 +821,20 @@ function IncomeEntrySection(props: {
           <div className="mt-4 hidden overflow-hidden rounded-[20px] border border-stone-900/10 bg-white md:block">
             <table className="w-full table-fixed border-collapse text-[12px]">
               <colgroup>
-                <col className="w-[22%]" />
+                <col className="w-[26%]" />
                 <col className="w-[12%]" />
-                <col className="w-[12%]" />
-                <col className="w-[11%]" />
-                <col className="w-[11%]" />
                 <col className="w-[12%]" />
                 <col className="w-[10%]" />
                 <col className="w-[10%]" />
+                <col className="w-[10%]" />
+                <col className="w-[8%]" />
+                <col className="w-[12%]" />
               </colgroup>
               <thead className="bg-stone-100/90 text-stone-600">
                 <tr className="border-b border-stone-900/10">
                   <HistoryHeader>团员</HistoryHeader>
-                  <HistoryHeader align="right">计划收入</HistoryHeader>
-                  <HistoryHeader align="right">已记收入</HistoryHeader>
+                  <HistoryHeader align="right">计划总收入</HistoryHeader>
+                  <HistoryHeader align="right">已记总收入</HistoryHeader>
                   <HistoryHeader align="center">线下张数</HistoryHeader>
                   <HistoryHeader align="center">线上张数</HistoryHeader>
                   <HistoryHeader align="right">本次收入</HistoryHeader>
@@ -813,13 +848,15 @@ function IncomeEntrySection(props: {
                     <HistoryCell className="min-w-0 whitespace-nowrap text-stone-950">
                       <div className="flex items-center gap-2 overflow-hidden">
                         <span className="shrink-0 font-semibold">{row.member.name}</span>
-                        <span className="truncate text-[11px] text-stone-500">
-                          {(row.member.employmentType === 'salary' ? '底薪' : '兼职') + ` · 线${formatUnits(row.plannedOfflineUnits)} / 上${formatUnits(row.plannedOnlineUnits)}`}
-                        </span>
+                        <span className="truncate text-[11px] tabular-nums text-stone-500">{buildMemberPlanCaption(row)}</span>
                       </div>
                     </HistoryCell>
-                    <HistoryCell align="right" className="whitespace-nowrap font-semibold text-stone-950">{formatCurrency(row.plannedAmount)}</HistoryCell>
-                    <HistoryCell align="right" className="whitespace-nowrap text-stone-700">{formatCurrency(row.postedAmount)}</HistoryCell>
+                    <HistoryCell align="right" className="whitespace-nowrap font-semibold tabular-nums text-stone-950">
+                      {formatCurrency(row.plannedAmount)}
+                    </HistoryCell>
+                    <HistoryCell align="right" className="whitespace-nowrap tabular-nums text-stone-700">
+                      {formatCurrency(row.postedAmount)}
+                    </HistoryCell>
                     <HistoryCell align="center">
                       <CompactNumberInput
                         value={row.draftOfflineUnits}
@@ -827,8 +864,8 @@ function IncomeEntrySection(props: {
                         min={0}
                         step={1}
                         size="sm"
-                        className="h-8 rounded-xl bg-stone-50"
-                        align="right"
+                        className="mx-auto h-8 max-w-[96px] rounded-xl bg-stone-50"
+                        align="center"
                         inputClassName="text-sm font-semibold"
                       />
                     </HistoryCell>
@@ -839,13 +876,17 @@ function IncomeEntrySection(props: {
                         min={0}
                         step={1}
                         size="sm"
-                        className="h-8 rounded-xl bg-stone-50"
-                        align="right"
+                        className="mx-auto h-8 max-w-[96px] rounded-xl bg-stone-50"
+                        align="center"
                         inputClassName="text-sm font-semibold"
                       />
                     </HistoryCell>
-                    <HistoryCell align="right" className="whitespace-nowrap font-semibold text-stone-950">{formatCurrency(row.draftAmount)}</HistoryCell>
-                    <HistoryCell align="right" className="whitespace-nowrap font-semibold text-amber-700">{formatCurrency(row.draftCommission)}</HistoryCell>
+                    <HistoryCell align="right" className="whitespace-nowrap font-semibold tabular-nums text-stone-950">
+                      {formatCurrency(row.draftAmount)}
+                    </HistoryCell>
+                    <HistoryCell align="right" className="whitespace-nowrap font-semibold tabular-nums text-amber-700">
+                      {formatCurrency(row.draftCommission)}
+                    </HistoryCell>
                     <HistoryCell align="center">
                       <div className="flex items-center justify-center gap-1.5 whitespace-nowrap">
                         <button
@@ -860,7 +901,7 @@ function IncomeEntrySection(props: {
                           type="button"
                           disabled={props.isLocked || row.draftAmount <= 0 || props.loading}
                           onClick={() => props.onSubmitMember(row.member.memberId)}
-                          className="rounded-full border border-stone-900/10 bg-stone-950 px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:opacity-50"
+                          className="rounded-full border border-stone-900/10 bg-amber-400 px-2.5 py-1 text-[11px] font-semibold text-stone-950 transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400"
                         >
                           入账
                         </button>
@@ -876,11 +917,9 @@ function IncomeEntrySection(props: {
             {props.rows.map((row) => (
               <article key={row.member.memberId} className="rounded-[20px] border border-stone-900/10 bg-white p-4">
                 <div className="truncate text-base font-semibold text-stone-950">{row.member.name}</div>
-                <div className="truncate text-xs text-stone-500">
-                  {(row.member.employmentType === 'salary' ? '底薪' : '兼职') + ` · 线${formatUnits(row.plannedOfflineUnits)} / 上${formatUnits(row.plannedOnlineUnits)}`}
-                </div>
+                <div className="truncate text-xs tabular-nums text-stone-500">{buildMemberPlanCaption(row)}</div>
                 <div className="mt-3 grid grid-cols-3 gap-2">
-                  <LedgerPill label="计划收入" value={formatCurrency(row.plannedAmount)} />
+                  <LedgerPill label="计划总收入" value={formatCurrency(row.plannedAmount)} />
                   <LedgerPill label="本次收入" value={formatCurrency(row.draftAmount)} />
                   <LedgerPill label="自动提成" value={formatCurrency(row.draftCommission)} />
                 </div>
@@ -893,7 +932,7 @@ function IncomeEntrySection(props: {
                       min={0}
                       step={1}
                       className="h-11 rounded-2xl bg-stone-50"
-                      align="right"
+                      align="center"
                       inputClassName="font-semibold"
                     />
                   </label>
@@ -905,7 +944,7 @@ function IncomeEntrySection(props: {
                       min={0}
                       step={1}
                       className="h-11 rounded-2xl bg-stone-50"
-                      align="right"
+                      align="center"
                       inputClassName="font-semibold"
                     />
                   </label>
@@ -917,13 +956,13 @@ function IncomeEntrySection(props: {
                     onClick={() => props.onFillPlannedMember(row.member.memberId, row.plannedOfflineUnits, row.plannedOnlineUnits)}
                     className="flex-1 rounded-2xl border border-stone-900/10 bg-stone-50 px-3 py-2.5 text-sm font-semibold text-stone-700 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    带入计划
+                    计划
                   </button>
                   <button
                     type="button"
                     disabled={props.isLocked || row.draftAmount <= 0 || props.loading}
                     onClick={() => props.onSubmitMember(row.member.memberId)}
-                    className="flex-1 rounded-2xl border border-stone-900/10 bg-stone-950 px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="flex-1 rounded-2xl border border-stone-900/10 bg-amber-400 px-3 py-2.5 text-sm font-semibold text-stone-950 transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400"
                   >
                     入账
                   </button>
@@ -942,124 +981,172 @@ function IncomeEntrySection(props: {
 }
 
 function HistorySection(props: {
-  historyGroups: Array<{ entry: EntryResponse; derivedEntries: EntryResponse[] }>
+  historyGroups: HistoryGroup[]
   isLocked: boolean
   onVoid: (entryId: string) => void
 }) {
+  const [directionFilter, setDirectionFilter] = useState<HistoryDirectionFilter>('all')
+  const [statusFilter, setStatusFilter] = useState<HistoryStatusFilter>('all')
+  const [keyword, setKeyword] = useState('')
+
+  const filteredHistoryGroups = useMemo(
+    () =>
+      props.historyGroups.filter(({ entry, derivedEntries }) => {
+        if (directionFilter !== 'all' && entry.direction !== directionFilter) return false
+        if (statusFilter !== 'all' && entry.status !== statusFilter) return false
+
+        const normalizedKeyword = keyword.trim().toLowerCase()
+        if (!normalizedKeyword) return true
+
+        return matchesHistoryKeyword(entry, derivedEntries, normalizedKeyword)
+      }),
+    [directionFilter, keyword, props.historyGroups, statusFilter],
+  )
+
+  const hasHistory = props.historyGroups.length > 0
+  const hasFilteredHistory = filteredHistoryGroups.length > 0
+
   return (
     <Panel>
       <SectionTitle icon={ReceiptText} eyebrow="历史" title="账本记录" />
 
-      {props.historyGroups.length > 0 ? (
-        <div className="mt-5 overflow-hidden rounded-[24px] border border-stone-900/10 bg-white">
-          <div className="hidden md:block">
-            <table className="w-full table-fixed border-collapse text-[12px]">
-              <colgroup>
-                <col className="w-[18%]" />
-                <col className="w-[8%]" />
-                <col className="w-[35%]" />
-                <col className="w-[13%]" />
-                <col className="w-[10%]" />
-                <col className="w-[8%]" />
-                <col className="w-[8%]" />
-              </colgroup>
-              <thead className="bg-stone-100/90 text-stone-600">
-                <tr className="border-b border-stone-900/10">
-                  <HistoryHeader>时间</HistoryHeader>
-                  <HistoryHeader>方向</HistoryHeader>
-                  <HistoryHeader>摘要</HistoryHeader>
-                  <HistoryHeader>关联对象</HistoryHeader>
-                  <HistoryHeader align="right">金额</HistoryHeader>
-                  <HistoryHeader align="center">状态</HistoryHeader>
-                  <HistoryHeader align="center">操作</HistoryHeader>
-                </tr>
-              </thead>
-              <tbody>
-                {props.historyGroups.map(({ entry, derivedEntries }) => (
-                  <tr key={entry.id} className="border-b border-stone-900/10 last:border-none">
-                    <HistoryCell className="whitespace-nowrap text-stone-500">
-                      {formatEntryDate(entry.occurredAt)} · 记账 {formatPostedAt(entry.postedAt)}
-                    </HistoryCell>
-                    <HistoryCell>
-                      <span
-                        className={cx(
-                          'rounded-full px-2.5 py-1 text-xs font-semibold',
-                          entry.direction === 'income'
-                            ? 'border border-emerald-200 bg-emerald-50 text-emerald-700'
-                            : 'border border-rose-200 bg-rose-50 text-rose-700',
-                        )}
-                      >
-                        {entry.direction === 'income' ? '收入' : '支出'}
-                      </span>
-                    </HistoryCell>
-                    <HistoryCell className="min-w-0">
-                      <div className="truncate font-medium text-stone-900">{buildHistorySummary(entry, derivedEntries)}</div>
-                    </HistoryCell>
-                    <HistoryCell className="truncate text-stone-600">{relatedEntityLabel(entry)}</HistoryCell>
-                    <HistoryCell align="right" className="whitespace-nowrap font-semibold text-stone-950">
-                      {formatCurrency(entry.amount)}
-                    </HistoryCell>
-                    <HistoryCell align="center">
-                      <span
-                        className={cx(
-                          'rounded-full px-2.5 py-1 text-xs font-semibold',
-                          entry.status === 'voided'
-                            ? 'border border-stone-900/10 bg-stone-100 text-stone-500'
-                            : 'border border-amber-200 bg-amber-50 text-amber-800',
-                        )}
-                      >
-                        {entry.status === 'voided' ? '已作废' : '已过账'}
-                      </span>
-                    </HistoryCell>
-                    <HistoryCell align="center">
+      {hasHistory ? (
+        <>
+          <div className="mt-5 flex flex-wrap items-center gap-2">
+            <SegmentTabs compact value={directionFilter} items={historyDirectionTabs} onChange={setDirectionFilter} />
+            <SegmentTabs compact value={statusFilter} items={historyStatusTabs} onChange={setStatusFilter} />
+
+            <label className="relative min-w-[220px] flex-1 md:ml-auto md:max-w-[320px]">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
+              <input
+                value={keyword}
+                onChange={(event) => setKeyword(event.target.value)}
+                placeholder="筛科目、成员、对方单位"
+                className="h-10 w-full rounded-2xl border border-stone-900/10 bg-white pl-10 pr-4 text-sm font-medium text-stone-900 outline-none transition focus:border-amber-300"
+              />
+            </label>
+
+            <span className="rounded-full border border-stone-900/10 bg-stone-50 px-3 py-2 text-xs font-semibold text-stone-600">
+              {filteredHistoryGroups.length} 条
+            </span>
+          </div>
+
+          {hasFilteredHistory ? (
+            <div className="mt-4 overflow-hidden rounded-[24px] border border-stone-900/10 bg-white">
+              <div className="hidden md:block">
+                <table className="w-full table-fixed border-collapse text-[12px]">
+                  <colgroup>
+                    <col className="w-[16%]" />
+                    <col className="w-[8%]" />
+                    <col className="w-[34%]" />
+                    <col className="w-[14%]" />
+                    <col className="w-[10%]" />
+                    <col className="w-[8%]" />
+                    <col className="w-[10%]" />
+                  </colgroup>
+                  <thead className="bg-stone-100/90 text-stone-600">
+                    <tr className="border-b border-stone-900/10">
+                      <HistoryHeader>时间</HistoryHeader>
+                      <HistoryHeader align="center">方向</HistoryHeader>
+                      <HistoryHeader>摘要</HistoryHeader>
+                      <HistoryHeader>关联对象</HistoryHeader>
+                      <HistoryHeader align="right">金额</HistoryHeader>
+                      <HistoryHeader align="center">状态</HistoryHeader>
+                      <HistoryHeader align="center">操作</HistoryHeader>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredHistoryGroups.map(({ entry, derivedEntries }) => (
+                      <tr key={entry.id} className="border-b border-stone-900/10 last:border-none">
+                        <HistoryCell className="whitespace-nowrap tabular-nums text-stone-500">
+                          {formatEntryDate(entry.occurredAt)} · 记账 {formatPostedAt(entry.postedAt)}
+                        </HistoryCell>
+                        <HistoryCell align="center">
+                          <span
+                            className={cx(
+                              'rounded-full px-2.5 py-1 text-xs font-semibold',
+                              entry.direction === 'income'
+                                ? 'border border-emerald-200 bg-emerald-50 text-emerald-700'
+                                : 'border border-rose-200 bg-rose-50 text-rose-700',
+                            )}
+                          >
+                            {entry.direction === 'income' ? '收入' : '支出'}
+                          </span>
+                        </HistoryCell>
+                        <HistoryCell className="min-w-0">
+                          <div className="truncate font-medium text-stone-900">{buildHistorySummary(entry, derivedEntries)}</div>
+                        </HistoryCell>
+                        <HistoryCell className="truncate text-stone-600">{relatedEntityLabel(entry)}</HistoryCell>
+                        <HistoryCell align="right" className="whitespace-nowrap font-semibold tabular-nums text-stone-950">
+                          {formatCurrency(entry.amount)}
+                        </HistoryCell>
+                        <HistoryCell align="center">
+                          <span
+                            className={cx(
+                              'rounded-full px-2.5 py-1 text-xs font-semibold',
+                              entry.status === 'voided'
+                                ? 'border border-stone-900/10 bg-stone-100 text-stone-500'
+                                : 'border border-amber-200 bg-amber-50 text-amber-800',
+                            )}
+                          >
+                            {entry.status === 'voided' ? '已作废' : '已过账'}
+                          </span>
+                        </HistoryCell>
+                        <HistoryCell align="center">
+                          {entry.status !== 'voided' ? (
+                            <button
+                              type="button"
+                              disabled={props.isLocked}
+                              onClick={() => props.onVoid(entry.id)}
+                              className="rounded-full border border-stone-900/10 bg-stone-50 px-2.5 py-1 text-[11px] font-semibold text-stone-700 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              作废
+                            </button>
+                          ) : (
+                            <span className="text-xs font-semibold text-stone-400">已结束</span>
+                          )}
+                        </HistoryCell>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="md:hidden">
+                {filteredHistoryGroups.map(({ entry, derivedEntries }, index) => (
+                  <article
+                    key={entry.id}
+                    className={cx('px-4 py-3', index !== filteredHistoryGroups.length - 1 && 'border-b border-stone-900/10')}
+                  >
+                    <div className="truncate text-sm font-semibold text-stone-950">{buildHistorySummary(entry, derivedEntries)}</div>
+                    <div className="mt-1 truncate text-xs text-stone-500">
+                      {formatEntryDate(entry.occurredAt)} · 记账 {formatPostedAt(entry.postedAt)} · {relatedEntityLabel(entry)}
+                    </div>
+                    <div className="mt-3 flex items-center justify-between gap-3">
+                      <div className="text-sm font-semibold text-stone-950">{formatCurrency(entry.amount)}</div>
                       {entry.status !== 'voided' ? (
                         <button
                           type="button"
                           disabled={props.isLocked}
                           onClick={() => props.onVoid(entry.id)}
-                          className="rounded-full border border-stone-900/10 bg-stone-50 px-2.5 py-1 text-[11px] font-semibold text-stone-700 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+                          className="rounded-full border border-stone-900/10 bg-stone-50 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
                         >
                           作废
                         </button>
                       ) : (
-                        <span className="text-xs font-semibold text-stone-400">已结束</span>
+                        <span className="text-xs font-semibold text-stone-400">已作废</span>
                       )}
-                    </HistoryCell>
-                  </tr>
+                    </div>
+                  </article>
                 ))}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="md:hidden">
-            {props.historyGroups.map(({ entry, derivedEntries }, index) => (
-              <article
-                key={entry.id}
-                className={cx('px-4 py-3', index !== props.historyGroups.length - 1 && 'border-b border-stone-900/10')}
-              >
-                <div className="truncate text-sm font-semibold text-stone-950">{buildHistorySummary(entry, derivedEntries)}</div>
-                <div className="mt-1 truncate text-xs text-stone-500">
-                  {formatEntryDate(entry.occurredAt)} · 记账 {formatPostedAt(entry.postedAt)} · {relatedEntityLabel(entry)}
-                </div>
-                <div className="mt-3 flex items-center justify-between gap-3">
-                  <div className="text-sm font-semibold text-stone-950">{formatCurrency(entry.amount)}</div>
-                  {entry.status !== 'voided' ? (
-                    <button
-                      type="button"
-                      disabled={props.isLocked}
-                      onClick={() => props.onVoid(entry.id)}
-                      className="rounded-full border border-stone-900/10 bg-stone-50 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      作废
-                    </button>
-                  ) : (
-                    <span className="text-xs font-semibold text-stone-400">已作废</span>
-                  )}
-                </div>
-              </article>
-            ))}
-          </div>
-        </div>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-4 rounded-[24px] border border-dashed border-stone-900/10 bg-stone-50/80 px-4 py-10 text-center text-sm text-stone-500">
+              当前筛选条件下还没有记录。
+            </div>
+          )}
+        </>
       ) : (
         <div className="mt-5 rounded-[24px] border border-dashed border-stone-900/10 bg-stone-50/80 px-4 py-10 text-center text-sm text-stone-500">
           当前期间还没有过账记录。
@@ -1097,7 +1184,7 @@ function HistoryHeader(props: { children: string; align?: 'left' | 'center' | 'r
   return (
     <th
       className={cx(
-        'whitespace-nowrap px-3 py-2 text-[11px] font-semibold tracking-[0.12em]',
+        'whitespace-nowrap px-2.5 py-2 text-[11px] font-semibold tracking-[0.12em]',
         props.align === 'right' ? 'text-right' : props.align === 'center' ? 'text-center' : 'text-left',
       )}
     >
@@ -1110,7 +1197,7 @@ function HistoryCell(props: { children: ReactNode; className?: string; align?: '
   return (
     <td
       className={cx(
-        'px-3 py-2 align-middle',
+        'px-2.5 py-2 align-middle',
         props.align === 'right' ? 'text-right' : props.align === 'center' ? 'text-center' : 'text-left',
         props.className,
       )}
@@ -1118,6 +1205,10 @@ function HistoryCell(props: { children: ReactNode; className?: string; align?: '
       {props.children}
     </td>
   )
+}
+
+function buildMemberPlanCaption(row: MemberRevenueRow) {
+  return `${row.member.employmentType === 'salary' ? '底薪' : '兼职'} · 线${formatUnits(row.plannedOfflineUnits)} / 上${formatUnits(row.plannedOnlineUnits)} 张`
 }
 
 function allocationTitle(allocations: EntryAllocation[]) {
@@ -1153,7 +1244,23 @@ function formatPostedAt(value: string | null) {
 
 function relatedEntityLabel(entry: EntryResponse) {
   const parts = [entry.relatedEntityName, entry.counterparty].filter((value): value is string => Boolean(value))
-  return parts.length > 0 ? parts.join(' / ') : '—'
+  return parts.length > 0 ? parts.join(' / ') : '无'
+}
+
+function matchesHistoryKeyword(entry: EntryResponse, derivedEntries: EntryResponse[], keyword: string) {
+  const haystack = [
+    allocationTitle(entry.allocations),
+    entry.description,
+    summarizeDerivedEntries(derivedEntries),
+    relatedEntityLabel(entry),
+    entry.counterparty,
+    entry.relatedEntityName,
+  ]
+    .filter((value): value is string => Boolean(value))
+    .join(' ')
+    .toLowerCase()
+
+  return haystack.includes(keyword)
 }
 
 function compareSubjects(left: SubjectResponse, right: SubjectResponse) {

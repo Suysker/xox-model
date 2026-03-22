@@ -195,14 +195,14 @@ export function SidebarNav<T extends string, U extends string>(props: {
                 <Layers3 className="h-4 w-4 text-emerald-600" />
                 {props.secondaryTitle}
               </div>
-              <div className="mt-2 flex flex-wrap gap-2">
+              <div className="mt-2 grid gap-2">
                 {props.secondaryItems.map((item) => (
                   <button
                     key={item.value}
                     type="button"
                     onClick={() => props.onSecondaryChange(item.value)}
                     className={cx(
-                      'rounded-full border px-3 py-2 text-sm font-semibold transition',
+                      'w-full rounded-full border px-3 py-2 text-sm font-semibold whitespace-nowrap transition',
                       props.secondaryValue === item.value
                         ? 'border-amber-300 bg-amber-100 text-amber-800'
                         : 'border-stone-900/10 bg-white text-stone-600 hover:bg-stone-100',
@@ -234,7 +234,7 @@ export function SidebarNav<T extends string, U extends string>(props: {
               <button
                 type="button"
                 onClick={props.onLogout}
-                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-stone-900/10 bg-white px-3 py-2.5 text-sm font-semibold text-stone-700 transition hover:bg-stone-100"
+                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-stone-900/10 bg-white px-3 py-2.5 text-sm font-semibold text-stone-700 whitespace-nowrap transition hover:bg-stone-100"
               >
                 <LogOut className="h-4 w-4" />
                 退出
@@ -242,7 +242,7 @@ export function SidebarNav<T extends string, U extends string>(props: {
               <button
                 type="button"
                 onClick={props.onCancelAccount}
-                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm font-semibold text-rose-700 transition hover:bg-rose-100"
+                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm font-semibold text-rose-700 whitespace-nowrap transition hover:bg-rose-100"
               >
                 <ShieldAlert className="h-4 w-4" />
                 注销
