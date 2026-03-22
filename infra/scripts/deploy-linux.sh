@@ -23,6 +23,7 @@ RUN_TESTS="${RUN_TESTS:-0}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE_DIR=""
 PYTHON_BIN="${PYTHON_BIN:-}"
+PYTHON_MIN_VERSION=""
 
 if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
   exec sudo \
@@ -124,45 +125,75 @@ ensure_node() {
   apt-get install -y nodejs
 }
 
-python_version_ge_312() {
+load_python_requirement() {
+  local pyproject="$SOURCE_DIR/apps/api/pyproject.toml"
+  local spec=""
+
+  [[ -f "$pyproject" ]] || fail "Missing API pyproject.toml: $pyproject"
+
+  spec="$(sed -nE 's/^requires-python[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$pyproject" | head -n 1)"
+  [[ -n "$spec" ]] || fail "Unable to read requires-python from $pyproject"
+
+  if [[ "$spec" =~ \>\=([0-9]+)\.([0-9]+) ]]; then
+    PYTHON_MIN_VERSION="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
+    log "API requires Python $spec"
+    return
+  fi
+
+  fail "Unsupported requires-python spec in $pyproject: $spec"
+}
+
+python_version_ge() {
   local candidate="$1"
-  "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)'
+  local required="$2"
+  "$candidate" - "$required" <<'PY'
+import sys
+
+required = tuple(int(part) for part in sys.argv[1].split("."))
+current = sys.version_info[: len(required)]
+raise SystemExit(0 if current >= required else 1)
+PY
 }
 
 ensure_python() {
+  [[ -n "$PYTHON_MIN_VERSION" ]] || fail "PYTHON_MIN_VERSION is not set. Call load_python_requirement first."
+
+  local python_cmd="python${PYTHON_MIN_VERSION}"
+  local python_venv_package="${python_cmd}-venv"
+
   if [[ -n "$PYTHON_BIN" ]]; then
     if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
       fail "PYTHON_BIN points to a missing executable: $PYTHON_BIN"
     fi
 
-    if python_version_ge_312 "$PYTHON_BIN"; then
+    if python_version_ge "$PYTHON_BIN" "$PYTHON_MIN_VERSION"; then
       return
     fi
 
-    fail "PYTHON_BIN must point to Python 3.12 or newer."
+    fail "PYTHON_BIN must point to Python $PYTHON_MIN_VERSION or newer."
   fi
 
-  if command -v python3.12 >/dev/null 2>&1 && python_version_ge_312 python3.12; then
-    PYTHON_BIN="python3.12"
+  if command -v "$python_cmd" >/dev/null 2>&1 && python_version_ge "$python_cmd" "$PYTHON_MIN_VERSION"; then
+    PYTHON_BIN="$python_cmd"
     return
   fi
 
-  if python_version_ge_312 python3; then
+  if command -v python3 >/dev/null 2>&1 && python_version_ge python3 "$PYTHON_MIN_VERSION"; then
     PYTHON_BIN="python3"
     return
   fi
 
-  if apt-cache show python3.12 >/dev/null 2>&1; then
-    log "Installing Python 3.12"
-    apt-get install -y python3.12 python3.12-venv
+  if apt-cache show "$python_cmd" >/dev/null 2>&1; then
+    log "Installing Python $PYTHON_MIN_VERSION"
+    apt-get install -y "$python_cmd" "$python_venv_package"
   fi
 
-  if command -v python3.12 >/dev/null 2>&1 && python_version_ge_312 python3.12; then
-    PYTHON_BIN="python3.12"
+  if command -v "$python_cmd" >/dev/null 2>&1 && python_version_ge "$python_cmd" "$PYTHON_MIN_VERSION"; then
+    PYTHON_BIN="$python_cmd"
     return
   fi
 
-  fail "Python 3.12 or newer is required. Install it and rerun the script."
+  fail "Python $PYTHON_MIN_VERSION or newer is required. Current distro packages did not provide $python_cmd."
 }
 
 is_repo_root() {
@@ -417,10 +448,11 @@ print_summary() {
 require_no_args "$@"
 validate_ports
 install_base_packages
-ensure_node
-ensure_python
 resolve_source_dir
 validate_source_dir
+load_python_requirement
+ensure_node
+ensure_python
 run_web_build
 install_api
 run_optional_tests

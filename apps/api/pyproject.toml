@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "xox-api"
 version = "0.1.0"
 description = "Backend service for xox-model"
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 dependencies = [
   "argon2-cffi>=25.1.0",
   "email-validator>=2.2.0",
@@ -24,3 +24,6 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.setuptools]
+packages = ["app"]
