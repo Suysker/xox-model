@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import { cx } from '../../lib/format'
 
@@ -187,7 +187,12 @@ export function CompactNumberInput(props: {
   align?: 'left' | 'center' | 'right' | undefined
   className?: string | undefined
   inputClassName?: string | undefined
+  emptyWhenZero?: boolean | undefined
 }) {
+  const [draftValue, setDraftValue] = useState<string | null>(null)
+  const resolvedValue = Number.isFinite(props.value) ? props.value : 0
+  const displayValue = draftValue ?? (props.emptyWhenZero && resolvedValue === 0 ? '' : resolvedValue)
+
   return (
     <div
       className={cx(
@@ -205,11 +210,16 @@ export function CompactNumberInput(props: {
           props.inputClassName,
         )}
         type="number"
-        value={Number.isFinite(props.value) ? props.value : 0}
+        value={displayValue}
         step={props.step}
         min={props.min}
         max={props.max}
-        onChange={(event) => props.onChange(Number(event.target.value))}
+        onChange={(event) => {
+          const nextValue = event.target.value
+          setDraftValue(nextValue)
+          props.onChange(nextValue === '' ? 0 : Number(nextValue))
+        }}
+        onBlur={() => setDraftValue(null)}
       />
       {props.suffix ? (
         <span

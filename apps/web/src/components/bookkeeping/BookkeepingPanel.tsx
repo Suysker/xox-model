@@ -955,6 +955,7 @@ function ExpenseComposer(props: {
                 <CompactNumberInput
                   value={props.amount}
                   onChange={props.onAmountChange}
+                  emptyWhenZero
                   min={0}
                   step={0.01}
                   className="h-11 rounded-2xl bg-white"
@@ -1097,6 +1098,7 @@ function IncomeEntrySection(props: {
                       <CompactNumberInput
                         value={row.draftOfflineUnits}
                         onChange={(value) => props.onMemberUnitsChange(row.member.memberId, 'offlineUnits', value)}
+                        emptyWhenZero
                         min={0}
                         step={1}
                         size="sm"
@@ -1109,6 +1111,7 @@ function IncomeEntrySection(props: {
                       <CompactNumberInput
                         value={row.draftOnlineUnits}
                         onChange={(value) => props.onMemberUnitsChange(row.member.memberId, 'onlineUnits', value)}
+                        emptyWhenZero
                         min={0}
                         step={1}
                         size="sm"
@@ -1165,6 +1168,7 @@ function IncomeEntrySection(props: {
                     <CompactNumberInput
                       value={row.draftOfflineUnits}
                       onChange={(value) => props.onMemberUnitsChange(row.member.memberId, 'offlineUnits', value)}
+                      emptyWhenZero
                       min={0}
                       step={1}
                       className="h-11 rounded-2xl bg-stone-50"
@@ -1177,6 +1181,7 @@ function IncomeEntrySection(props: {
                     <CompactNumberInput
                       value={row.draftOnlineUnits}
                       onChange={(value) => props.onMemberUnitsChange(row.member.memberId, 'onlineUnits', value)}
+                      emptyWhenZero
                       min={0}
                       step={1}
                       className="h-11 rounded-2xl bg-stone-50"
@@ -1303,6 +1308,7 @@ function MemberExpenseEntrySection(props: {
                       <CompactNumberInput
                         value={row.draftAmount}
                         onChange={(value) => props.onAmountChange(props.subjectKey, row.option.id, value)}
+                        emptyWhenZero
                         min={0}
                         step={0.01}
                         size="sm"
@@ -1351,6 +1357,7 @@ function MemberExpenseEntrySection(props: {
                   <CompactNumberInput
                     value={row.draftAmount}
                     onChange={(value) => props.onAmountChange(props.subjectKey, row.option.id, value)}
+                    emptyWhenZero
                     min={0}
                     step={0.01}
                     className="h-11 rounded-2xl bg-stone-50"
@@ -1499,6 +1506,7 @@ function OtherIncomeComposer(props: {
           <CompactNumberInput
             value={props.amount}
             onChange={props.onAmountChange}
+            emptyWhenZero
             min={0}
             step={0.01}
             className="h-11 rounded-2xl bg-white"
