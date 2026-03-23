@@ -232,6 +232,10 @@ export function BookkeepingPanel(props: {
       ),
     [memberExpenseRows],
   )
+  const pendingMemberExpenseCount = useMemo(
+    () => memberExpenseRows.filter((row) => row.draftAmount > 0).length,
+    [memberExpenseRows],
+  )
 
   const memberRevenueRows = useMemo<MemberRevenueRow[]>(
     () =>
@@ -280,6 +284,10 @@ export function BookkeepingPanel(props: {
         }),
         { plannedRevenue: 0, plannedOfflineUnits: 0, plannedOnlineUnits: 0, postedAmount: 0, draftCommission: 0 },
       ),
+    [memberRevenueRows],
+  )
+  const pendingMemberRevenueCount = useMemo(
+    () => memberRevenueRows.filter((row) => row.draftAmount > 0).length,
     [memberRevenueRows],
   )
 
@@ -419,12 +427,12 @@ export function BookkeepingPanel(props: {
   }
 
   async function handleSubmitMemberIncome(memberId: string) {
-    if (!offlineRevenueSubject) return
+    if (!offlineRevenueSubject) return false
 
     const member = props.plannedMonthResult?.members.find((item) => item.memberId === memberId)
     const draft = memberIncomeDrafts[memberId] ?? { offlineUnits: 0, onlineUnits: 0 }
-    if (!member || (draft.offlineUnits <= 0 && draft.onlineUnits <= 0)) return
-    if (draft.onlineUnits > 0 && !onlineRevenueSubject) return
+    if (!member || (draft.offlineUnits <= 0 && draft.onlineUnits <= 0)) return false
+    if (draft.onlineUnits > 0 && !onlineRevenueSubject) return false
 
     const offlineAmount = roundMoney(draft.offlineUnits * props.offlineUnitPrice)
     const onlineAmount = roundMoney(draft.onlineUnits * props.onlineUnitPrice)
@@ -470,6 +478,18 @@ export function BookkeepingPanel(props: {
         [memberId]: { offlineUnits: 0, onlineUnits: 0 },
       }))
     }
+
+    return success
+  }
+
+  async function handleSubmitAllMemberIncome() {
+    if (props.loading || isLocked || pendingMemberRevenueCount === 0) return
+
+    const pendingMemberIds = memberRevenueRows.filter((row) => row.draftAmount > 0).map((row) => row.member.memberId)
+    for (const memberId of pendingMemberIds) {
+      const success = await handleSubmitMemberIncome(memberId)
+      if (!success) break
+    }
   }
 
   async function handleSubmitOtherIncome() {
@@ -506,12 +526,12 @@ export function BookkeepingPanel(props: {
   }
 
   async function handleSubmitMemberExpense(entityId: string) {
-    if (!selectedSubject || !showMemberExpenseTable) return
+    if (!selectedSubject || !showMemberExpenseTable) return false
 
     const option = relatedOptions.find((item) => item.id === entityId)
     const draftKey = getEntityAllocationKey(selectedSubject.subjectKey, entityId)
     const draftAmount = memberExpenseDrafts[draftKey] ?? 0
-    if (!option || draftAmount <= 0) return
+    if (!option || draftAmount <= 0) return false
 
     const occurredAt = resolveOccurredAt({
       ref: expenseOccurredOnInputRef,
@@ -523,8 +543,6 @@ export function BookkeepingPanel(props: {
       direction: 'expense',
       amount: roundMoney(draftAmount),
       occurredAt,
-      ...(counterparty.trim() ? { counterparty: counterparty.trim() } : {}),
-      ...(description.trim() ? { description: description.trim() } : {}),
       relatedEntityType: option.type,
       relatedEntityId: option.id,
       relatedEntityName: option.name,
@@ -544,9 +562,18 @@ export function BookkeepingPanel(props: {
         delete next[draftKey]
         return next
       })
-      setCounterparty('')
-      setDescription('')
-      setShowDetails(false)
+    }
+
+    return success
+  }
+
+  async function handleSubmitAllMemberExpense() {
+    if (props.loading || isLocked || pendingMemberExpenseCount === 0) return
+
+    const pendingEntityIds = memberExpenseRows.filter((row) => row.draftAmount > 0).map((row) => row.option.id)
+    for (const entityId of pendingEntityIds) {
+      const success = await handleSubmitMemberExpense(entityId)
+      if (!success) break
     }
   }
 
@@ -653,11 +680,13 @@ export function BookkeepingPanel(props: {
                 plannedOnlineUnits={memberRevenueSummary.plannedOnlineUnits}
                 postedAmount={memberRevenueSummary.postedAmount}
                 draftCommission={memberRevenueSummary.draftCommission}
+                pendingCount={pendingMemberRevenueCount}
                 isLocked={isLocked}
                 loading={props.loading}
                 onOccurredOnChange={setIncomeOccurredOn}
                 onMemberUnitsChange={setMemberDraftUnits}
                 onFillPlannedMember={fillPlannedMemberUnits}
+                onSubmitAll={() => void handleSubmitAllMemberIncome()}
                 onSubmitMember={(memberId) => void handleSubmitMemberIncome(memberId)}
               />
               <OtherIncomeComposer
@@ -708,6 +737,7 @@ export function BookkeepingPanel(props: {
               memberExpensePlannedAmount={memberExpenseSummary.plannedAmount}
               memberExpensePostedAmount={memberExpenseSummary.postedAmount}
               memberExpenseDraftAmount={memberExpenseSummary.draftAmount}
+              memberExpensePendingCount={pendingMemberExpenseCount}
               expenseOccurredOn={expenseOccurredOn}
               expenseOccurredOnInputRef={expenseOccurredOnInputRef}
               onExpenseOccurredOnChange={setExpenseOccurredOn}
@@ -722,6 +752,7 @@ export function BookkeepingPanel(props: {
               canSubmit={canSubmit}
               onMemberAmountChange={setMemberExpenseDraft}
               onFillPlannedMemberExpense={fillPlannedMemberExpense}
+              onSubmitAllMemberExpense={() => void handleSubmitAllMemberExpense()}
               onSubmitMemberExpense={(entityId) => void handleSubmitMemberExpense(entityId)}
               onSubmit={() => void handleSubmitExpense()}
             />
@@ -758,6 +789,7 @@ function ExpenseComposer(props: {
   memberExpensePlannedAmount: number
   memberExpensePostedAmount: number
   memberExpenseDraftAmount: number
+  memberExpensePendingCount: number
   expenseOccurredOn: string
   expenseOccurredOnInputRef: RefObject<HTMLInputElement | null>
   onExpenseOccurredOnChange: (value: string) => void
@@ -772,6 +804,7 @@ function ExpenseComposer(props: {
   canSubmit: boolean
   onMemberAmountChange: (subjectKey: string, entityId: string, value: number) => void
   onFillPlannedMemberExpense: (subjectKey: string, entityId: string, plannedAmount: number) => void
+  onSubmitAllMemberExpense: () => void
   onSubmitMemberExpense: (entityId: string) => void
   onSubmit: () => void
 }) {
@@ -856,20 +889,16 @@ function ExpenseComposer(props: {
           plannedAmount={props.memberExpensePlannedAmount}
           postedAmount={props.memberExpensePostedAmount}
           draftAmount={props.memberExpenseDraftAmount}
+          pendingCount={props.memberExpensePendingCount}
           occurredOn={props.expenseOccurredOn}
           occurredOnInputRef={props.expenseOccurredOnInputRef}
           onOccurredOnChange={props.onExpenseOccurredOnChange}
-          showDetails={props.showDetails}
-          onToggleDetails={props.onToggleDetails}
-          counterparty={props.counterparty}
-          onCounterpartyChange={props.onCounterpartyChange}
-          description={props.description}
-          onDescriptionChange={props.onDescriptionChange}
           isLocked={props.isLocked}
           loading={props.loading}
           subjectKey={props.selectedSubjectKey}
           onAmountChange={props.onMemberAmountChange}
           onFillPlanned={props.onFillPlannedMemberExpense}
+          onSubmitAll={props.onSubmitAllMemberExpense}
           onSubmitRow={props.onSubmitMemberExpense}
         />
       ) : (
@@ -1021,11 +1050,13 @@ function IncomeEntrySection(props: {
   plannedOnlineUnits: number
   postedAmount: number
   draftCommission: number
+  pendingCount: number
   isLocked: boolean
   loading: boolean
   onOccurredOnChange: (value: string) => void
   onMemberUnitsChange: (memberId: string, channel: keyof MemberIncomeDraft, value: number) => void
   onFillPlannedMember: (memberId: string, offlineUnits: number, onlineUnits: number) => void
+  onSubmitAll: () => void
   onSubmitMember: (memberId: string) => void
 }) {
   return (
@@ -1050,6 +1081,14 @@ function IncomeEntrySection(props: {
           <LedgerPill label="线上计划" value={`${formatUnits(props.plannedOnlineUnits)} 张`} />
           <LedgerPill label="已记总收入" value={formatCurrency(props.postedAmount)} />
           <LedgerPill label="待生成提成" value={formatCurrency(props.draftCommission)} tone="accent" />
+          <button
+            type="button"
+            disabled={props.isLocked || props.pendingCount === 0 || props.loading}
+            onClick={props.onSubmitAll}
+            className="rounded-full border border-stone-900/10 bg-amber-400 px-4 py-2 text-sm font-semibold text-stone-950 transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400"
+          >
+            {props.loading ? '保存中...' : props.pendingCount > 0 ? `一键入账 ${props.pendingCount} 笔` : '一键入账'}
+          </button>
         </div>
       </div>
 
@@ -1228,19 +1267,15 @@ function MemberExpenseEntrySection(props: {
   plannedAmount: number
   postedAmount: number
   draftAmount: number
+  pendingCount: number
   occurredOn: string
   occurredOnInputRef: RefObject<HTMLInputElement | null>
   onOccurredOnChange: (value: string) => void
-  showDetails: boolean
-  onToggleDetails: () => void
-  counterparty: string
-  onCounterpartyChange: (value: string) => void
-  description: string
-  onDescriptionChange: (value: string) => void
   isLocked: boolean
   loading: boolean
   onAmountChange: (subjectKey: string, entityId: string, value: number) => void
   onFillPlanned: (subjectKey: string, entityId: string, plannedAmount: number) => void
+  onSubmitAll: () => void
   onSubmitRow: (entityId: string) => void
 }) {
   return (
@@ -1265,11 +1300,11 @@ function MemberExpenseEntrySection(props: {
           <LedgerPill label="待入账" value={formatCurrency(props.draftAmount)} tone="accent" />
           <button
             type="button"
-            disabled={props.isLocked}
-            onClick={props.onToggleDetails}
-            className="rounded-full border border-stone-900/10 bg-white px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={props.isLocked || props.pendingCount === 0 || props.loading}
+            onClick={props.onSubmitAll}
+            className="rounded-full border border-stone-900/10 bg-amber-400 px-4 py-2 text-sm font-semibold text-stone-950 transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400"
           >
-            {props.showDetails ? '收起对方与备注' : '补充对方与备注'}
+            {props.loading ? '保存中...' : props.pendingCount > 0 ? `一键入账 ${props.pendingCount} 笔` : '一键入账'}
           </button>
         </div>
       </div>
@@ -1393,33 +1428,6 @@ function MemberExpenseEntrySection(props: {
         </div>
       )}
 
-      {props.showDetails ? (
-        <div className="mt-4 grid gap-3 md:grid-cols-[220px_minmax(0,1fr)] md:items-end">
-          <label className="grid gap-2">
-            <span className="text-sm font-semibold text-stone-700">对方单位</span>
-            <div className="relative">
-              <Building2 className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
-              <input
-                disabled={props.isLocked}
-                value={props.counterparty}
-                onChange={(event) => props.onCounterpartyChange(event.target.value)}
-                className="h-11 w-full rounded-2xl border border-stone-900/10 bg-white px-11 pr-4 text-sm font-medium text-stone-900 outline-none transition focus:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
-              />
-            </div>
-          </label>
-
-          <label className="grid gap-2">
-            <span className="text-sm font-semibold text-stone-700">备注</span>
-            <input
-              type="text"
-              disabled={props.isLocked}
-              value={props.description}
-              onChange={(event) => props.onDescriptionChange(event.target.value)}
-              className="h-11 rounded-2xl border border-stone-900/10 bg-white px-4 text-sm font-medium text-stone-900 outline-none transition focus:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
-            />
-          </label>
-        </div>
-      ) : null}
     </section>
   )
 }
