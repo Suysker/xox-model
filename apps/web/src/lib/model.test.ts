@@ -24,8 +24,8 @@ describe('monthly underground-idol investment model', () => {
     expect(result.months[1]?.monthlyProfit).toBeCloseTo(67420.19, 2)
 
     expect(result.months[2]?.label).toBe('5月')
-    expect(result.months[2]?.unitLinkedCostTotal).toBeCloseTo(7223.04, 2)
-    expect(result.months[2]?.monthlyProfit).toBeCloseTo(60197.15, 2)
+    expect(result.months[2]?.unitLinkedCostTotal).toBeCloseTo(7945.34, 2)
+    expect(result.months[2]?.monthlyProfit).toBeCloseTo(59474.85, 2)
   })
 
   it('keeps pessimistic, base and optimistic scenarios ordered', () => {
@@ -92,6 +92,7 @@ describe('monthly underground-idol investment model', () => {
 
   it('aggregates configurable cost items by monthly, per-event and per-unit buckets', () => {
     const config = createProductDefaultModel()
+    config.operating.polaroidLossRate = 0
     config.operating.monthlyFixedCosts = [
       { id: 'monthly-rent', name: '场地月租', amount: 2400 },
       { id: 'monthly-admin', name: '行政杂费', amount: 600 },
@@ -122,6 +123,46 @@ describe('monthly underground-idol investment model', () => {
     expect(base.months[1]?.monthlyOperatingCost).toBe(3000)
     expect(base.months[1]?.perEventOperatingCost).toBe(1200)
     expect(base.months[2]?.unitLinkedCostTotal).toBeCloseTo((base.months[2]?.totalUnitsPerMonth ?? 0) * 7, 2)
+  })
+
+  it('applies polaroid loss rate only to unit-linked costs and not revenue', () => {
+    const baseConfig = createProductDefaultModel()
+    const materialItem = baseConfig.stageCostItems.find((item) => item.id === 'stage-cost-material')
+
+    if (!materialItem) {
+      throw new Error('missing stage-cost-material')
+    }
+
+    const specialCosts = createStageCostValues(baseConfig.stageCostItems, [
+      { itemId: materialItem.id, amount: 6, count: 1 },
+    ])
+
+    const withoutLossConfig = createProductDefaultModel()
+    withoutLossConfig.operating.polaroidLossRate = 0
+    withoutLossConfig.months[0] = {
+      ...withoutLossConfig.months[0]!,
+      specialCosts,
+    }
+
+    const withLossConfig = createProductDefaultModel()
+    withLossConfig.operating.polaroidLossRate = 0.1
+    withLossConfig.months[0] = {
+      ...withLossConfig.months[0]!,
+      specialCosts,
+    }
+
+    const withoutLoss = getScenarioResult(withoutLossConfig, 'base')
+    const withLoss = getScenarioResult(withLossConfig, 'base')
+
+    expect(withLoss.months[0]?.grossSales).toBeCloseTo(withoutLoss.months[0]?.grossSales ?? 0, 2)
+    expect(withLoss.months[0]?.unitLinkedCostTotal).toBeCloseTo(
+      (withoutLoss.months[0]?.unitLinkedCostTotal ?? 0) * 1.1,
+      2,
+    )
+    expect(withLoss.months[0]?.monthlyProfit).toBeCloseTo(
+      (withoutLoss.months[0]?.monthlyProfit ?? 0) - (withoutLoss.months[0]?.unitLinkedCostTotal ?? 0) * 0.1,
+      2,
+    )
   })
 
   it('supports dynamic stage cost items and per-month counted occurrences', () => {

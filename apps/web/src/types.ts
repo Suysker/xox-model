@@ -57,6 +57,7 @@ export type Employee = {
 export type OperatingConfig = {
   offlineUnitPrice: number
   onlineUnitPrice: number
+  polaroidLossRate: number
   monthlyFixedCosts: CostItem[]
   perEventCosts: CostItem[]
   perUnitCosts: CostItem[]

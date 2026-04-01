@@ -45,7 +45,7 @@ describe('workspace storage bundle', () => {
 
     const parsed = parseWorkspaceBundle(JSON.stringify(legacyBundle))
 
-    expect(parsed?.schemaVersion).toBe(9)
+    expect(parsed?.schemaVersion).toBe(10)
     expect(parsed?.currentConfig.teamMembers[0]?.departureMonthIndex).toBe(4)
   })
 
@@ -87,6 +87,7 @@ describe('workspace storage bundle', () => {
     expect(parsed?.currentConfig.employees[0]?.perEventCost).toBe(300)
     expect(parsed?.currentConfig.operating.offlineUnitPrice).toBe(88)
     expect(parsed?.currentConfig.operating.onlineUnitPrice).toBe(88)
+    expect(parsed?.currentConfig.operating.polaroidLossRate).toBe(0.1)
     expect(parsed?.currentConfig.operating.monthlyFixedCosts[0]?.amount).toBe(1200)
     expect(parsed?.currentConfig.operating.perEventCosts[0]?.amount).toBe(500)
     expect(parsed?.currentConfig.operating.perUnitCosts[0]?.amount).toBe(6)
@@ -132,8 +133,34 @@ describe('workspace storage bundle', () => {
 
     expect(parsed?.currentConfig.operating.offlineUnitPrice).toBe(88)
     expect(parsed?.currentConfig.operating.onlineUnitPrice).toBe(88)
+    expect(parsed?.currentConfig.operating.polaroidLossRate).toBe(0.1)
     expect(parsed?.currentConfig.timelineTemplate.onlineSalesFactor).toBe(0.02)
     expect(parsed?.currentConfig.months[0]?.onlineSalesFactor).toBe(0.17)
+  })
+
+  it('defaults polaroid loss rate to 10 percent when legacy data does not provide it', () => {
+    const defaults = createProductDefaultModel()
+    const legacyBundle = {
+      schemaVersion: 9,
+      workspaceName: '损耗率默认值',
+      currentConfig: {
+        ...defaults,
+        operating: {
+          offlineUnitPrice: defaults.operating.offlineUnitPrice,
+          onlineUnitPrice: defaults.operating.onlineUnitPrice,
+          monthlyFixedCosts: defaults.operating.monthlyFixedCosts,
+          perEventCosts: defaults.operating.perEventCosts,
+          perUnitCosts: defaults.operating.perUnitCosts,
+        },
+      },
+      snapshots: [],
+      lastSavedAt: null,
+    }
+
+    const parsed = parseWorkspaceBundle(JSON.stringify(legacyBundle))
+
+    expect(parsed?.schemaVersion).toBe(10)
+    expect(parsed?.currentConfig.operating.polaroidLossRate).toBe(0.1)
   })
 
   it('migrates legacy fixed special-cost fields into dynamic stage cost items and counts', () => {

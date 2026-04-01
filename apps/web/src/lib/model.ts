@@ -38,6 +38,10 @@ function clampToNonNegative(value: number) {
   return Math.max(0, safeNumber(value))
 }
 
+function getLossAdjustedUnits(units: number, lossRate: number) {
+  return clampToNonNegative(units) * (1 + clampToNonNegative(lossRate))
+}
+
 function isMemberActiveInMonth(member: TeamMember, monthIndex: number) {
   if (member.departureMonthIndex === null) {
     return true
@@ -139,13 +143,15 @@ export function getScenarioResult(config: ModelConfig, key: ScenarioKey): Scenar
     const monthlyOperatingCost = sumCostItems(config.operating.monthlyFixedCosts)
     const perEventOperatingCost = events * sumCostItems(config.operating.perEventCosts)
     const perUnitOperatingCost = sumCostItems(config.operating.perUnitCosts)
+    const polaroidLossRate = clampToNonNegative(config.operating.polaroidLossRate)
     const stageCostTotals = getStageCostTotals(config.stageCostItems, month.specialCosts)
     const rehearsalCost =
       clampToNonNegative(month.rehearsalCount) * clampToNonNegative(month.rehearsalCost)
     const teacherCost =
       clampToNonNegative(month.teacherCount) * clampToNonNegative(month.teacherCost)
     const specialProjectCost = stageCostTotals.monthly
-    const unitLinkedCostTotal = totalUnitsPerMonth * (perUnitOperatingCost + stageCostTotals.perUnitLike)
+    const lossAdjustedUnits = getLossAdjustedUnits(totalUnitsPerMonth, polaroidLossRate)
+    const unitLinkedCostTotal = lossAdjustedUnits * (perUnitOperatingCost + stageCostTotals.perUnitLike)
     const monthlyFixedCostTotal =
       basePayCost +
       employeeBasePayCost +

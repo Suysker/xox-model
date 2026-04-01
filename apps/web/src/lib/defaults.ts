@@ -257,6 +257,7 @@ export function createProductDefaultModel(): ModelConfig {
     operating: {
       offlineUnitPrice: 88,
       onlineUnitPrice: 88,
+      polaroidLossRate: 0.1,
       monthlyFixedCosts: [],
       perEventCosts: [],
       perUnitCosts: [],

@@ -24,11 +24,12 @@ export function SharedInputsPanel(props: {
             title={`核心经营假设 · ${getScenarioLabel(props.selectedScenario, props.selectedScenarioResult.label)}`}
           />
 
-          <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
             <StatCard label="启动月份" value={`${props.config.planning.startMonth}月`} />
             <StatCard label="规划周期" value={`${props.config.planning.horizonMonths}个月`} />
             <StatCard label="线下单价" value={formatCurrency(props.config.operating.offlineUnitPrice)} />
             <StatCard label="线上单价" value={formatCurrency(props.config.operating.onlineUnitPrice)} />
+            <StatCard label="拍立得损耗率" value={formatPercent(props.config.operating.polaroidLossRate)} />
           </div>
 
           <div className="mt-5 grid gap-3 md:grid-cols-3">

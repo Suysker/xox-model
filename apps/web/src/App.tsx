@@ -170,6 +170,10 @@ function normalizeRevenueNumber(key: RevenueNumberKey, value: number) {
   return Math.max(0, roundTo(value, 2))
 }
 
+function normalizePercentInput(value: number) {
+  return Math.max(0, roundTo((Number.isFinite(value) ? value : 0) / 100, 4))
+}
+
 function syncStageCosts(config: ModelConfig, stageCostItems: ModelConfig['stageCostItems']) {
   return {
     ...config,
@@ -605,6 +609,16 @@ export default function App() {
       operating: {
         ...current.operating,
         onlineUnitPrice: value,
+      },
+    }))
+  }
+
+  function updatePolaroidLossRate(value: number) {
+    setConfig((current) => ({
+      ...current,
+      operating: {
+        ...current.operating,
+        polaroidLossRate: normalizePercentInput(value),
       },
     }))
   }
@@ -1242,8 +1256,10 @@ export default function App() {
                     <RevenueWorkbench
                       offlineUnitPrice={config.operating.offlineUnitPrice}
                       onlineUnitPrice={config.operating.onlineUnitPrice}
+                      polaroidLossRate={config.operating.polaroidLossRate}
                       onOfflineUnitPriceChange={updateOfflineUnitPrice}
                       onOnlineUnitPriceChange={updateOnlineUnitPrice}
+                      onPolaroidLossRateChange={updatePolaroidLossRate}
                     />
 
                     <TimelineEditor

@@ -26,7 +26,7 @@ import type {
 } from '../types'
 
 export const STORAGE_KEY = 'xox-model-workspace-v1'
-export const SCHEMA_VERSION = 9
+export const SCHEMA_VERSION = 10
 
 function createId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -371,6 +371,7 @@ function normalizeOperating(rawOperating: unknown, migrateLegacyMaterial: boolea
     return {
       offlineUnitPrice: 88,
       onlineUnitPrice: 120,
+      polaroidLossRate: 0.1,
       monthlyFixedCosts: [],
       perEventCosts: [],
       perUnitCosts: [],
@@ -397,6 +398,7 @@ function normalizeOperating(rawOperating: unknown, migrateLegacyMaterial: boolea
         : typeof rawOperating.unitPrice === 'number'
           ? rawOperating.unitPrice
           : 120,
+    polaroidLossRate: normalizePercent(rawOperating.polaroidLossRate ?? 0.1),
     monthlyFixedCosts: normalizeCostItems(
       rawOperating.monthlyFixedCosts,
       'monthly-fixed',
