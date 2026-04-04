@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from .audit import record_audit
@@ -12,6 +12,18 @@ from .facts import build_forecast_line_items
 from .models import ActualEntry, ActualEntryAllocation, LedgerPeriod, Workspace, WorkspaceDraft
 from .projection import project_model
 from .schemas import AllocationInput
+
+BOOKKEEPING_SUBJECTS = (
+    {
+        "subjectKey": "cost.other.refund",
+        "subjectName": "退费退款",
+        "subjectType": "cost",
+        "subjectGroup": "other",
+        "entityType": None,
+        "entityId": None,
+        "plannedAmount": 0.0,
+    },
+)
 
 
 def _get_workspace_draft(session: Session, workspace: Workspace) -> WorkspaceDraft:
@@ -104,6 +116,8 @@ def _subjects_for_period_by_key(session: Session, workspace: Workspace, period: 
             },
         )
         subject["plannedAmount"] += row.plannedAmount
+    for subject in BOOKKEEPING_SUBJECTS:
+        subjects.setdefault(subject["subjectKey"], dict(subject))
     return subjects
 
 
@@ -241,7 +255,87 @@ def list_entries(session: Session, workspace: Workspace, period_id: str) -> list
     return [_serialize_entry(session, entry) for entry in entries]
 
 
-def _create_derived_member_commission_entry(
+def _normalize_entry_payload(
+    session: Session,
+    *,
+    workspace: Workspace,
+    period: LedgerPeriod,
+    direction: str,
+    amount: float,
+    related_entity_type: str | None,
+    related_entity_id: str | None,
+    related_entity_name: str | None,
+    allocations: list[AllocationInput],
+) -> tuple[ModelConfig, dict[str, dict], list[dict], dict[str, float], str | None]:
+    if amount <= 0:
+        raise ValueError("Amount must be positive")
+    if not allocations:
+        raise ValueError("At least one allocation is required")
+    if any(item.amount <= 0 for item in allocations):
+        raise ValueError("Allocation amounts must be positive")
+    if round(sum(item.amount for item in allocations), 2) != round(amount, 2):
+        raise ValueError("Allocations must equal the entry amount")
+
+    expected_subject_type = "revenue" if direction == "income" else "cost"
+    config, _ = _current_draft_context(session, workspace)
+    available_subjects = _subjects_for_period_by_key(session, workspace, period)
+    entity_catalog = _related_entity_catalog(config)
+
+    normalized_allocations: list[dict] = []
+    totals_by_subject = defaultdict(float)
+    for item in allocations:
+        canonical_subject = available_subjects.get(item.subjectKey)
+        if canonical_subject is None:
+            raise ValueError(f"Unknown forecast subject: {item.subjectKey}")
+        if canonical_subject["subjectType"] != expected_subject_type:
+            raise ValueError("Entry direction does not match allocation subject type")
+        if direction == "expense" and item.subjectKey == "cost.member.commission":
+            raise ValueError("Member commission is derived automatically from posted member revenue")
+        totals_by_subject[item.subjectKey] += item.amount
+
+    for subject_key, subject_amount in totals_by_subject.items():
+        canonical_subject = available_subjects[subject_key]
+        normalized_allocations.append(
+            {
+                "subjectKey": canonical_subject["subjectKey"],
+                "subjectName": canonical_subject["subjectName"],
+                "subjectType": canonical_subject["subjectType"],
+                "amount": round(subject_amount, 2),
+            }
+        )
+
+    if any([related_entity_type, related_entity_id, related_entity_name]) and not all([related_entity_type, related_entity_id]):
+        raise ValueError("Related entity selection is incomplete")
+
+    canonical_related_name: str | None = None
+    if related_entity_type and related_entity_id:
+        entity_group = entity_catalog.get(related_entity_type)
+        if entity_group is None:
+            raise ValueError("Unsupported related entity type")
+        canonical_related_name = entity_group.get(related_entity_id)
+        if canonical_related_name is None:
+            raise ValueError("Related entity not found in the current draft")
+
+    return config, available_subjects, normalized_allocations, totals_by_subject, canonical_related_name
+
+
+def _replace_entry_allocations(session: Session, entry_id: str, allocations: list[dict]) -> None:
+    session.execute(delete(ActualEntryAllocation).where(ActualEntryAllocation.actual_entry_id == entry_id))
+    session.add_all(
+        [
+            ActualEntryAllocation(
+                actual_entry_id=entry_id,
+                subject_key=item["subjectKey"],
+                subject_name=item["subjectName"],
+                subject_type=item["subjectType"],
+                amount=item["amount"],
+            )
+            for item in allocations
+        ]
+    )
+
+
+def _sync_derived_member_commission_entry(
     session: Session,
     *,
     workspace: Workspace,
@@ -249,12 +343,24 @@ def _create_derived_member_commission_entry(
     actor_id: str,
     source_entry: ActualEntry,
     source_amount: float,
-    related_entity_id: str,
-    related_entity_name: str,
+    related_entity_id: str | None,
+    related_entity_name: str | None,
     available_subjects: dict[str, dict],
     timestamp: datetime,
 ) -> ActualEntry | None:
-    if source_amount <= 0:
+    existing_entries = session.scalars(
+        select(ActualEntry).where(
+            ActualEntry.source_entry_id == source_entry.id,
+            ActualEntry.derived_kind == "member_commission",
+        )
+    ).all()
+    entry = existing_entries[0] if existing_entries else None
+    for extra_entry in existing_entries[1:]:
+        extra_entry.status = "voided"
+
+    if source_amount <= 0 or not related_entity_id or not related_entity_name:
+        if entry is not None:
+            entry.status = "voided"
         return None
 
     config, _ = _current_draft_context(session, workspace)
@@ -268,50 +374,70 @@ def _create_derived_member_commission_entry(
 
     commission_amount = round(source_amount * clamp_non_negative(member.commissionRate), 2)
     if commission_amount <= 0:
+        if entry is not None:
+            entry.status = "voided"
         return None
 
-    entry = ActualEntry(
-        workspace_id=workspace.id,
-        ledger_period_id=period.id,
-        direction="expense",
-        amount=commission_amount,
-        occurred_at=source_entry.occurred_at,
-        description=f"{related_entity_name} 提成自动计提",
-        related_entity_type="teamMember",
-        related_entity_id=related_entity_id,
-        related_entity_name=related_entity_name,
-        source_entry_id=source_entry.id,
-        entry_origin="derived",
-        derived_kind="member_commission",
-        status="posted",
-        created_by=actor_id,
-        posted_at=timestamp,
-    )
-    session.add(entry)
-    session.flush()
-    session.add(
-        ActualEntryAllocation(
-            actual_entry_id=entry.id,
-            subject_key=commission_subject["subjectKey"],
-            subject_name=commission_subject["subjectName"],
-            subject_type=commission_subject["subjectType"],
+    is_new_entry = entry is None
+    if entry is None:
+        entry = ActualEntry(
+            workspace_id=workspace.id,
+            ledger_period_id=period.id,
+            direction="expense",
             amount=commission_amount,
+            occurred_at=source_entry.occurred_at,
+            description=f"{related_entity_name} 提成自动计提",
+            related_entity_type="teamMember",
+            related_entity_id=related_entity_id,
+            related_entity_name=related_entity_name,
+            source_entry_id=source_entry.id,
+            entry_origin="derived",
+            derived_kind="member_commission",
+            status="posted",
+            created_by=actor_id,
+            posted_at=timestamp,
         )
-    )
-    record_audit(
+        session.add(entry)
+        session.flush()
+    else:
+        entry.ledger_period_id = period.id
+        entry.amount = commission_amount
+        entry.occurred_at = source_entry.occurred_at
+        entry.description = f"{related_entity_name} 提成自动计提"
+        entry.related_entity_type = "teamMember"
+        entry.related_entity_id = related_entity_id
+        entry.related_entity_name = related_entity_name
+        entry.status = "posted"
+        entry.posted_at = entry.posted_at or timestamp
+
+    _replace_entry_allocations(
         session,
-        action="ledger.entry_auto_derived",
-        workspace_id=workspace.id,
-        actor_id=actor_id,
-        entity_type="actual_entry",
-        entity_id=entry.id,
-        meta={
-            "ledgerPeriodId": period.id,
-            "sourceEntryId": source_entry.id,
-            "derivedKind": "member_commission",
-            "amount": commission_amount,
-        },
+        entry.id,
+        [
+            {
+                "subjectKey": commission_subject["subjectKey"],
+                "subjectName": commission_subject["subjectName"],
+                "subjectType": commission_subject["subjectType"],
+                "amount": commission_amount,
+            }
+        ],
     )
+
+    if is_new_entry:
+        record_audit(
+            session,
+            action="ledger.entry_auto_derived",
+            workspace_id=workspace.id,
+            actor_id=actor_id,
+            entity_type="actual_entry",
+            entity_id=entry.id,
+            meta={
+                "ledgerPeriodId": period.id,
+                "sourceEntryId": source_entry.id,
+                "derivedKind": "member_commission",
+                "amount": commission_amount,
+            },
+        )
     return entry
 
 
@@ -342,51 +468,17 @@ def create_actual_entry(
     period = _get_period(session, workspace, ledger_period_id)
     if period.status == "locked":
         raise ValueError("Ledger period is locked")
-    if amount <= 0:
-        raise ValueError("Amount must be positive")
-    if not allocations:
-        raise ValueError("At least one allocation is required")
-    if any(item.amount <= 0 for item in allocations):
-        raise ValueError("Allocation amounts must be positive")
-    if round(sum(item.amount for item in allocations), 2) != round(amount, 2):
-        raise ValueError("Allocations must equal the entry amount")
-    expected_subject_type = "revenue" if direction == "income" else "cost"
-    config, _ = _current_draft_context(session, workspace)
-    available_subjects = _subjects_for_period_by_key(session, workspace, period)
-    entity_catalog = _related_entity_catalog(config)
-    normalized_allocations: list[dict] = []
-    totals_by_subject = defaultdict(float)
-    for item in allocations:
-        canonical_subject = available_subjects.get(item.subjectKey)
-        if canonical_subject is None:
-            raise ValueError(f"Unknown forecast subject: {item.subjectKey}")
-        if canonical_subject["subjectType"] != expected_subject_type:
-            raise ValueError("Entry direction does not match allocation subject type")
-        if direction == "expense" and item.subjectKey == "cost.member.commission":
-            raise ValueError("Member commission is derived automatically from posted member revenue")
-        totals_by_subject[item.subjectKey] += item.amount
-    for subject_key, subject_amount in totals_by_subject.items():
-        canonical_subject = available_subjects[subject_key]
-        normalized_allocations.append(
-            {
-                "subjectKey": canonical_subject["subjectKey"],
-                "subjectName": canonical_subject["subjectName"],
-                "subjectType": canonical_subject["subjectType"],
-                "amount": round(subject_amount, 2),
-            }
-        )
-
-    if any([related_entity_type, related_entity_id, related_entity_name]) and not all([related_entity_type, related_entity_id]):
-        raise ValueError("Related entity selection is incomplete")
-
-    canonical_related_name: str | None = None
-    if related_entity_type and related_entity_id:
-        entity_group = entity_catalog.get(related_entity_type)
-        if entity_group is None:
-            raise ValueError("Unsupported related entity type")
-        canonical_related_name = entity_group.get(related_entity_id)
-        if canonical_related_name is None:
-            raise ValueError("Related entity not found in the current draft")
+    _, available_subjects, normalized_allocations, totals_by_subject, canonical_related_name = _normalize_entry_payload(
+        session,
+        workspace=workspace,
+        period=period,
+        direction=direction,
+        amount=amount,
+        related_entity_type=related_entity_type,
+        related_entity_id=related_entity_id,
+        related_entity_name=related_entity_name,
+        allocations=allocations,
+    )
 
     entry = ActualEntry(
         workspace_id=workspace.id,
@@ -408,18 +500,7 @@ def create_actual_entry(
     )
     session.add(entry)
     session.flush()
-    session.add_all(
-        [
-            ActualEntryAllocation(
-                actual_entry_id=entry.id,
-                subject_key=item["subjectKey"],
-                subject_name=item["subjectName"],
-                subject_type=item["subjectType"],
-                amount=item["amount"],
-            )
-            for item in normalized_allocations
-        ]
-    )
+    _replace_entry_allocations(session, entry.id, normalized_allocations)
     record_audit(
         session,
         action="ledger.entry_posted",
@@ -437,7 +518,7 @@ def create_actual_entry(
     )
 
     if direction == "income" and related_entity_type == "teamMember" and related_entity_id:
-        _create_derived_member_commission_entry(
+        _sync_derived_member_commission_entry(
             session,
             workspace=workspace,
             period=period,
@@ -445,10 +526,103 @@ def create_actual_entry(
             source_entry=entry,
             source_amount=_member_income_total(totals_by_subject),
             related_entity_id=related_entity_id,
-            related_entity_name=canonical_related_name or related_entity_name or "",
+            related_entity_name=canonical_related_name or related_entity_name,
             available_subjects=available_subjects,
             timestamp=timestamp,
         )
+
+    session.commit()
+    return _serialize_entry(session, entry)
+
+
+def update_actual_entry(
+    session: Session,
+    *,
+    workspace: Workspace,
+    actor_id: str,
+    entry_id: str,
+    amount: float,
+    occurred_at: datetime | None,
+    counterparty: str | None,
+    description: str | None,
+    related_entity_type: str | None,
+    related_entity_id: str | None,
+    related_entity_name: str | None,
+    allocations: list[AllocationInput],
+    timestamp: datetime,
+) -> dict:
+    entry = _get_entry(session, workspace, entry_id)
+    period = session.get(LedgerPeriod, entry.ledger_period_id)
+    if period and period.status == "locked":
+        raise ValueError("Ledger period is locked")
+    if entry.entry_origin == "derived":
+        raise ValueError("System-generated entry must be edited from its source entry")
+    if entry.status == "voided":
+        raise ValueError("Voided entry cannot be edited")
+
+    _, available_subjects, normalized_allocations, totals_by_subject, canonical_related_name = _normalize_entry_payload(
+        session,
+        workspace=workspace,
+        period=period,
+        direction=entry.direction,
+        amount=amount,
+        related_entity_type=related_entity_type,
+        related_entity_id=related_entity_id,
+        related_entity_name=related_entity_name,
+        allocations=allocations,
+    )
+
+    entry.amount = amount
+    entry.occurred_at = occurred_at or entry.occurred_at
+    entry.counterparty = counterparty
+    entry.description = description
+    entry.related_entity_type = related_entity_type
+    entry.related_entity_id = related_entity_id
+    entry.related_entity_name = canonical_related_name or related_entity_name
+    _replace_entry_allocations(session, entry.id, normalized_allocations)
+
+    if entry.direction == "income" and related_entity_type == "teamMember" and related_entity_id:
+        _sync_derived_member_commission_entry(
+            session,
+            workspace=workspace,
+            period=period,
+            actor_id=actor_id,
+            source_entry=entry,
+            source_amount=_member_income_total(totals_by_subject),
+            related_entity_id=related_entity_id,
+            related_entity_name=canonical_related_name or related_entity_name,
+            available_subjects=available_subjects,
+            timestamp=timestamp,
+        )
+    else:
+        _sync_derived_member_commission_entry(
+            session,
+            workspace=workspace,
+            period=period,
+            actor_id=actor_id,
+            source_entry=entry,
+            source_amount=0,
+            related_entity_id=None,
+            related_entity_name=None,
+            available_subjects=available_subjects,
+            timestamp=timestamp,
+        )
+
+    record_audit(
+        session,
+        action="ledger.entry_updated",
+        workspace_id=workspace.id,
+        actor_id=actor_id,
+        entity_type="actual_entry",
+        entity_id=entry.id,
+        meta={
+            "ledgerPeriodId": entry.ledger_period_id,
+            "direction": entry.direction,
+            "amount": amount,
+            "relatedEntityType": related_entity_type,
+            "relatedEntityId": related_entity_id,
+        },
+    )
 
     session.commit()
     return _serialize_entry(session, entry)
@@ -477,6 +651,48 @@ def void_entry(session: Session, workspace: Workspace, entry_id: str, *, actor_i
         meta={
             "ledgerPeriodId": entry.ledger_period_id,
             "derivedEntryIds": [derived_entry.id for derived_entry in derived_entries],
+        },
+    )
+    session.commit()
+
+
+def restore_entry(session: Session, workspace: Workspace, entry_id: str, *, actor_id: str) -> None:
+    entry = _get_entry(session, workspace, entry_id)
+    period = session.get(LedgerPeriod, entry.ledger_period_id)
+    if period and period.status == "locked":
+        raise ValueError("Ledger period is locked")
+    if entry.entry_origin == "derived":
+        raise ValueError("System-generated entry must be restored from its source entry")
+    if entry.status != "voided":
+        raise ValueError("Entry is not voided")
+
+    entry.status = "posted"
+    derived_entries = session.scalars(
+        select(ActualEntry)
+        .where(ActualEntry.source_entry_id == entry.id)
+        .order_by(ActualEntry.created_at.desc())
+    ).all()
+    restored_derived_entry_ids: list[str] = []
+    if derived_entries:
+        primary_entry = derived_entries[0]
+        primary_entry.status = "posted"
+        primary_entry.ledger_period_id = entry.ledger_period_id
+        primary_entry.occurred_at = entry.occurred_at
+        primary_entry.posted_at = primary_entry.posted_at or entry.posted_at
+        restored_derived_entry_ids.append(primary_entry.id)
+        for extra_entry in derived_entries[1:]:
+            extra_entry.status = "voided"
+
+    record_audit(
+        session,
+        action="ledger.entry_restored",
+        workspace_id=workspace.id,
+        actor_id=actor_id,
+        entity_type="actual_entry",
+        entity_id=entry.id,
+        meta={
+            "ledgerPeriodId": entry.ledger_period_id,
+            "derivedEntryIds": restored_derived_entry_ids,
         },
     )
     session.commit()

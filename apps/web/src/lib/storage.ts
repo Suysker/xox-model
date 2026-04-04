@@ -3,6 +3,7 @@ import {
   createDefaultStageCostItems,
   createEmployee,
   createMember,
+  createProductDefaultModel,
   createShareholder,
   createStageCostItem,
   createStageCostValues,
@@ -426,6 +427,8 @@ function normalizeStageCostName(name: string) {
   const localizedNames: Record<string, string> = {
     VJ: '舞台视觉',
     'Original Song': '原创',
+    Costume: '服装',
+    'Performance Fee': '演出收费',
     Makeup: '化妆',
     Streaming: '推流',
     Meal: '聚餐',
@@ -514,12 +517,12 @@ function normalizeStageCostItems(rawItems: unknown) {
             : 'perEvent',
       })
     })
+    const defaultItems = createDefaultStageCostItems()
+    const normalizedById = new Map(normalized.map((item) => [item.id, item]))
+    const defaultItemIds = new Set(defaultItems.map((item) => item.id))
+    const customItems = normalized.filter((item) => !defaultItemIds.has(item.id))
 
-    if (!normalized.some((item) => item.id === 'stage-cost-material')) {
-      normalized.push(createStageCostItem('material', { name: '耗材', mode: 'perUnit' }))
-    }
-
-    return normalized
+    return [...defaultItems.map((item) => normalizedById.get(item.id) ?? item), ...customItems]
   }
 
   return createDefaultStageCostItems()
@@ -823,6 +826,10 @@ function normalizeModelConfig(value: unknown): ModelConfig | null {
     employees,
     months: syncMonthsToPlanning(months, planning, 'import', timelineTemplate, stageCostItems),
   }
+}
+
+export function hydrateModelConfig(value: unknown): ModelConfig {
+  return normalizeModelConfig(value) ?? createProductDefaultModel()
 }
 
 function isValidModelConfig(value: unknown): value is ModelConfig {

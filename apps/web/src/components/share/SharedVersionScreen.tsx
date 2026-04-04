@@ -10,6 +10,7 @@ import { SharedInputsPanel } from './SharedInputsPanel'
 import type { PublicShareResponse } from '../../lib/api'
 import { api } from '../../lib/api'
 import { formatCurrency, formatDateTime, formatPaybackMonths, formatPercent } from '../../lib/format'
+import { cloneConfig, hydrateModelConfig } from '../../lib/storage'
 import type { ScenarioKey } from '../../types'
 
 type SharedView = 'analysis' | 'months' | 'members' | 'inputs'
@@ -55,7 +56,10 @@ export function SharedVersionScreen(props: {
         if (!active) {
           return
         }
-        setShare(nextShare)
+        setShare({
+          ...nextShare,
+          config: cloneConfig(hydrateModelConfig(nextShare.config)),
+        })
         setError(null)
       } catch (loadError) {
         if (!active) {

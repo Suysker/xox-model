@@ -1,5 +1,5 @@
-import { createProductDefaultModel } from './defaults'
-import { createSnapshot, parseWorkspaceBundle, serializeWorkspaceBundle } from './storage'
+import { createProductDefaultModel, createStageCostItem } from './defaults'
+import { createSnapshot, hydrateModelConfig, parseWorkspaceBundle, serializeWorkspaceBundle } from './storage'
 import type { WorkspaceBundle } from '../types'
 
 describe('workspace storage bundle', () => {
@@ -23,9 +23,11 @@ describe('workspace storage bundle', () => {
     expect(parsed?.currentConfig.months[0]?.label).toBe('3月')
     expect(parsed?.currentConfig.shareholders).toHaveLength(2)
     expect(parsed?.currentConfig.employees).toHaveLength(2)
-    expect(parsed?.currentConfig.stageCostItems).toHaveLength(7)
+    expect(parsed?.currentConfig.stageCostItems).toHaveLength(9)
     expect(parsed?.currentConfig.teamMembers[0]?.departureMonthIndex).toBe(4)
     expect(parsed?.currentConfig.stageCostItems.some((item) => item.id === 'stage-cost-material')).toBe(true)
+    expect(parsed?.currentConfig.stageCostItems.some((item) => item.id === 'stage-cost-costume')).toBe(true)
+    expect(parsed?.currentConfig.stageCostItems.some((item) => item.id === 'stage-cost-performance-fee')).toBe(true)
   })
 
   it('migrates legacy departure months into cycle-linked month indexes', () => {
@@ -211,6 +213,8 @@ describe('workspace storage bundle', () => {
 
     expect(parsed).not.toBeNull()
     expect(parsed?.currentConfig.stageCostItems.some((item) => item.name === '舞台视觉')).toBe(true)
+    expect(parsed?.currentConfig.stageCostItems.some((item) => item.name === '服装')).toBe(true)
+    expect(parsed?.currentConfig.stageCostItems.some((item) => item.name === '演出收费')).toBe(true)
     expect(parsed?.currentConfig.stageCostItems.some((item) => item.name === '化妆')).toBe(true)
     expect(parsed?.currentConfig.stageCostItems.some((item) => item.name === '团建')).toBe(true)
     expect(parsed?.currentConfig.stageCostItems.some((item) => item.name === '耗材')).toBe(true)
@@ -298,6 +302,12 @@ describe('workspace storage bundle', () => {
     expect(parsed?.currentConfig.stageCostItems.find((item) => item.id === 'stage-cost-material')?.mode).toBe(
       'perUnit',
     )
+    expect(parsed?.currentConfig.stageCostItems.find((item) => item.id === 'stage-cost-costume')?.mode).toBe(
+      'monthly',
+    )
+    expect(parsed?.currentConfig.stageCostItems.find((item) => item.id === 'stage-cost-performance-fee')?.mode).toBe(
+      'perEvent',
+    )
     expect(parsed?.currentConfig.stageCostItems.find((item) => item.id === 'stage-cost-streaming')?.name).toBe(
       '推流',
     )
@@ -364,5 +374,50 @@ describe('workspace storage bundle', () => {
       amount: 900,
       count: 1,
     })
+  })
+
+  it('hydrates API configs with default stage-cost columns before custom columns', () => {
+    const defaults = createProductDefaultModel()
+    const customItem = createStageCostItem('custom-styling', { name: '造型维护', mode: 'monthly' })
+    const legacyConfig = {
+      ...defaults,
+      stageCostItems: [
+        defaults.stageCostItems.find((item) => item.id === 'stage-cost-vj')!,
+        defaults.stageCostItems.find((item) => item.id === 'stage-cost-original-song')!,
+        defaults.stageCostItems.find((item) => item.id === 'stage-cost-makeup')!,
+        defaults.stageCostItems.find((item) => item.id === 'stage-cost-streaming')!,
+        defaults.stageCostItems.find((item) => item.id === 'stage-cost-meal')!,
+        defaults.stageCostItems.find((item) => item.id === 'stage-cost-team-building')!,
+        defaults.stageCostItems.find((item) => item.id === 'stage-cost-material')!,
+        customItem,
+      ],
+      timelineTemplate: {
+        ...defaults.timelineTemplate,
+        specialCosts: defaults.timelineTemplate.specialCosts.filter((item) => item.itemId !== 'stage-cost-costume'),
+      },
+      months: defaults.months.map((month) => ({
+        ...month,
+        specialCosts: month.specialCosts.filter((item) => item.itemId !== 'stage-cost-costume'),
+      })),
+    }
+
+    const hydrated = hydrateModelConfig(legacyConfig)
+
+    expect(hydrated.stageCostItems.map((item) => item.name)).toEqual([
+      '舞台视觉',
+      '原创',
+      '服装',
+      '演出收费',
+      '化妆',
+      '推流',
+      '聚餐',
+      '团建',
+      '耗材',
+      '造型维护',
+    ])
+    expect(hydrated.timelineTemplate.specialCosts.some((item) => item.itemId === 'stage-cost-costume')).toBe(true)
+    expect(hydrated.months.every((month) => month.specialCosts.some((item) => item.itemId === 'stage-cost-costume'))).toBe(
+      true,
+    )
   })
 })

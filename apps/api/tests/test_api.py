@@ -163,6 +163,8 @@ def test_ledger_is_available_from_current_draft_without_release(tmp_path: Path) 
     subject_map = {item["subjectKey"]: item for item in subjects.json()}
     assert "revenue.offline_sales" in subject_map
     assert "cost.training.rehearsal" in subject_map
+    assert subject_map["cost.other.refund"]["subjectName"] == "退费退款"
+    assert subject_map["cost.other.refund"]["subjectType"] == "cost"
 
     create_entry = client.post(
         "/api/v1/ledger/entries",
@@ -382,6 +384,25 @@ def test_member_income_uses_occurred_date_and_auto_derives_commission(tmp_path: 
     assert after_void.json()["actualRevenue"] == 0
     assert after_void.json()["actualCost"] == 0
 
+    blocked_direct_restore = client.post(f"/api/v1/ledger/entries/{derived_entry['id']}/restore")
+    assert blocked_direct_restore.status_code == 409
+
+    restored = client.post(f"/api/v1/ledger/entries/{manual_entry['id']}/restore")
+    assert restored.status_code == 200
+
+    after_restore = client.get(f"/api/v1/ledger/entries?periodId={period['id']}")
+    assert after_restore.status_code == 200
+    restored_payload = after_restore.json()
+    restored_manual = next(item for item in restored_payload if item["id"] == manual_entry["id"])
+    restored_derived = next(item for item in restored_payload if item["id"] == derived_entry["id"])
+    assert restored_manual["status"] == "posted"
+    assert restored_derived["status"] == "posted"
+
+    restored_variance = client.get(f"/api/v1/variance/periods/{period['id']}")
+    assert restored_variance.status_code == 200
+    assert restored_variance.json()["actualRevenue"] == 880
+    assert restored_variance.json()["actualCost"] == 308
+
 
 def test_member_income_combines_offline_and_online_for_commission(tmp_path: Path) -> None:
     client = build_client(tmp_path / "member-income-combo.db")
@@ -430,6 +451,105 @@ def test_member_income_combines_offline_and_online_for_commission(tmp_path: Path
     assert derived_entry["direction"] == "expense"
     assert derived_entry["amount"] == 350
     assert derived_entry["allocations"][0]["subjectKey"] == "cost.member.commission"
+
+
+def test_manual_entry_can_be_updated_and_recomputes_member_commission(tmp_path: Path) -> None:
+    client = build_client(tmp_path / "member-income-update.db")
+    register_user(client, email="member-income-update@example.com", display_name="Finance")
+
+    release = client.post("/api/v1/workspace/versions", json={"kind": "release", "name": "Budget V1"})
+    assert release.status_code == 200
+
+    period = client.get("/api/v1/ledger/periods").json()[0]
+    subjects = client.get(f"/api/v1/ledger/periods/{period['id']}/subjects").json()
+    subject_map = {item["subjectKey"]: item for item in subjects}
+
+    created = client.post(
+        "/api/v1/ledger/entries",
+        json={
+            "ledgerPeriodId": period["id"],
+            "direction": "income",
+            "amount": 880,
+            "occurredAt": "2026-03-05T10:00:00+00:00",
+            "relatedEntityType": "teamMember",
+            "relatedEntityId": "member-a",
+            "description": "初始收入",
+            "allocations": [
+                {
+                    "subjectKey": "revenue.offline_sales",
+                    "subjectName": subject_map["revenue.offline_sales"]["subjectName"],
+                    "subjectType": "revenue",
+                    "amount": 880,
+                }
+            ],
+        },
+    )
+    assert created.status_code == 200
+
+    updated = client.patch(
+        f"/api/v1/ledger/entries/{created.json()['id']}",
+        json={
+            "amount": 1000,
+            "occurredAt": "2026-03-06T12:00:00+00:00",
+            "relatedEntityType": "teamMember",
+            "relatedEntityId": "member-a",
+            "description": "更新后收入",
+            "counterparty": "Walk-in",
+            "allocations": [
+                {
+                    "subjectKey": "revenue.offline_sales",
+                    "subjectName": subject_map["revenue.offline_sales"]["subjectName"],
+                    "subjectType": "revenue",
+                    "amount": 700,
+                },
+                {
+                    "subjectKey": "revenue.online_sales",
+                    "subjectName": subject_map["revenue.online_sales"]["subjectName"],
+                    "subjectType": "revenue",
+                    "amount": 300,
+                },
+            ],
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["amount"] == 1000
+    assert updated.json()["description"] == "更新后收入"
+    assert updated.json()["counterparty"] == "Walk-in"
+    assert updated.json()["occurredAt"].startswith("2026-03-06T12:00:00")
+    assert len(updated.json()["allocations"]) == 2
+
+    entries = client.get(f"/api/v1/ledger/entries?periodId={period['id']}")
+    assert entries.status_code == 200
+    payload = entries.json()
+    manual_entry = next(item for item in payload if item["id"] == created.json()["id"])
+    derived_entries = [item for item in payload if item["sourceEntryId"] == manual_entry["id"] and item["status"] == "posted"]
+
+    assert len(derived_entries) == 1
+    derived_entry = derived_entries[0]
+    assert derived_entry["amount"] == 350
+    assert derived_entry["occurredAt"].startswith("2026-03-06T12:00:00")
+    assert derived_entry["allocations"][0]["subjectKey"] == "cost.member.commission"
+
+    blocked_direct_update = client.patch(
+        f"/api/v1/ledger/entries/{derived_entry['id']}",
+        json={
+            "amount": 350,
+            "allocations": [
+                {
+                    "subjectKey": "cost.member.commission",
+                    "subjectName": subject_map["cost.member.commission"]["subjectName"],
+                    "subjectType": "cost",
+                    "amount": 350,
+                }
+            ],
+        },
+    )
+    assert blocked_direct_update.status_code == 409
+
+    variance = client.get(f"/api/v1/variance/periods/{period['id']}")
+    assert variance.status_code == 200
+    assert variance.json()["actualRevenue"] == 1000
+    assert variance.json()["actualCost"] == 350
 
 
 def test_multi_allocation_locking_and_variance_reconciliation(tmp_path: Path) -> None:

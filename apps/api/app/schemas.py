@@ -104,6 +104,17 @@ class CreateEntryRequest(BaseModel):
     allocations: list[AllocationInput]
 
 
+class UpdateEntryRequest(BaseModel):
+    amount: float
+    occurredAt: datetime | None = None
+    counterparty: str | None = None
+    description: str | None = None
+    relatedEntityType: Literal["teamMember", "employee"] | None = None
+    relatedEntityId: str | None = None
+    relatedEntityName: str | None = None
+    allocations: list[AllocationInput]
+
+
 class EntryResponse(BaseModel):
     id: str
     ledgerPeriodId: str

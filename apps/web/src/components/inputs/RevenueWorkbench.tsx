@@ -50,8 +50,8 @@ export function RevenueWorkbench(props: {
           />
         </div>
 
-        <div className="rounded-[22px] border border-stone-900/10 bg-stone-50/80 px-4 py-4 text-sm leading-7 text-stone-600 xl:col-span-4">
-          线下看单价，线上看系数，拍立得损耗率只影响按张成本，不改变收入张数。
+        <div className="flex h-full items-end rounded-[22px] border border-stone-900/10 bg-stone-50/80 px-4 py-4 text-sm leading-7 text-stone-600 xl:col-span-4">
+          <p>线下看单价，线上看系数，拍立得损耗率只影响按张成本，不改变收入张数。</p>
         </div>
       </div>
     </Panel>
@@ -75,14 +75,16 @@ function ValueField(props: {
       </div>
       <div className="flex h-11 items-center overflow-hidden rounded-2xl border border-stone-900/10 bg-stone-100/80 focus-within:border-emerald-500 focus-within:bg-white">
         <input
-          className="h-full flex-1 border-none bg-transparent px-4 text-sm font-medium tabular-nums text-stone-900 outline-none"
+          className="compact-number-input-field h-full min-w-0 flex-1 border-none bg-transparent px-4 text-sm font-medium tabular-nums text-stone-900 outline-none"
           type="number"
           value={Number.isFinite(props.value) ? props.value : 0}
           min={props.min}
           step={props.step}
           onChange={(event) => props.onChange(Number(event.target.value))}
         />
-        <span className="pr-4 text-xs font-semibold tracking-[0.18em] text-stone-500">{props.suffix}</span>
+        <span className="shrink-0 pr-4 text-xs font-semibold tracking-[0.18em] text-stone-500">
+          {props.suffix}
+        </span>
       </div>
     </label>
   )

@@ -16,6 +16,7 @@ from .schemas import (
     PublishRequest,
     RegisterRequest,
     SubjectResponse,
+    UpdateEntryRequest,
     UserResponse,
     VarianceSummaryResponse,
     VersionResponse,
@@ -36,7 +37,9 @@ from .services_ledger import (
     list_entries,
     list_periods,
     list_subjects_for_period,
+    restore_entry,
     set_period_status,
+    update_actual_entry,
     variance_for_period,
     void_entry,
 )
@@ -265,11 +268,52 @@ def create_entry(payload: CreateEntryRequest, session: Session = Depends(get_db)
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from error
 
 
+@router.patch("/ledger/entries/{entry_id}", response_model=EntryResponse)
+def update_entry(entry_id: str, payload: UpdateEntryRequest, session: Session = Depends(get_db), user: User = Depends(current_user)) -> dict:
+    workspace = get_workspace_for_user(session, user)
+    try:
+        return update_actual_entry(
+            session,
+            workspace=workspace,
+            actor_id=user.id,
+            entry_id=entry_id,
+            amount=payload.amount,
+            occurred_at=payload.occurredAt,
+            counterparty=payload.counterparty,
+            description=payload.description,
+            related_entity_type=payload.relatedEntityType,
+            related_entity_id=payload.relatedEntityId,
+            related_entity_name=payload.relatedEntityName,
+            allocations=payload.allocations,
+            timestamp=utc_now(),
+        )
+    except LookupError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+    except PermissionError as error:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+
+
 @router.post("/ledger/entries/{entry_id}/void")
 def remove_entry(entry_id: str, session: Session = Depends(get_db), user: User = Depends(current_user)) -> dict:
     workspace = get_workspace_for_user(session, user)
     try:
         void_entry(session, workspace, entry_id, actor_id=user.id)
+    except LookupError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+    except PermissionError as error:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+    return {"ok": True}
+
+
+@router.post("/ledger/entries/{entry_id}/restore")
+def restore_removed_entry(entry_id: str, session: Session = Depends(get_db), user: User = Depends(current_user)) -> dict:
+    workspace = get_workspace_for_user(session, user)
+    try:
+        restore_entry(session, workspace, entry_id, actor_id=user.id)
     except LookupError as error:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
     except PermissionError as error:

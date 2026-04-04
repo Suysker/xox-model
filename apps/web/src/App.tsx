@@ -6,7 +6,7 @@ import { type ChartMetricKey } from './components/analysis/MetricBandChart'
 import { MonthlyResultsTable } from './components/analysis/MonthlyResultsTable'
 import { OverviewPanel } from './components/analysis/OverviewPanel'
 import { ScenarioDeck } from './components/analysis/ScenarioDeck'
-import { BookkeepingPanel, type BookkeepingSubmitPayload } from './components/bookkeeping/BookkeepingPanel'
+import { BookkeepingPanel, type BookkeepingSubmitPayload, type BookkeepingUpdatePayload } from './components/bookkeeping/BookkeepingPanel'
 import { NoticeBanner, type NoticeTone } from './components/common/NoticeBanner'
 import { Panel, SectionTitle } from './components/common/ui'
 import { CostWorkbench } from './components/inputs/CostWorkbench'
@@ -490,13 +490,44 @@ export default function App() {
     }
   }
 
-  async function handleVoidEntry(entryId: string) {
-    const confirmed = window.confirm('作废后这笔分录会保留审计记录，但不会继续参与预实分析。确认继续吗？')
-
-    if (!confirmed) {
+  async function handleUpdateEntry(entryId: string, payload: BookkeepingUpdatePayload) {
+    if (!selectedPeriodId || payload.amount <= 0 || payload.allocations.length === 0) {
       return false
     }
 
+    const allocations = payload.allocations
+
+    if (Math.abs(allocations.reduce((sum, allocation) => sum + allocation.amount, 0) - payload.amount) >= 0.005) {
+      setBanner({ tone: 'error', message: '金额校验失败，请重新确认录入金额。' })
+      return false
+    }
+
+    setLedgerBusy(true)
+    try {
+      await api.updateEntry(entryId, {
+        amount: payload.amount,
+        allocations,
+        ...(payload.occurredAt ? { occurredAt: payload.occurredAt } : {}),
+        ...(payload.counterparty ? { counterparty: payload.counterparty } : {}),
+        ...(payload.description ? { description: payload.description } : {}),
+        ...(payload.relatedEntityType ? { relatedEntityType: payload.relatedEntityType } : {}),
+        ...(payload.relatedEntityId ? { relatedEntityId: payload.relatedEntityId } : {}),
+        ...(payload.relatedEntityName ? { relatedEntityName: payload.relatedEntityName } : {}),
+      })
+
+      await refreshPeriods()
+      await refreshSelectedPeriodData(selectedPeriodId)
+      setBanner({ tone: 'success', message: '分录已更新。' })
+      return true
+    } catch (entryError) {
+      setBanner({ tone: 'error', message: entryError instanceof Error ? entryError.message : String(entryError) })
+      return false
+    } finally {
+      setLedgerBusy(false)
+    }
+  }
+
+  async function handleVoidEntry(entryId: string) {
     setLedgerBusy(true)
     try {
       await api.voidEntry(entryId)
@@ -505,8 +536,28 @@ export default function App() {
         await refreshSelectedPeriodData(selectedPeriodId)
       }
       setBanner({ tone: 'info', message: '分录已作废。' })
+      return true
     } catch (entryError) {
       setBanner({ tone: 'error', message: entryError instanceof Error ? entryError.message : String(entryError) })
+      return false
+    } finally {
+      setLedgerBusy(false)
+    }
+  }
+
+  async function handleRestoreEntry(entryId: string) {
+    setLedgerBusy(true)
+    try {
+      await api.restoreEntry(entryId)
+      await refreshPeriods()
+      if (selectedPeriodId) {
+        await refreshSelectedPeriodData(selectedPeriodId)
+      }
+      setBanner({ tone: 'success', message: '分录已取消作废。' })
+      return true
+    } catch (entryError) {
+      setBanner({ tone: 'error', message: entryError instanceof Error ? entryError.message : String(entryError) })
+      return false
     } finally {
       setLedgerBusy(false)
     }
@@ -1396,7 +1447,9 @@ export default function App() {
                 onlineUnitPrice={config.operating.onlineUnitPrice}
                 onSelectPeriod={setSelectedPeriodId}
                 onSubmit={handleSubmitEntry}
+                onUpdate={handleUpdateEntry}
                 onVoid={handleVoidEntry}
+                onRestore={handleRestoreEntry}
                 onToggleLock={handleTogglePeriodLock}
               />
             ) : null}

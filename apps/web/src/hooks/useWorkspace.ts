@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createProductDefaultModel } from '../lib/defaults'
 import { api, type DraftResponse, type VersionResponse, type VersionShareResponse } from '../lib/api'
-import { SCHEMA_VERSION, cloneConfig } from '../lib/storage'
+import { SCHEMA_VERSION, cloneConfig, hydrateModelConfig } from '../lib/storage'
 import type { ModelConfig, WorkspaceBundle, WorkspaceSnapshot } from '../types'
 
 const defaultWorkspaceName = '默认工作区'
@@ -22,7 +22,7 @@ function toSnapshot(version: VersionResponse): WorkspaceSnapshot {
     name: version.name,
     createdAt: version.createdAt,
     kind: version.kind,
-    config: cloneConfig(version.config),
+    config: cloneConfig(hydrateModelConfig(version.config)),
   }
 }
 
@@ -77,7 +77,7 @@ export function useWorkspace(enabled = true) {
           return
         }
         setWorkspaceNameState(draft.workspaceName)
-        setConfigState(cloneConfig(draft.config))
+        setConfigState(cloneConfig(hydrateModelConfig(draft.config)))
         setLastSavedAt(draft.lastAutosavedAt)
         setRevision(draft.revision)
         applyVersions(versions)
@@ -161,7 +161,7 @@ export function useWorkspace(enabled = true) {
 
   async function applyDraftResponse(draft: DraftResponse) {
     setWorkspaceNameState(draft.workspaceName)
-    setConfigState(cloneConfig(draft.config))
+    setConfigState(cloneConfig(hydrateModelConfig(draft.config)))
     setLastSavedAt(draft.lastAutosavedAt)
     setRevision(draft.revision)
     dirtyRef.current = false

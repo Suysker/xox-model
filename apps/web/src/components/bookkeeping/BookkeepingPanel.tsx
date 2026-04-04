@@ -1,13 +1,25 @@
-import { Building2, Lock, LockOpen, ReceiptText, Search, WalletCards } from 'lucide-react'
+import { Building2, Lock, LockOpen, ReceiptText, WalletCards } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode, RefObject } from 'react'
 import type { EntryAllocation, EntryResponse, PeriodResponse, SubjectResponse } from '../../lib/api'
 import { cx, formatCurrency } from '../../lib/format'
 import type { MonthlyScenarioResult } from '../../types'
 import { CompactNumberInput, Panel, SectionTitle, SegmentTabs, StatCard } from '../common/ui'
+import { HistorySection } from './HistorySection'
 
 export type BookkeepingSubmitPayload = {
   direction: 'income' | 'expense'
+  amount: number
+  occurredAt?: string
+  counterparty?: string
+  description?: string
+  relatedEntityType?: 'teamMember' | 'employee'
+  relatedEntityId?: string
+  relatedEntityName?: string
+  allocations: EntryAllocation[]
+}
+
+export type BookkeepingUpdatePayload = {
   amount: number
   occurredAt?: string
   counterparty?: string
@@ -51,10 +63,6 @@ type MemberExpenseRow = {
   draftAmount: number
 }
 
-type HistoryDirectionFilter = 'all' | 'income' | 'expense'
-
-type HistoryStatusFilter = 'all' | 'posted' | 'voided'
-
 type HistoryGroup = {
   entry: EntryResponse
   derivedEntries: EntryResponse[]
@@ -75,18 +83,6 @@ const categoryLabels: Record<SubjectCategory, string> = {
   other: '其他',
 }
 
-const historyDirectionTabs: Array<{ value: HistoryDirectionFilter; label: string }> = [
-  { value: 'all', label: '全部方向' },
-  { value: 'income', label: '收入' },
-  { value: 'expense', label: '支出' },
-]
-
-const historyStatusTabs: Array<{ value: HistoryStatusFilter; label: string }> = [
-  { value: 'all', label: '全部状态' },
-  { value: 'posted', label: '已过账' },
-  { value: 'voided', label: '已作废' },
-]
-
 export function BookkeepingPanel(props: {
   periods: PeriodResponse[]
   selectedPeriodId: string
@@ -98,7 +94,9 @@ export function BookkeepingPanel(props: {
   onlineUnitPrice: number
   onSelectPeriod: (id: string) => void
   onSubmit: (payload: BookkeepingSubmitPayload) => Promise<boolean | void>
-  onVoid: (entryId: string) => void
+  onUpdate: (entryId: string, payload: BookkeepingUpdatePayload) => Promise<boolean | void>
+  onVoid: (entryId: string) => Promise<boolean | void>
+  onRestore: (entryId: string) => Promise<boolean | void>
   onToggleLock: () => void
 }) {
   const [direction, setDirection] = useState<'income' | 'expense'>('income')
@@ -136,6 +134,18 @@ export function BookkeepingPanel(props: {
         )
         .sort(compareSubjects),
     [direction, props.subjects],
+  )
+  const otherEntrySubjects = useMemo(
+    () =>
+      props.subjects
+        .filter(
+          (subject) =>
+            subject.subjectKey === 'revenue.offline_sales' ||
+            subject.subjectKey === 'revenue.online_sales' ||
+            subject.subjectKey === 'cost.other.refund',
+        )
+        .sort(compareSubjects),
+    [props.subjects],
   )
 
   const categoryOptions = useMemo(() => {
@@ -199,9 +209,9 @@ export function BookkeepingPanel(props: {
       !isLocked,
   )
 
-  const offlineRevenueSubject = subjectOptions.find((subject) => subject.subjectKey === 'revenue.offline_sales') ?? null
-  const onlineRevenueSubject = subjectOptions.find((subject) => subject.subjectKey === 'revenue.online_sales') ?? null
-  const selectedOtherIncomeSubject = subjectOptions.find((subject) => subject.subjectKey === otherIncomeSubjectKey) ?? null
+  const offlineRevenueSubject = otherEntrySubjects.find((subject) => subject.subjectKey === 'revenue.offline_sales') ?? null
+  const onlineRevenueSubject = otherEntrySubjects.find((subject) => subject.subjectKey === 'revenue.online_sales') ?? null
+  const selectedOtherIncomeSubject = otherEntrySubjects.find((subject) => subject.subjectKey === otherIncomeSubjectKey) ?? null
   const otherIncomePostedAmount = selectedOtherIncomeSubject
     ? postedAmountsBySubject.get(selectedOtherIncomeSubject.subjectKey) ?? 0
     : 0
@@ -299,6 +309,9 @@ export function BookkeepingPanel(props: {
       .sort(compareEntryHistory)
       .forEach((entry) => {
         if (entry.entryOrigin === 'derived' && entry.sourceEntryId) {
+          if (entry.status === 'voided') {
+            return
+          }
           groupedDerived.set(entry.sourceEntryId, [...(groupedDerived.get(entry.sourceEntryId) ?? []), entry])
           return
         }
@@ -337,17 +350,17 @@ export function BookkeepingPanel(props: {
       return
     }
 
-    if (subjectOptions.length === 0) {
+    if (otherEntrySubjects.length === 0) {
       if (otherIncomeSubjectKey) {
         setOtherIncomeSubjectKey('')
       }
       return
     }
 
-    if (!subjectOptions.some((subject) => subject.subjectKey === otherIncomeSubjectKey)) {
-      setOtherIncomeSubjectKey(subjectOptions[0]?.subjectKey ?? '')
+    if (!otherEntrySubjects.some((subject) => subject.subjectKey === otherIncomeSubjectKey)) {
+      setOtherIncomeSubjectKey(otherEntrySubjects[0]?.subjectKey ?? '')
     }
-  }, [direction, otherIncomeSubjectKey, subjectOptions])
+  }, [direction, otherEntrySubjects, otherIncomeSubjectKey])
 
   useEffect(() => {
     if (direction !== 'income') {
@@ -501,8 +514,8 @@ export function BookkeepingPanel(props: {
       onResolved: setOtherIncomeOccurredOn,
     })
 
-    const success = await props.onSubmit({
-      direction: 'income',
+      const success = await props.onSubmit({
+      direction: selectedOtherIncomeSubject.subjectType === 'revenue' ? 'income' : 'expense',
       amount: roundMoney(otherIncomeAmount),
       occurredAt,
       ...(otherIncomeCounterparty ? { counterparty: otherIncomeCounterparty } : {}),
@@ -690,7 +703,7 @@ export function BookkeepingPanel(props: {
                 onSubmitMember={(memberId) => void handleSubmitMemberIncome(memberId)}
               />
               <OtherIncomeComposer
-                subjects={subjectOptions}
+                subjects={otherEntrySubjects}
                 selectedSubjectKey={otherIncomeSubjectKey}
                 selectedSubject={selectedOtherIncomeSubject}
                 postedAmount={otherIncomePostedAmount}
@@ -760,7 +773,18 @@ export function BookkeepingPanel(props: {
         </div>
       </Panel>
 
-      <HistorySection historyGroups={historyGroups} isLocked={isLocked} onVoid={props.onVoid} />
+      <HistorySection
+        historyGroups={historyGroups}
+        isLocked={isLocked}
+        loading={props.loading}
+        subjects={props.subjects}
+        plannedMonthResult={props.plannedMonthResult}
+        offlineUnitPrice={props.offlineUnitPrice}
+        onlineUnitPrice={props.onlineUnitPrice}
+        onUpdate={props.onUpdate}
+        onVoid={props.onVoid}
+        onRestore={props.onRestore}
+      />
     </div>
   )
 }
@@ -840,7 +864,7 @@ function ExpenseComposer(props: {
           </span>
         </div>
 
-        <div className="mt-4 grid gap-2 lg:grid-cols-2 xl:grid-cols-3">
+        <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
           {props.visibleSubjects.map((subject) => (
             <button
               key={subject.subjectKey}
@@ -848,7 +872,7 @@ function ExpenseComposer(props: {
               disabled={props.isLocked}
               onClick={() => props.onSelectSubject(subject)}
               className={cx(
-                'rounded-[18px] border px-3 py-2.5 text-left transition',
+                'rounded-[16px] border px-3 py-2 text-left transition',
                 props.selectedSubjectKey === subject.subjectKey
                   ? 'border-amber-300 bg-amber-50 text-stone-950 shadow-[0_12px_28px_rgba(245,158,11,0.12)]'
                   : 'border-stone-900/10 bg-white text-stone-900 hover:bg-stone-100',
@@ -856,12 +880,12 @@ function ExpenseComposer(props: {
               )}
             >
               <div className="flex items-center justify-between gap-3">
-                <span className="text-sm font-semibold">{subject.subjectName}</span>
+                <span className="truncate text-sm font-semibold">{subject.subjectName}</span>
                 <span
                   className={
                     props.selectedSubjectKey === subject.subjectKey
-                      ? 'rounded-full border border-amber-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-amber-700'
-                      : 'rounded-full border border-stone-900/10 bg-stone-50 px-2.5 py-1 text-[11px] font-semibold text-stone-500'
+                      ? 'shrink-0 rounded-full border border-amber-300 bg-white px-2 py-0.5 text-[10px] font-semibold text-amber-700'
+                      : 'shrink-0 rounded-full border border-stone-900/10 bg-stone-50 px-2 py-0.5 text-[10px] font-semibold text-stone-500'
                   }
                 >
                   {formatCurrency(subject.plannedAmount)}
@@ -870,12 +894,12 @@ function ExpenseComposer(props: {
               <div
                 className={
                   props.selectedSubjectKey === subject.subjectKey
-                    ? 'mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-stone-600'
-                    : 'mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-stone-500'
+                    ? 'mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px] text-stone-600'
+                    : 'mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px] text-stone-500'
                 }
               >
-                <span>已记 {formatCurrency(props.postedAmountsBySubject.get(subject.subjectKey) ?? 0)}</span>
-                <span>剩余 {formatCurrency(subject.plannedAmount - (props.postedAmountsBySubject.get(subject.subjectKey) ?? 0))}</span>
+                <span>已 {formatCurrency(props.postedAmountsBySubject.get(subject.subjectKey) ?? 0)}</span>
+                <span>余 {formatCurrency(subject.plannedAmount - (props.postedAmountsBySubject.get(subject.subjectKey) ?? 0))}</span>
               </div>
             </button>
           ))}
@@ -945,14 +969,28 @@ function ExpenseComposer(props: {
           <section className="rounded-[28px] border border-amber-200/70 bg-[linear-gradient(135deg,rgba(255,251,235,0.94),rgba(255,255,255,0.98))] p-4 shadow-[0_18px_42px_rgba(245,158,11,0.12)]">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="flex flex-wrap gap-2">
-                <LedgerPill label="科目" value={props.selectedSubject?.subjectName ?? '待选择'} />
+                <LedgerPill label="科目" value={props.selectedSubject?.subjectName ?? '待选择'} layout="inline" />
                 <LedgerPill
                   label={props.relatedSelectionRequired ? '归属对象' : '归属'}
                   value={props.selectedRelatedEntity?.name ?? (props.relatedSelectionRequired ? '待选择' : '无需')}
+                  layout="inline"
                 />
-                <LedgerPill label="计划参考" value={props.plannedReference > 0 ? formatCurrency(props.plannedReference) : '无'} />
-                <LedgerPill label="本期已记" value={props.selectedSubject ? formatCurrency(props.selectedPostedAmount) : '无'} />
-                <LedgerPill label="剩余预算" value={props.selectedSubject ? formatCurrency(props.selectedGapAmount) : '无'} tone="accent" />
+                <LedgerPill
+                  label="计划参考"
+                  value={props.plannedReference > 0 ? formatCurrency(props.plannedReference) : '无'}
+                  layout="inline"
+                />
+                <LedgerPill
+                  label="本期已记"
+                  value={props.selectedSubject ? formatCurrency(props.selectedPostedAmount) : '无'}
+                  layout="inline"
+                />
+                <LedgerPill
+                  label="剩余预算"
+                  value={props.selectedSubject ? formatCurrency(props.selectedGapAmount) : '无'}
+                  tone="accent"
+                  layout="inline"
+                />
               </div>
 
               <button
@@ -1458,7 +1496,7 @@ function OtherIncomeComposer(props: {
     <section className="rounded-[24px] border border-stone-900/10 bg-stone-50/80 p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h3 className="text-lg font-semibold text-stone-950">其他收入</h3>
+          <h3 className="text-lg font-semibold text-stone-950">其他收支</h3>
         </div>
         <button
           type="button"
@@ -1470,12 +1508,21 @@ function OtherIncomeComposer(props: {
         </button>
       </div>
 
-      <div className="mt-4 flex flex-wrap gap-2">
-        <LedgerPill label="本期已记" value={props.selectedSubject ? formatCurrency(props.postedAmount) : '无'} />
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <LedgerPill
+          label="本期已记"
+          value={props.selectedSubject ? formatCurrency(props.postedAmount) : '无'}
+          layout="inline"
+        />
         <LedgerPill
           label="口径说明"
-          value="商业演出 / 一次性收入 / 赞助回款；不挂团员，不自动计提提成"
+          value={
+            props.selectedSubject?.subjectType === 'cost'
+              ? '退费退款走支出；不挂团员，不自动计提提成'
+              : '商业演出 / 一次性回款 / 赞助回款；不挂团员，不自动计提提成'
+          }
           tone="accent"
+          layout="inline"
         />
       </div>
 
@@ -1524,7 +1571,11 @@ function OtherIncomeComposer(props: {
         </label>
 
         <div className="flex min-h-11 items-center text-sm font-medium text-stone-500">
-          {props.selectedSubject ? '这笔收入会直接挂到所选营收科目，适合录商业演出或一次性回款。' : '先选择一个营收科目，再录入金额。'}
+          {props.selectedSubject
+            ? props.selectedSubject.subjectType === 'cost'
+              ? '这笔记录会直接挂到退费退款科目，适合录售后退款或退费。'
+              : '这笔记录会直接挂到所选营收科目，适合录商业演出或一次性回款。'
+            : '先选择一个挂账科目，再录入金额。'}
         </div>
 
         <button
@@ -1568,187 +1619,18 @@ function OtherIncomeComposer(props: {
   )
 }
 
-function HistorySection(props: {
-  historyGroups: HistoryGroup[]
-  isLocked: boolean
-  onVoid: (entryId: string) => void
+function LedgerPill(props: {
+  label: string
+  value: string
+  tone?: 'default' | 'accent'
+  dark?: boolean
+  layout?: 'stacked' | 'inline'
 }) {
-  const [directionFilter, setDirectionFilter] = useState<HistoryDirectionFilter>('all')
-  const [statusFilter, setStatusFilter] = useState<HistoryStatusFilter>('all')
-  const [keyword, setKeyword] = useState('')
-
-  const filteredHistoryGroups = useMemo(
-    () =>
-      props.historyGroups.filter(({ entry, derivedEntries }) => {
-        if (directionFilter !== 'all' && entry.direction !== directionFilter) return false
-        if (statusFilter !== 'all' && entry.status !== statusFilter) return false
-
-        const normalizedKeyword = keyword.trim().toLowerCase()
-        if (!normalizedKeyword) return true
-
-        return matchesHistoryKeyword(entry, derivedEntries, normalizedKeyword)
-      }),
-    [directionFilter, keyword, props.historyGroups, statusFilter],
-  )
-
-  const hasHistory = props.historyGroups.length > 0
-  const hasFilteredHistory = filteredHistoryGroups.length > 0
-
-  return (
-    <Panel>
-      <SectionTitle icon={ReceiptText} eyebrow="历史" title="账本记录" />
-
-      {hasHistory ? (
-        <>
-          <div className="mt-5 flex flex-wrap items-center gap-2">
-            <SegmentTabs compact value={directionFilter} items={historyDirectionTabs} onChange={setDirectionFilter} />
-            <SegmentTabs compact value={statusFilter} items={historyStatusTabs} onChange={setStatusFilter} />
-
-            <label className="relative min-w-[220px] flex-1 md:ml-auto md:max-w-[320px]">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
-              <input
-                value={keyword}
-                onChange={(event) => setKeyword(event.target.value)}
-                placeholder="筛科目、成员、对方单位"
-                className="h-10 w-full rounded-2xl border border-stone-900/10 bg-white pl-10 pr-4 text-sm font-medium text-stone-900 outline-none transition focus:border-amber-300"
-              />
-            </label>
-
-            <span className="rounded-full border border-stone-900/10 bg-stone-50 px-3 py-2 text-xs font-semibold text-stone-600">
-              {filteredHistoryGroups.length} 条
-            </span>
-          </div>
-
-          {hasFilteredHistory ? (
-            <div className="mt-4 overflow-hidden rounded-[24px] border border-stone-900/10 bg-white">
-              <div className="hidden md:block">
-                <table className="w-full table-fixed border-collapse text-[12px]">
-                  <colgroup>
-                    <col className="w-[16%]" />
-                    <col className="w-[8%]" />
-                    <col className="w-[34%]" />
-                    <col className="w-[14%]" />
-                    <col className="w-[10%]" />
-                    <col className="w-[8%]" />
-                    <col className="w-[10%]" />
-                  </colgroup>
-                  <thead className="bg-stone-100/90 text-stone-600">
-                    <tr className="border-b border-stone-900/10">
-                      <HistoryHeader>时间</HistoryHeader>
-                      <HistoryHeader align="center">方向</HistoryHeader>
-                      <HistoryHeader>摘要</HistoryHeader>
-                      <HistoryHeader>关联对象</HistoryHeader>
-                      <HistoryHeader align="right">金额</HistoryHeader>
-                      <HistoryHeader align="center">状态</HistoryHeader>
-                      <HistoryHeader align="center">操作</HistoryHeader>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredHistoryGroups.map(({ entry, derivedEntries }) => (
-                      <tr key={entry.id} className="border-b border-stone-900/10 last:border-none">
-                        <HistoryCell className="whitespace-nowrap tabular-nums text-stone-500">
-                          {formatEntryDate(entry.occurredAt)} · 记账 {formatPostedAt(entry.postedAt)}
-                        </HistoryCell>
-                        <HistoryCell align="center">
-                          <span
-                            className={cx(
-                              'rounded-full px-2.5 py-1 text-xs font-semibold',
-                              entry.direction === 'income'
-                                ? 'border border-emerald-200 bg-emerald-50 text-emerald-700'
-                                : 'border border-rose-200 bg-rose-50 text-rose-700',
-                            )}
-                          >
-                            {entry.direction === 'income' ? '收入' : '支出'}
-                          </span>
-                        </HistoryCell>
-                        <HistoryCell className="min-w-0">
-                          <div className="truncate font-medium text-stone-900">{buildHistorySummary(entry, derivedEntries)}</div>
-                        </HistoryCell>
-                        <HistoryCell className="truncate text-stone-600">{relatedEntityLabel(entry)}</HistoryCell>
-                        <HistoryCell align="right" className="whitespace-nowrap font-semibold tabular-nums text-stone-950">
-                          {formatCurrency(entry.amount)}
-                        </HistoryCell>
-                        <HistoryCell align="center">
-                          <span
-                            className={cx(
-                              'rounded-full px-2.5 py-1 text-xs font-semibold',
-                              entry.status === 'voided'
-                                ? 'border border-stone-900/10 bg-stone-100 text-stone-500'
-                                : 'border border-amber-200 bg-amber-50 text-amber-800',
-                            )}
-                          >
-                            {entry.status === 'voided' ? '已作废' : '已过账'}
-                          </span>
-                        </HistoryCell>
-                        <HistoryCell align="center">
-                          {entry.status !== 'voided' ? (
-                            <button
-                              type="button"
-                              disabled={props.isLocked}
-                              onClick={() => props.onVoid(entry.id)}
-                              className="rounded-full border border-stone-900/10 bg-stone-50 px-2.5 py-1 text-[11px] font-semibold text-stone-700 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
-                            >
-                              作废
-                            </button>
-                          ) : (
-                            <span className="text-xs font-semibold text-stone-400">已结束</span>
-                          )}
-                        </HistoryCell>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="md:hidden">
-                {filteredHistoryGroups.map(({ entry, derivedEntries }, index) => (
-                  <article
-                    key={entry.id}
-                    className={cx('px-4 py-3', index !== filteredHistoryGroups.length - 1 && 'border-b border-stone-900/10')}
-                  >
-                    <div className="truncate text-sm font-semibold text-stone-950">{buildHistorySummary(entry, derivedEntries)}</div>
-                    <div className="mt-1 truncate text-xs text-stone-500">
-                      {formatEntryDate(entry.occurredAt)} · 记账 {formatPostedAt(entry.postedAt)} · {relatedEntityLabel(entry)}
-                    </div>
-                    <div className="mt-3 flex items-center justify-between gap-3">
-                      <div className="text-sm font-semibold text-stone-950">{formatCurrency(entry.amount)}</div>
-                      {entry.status !== 'voided' ? (
-                        <button
-                          type="button"
-                          disabled={props.isLocked}
-                          onClick={() => props.onVoid(entry.id)}
-                          className="rounded-full border border-stone-900/10 bg-stone-50 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          作废
-                        </button>
-                      ) : (
-                        <span className="text-xs font-semibold text-stone-400">已作废</span>
-                      )}
-                    </div>
-                  </article>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div className="mt-4 rounded-[24px] border border-dashed border-stone-900/10 bg-stone-50/80 px-4 py-10 text-center text-sm text-stone-500">
-              当前筛选条件下还没有记录。
-            </div>
-          )}
-        </>
-      ) : (
-        <div className="mt-5 rounded-[24px] border border-dashed border-stone-900/10 bg-stone-50/80 px-4 py-10 text-center text-sm text-stone-500">
-          当前期间还没有过账记录。
-        </div>
-      )}
-    </Panel>
-  )
-}
-
-function LedgerPill(props: { label: string; value: string; tone?: 'default' | 'accent'; dark?: boolean }) {
   return (
     <div
       className={cx(
         'rounded-[18px] border px-4 py-3',
+        props.layout === 'inline' && 'flex max-w-full items-center gap-3 overflow-hidden',
         props.dark
           ? props.tone === 'accent'
             ? 'border-amber-300/40 bg-amber-300/12'
@@ -1758,10 +1640,23 @@ function LedgerPill(props: { label: string; value: string; tone?: 'default' | 'a
             : 'border-stone-900/10 bg-white',
       )}
     >
-      <p className={props.dark ? 'text-xs font-semibold tracking-[0.16em] text-stone-400' : 'text-xs font-semibold tracking-[0.16em] text-stone-500'}>
+      <p
+        className={cx(
+          props.dark
+            ? 'text-xs font-semibold tracking-[0.16em] text-stone-400'
+            : 'text-xs font-semibold tracking-[0.16em] text-stone-500',
+          props.layout === 'inline' && 'shrink-0',
+        )}
+      >
         {props.label}
       </p>
-      <p className={cx('mt-1.5 text-sm font-semibold', props.dark ? (props.tone === 'accent' ? 'text-amber-200' : 'text-white') : 'text-stone-950')}>
+      <p
+        className={cx(
+          props.layout === 'inline' ? 'text-sm font-semibold' : 'mt-1.5 text-sm font-semibold',
+          props.layout === 'inline' && 'truncate',
+          props.dark ? (props.tone === 'accent' ? 'text-amber-200' : 'text-white') : 'text-stone-950',
+        )}
+      >
         {props.value}
       </p>
     </div>
@@ -1797,58 +1692,6 @@ function HistoryCell(props: { children: ReactNode; className?: string; align?: '
 
 function buildMemberPlanCaption(row: MemberRevenueRow) {
   return `${row.member.employmentType === 'salary' ? '底薪' : '兼职'} · 线${formatUnits(row.plannedOfflineUnits)} / 上${formatUnits(row.plannedOnlineUnits)} 张`
-}
-
-function allocationTitle(allocations: EntryAllocation[]) {
-  if (allocations.length === 0) return '未挂科目'
-  const keys = new Set(allocations.map((allocation) => allocation.subjectKey))
-  if (keys.has('revenue.offline_sales') && keys.has('revenue.online_sales') && keys.size === 2) return '团员营收'
-  return [...new Set(allocations.map((allocation) => allocation.subjectName))].join(' / ')
-}
-
-function summarizeDerivedEntries(entries: EntryResponse[]) {
-  return entries.map((entry) => `${allocationTitle(entry.allocations)} ${formatCurrency(entry.amount)}`).join(' / ')
-}
-
-function buildHistorySummary(entry: EntryResponse, derivedEntries: EntryResponse[]) {
-  return [allocationTitle(entry.allocations), entry.description, derivedEntries.length > 0 ? `自动提成 ${summarizeDerivedEntries(derivedEntries)}` : null]
-    .filter((part): part is string => Boolean(part))
-    .join(' · ')
-}
-
-function formatEntryDate(value: string | null) {
-  if (!value) return '未设置'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return '未设置'
-  return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit' }).format(date)
-}
-
-function formatPostedAt(value: string | null) {
-  if (!value) return '未过账'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return '未过账'
-  return `${new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit' }).format(date)} ${new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }).format(date)}`
-}
-
-function relatedEntityLabel(entry: EntryResponse) {
-  const parts = [entry.relatedEntityName, entry.counterparty].filter((value): value is string => Boolean(value))
-  return parts.length > 0 ? parts.join(' / ') : '无'
-}
-
-function matchesHistoryKeyword(entry: EntryResponse, derivedEntries: EntryResponse[], keyword: string) {
-  const haystack = [
-    allocationTitle(entry.allocations),
-    entry.description,
-    summarizeDerivedEntries(derivedEntries),
-    relatedEntityLabel(entry),
-    entry.counterparty,
-    entry.relatedEntityName,
-  ]
-    .filter((value): value is string => Boolean(value))
-    .join(' ')
-    .toLowerCase()
-
-  return haystack.includes(keyword)
 }
 
 function compareSubjects(left: SubjectResponse, right: SubjectResponse) {

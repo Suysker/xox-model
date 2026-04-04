@@ -25,12 +25,6 @@ const trainingColumns: Array<{ key: TrainingNumberKey; label: string; step: numb
   { key: 'teacherCost', label: '老师单价', step: 50 },
 ]
 
-const stageModeOrder: Record<StageCostMode, number> = {
-  perUnit: 0,
-  perEvent: 1,
-  monthly: 2,
-}
-
 function getStageHeaderLabel(mode: StageCostMode) {
   if (mode === 'perEvent') {
     return '单价 / 场次'
@@ -149,6 +143,36 @@ function PerUnitCostCell(props: {
   )
 }
 
+function MonthResetCell(props: {
+  label: string
+  resetLabel?: string | undefined
+  onReset?: (() => void) | undefined
+  tone?: 'default' | 'template' | undefined
+}) {
+  return (
+    <div className="flex items-start justify-between gap-2">
+      <span
+        className={
+          props.tone === 'template' ? 'font-semibold text-amber-900' : 'font-semibold text-stone-900'
+        }
+      >
+        {props.label}
+      </span>
+      {props.onReset ? (
+        <button
+          type="button"
+          onClick={props.onReset}
+          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-stone-900/10 bg-white text-stone-700 transition hover:bg-stone-100"
+          aria-label={props.resetLabel}
+          title={props.resetLabel}
+        >
+          <RefreshCcw className="h-3.5 w-3.5" />
+        </button>
+      ) : null}
+    </div>
+  )
+}
+
 export function CostOverridesEditor(props: {
   operating: ModelConfig['operating']
   teamMembers: TeamMember[]
@@ -173,12 +197,6 @@ export function CostOverridesEditor(props: {
 }) {
   const [tab, setTab] = useState<CostTab>('special')
   const orderedStageCostItems = props.stageCostItems
-    .map((item, index) => ({ item, index }))
-    .sort((left, right) => {
-      const modeGap = stageModeOrder[left.item.mode] - stageModeOrder[right.item.mode]
-      return modeGap !== 0 ? modeGap : left.index - right.index
-    })
-    .map((entry) => entry.item)
 
   return (
     <Panel>
@@ -246,13 +264,12 @@ export function CostOverridesEditor(props: {
                         {column.label}
                       </HeaderCell>
                     ))}
-                    <HeaderCell align="center">恢复</HeaderCell>
                   </tr>
                 </thead>
                 <tbody>
                   <tr className="border-b border-stone-900/10 bg-amber-50/60">
-                    <BodyCell align="center" className="font-semibold text-amber-900">
-                      默认
+                    <BodyCell align="left">
+                      <MonthResetCell label="默认" tone="template" />
                     </BodyCell>
                     {trainingColumns.map((column) => (
                       <BodyCell key={`template-${column.key}`} align="center">
@@ -267,15 +284,16 @@ export function CostOverridesEditor(props: {
                         />
                       </BodyCell>
                     ))}
-                    <BodyCell align="center" className="text-xs font-semibold text-stone-400">
-                      --
-                    </BodyCell>
                   </tr>
 
                   {props.months.map((month) => (
                     <tr key={month.id} className="border-b border-stone-900/10 last:border-none">
-                      <BodyCell align="center" className="font-semibold text-stone-900">
-                        {month.label}
+                      <BodyCell align="left">
+                        <MonthResetCell
+                          label={month.label}
+                          resetLabel={`恢复${month.label}训练默认值`}
+                          onReset={() => props.onResetMonthFromTemplate(month.id, 'training')}
+                        />
                       </BodyCell>
                       {trainingColumns.map((column) => (
                         <BodyCell key={`${month.id}-${column.key}`} align="center">
@@ -290,17 +308,6 @@ export function CostOverridesEditor(props: {
                           />
                         </BodyCell>
                       ))}
-                      <BodyCell align="center">
-                        <button
-                          type="button"
-                          onClick={() => props.onResetMonthFromTemplate(month.id, 'training')}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-stone-900/10 bg-white text-stone-700 transition hover:bg-stone-100"
-                          aria-label={`恢复${month.label}训练默认值`}
-                          title={`恢复${month.label}训练默认值`}
-                        >
-                          <RefreshCcw className="h-3.5 w-3.5" />
-                        </button>
-                      </BodyCell>
                     </tr>
                   ))}
                 </tbody>
@@ -311,14 +318,13 @@ export function CostOverridesEditor(props: {
 
       {tab === 'special' ? (
         <section className="mt-5 rounded-[24px] border border-stone-900/10 bg-stone-50/80 p-4">
-            <div className="rounded-[20px] border border-stone-900/10">
-              <table className="w-full table-fixed text-sm">
+            <div className="overflow-x-auto rounded-[20px] border border-stone-900/10 pb-1">
+              <table className="w-max min-w-full table-fixed text-sm">
                 <colgroup>
-                  <col className="w-[92px]" />
+                  <col className="w-[116px]" />
                   {orderedStageCostItems.map((item) => (
                     <col key={`${item.id}-column`} className="w-[138px]" />
                   ))}
-                  <col className="w-[84px]" />
                 </colgroup>
 
                 <thead className="bg-stone-100/90 text-stone-700">
@@ -361,9 +367,6 @@ export function CostOverridesEditor(props: {
                         </div>
                       </th>
                     ))}
-                    <HeaderCell align="center" rowSpan={2}>
-                      恢复
-                    </HeaderCell>
                   </tr>
                   <tr className="border-b border-stone-900/10">
                     {orderedStageCostItems.map((item) => (
@@ -376,8 +379,8 @@ export function CostOverridesEditor(props: {
 
                 <tbody>
                   <tr className="border-b border-stone-900/10 bg-amber-50/60">
-                    <BodyCell align="center" className="font-semibold text-amber-900">
-                      默认
+                    <BodyCell align="left">
+                      <MonthResetCell label="默认" tone="template" />
                     </BodyCell>
                     {orderedStageCostItems.map((item) => {
                       const value = getStageValue(props.template.specialCosts, item.id)
@@ -421,15 +424,16 @@ export function CostOverridesEditor(props: {
                         </BodyCell>
                       )
                     })}
-                    <BodyCell align="center" className="text-xs font-semibold text-stone-400">
-                      --
-                    </BodyCell>
                   </tr>
 
                   {props.months.map((month) => (
                     <tr key={month.id} className="border-b border-stone-900/10 last:border-none">
-                      <BodyCell align="center" className="font-semibold text-stone-900">
-                        {month.label}
+                      <BodyCell align="left">
+                        <MonthResetCell
+                          label={month.label}
+                          resetLabel={`恢复${month.label}专项默认值`}
+                          onReset={() => props.onResetMonthFromTemplate(month.id, 'special')}
+                        />
                       </BodyCell>
                       {orderedStageCostItems.map((item) => {
                         const value = getStageValue(month.specialCosts, item.id)
@@ -485,17 +489,6 @@ export function CostOverridesEditor(props: {
                           </BodyCell>
                         )
                       })}
-                      <BodyCell align="center">
-                        <button
-                          type="button"
-                          onClick={() => props.onResetMonthFromTemplate(month.id, 'special')}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-stone-900/10 bg-white text-stone-700 transition hover:bg-stone-100"
-                          aria-label={`恢复${month.label}专项默认值`}
-                          title={`恢复${month.label}专项默认值`}
-                        >
-                          <RefreshCcw className="h-3.5 w-3.5" />
-                        </button>
-                      </BodyCell>
                     </tr>
                   ))}
                 </tbody>

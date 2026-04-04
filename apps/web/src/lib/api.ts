@@ -183,6 +183,10 @@ const exactMessageTranslations: Record<string, string> = {
   'Allocations must equal the entry amount': '预算科目金额必须与录入金额一致。',
   'Member commission is derived automatically from posted member revenue': '成员提成会随成员收入自动计提，不需要手动录入。',
   'System-generated entry must be voided from its source entry': '自动生成的提成分录需要从对应收入记录里一起作废。',
+  'System-generated entry must be restored from its source entry': '自动生成的提成分录需要从对应收入记录里一起取消作废。',
+  'System-generated entry must be edited from its source entry': '自动生成的提成分录需要从对应收入记录里一起编辑。',
+  'Voided entry cannot be edited': '已作废的分录不能再编辑。',
+  'Entry is not voided': '这笔分录当前不是作废状态。',
   'Related entity not found in the current draft': '当前草稿里找不到这个关联对象，请先同步测算后再记账。',
   'Current draft does not expose member commission subject': '当前草稿缺少成员提成科目，无法自动计提。',
   'Baseline version does not expose member commission subject': '当前预算基线缺少成员提成科目，无法自动计提。',
@@ -320,8 +324,20 @@ export const api = {
     relatedEntityName?: string
     allocations: EntryAllocation[]
   }) => apiRequest<EntryResponse>('POST', '/api/v1/ledger/entries', payload),
+  updateEntry: (entryId: string, payload: {
+    amount: number
+    counterparty?: string
+    description?: string
+    occurredAt?: string
+    relatedEntityType?: 'teamMember' | 'employee'
+    relatedEntityId?: string
+    relatedEntityName?: string
+    allocations: EntryAllocation[]
+  }) => apiRequest<EntryResponse>('PATCH', `/api/v1/ledger/entries/${entryId}`, payload),
   voidEntry: (entryId: string) =>
     apiRequest<{ ok: boolean }>('POST', `/api/v1/ledger/entries/${entryId}/void`),
+  restoreEntry: (entryId: string) =>
+    apiRequest<{ ok: boolean }>('POST', `/api/v1/ledger/entries/${entryId}/restore`),
   getVariance: (periodId: string) =>
     apiRequest<VarianceResponse>('GET', `/api/v1/variance/periods/${periodId}`),
   getSharedVersion: (shareToken: string) =>

@@ -47,6 +47,7 @@
   - 若当前草稿已有月份但账期尚未生成，会按草稿自动补齐
 - `GET /api/v1/ledger/periods/{id}/subjects`
   - 返回该期间当前草稿计划对应的标准化预测科目
+  - 会包含少量计划值为 `0` 的通用挂账科目，例如 `退费退款`
 - `POST /api/v1/ledger/periods/{id}/lock`
 - `POST /api/v1/ledger/periods/{id}/unlock`
 - `GET /api/v1/ledger/entries?periodId=...`
@@ -55,8 +56,14 @@
   - 分摊总额必须等于分录金额
   - 分摊科目方向必须与 `direction` 一致
   - 锁定期间拒绝写入
+- `PATCH /api/v1/ledger/entries/{id}`
+  - 更新已过账的手工分录
+  - 自动生成的提成分录不能直接编辑，需要从源收入分录一起修改
 - `POST /api/v1/ledger/entries/{id}/void`
   - 锁定期间拒绝作废
+- `POST /api/v1/ledger/entries/{id}/restore`
+  - 锁定期间拒绝取消作废
+  - 自动生成的提成分录不能直接取消作废，需要从源收入分录一起恢复
 
 ## 预实分析
 

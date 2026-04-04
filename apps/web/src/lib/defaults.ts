@@ -63,6 +63,8 @@ export function createDefaultStageCostItems() {
   return [
     createStageCostItem('vj', { name: '舞台视觉', mode: 'monthly' }),
     createStageCostItem('original-song', { name: '原创', mode: 'monthly' }),
+    createStageCostItem('costume', { name: '服装', mode: 'monthly' }),
+    createStageCostItem('performance-fee', { name: '演出收费', mode: 'perEvent' }),
     createStageCostItem('makeup', { name: '化妆', mode: 'perEvent' }),
     createStageCostItem('streaming', { name: '推流', mode: 'perEvent' }),
     createStageCostItem('meal', { name: '聚餐', mode: 'perEvent' }),

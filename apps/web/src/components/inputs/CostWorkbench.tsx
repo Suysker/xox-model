@@ -34,6 +34,8 @@ const namedColors: Record<string, string> = {
   VJ: '#a855f7',
   舞台视觉: '#a855f7',
   原创: '#d946ef',
+  服装: '#8b5cf6',
+  演出收费: '#ef4444',
   耗材: '#eab308',
 }
 
