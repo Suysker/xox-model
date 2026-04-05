@@ -2,7 +2,7 @@ import { Coins, Plus, Trash2 } from 'lucide-react'
 import { monthLabelOptions } from '../../lib/defaults'
 import { formatCurrency, formatPercent } from '../../lib/format'
 import type { PlanningConfig, Shareholder } from '../../types'
-import { CompactNumberInput, HeaderCell, Panel, SectionTitle } from '../common/ui'
+import { CompactNumberInput, HeaderCell, InlineStatPill, Panel, SectionTitle } from '../common/ui'
 
 export function OperatingWorkbench(props: {
   shareholders: Shareholder[]
@@ -24,55 +24,57 @@ export function OperatingWorkbench(props: {
         eyebrow="输入"
         title="股东投资"
         aside={
-          <button
-            type="button"
-            onClick={props.onShareholderAdd}
-            className="inline-flex items-center justify-center gap-2 rounded-full border border-stone-900/10 bg-stone-950 px-4 py-2 text-sm font-medium text-white transition hover:bg-stone-800"
-          >
-            <Plus className="h-4 w-4" />
-            添加股东
-          </button>
+          <div className="flex flex-wrap items-center justify-end gap-3">
+            <label className="inline-flex min-w-[220px] items-center justify-between gap-3 rounded-[18px] border border-stone-900/10 bg-stone-50/90 px-4 py-3">
+              <span className="text-sm font-semibold text-stone-600">经营开始月份</span>
+              <select
+                className="h-10 w-[110px] shrink-0 rounded-xl border border-stone-900/10 bg-white px-3 text-sm font-medium text-stone-900 outline-none transition focus:border-emerald-500"
+                value={props.planning.startMonth}
+                onChange={(event) => props.onPlanningChange('startMonth', Number(event.target.value))}
+              >
+                {monthLabelOptions.map((label, index) => (
+                  <option key={label} value={index + 1}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="inline-flex min-w-[190px] items-center justify-between gap-3 rounded-[18px] border border-stone-900/10 bg-stone-50/90 px-4 py-3">
+              <span className="text-sm font-semibold text-stone-600">规划月数</span>
+              <CompactNumberInput
+                value={props.planning.horizonMonths}
+                min={1}
+                max={24}
+                step={1}
+                size="sm"
+                align="center"
+                suffix="月"
+                className="h-10 w-[108px] shrink-0 rounded-xl bg-white"
+                onChange={(value) => props.onPlanningChange('horizonMonths', value)}
+              />
+            </label>
+
+            <InlineStatPill label="总投资" value={formatCurrency(totalInvestment)} />
+            <InlineStatPill label="股东人数" value={`${props.shareholders.length} 人`} className="min-w-[150px]" />
+            <InlineStatPill
+              label="分红比例合计"
+              value={formatPercent(totalDividendRate)}
+              tone={Math.abs(totalDividendRate - 1) <= 0.001 ? 'ok' : 'warn'}
+              className="min-w-[188px]"
+            />
+
+            <button
+              type="button"
+              onClick={props.onShareholderAdd}
+              className="inline-flex h-[54px] items-center justify-center gap-2 rounded-full border border-stone-900/10 bg-stone-950 px-5 text-sm font-medium text-white transition hover:bg-stone-800"
+            >
+              <Plus className="h-4 w-4" />
+              添加股东
+            </button>
+          </div>
         }
       />
-
-      <div className="mt-5 grid gap-3 xl:grid-cols-[190px_170px_repeat(3,minmax(0,1fr))]">
-        <label className="grid gap-2 rounded-[18px] border border-stone-900/10 bg-stone-50/90 px-4 py-3">
-          <span className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">经营开始月份</span>
-          <select
-            className="h-10 rounded-xl border border-stone-900/10 bg-white px-3 text-sm font-medium text-stone-900 outline-none transition focus:border-emerald-500"
-            value={props.planning.startMonth}
-            onChange={(event) => props.onPlanningChange('startMonth', Number(event.target.value))}
-          >
-            {monthLabelOptions.map((label, index) => (
-              <option key={label} value={index + 1}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="grid gap-2 rounded-[18px] border border-stone-900/10 bg-stone-50/90 px-4 py-3">
-          <span className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">规划月数</span>
-          <CompactNumberInput
-            value={props.planning.horizonMonths}
-            min={1}
-            max={24}
-            step={1}
-            size="sm"
-            align="center"
-            suffix="月"
-            onChange={(value) => props.onPlanningChange('horizonMonths', value)}
-          />
-        </label>
-
-        <SummaryPill label="总投资" value={formatCurrency(totalInvestment)} />
-        <SummaryPill label="股东人数" value={`${props.shareholders.length} 人`} />
-        <SummaryPill
-          label="分红比例合计"
-          value={formatPercent(totalDividendRate)}
-          tone={Math.abs(totalDividendRate - 1) <= 0.001 ? 'ok' : 'warn'}
-        />
-      </div>
 
       <div className="mt-5 rounded-[24px] border border-stone-900/10 bg-white">
         <table className="w-full table-fixed text-sm">
@@ -138,26 +140,5 @@ export function OperatingWorkbench(props: {
         </table>
       </div>
     </Panel>
-  )
-}
-
-function SummaryPill(props: {
-  label: string
-  value: string
-  tone?: 'default' | 'ok' | 'warn' | undefined
-}) {
-  return (
-    <div
-      className={
-        props.tone === 'ok'
-          ? 'rounded-[18px] border border-emerald-200 bg-emerald-50 px-4 py-3'
-          : props.tone === 'warn'
-            ? 'rounded-[18px] border border-amber-200 bg-amber-50 px-4 py-3'
-            : 'rounded-[18px] border border-stone-900/10 bg-stone-50/90 px-4 py-3'
-      }
-    >
-      <p className="text-xs uppercase tracking-[0.18em] text-stone-500">{props.label}</p>
-      <p className="mt-1.5 text-lg font-bold text-stone-950">{props.value}</p>
-    </div>
   )
 }

@@ -2,9 +2,10 @@ import { Building2, Lock, LockOpen, ReceiptText, WalletCards } from 'lucide-reac
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode, RefObject } from 'react'
 import type { EntryAllocation, EntryResponse, PeriodResponse, SubjectResponse } from '../../lib/api'
+import { findPeriodIdForDateValue, getTodayInputDate, syncInputDateForPeriodChange } from '../../lib/bookkeeping'
 import { cx, formatCurrency } from '../../lib/format'
 import type { MonthlyScenarioResult } from '../../types'
-import { CompactNumberInput, Panel, SectionTitle, SegmentTabs, StatCard } from '../common/ui'
+import { CompactNumberInput, InlineStatPill, Panel, SectionTitle, SegmentTabs } from '../common/ui'
 import { HistorySection } from './HistorySection'
 
 export type BookkeepingSubmitPayload = {
@@ -68,6 +69,34 @@ type HistoryGroup = {
   derivedEntries: EntryResponse[]
 }
 
+export function summarizePostedAmounts(entries: EntryResponse[]) {
+  const bySubject = new Map<string, number>()
+  const bySubjectAndEntity = new Map<string, number>()
+  const standaloneBySubject = new Map<string, number>()
+
+  entries.forEach((entry) => {
+    if (entry.status === 'voided') return
+
+    const isStandaloneManualEntry = entry.entryOrigin !== 'derived' && !entry.relatedEntityId
+
+    entry.allocations.forEach((allocation) => {
+      bySubject.set(allocation.subjectKey, (bySubject.get(allocation.subjectKey) ?? 0) + allocation.amount)
+
+      const entityKey = `${allocation.subjectKey}:${entry.relatedEntityId ?? 'none'}`
+      bySubjectAndEntity.set(entityKey, (bySubjectAndEntity.get(entityKey) ?? 0) + allocation.amount)
+
+      if (isStandaloneManualEntry) {
+        standaloneBySubject.set(
+          allocation.subjectKey,
+          (standaloneBySubject.get(allocation.subjectKey) ?? 0) + allocation.amount,
+        )
+      }
+    })
+  })
+
+  return { bySubject, bySubjectAndEntity, standaloneBySubject }
+}
+
 const directionTabs: Array<{ value: 'income' | 'expense'; label: string }> = [
   { value: 'income', label: '记收入' },
   { value: 'expense', label: '记支出' },
@@ -120,6 +149,7 @@ export function BookkeepingPanel(props: {
   const incomeOccurredOnInputRef = useRef<HTMLInputElement | null>(null)
   const otherIncomeOccurredOnInputRef = useRef<HTMLInputElement | null>(null)
   const expenseOccurredOnInputRef = useRef<HTMLInputElement | null>(null)
+  const previousPeriodIdRef = useRef<string | null>(props.selectedPeriodId || null)
 
   const selectedPeriod = props.periods.find((period) => period.id === props.selectedPeriodId) ?? null
   const isLocked = selectedPeriod?.status === 'locked'
@@ -169,28 +199,8 @@ export function BookkeepingPanel(props: {
   )
   const selectedSubject = subjectOptions.find((subject) => subject.subjectKey === selectedSubjectKey) ?? null
 
-  const postedAmountsBySubject = useMemo(() => {
-    const next = new Map<string, number>()
-    props.entries.forEach((entry) => {
-      if (entry.status === 'voided') return
-      entry.allocations.forEach((allocation) => {
-        next.set(allocation.subjectKey, (next.get(allocation.subjectKey) ?? 0) + allocation.amount)
-      })
-    })
-    return next
-  }, [props.entries])
-
-  const postedAmountsBySubjectAndEntity = useMemo(() => {
-    const next = new Map<string, number>()
-    props.entries.forEach((entry) => {
-      if (entry.status === 'voided') return
-      entry.allocations.forEach((allocation) => {
-        const key = `${allocation.subjectKey}:${entry.relatedEntityId ?? 'none'}`
-        next.set(key, (next.get(key) ?? 0) + allocation.amount)
-      })
-    })
-    return next
-  }, [props.entries])
+  const { bySubject: postedAmountsBySubject, bySubjectAndEntity: postedAmountsBySubjectAndEntity, standaloneBySubject } =
+    useMemo(() => summarizePostedAmounts(props.entries), [props.entries])
 
   const relatedOptions = useMemo(
     () => buildRelatedEntityOptions(selectedSubjectKey, props.plannedMonthResult),
@@ -213,7 +223,7 @@ export function BookkeepingPanel(props: {
   const onlineRevenueSubject = otherEntrySubjects.find((subject) => subject.subjectKey === 'revenue.online_sales') ?? null
   const selectedOtherIncomeSubject = otherEntrySubjects.find((subject) => subject.subjectKey === otherIncomeSubjectKey) ?? null
   const otherIncomePostedAmount = selectedOtherIncomeSubject
-    ? postedAmountsBySubject.get(selectedOtherIncomeSubject.subjectKey) ?? 0
+    ? standaloneBySubject.get(selectedOtherIncomeSubject.subjectKey) ?? 0
     : 0
   const otherIncomeCanSubmit = Boolean(selectedOtherIncomeSubject && otherIncomeAmount > 0 && !props.loading && !isLocked)
   const showMemberExpenseTable = direction === 'expense' && getRelatedEntityType(selectedSubjectKey) === 'teamMember' && Boolean(selectedSubject)
@@ -346,6 +356,26 @@ export function BookkeepingPanel(props: {
   }, [props.selectedPeriodId])
 
   useEffect(() => {
+    if (!selectedPeriod) {
+      previousPeriodIdRef.current = props.selectedPeriodId || null
+      return
+    }
+
+    const previousPeriodId = previousPeriodIdRef.current
+    previousPeriodIdRef.current = props.selectedPeriodId || null
+    const fallbackDate = getTodayInputDate()
+    setIncomeOccurredOn((current) =>
+      syncInputDateForPeriodChange(current, previousPeriodId, props.selectedPeriodId, selectedPeriod.monthLabel, fallbackDate),
+    )
+    setOtherIncomeOccurredOn((current) =>
+      syncInputDateForPeriodChange(current, previousPeriodId, props.selectedPeriodId, selectedPeriod.monthLabel, fallbackDate),
+    )
+    setExpenseOccurredOn((current) =>
+      syncInputDateForPeriodChange(current, previousPeriodId, props.selectedPeriodId, selectedPeriod.monthLabel, fallbackDate),
+    )
+  }, [props.selectedPeriodId, selectedPeriod])
+
+  useEffect(() => {
     if (direction !== 'income') {
       return
     }
@@ -386,6 +416,28 @@ export function BookkeepingPanel(props: {
       setRelatedEntityId('')
     }
   }, [amount, relatedEntityId, relatedOptions, selectedSubject])
+
+  function syncSelectedPeriodToOccurredOn(dateValue: string) {
+    const nextPeriodId = findPeriodIdForDateValue(props.periods, dateValue, props.selectedPeriodId)
+    if (nextPeriodId && nextPeriodId !== props.selectedPeriodId) {
+      props.onSelectPeriod(nextPeriodId)
+    }
+  }
+
+  function handleIncomeOccurredOnChange(value: string) {
+    setIncomeOccurredOn(value)
+    syncSelectedPeriodToOccurredOn(value)
+  }
+
+  function handleOtherIncomeOccurredOnChange(value: string) {
+    setOtherIncomeOccurredOn(value)
+    syncSelectedPeriodToOccurredOn(value)
+  }
+
+  function handleExpenseOccurredOnChange(value: string) {
+    setExpenseOccurredOn(value)
+    syncSelectedPeriodToOccurredOn(value)
+  }
 
   function handleSubjectSelect(subject: SubjectResponse) {
     setSelectedSubjectKey(subject.subjectKey)
@@ -637,51 +689,57 @@ export function BookkeepingPanel(props: {
           eyebrow="记账"
           title="本期账本"
           aside={
-            selectedPeriod ? (
-              <button
-                type="button"
-                onClick={props.onToggleLock}
-                className="inline-flex items-center gap-2 rounded-full border border-stone-900/10 bg-white px-4 py-2 text-sm font-semibold text-stone-700"
-              >
-                {isLocked ? <LockOpen className="h-4 w-4" /> : <Lock className="h-4 w-4" />}
-                {isLocked ? '解锁期间' : '锁定期间'}
-              </button>
+            props.periods.length > 0 ? (
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <div className="flex flex-wrap justify-end gap-2">
+                  {props.periods.map((period) => (
+                    <button
+                      key={period.id}
+                      type="button"
+                      onClick={() => props.onSelectPeriod(period.id)}
+                      className={
+                        props.selectedPeriodId === period.id
+                          ? 'rounded-full border border-stone-950 bg-stone-950 px-4 py-2 text-sm font-semibold text-white'
+                          : 'rounded-full border border-stone-900/10 bg-stone-50 px-4 py-2 text-sm font-semibold text-stone-700'
+                      }
+                    >
+                      {period.monthLabel}
+                    </button>
+                  ))}
+                </div>
+                {selectedPeriod ? (
+                  <button
+                    type="button"
+                    onClick={props.onToggleLock}
+                    className="inline-flex items-center gap-2 rounded-full border border-stone-900/10 bg-white px-4 py-2 text-sm font-semibold text-stone-700"
+                  >
+                    {isLocked ? <LockOpen className="h-4 w-4" /> : <Lock className="h-4 w-4" />}
+                    {isLocked ? '解锁期间' : '锁定期间'}
+                  </button>
+                ) : null}
+              </div>
             ) : null
           }
         />
 
-        <div className="mt-5 flex flex-wrap gap-2">
-          {props.periods.map((period) => (
-            <button
-              key={period.id}
-              type="button"
-              onClick={() => props.onSelectPeriod(period.id)}
-              className={
-                props.selectedPeriodId === period.id
-                  ? 'rounded-full border border-stone-950 bg-stone-950 px-4 py-2 text-sm font-semibold text-white'
-                  : 'rounded-full border border-stone-900/10 bg-stone-50 px-4 py-2 text-sm font-semibold text-stone-700'
-              }
-            >
-              {period.monthLabel}
-            </button>
-          ))}
-        </div>
-
         {selectedPeriod ? (
-          <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <StatCard label="计划收入" value={formatCurrency(selectedPeriod.plannedRevenue)} />
-            <StatCard label="计划成本" value={formatCurrency(selectedPeriod.plannedCost)} />
-            <StatCard label="实际收入" value={formatCurrency(selectedPeriod.actualRevenue)} />
-            <StatCard label="实际成本" value={formatCurrency(selectedPeriod.actualCost)} />
+          <div className="mt-4 flex flex-wrap gap-2.5">
+            <InlineStatPill label="计划收入" value={formatCurrency(selectedPeriod.plannedRevenue)} />
+            <InlineStatPill label="计划成本" value={formatCurrency(selectedPeriod.plannedCost)} />
+            <InlineStatPill label="实际收入" value={formatCurrency(selectedPeriod.actualRevenue)} />
+            <InlineStatPill label="实际成本" value={formatCurrency(selectedPeriod.actualCost)} />
           </div>
         ) : null}
       </Panel>
 
       <Panel>
-        <SectionTitle icon={WalletCards} eyebrow="录入" title="记一笔" />
+        <SectionTitle
+          icon={WalletCards}
+          eyebrow="录入"
+          title="记一笔"
+          aside={<SegmentTabs value={direction} items={directionTabs} onChange={setDirection} />}
+        />
         <div className="mt-5 space-y-4">
-          <SegmentTabs value={direction} items={directionTabs} onChange={setDirection} />
-
           {direction === 'income' ? (
             <>
               <IncomeEntrySection
@@ -696,7 +754,7 @@ export function BookkeepingPanel(props: {
                 pendingCount={pendingMemberRevenueCount}
                 isLocked={isLocked}
                 loading={props.loading}
-                onOccurredOnChange={setIncomeOccurredOn}
+                onOccurredOnChange={handleIncomeOccurredOnChange}
                 onMemberUnitsChange={setMemberDraftUnits}
                 onFillPlannedMember={fillPlannedMemberUnits}
                 onSubmitAll={() => void handleSubmitAllMemberIncome()}
@@ -709,7 +767,7 @@ export function BookkeepingPanel(props: {
                 postedAmount={otherIncomePostedAmount}
                 occurredOn={otherIncomeOccurredOn}
                 occurredOnInputRef={otherIncomeOccurredOnInputRef}
-                onOccurredOnChange={setOtherIncomeOccurredOn}
+                onOccurredOnChange={handleOtherIncomeOccurredOnChange}
                 amount={otherIncomeAmount}
                 onAmountChange={setOtherIncomeAmount}
                 counterparty={otherIncomeCounterparty}
@@ -753,7 +811,7 @@ export function BookkeepingPanel(props: {
               memberExpensePendingCount={pendingMemberExpenseCount}
               expenseOccurredOn={expenseOccurredOn}
               expenseOccurredOnInputRef={expenseOccurredOnInputRef}
-              onExpenseOccurredOnChange={setExpenseOccurredOn}
+              onExpenseOccurredOnChange={handleExpenseOccurredOnChange}
               amount={amount}
               onAmountChange={setAmount}
               counterparty={counterparty}
@@ -834,31 +892,32 @@ function ExpenseComposer(props: {
 }) {
   return (
     <>
-      {props.categoryOptions.length > 1 ? (
-        <div className="flex flex-wrap gap-2">
-          {props.categoryOptions.map((item) => (
-            <button
-              key={item.value}
-              type="button"
-              disabled={props.isLocked}
-              onClick={() => props.onSelectCategory(item.value)}
-              className={cx(
-                'rounded-full border px-3 py-2 text-sm font-semibold transition',
-                props.selectedCategory === item.value
-                  ? 'border-amber-300 bg-amber-100 text-amber-800'
-                  : 'border-stone-900/10 bg-stone-50 text-stone-600 hover:bg-white',
-                props.isLocked && 'cursor-not-allowed opacity-60',
-              )}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
-      ) : null}
-
       <section className="rounded-[24px] border border-stone-900/10 bg-stone-50/80 p-4">
-        <div className="flex items-center justify-between gap-3">
-          <h3 className="text-lg font-semibold text-stone-950">先选预算科目</h3>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <h3 className="text-lg font-semibold text-stone-950">先选预算科目</h3>
+            {props.categoryOptions.length > 1 ? (
+              <div className="flex flex-wrap gap-2">
+                {props.categoryOptions.map((item) => (
+                  <button
+                    key={item.value}
+                    type="button"
+                    disabled={props.isLocked}
+                    onClick={() => props.onSelectCategory(item.value)}
+                    className={cx(
+                      'rounded-full border px-3 py-2 text-sm font-semibold transition',
+                      props.selectedCategory === item.value
+                        ? 'border-amber-300 bg-amber-100 text-amber-800'
+                        : 'border-stone-900/10 bg-stone-50 text-stone-600 hover:bg-white',
+                      props.isLocked && 'cursor-not-allowed opacity-60',
+                    )}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
           <span className="rounded-full border border-stone-900/10 bg-white px-3 py-1 text-xs font-semibold text-stone-600">
             {props.visibleSubjects.length} 项
           </span>
@@ -1101,24 +1160,18 @@ function IncomeEntrySection(props: {
     <section className="rounded-[24px] border border-stone-900/10 bg-stone-50/80 p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h3 className="text-lg font-semibold text-stone-950">团员收入台账</h3>
-        <div className="flex flex-wrap items-end gap-2">
-          <label className="grid gap-1">
-            <span className="text-xs font-semibold tracking-[0.16em] text-stone-500">业务发生日</span>
-            <input
-              ref={props.occurredOnInputRef}
-              type="date"
-              value={props.occurredOn}
-              disabled={props.isLocked}
-              onInput={(event) => props.onOccurredOnChange((event.target as HTMLInputElement).value)}
-              onChange={(event) => props.onOccurredOnChange(event.target.value)}
-              className="h-10 rounded-2xl border border-stone-900/10 bg-white px-3 text-sm font-semibold text-stone-900 outline-none transition focus:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
-            />
-          </label>
-          <LedgerPill label="计划总收入" value={formatCurrency(props.plannedRevenue)} />
-          <LedgerPill label="线下计划" value={`${formatUnits(props.plannedOfflineUnits)} 张`} />
-          <LedgerPill label="线上计划" value={`${formatUnits(props.plannedOnlineUnits)} 张`} />
-          <LedgerPill label="已记总收入" value={formatCurrency(props.postedAmount)} />
-          <LedgerPill label="待生成提成" value={formatCurrency(props.draftCommission)} tone="accent" />
+        <div className="flex flex-wrap items-center gap-2">
+          <LedgerDatePill
+            value={props.occurredOn}
+            inputRef={props.occurredOnInputRef}
+            disabled={props.isLocked}
+            onChange={props.onOccurredOnChange}
+          />
+          <LedgerPill label="计划总收入" value={formatCurrency(props.plannedRevenue)} layout="inline" />
+          <LedgerPill label="线下计划" value={`${formatUnits(props.plannedOfflineUnits)} 张`} layout="inline" />
+          <LedgerPill label="线上计划" value={`${formatUnits(props.plannedOnlineUnits)} 张`} layout="inline" />
+          <LedgerPill label="本期已记" value={formatCurrency(props.postedAmount)} layout="inline" />
+          <LedgerPill label="待生成提成" value={formatCurrency(props.draftCommission)} tone="accent" layout="inline" />
           <button
             type="button"
             disabled={props.isLocked || props.pendingCount === 0 || props.loading}
@@ -1320,22 +1373,16 @@ function MemberExpenseEntrySection(props: {
     <section className="rounded-[24px] border border-stone-900/10 bg-stone-50/80 p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h3 className="text-lg font-semibold text-stone-950">{props.subject ? `${props.subject.subjectName}台账` : '成员支出台账'}</h3>
-        <div className="flex flex-wrap items-end gap-2">
-          <label className="grid gap-1">
-            <span className="text-xs font-semibold tracking-[0.16em] text-stone-500">业务发生日</span>
-            <input
-              ref={props.occurredOnInputRef}
-              type="date"
-              value={props.occurredOn}
-              disabled={props.isLocked}
-              onInput={(event) => props.onOccurredOnChange((event.target as HTMLInputElement).value)}
-              onChange={(event) => props.onOccurredOnChange(event.target.value)}
-              className="h-10 rounded-2xl border border-stone-900/10 bg-white px-3 text-sm font-semibold text-stone-900 outline-none transition focus:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
-            />
-          </label>
-          <LedgerPill label="计划合计" value={formatCurrency(props.plannedAmount)} />
-          <LedgerPill label="本期已记" value={formatCurrency(props.postedAmount)} />
-          <LedgerPill label="待入账" value={formatCurrency(props.draftAmount)} tone="accent" />
+        <div className="flex flex-wrap items-center gap-2">
+          <LedgerDatePill
+            value={props.occurredOn}
+            inputRef={props.occurredOnInputRef}
+            disabled={props.isLocked}
+            onChange={props.onOccurredOnChange}
+          />
+          <LedgerPill label="计划合计" value={formatCurrency(props.plannedAmount)} layout="inline" />
+          <LedgerPill label="本期已记" value={formatCurrency(props.postedAmount)} layout="inline" />
+          <LedgerPill label="待入账" value={formatCurrency(props.draftAmount)} tone="accent" layout="inline" />
           <button
             type="button"
             disabled={props.isLocked || props.pendingCount === 0 || props.loading}
@@ -1495,8 +1542,23 @@ function OtherIncomeComposer(props: {
   return (
     <section className="rounded-[24px] border border-stone-900/10 bg-stone-50/80 p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
           <h3 className="text-lg font-semibold text-stone-950">其他收支</h3>
+          <LedgerPill
+            label="本期已记"
+            value={props.selectedSubject ? formatCurrency(props.postedAmount) : '无'}
+            layout="inline"
+          />
+          <LedgerPill
+            label="口径说明"
+            value={
+              props.selectedSubject?.subjectKey === 'cost.other.refund'
+                ? '退费退款记收入；不挂团员，不自动计提提成'
+                : '商业演出 / 一次性回款 / 赞助回款；不挂团员，不自动计提提成'
+            }
+            tone="accent"
+            layout="inline"
+          />
         </div>
         <button
           type="button"
@@ -1506,24 +1568,6 @@ function OtherIncomeComposer(props: {
         >
           {props.showDetails ? '收起对方与备注' : '补充对方与备注'}
         </button>
-      </div>
-
-      <div className="mt-4 flex flex-wrap items-center gap-2">
-        <LedgerPill
-          label="本期已记"
-          value={props.selectedSubject ? formatCurrency(props.postedAmount) : '无'}
-          layout="inline"
-        />
-        <LedgerPill
-          label="口径说明"
-          value={
-            props.selectedSubject?.subjectType === 'cost'
-              ? '退费退款走支出；不挂团员，不自动计提提成'
-              : '商业演出 / 一次性回款 / 赞助回款；不挂团员，不自动计提提成'
-          }
-          tone="accent"
-          layout="inline"
-        />
       </div>
 
       <div className="mt-4 grid gap-3 xl:grid-cols-[200px_170px_170px_minmax(0,1fr)_144px] xl:items-end">
@@ -1572,8 +1616,8 @@ function OtherIncomeComposer(props: {
 
         <div className="flex min-h-11 items-center text-sm font-medium text-stone-500">
           {props.selectedSubject
-            ? props.selectedSubject.subjectType === 'cost'
-              ? '这笔记录会直接挂到退费退款科目，适合录售后退款或退费。'
+            ? props.selectedSubject.subjectKey === 'cost.other.refund'
+              ? '这笔记录会直接挂到退费退款科目，适合录退费回款或退款返还。'
               : '这笔记录会直接挂到所选营收科目，适合录商业演出或一次性回款。'
             : '先选择一个挂账科目，再录入金额。'}
         </div>
@@ -1660,6 +1704,28 @@ function LedgerPill(props: {
         {props.value}
       </p>
     </div>
+  )
+}
+
+function LedgerDatePill(props: {
+  value: string
+  inputRef: RefObject<HTMLInputElement | null>
+  disabled: boolean
+  onChange: (value: string) => void
+}) {
+  return (
+    <label className="flex items-center gap-3 rounded-[18px] border border-stone-900/10 bg-white px-4 py-3">
+      <span className="shrink-0 text-xs font-semibold tracking-[0.16em] text-stone-500">业务发生日</span>
+      <input
+        ref={props.inputRef}
+        type="date"
+        value={props.value}
+        disabled={props.disabled}
+        onInput={(event) => props.onChange((event.target as HTMLInputElement).value)}
+        onChange={(event) => props.onChange(event.target.value)}
+        className="h-7 min-w-[132px] bg-transparent text-sm font-semibold text-stone-900 outline-none transition disabled:cursor-not-allowed disabled:opacity-60"
+      />
+    </label>
   )
 }
 
@@ -1755,12 +1821,6 @@ function roundMoney(value: number) {
 
 function formatUnits(value: number) {
   return Math.abs(value - Math.round(value)) < 0.001 ? String(Math.round(value)) : value.toFixed(1)
-}
-
-function getTodayInputDate() {
-  const now = new Date()
-  const localDate = new Date(now.getTime() - now.getTimezoneOffset() * 60_000)
-  return localDate.toISOString().slice(0, 10)
 }
 
 function toOccurredAtIso(dateValue: string) {

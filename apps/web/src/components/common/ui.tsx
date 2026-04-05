@@ -29,7 +29,7 @@ export function SectionTitle(props: {
   const Icon = props.icon
 
   return (
-    <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+    <div className="flex flex-col gap-4 md:flex-row md:flex-wrap md:items-start md:justify-between">
       <div className="flex items-start gap-3">
         <div
           className={
@@ -40,19 +40,21 @@ export function SectionTitle(props: {
         >
           <Icon className="h-5 w-5" />
         </div>
-        <div className="space-y-2">
-          <p
-            className={
-              props.dark
-                ? 'text-xs font-semibold uppercase tracking-[0.28em] text-stone-400'
-                : 'text-xs font-semibold uppercase tracking-[0.28em] text-stone-500'
-            }
-          >
-            {props.eyebrow}
-          </p>
-          <h2 className={props.dark ? 'text-2xl font-bold text-white' : 'text-2xl font-bold text-stone-950'}>
-            {props.title}
-          </h2>
+        <div className="min-w-0 space-y-2">
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <p
+              className={
+                props.dark
+                  ? 'shrink-0 text-xs font-semibold uppercase tracking-[0.28em] text-stone-400'
+                  : 'shrink-0 text-xs font-semibold uppercase tracking-[0.28em] text-stone-500'
+              }
+            >
+              {props.eyebrow}
+            </p>
+            <h2 className={cx('min-w-0', props.dark ? 'text-2xl font-bold text-white' : 'text-2xl font-bold text-stone-950')}>
+              {props.title}
+            </h2>
+          </div>
           {props.description ? (
             <p
               className={props.dark ? 'max-w-4xl text-sm leading-7 text-stone-300' : 'max-w-4xl text-sm leading-7 text-stone-600'}
@@ -62,7 +64,7 @@ export function SectionTitle(props: {
           ) : null}
         </div>
       </div>
-      {props.aside ? <div className="shrink-0">{props.aside}</div> : null}
+      {props.aside ? <div className="min-w-0 md:ml-auto">{props.aside}</div> : null}
     </div>
   )
 }
@@ -71,27 +73,78 @@ export function StatCard(props: {
   label: string
   value: string
   dark?: boolean | undefined
+  layout?: 'stacked' | 'inline' | undefined
 }) {
+  const inline = props.layout === 'inline'
+
   return (
     <div
-      className={
+      className={cx(
         props.dark
           ? 'rounded-[22px] border border-white/10 bg-white/5 p-4'
-          : 'rounded-[22px] border border-stone-900/10 bg-stone-50/90 p-4'
-      }
+          : 'rounded-[22px] border border-stone-900/10 bg-stone-50/90 p-4',
+        inline && 'flex items-center justify-between gap-4',
+      )}
     >
       <p
-        className={
+        className={cx(
           props.dark
-            ? 'text-xs uppercase tracking-[0.2em] text-stone-400'
-            : 'text-xs uppercase tracking-[0.2em] text-stone-500'
-        }
+            ? inline
+              ? 'text-sm font-semibold text-stone-300'
+              : 'text-xs uppercase tracking-[0.2em] text-stone-400'
+            : inline
+              ? 'text-sm font-semibold text-stone-600'
+              : 'text-xs uppercase tracking-[0.2em] text-stone-500',
+          inline && 'whitespace-nowrap',
+        )}
       >
         {props.label}
       </p>
-      <p className={props.dark ? 'mt-2 text-lg font-bold text-white' : 'mt-2 text-lg font-bold text-stone-950'}>
+      <p
+        className={cx(
+          props.dark ? 'text-lg font-bold text-white' : 'text-lg font-bold text-stone-950',
+          !inline && 'mt-2',
+          inline && 'whitespace-nowrap',
+        )}
+      >
         {props.value}
       </p>
+    </div>
+  )
+}
+
+export function InlineStatPill(props: {
+  label: string
+  value: string
+  tone?: 'default' | 'ok' | 'warn' | 'accent' | undefined
+  dark?: boolean | undefined
+  className?: string | undefined
+}) {
+  const lightToneClass =
+    props.tone === 'ok'
+      ? 'border-emerald-200 bg-emerald-50'
+      : props.tone === 'warn'
+        ? 'border-amber-200 bg-amber-50'
+        : props.tone === 'accent'
+          ? 'border-sky-200 bg-sky-50'
+          : 'border-stone-900/10 bg-stone-50/90'
+  const darkToneClass =
+    props.tone === 'accent' ? 'border-amber-300/30 bg-amber-300/12' : 'border-white/10 bg-white/5'
+
+  return (
+    <div
+      className={cx(
+        'inline-flex min-w-[170px] items-center justify-between gap-4 rounded-[18px] border px-4 py-3 whitespace-nowrap',
+        props.dark ? darkToneClass : lightToneClass,
+        props.className,
+      )}
+    >
+      <span className={props.dark ? 'text-sm font-semibold text-stone-300' : 'text-sm font-semibold text-stone-600'}>
+        {props.label}
+      </span>
+      <span className={props.dark ? 'text-lg font-bold text-white' : 'text-lg font-bold text-stone-950'}>
+        {props.value}
+      </span>
     </div>
   )
 }

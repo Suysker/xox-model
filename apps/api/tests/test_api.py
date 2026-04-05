@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from copy import deepcopy
+from datetime import datetime
 import os
 from pathlib import Path
 
@@ -38,6 +40,25 @@ def login_user(client: TestClient, *, email: str) -> dict:
 
 def app_session(client: TestClient):
     return client.app.state.db_factory()
+
+
+def resize_draft_horizon(config: dict, horizon_months: int) -> dict:
+    from app.defaults import get_month_label
+
+    next_config = deepcopy(config)
+    source_months = next_config["months"]
+    fallback_month = deepcopy(source_months[-1])
+    next_months = []
+
+    for month_index in range(horizon_months):
+        month = deepcopy(source_months[month_index] if month_index < len(source_months) else fallback_month)
+        month["id"] = f"month-test-{month_index + 1}"
+        month["label"] = get_month_label(next_config["planning"]["startMonth"], month_index)
+        next_months.append(month)
+
+    next_config["planning"]["horizonMonths"] = horizon_months
+    next_config["months"] = next_months
+    return next_config
 
 
 def test_run_migrations_is_repeatable(tmp_path: Path) -> None:
@@ -164,7 +185,7 @@ def test_ledger_is_available_from_current_draft_without_release(tmp_path: Path) 
     assert "revenue.offline_sales" in subject_map
     assert "cost.training.rehearsal" in subject_map
     assert subject_map["cost.other.refund"]["subjectName"] == "退费退款"
-    assert subject_map["cost.other.refund"]["subjectType"] == "cost"
+    assert subject_map["cost.other.refund"]["subjectType"] == "revenue"
 
     create_entry = client.post(
         "/api/v1/ledger/entries",
@@ -184,9 +205,69 @@ def test_ledger_is_available_from_current_draft_without_release(tmp_path: Path) 
     )
     assert create_entry.status_code == 200
 
+    refund_entry = client.post(
+        "/api/v1/ledger/entries",
+        json={
+            "ledgerPeriodId": period["id"],
+            "direction": "income",
+            "amount": 50,
+            "allocations": [
+                {
+                    "subjectKey": "cost.other.refund",
+                    "subjectName": subject_map["cost.other.refund"]["subjectName"],
+                    "subjectType": subject_map["cost.other.refund"]["subjectType"],
+                    "amount": 50,
+                }
+            ],
+        },
+    )
+    assert refund_entry.status_code == 200
+
     variance = client.get(f"/api/v1/variance/periods/{period['id']}")
     assert variance.status_code == 200
+    assert variance.json()["actualRevenue"] == 50
     assert variance.json()["actualCost"] == 120
+
+
+def test_ledger_periods_follow_current_draft_horizon_when_shrinking(tmp_path: Path) -> None:
+    client = build_client(tmp_path / "ledger-horizon.db")
+    register_user(client, email="ledger-horizon@example.com", display_name="Finance")
+
+    initial_draft = client.get("/api/v1/workspace/draft")
+    assert initial_draft.status_code == 200
+    initial_payload = initial_draft.json()
+
+    expand_config = resize_draft_horizon(initial_payload["config"], 24)
+    expanded = client.patch(
+        "/api/v1/workspace/draft",
+        json={
+            "revision": initial_payload["revision"],
+            "workspaceName": initial_payload["workspaceName"],
+            "config": expand_config,
+        },
+    )
+    assert expanded.status_code == 200
+
+    expanded_periods = client.get("/api/v1/ledger/periods")
+    assert expanded_periods.status_code == 200
+    assert len(expanded_periods.json()) == 24
+    assert expanded_periods.json()[-1]["monthIndex"] == 24
+
+    shrink_config = resize_draft_horizon(expanded.json()["config"], 12)
+    shrunk = client.patch(
+        "/api/v1/workspace/draft",
+        json={
+            "revision": expanded.json()["revision"],
+            "workspaceName": expanded.json()["workspaceName"],
+            "config": shrink_config,
+        },
+    )
+    assert shrunk.status_code == 200
+
+    shrunk_periods = client.get("/api/v1/ledger/periods")
+    assert shrunk_periods.status_code == 200
+    assert len(shrunk_periods.json()) == 12
+    assert [period["monthIndex"] for period in shrunk_periods.json()] == list(range(1, 13))
 
 
 def test_rollback_resyncs_ledger_plan_to_current_draft(tmp_path: Path) -> None:
@@ -550,6 +631,105 @@ def test_manual_entry_can_be_updated_and_recomputes_member_commission(tmp_path: 
     assert variance.status_code == 200
     assert variance.json()["actualRevenue"] == 1000
     assert variance.json()["actualCost"] == 350
+
+
+def test_entry_is_posted_into_the_period_matching_its_occurred_month(tmp_path: Path) -> None:
+    client = build_client(tmp_path / "entry-period-sync.db")
+    register_user(client, email="entry-period-sync@example.com", display_name="Finance")
+
+    release = client.post("/api/v1/workspace/versions", json={"kind": "release", "name": "Budget V1"})
+    assert release.status_code == 200
+
+    periods = client.get("/api/v1/ledger/periods")
+    assert periods.status_code == 200
+    march_period, april_period = periods.json()[:2]
+
+    subjects = client.get(f"/api/v1/ledger/periods/{march_period['id']}/subjects")
+    assert subjects.status_code == 200
+    subject_map = {item["subjectKey"]: item for item in subjects.json()}
+
+    created = client.post(
+        "/api/v1/ledger/entries",
+        json={
+            "ledgerPeriodId": march_period["id"],
+            "direction": "income",
+            "amount": 88,
+            "occurredAt": "2026-04-05T12:00:00+00:00",
+            "allocations": [
+                {
+                    "subjectKey": "revenue.offline_sales",
+                    "subjectName": subject_map["revenue.offline_sales"]["subjectName"],
+                    "subjectType": "revenue",
+                    "amount": 88,
+                }
+            ],
+        },
+    )
+    assert created.status_code == 200
+    assert created.json()["ledgerPeriodId"] == april_period["id"]
+
+    march_entries = client.get(f"/api/v1/ledger/entries?periodId={march_period['id']}")
+    assert march_entries.status_code == 200
+    assert created.json()["id"] not in {item["id"] for item in march_entries.json()}
+
+    april_entries = client.get(f"/api/v1/ledger/entries?periodId={april_period['id']}")
+    assert april_entries.status_code == 200
+    april_entry = next(item for item in april_entries.json() if item["id"] == created.json()["id"])
+    assert april_entry["occurredAt"].startswith("2026-04-05T12:00:00")
+
+
+def test_listing_entries_realigns_dirty_period_assignment_to_occurred_month(tmp_path: Path) -> None:
+    client = build_client(tmp_path / "entry-period-realign.db")
+    register_user(client, email="entry-period-realign@example.com", display_name="Finance")
+
+    release = client.post("/api/v1/workspace/versions", json={"kind": "release", "name": "Budget V1"})
+    assert release.status_code == 200
+
+    periods = client.get("/api/v1/ledger/periods")
+    assert periods.status_code == 200
+    march_period, april_period = periods.json()[:2]
+
+    subjects = client.get(f"/api/v1/ledger/periods/{march_period['id']}/subjects")
+    assert subjects.status_code == 200
+    subject_map = {item["subjectKey"]: item for item in subjects.json()}
+
+    created = client.post(
+        "/api/v1/ledger/entries",
+        json={
+            "ledgerPeriodId": march_period["id"],
+            "direction": "income",
+            "amount": 88,
+            "occurredAt": "2026-03-05T12:00:00+00:00",
+            "allocations": [
+                {
+                    "subjectKey": "revenue.offline_sales",
+                    "subjectName": subject_map["revenue.offline_sales"]["subjectName"],
+                    "subjectType": "revenue",
+                    "amount": 88,
+                }
+            ],
+        },
+    )
+    assert created.status_code == 200
+    assert created.json()["ledgerPeriodId"] == march_period["id"]
+
+    with app_session(client) as session:
+        from app.models import ActualEntry
+
+        entry = session.get(ActualEntry, created.json()["id"])
+        assert entry is not None
+        entry.occurred_at = datetime.fromisoformat("2026-04-05T12:00:00+00:00")
+        session.commit()
+
+    march_entries = client.get(f"/api/v1/ledger/entries?periodId={march_period['id']}")
+    assert march_entries.status_code == 200
+    assert created.json()["id"] not in {item["id"] for item in march_entries.json()}
+
+    april_entries = client.get(f"/api/v1/ledger/entries?periodId={april_period['id']}")
+    assert april_entries.status_code == 200
+    realigned_entry = next(item for item in april_entries.json() if item["id"] == created.json()["id"])
+    assert realigned_entry["ledgerPeriodId"] == april_period["id"]
+    assert realigned_entry["occurredAt"].startswith("2026-04-05T12:00:00")
 
 
 def test_multi_allocation_locking_and_variance_reconciliation(tmp_path: Path) -> None:

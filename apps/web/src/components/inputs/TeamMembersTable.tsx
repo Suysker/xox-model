@@ -1,6 +1,6 @@
 import { Plus, Trash2, Users } from 'lucide-react'
 import type { EmploymentType, ScenarioKey } from '../../types'
-import { CompactNumberInput, HeaderCell, Panel, SectionTitle } from '../common/ui'
+import { CompactNumberInput, HeaderCell, InlineStatPill, Panel, SectionTitle } from '../common/ui'
 import { formatCurrency, formatDecimal } from '../../lib/format'
 
 const employmentOptions: Array<{ label: string; value: EmploymentType }> = [
@@ -52,23 +52,22 @@ export function TeamMembersTable(props: TeamMembersTableProps) {
         eyebrow="输入"
         title="团队成员假设"
         aside={
-          <button
-            type="button"
-            onClick={props.onAdd}
-            className="inline-flex items-center gap-2 rounded-full border border-stone-900/10 bg-stone-950 px-4 py-2 text-sm font-medium text-white transition hover:bg-stone-800"
-          >
-            <Plus className="h-4 w-4" />
-            添加成员
-          </button>
+          <div className="flex flex-wrap items-center justify-end gap-3">
+            <InlineStatPill label="成员数量" value={`${props.members.length} 人`} className="min-w-[150px]" />
+            <InlineStatPill label="底薪成员" value={`${salariedCount} 人`} className="min-w-[150px]" />
+            <InlineStatPill label="基准单场合计" value={`${formatDecimal(baseUnitsPerEvent)} 张`} className="min-w-[196px]" />
+            <InlineStatPill label="成员路费 / 场" value={formatCurrency(totalTravel)} className="min-w-[188px]" />
+            <button
+              type="button"
+              onClick={props.onAdd}
+              className="inline-flex h-[54px] items-center gap-2 rounded-full border border-stone-900/10 bg-stone-950 px-5 text-sm font-medium text-white transition hover:bg-stone-800"
+            >
+              <Plus className="h-4 w-4" />
+              添加成员
+            </button>
+          </div>
         }
       />
-
-      <div className="mt-5 flex flex-wrap gap-3">
-        <SummaryPill label="成员数量" value={`${props.members.length} 人`} />
-        <SummaryPill label="底薪成员" value={`${salariedCount} 人`} />
-        <SummaryPill label="基准单场合计" value={`${formatDecimal(baseUnitsPerEvent)} 张`} />
-        <SummaryPill label="成员路费 / 场" value={formatCurrency(totalTravel)} />
-      </div>
 
       <div className="mt-5 rounded-[24px] border border-stone-900/10 bg-white">
         <table className="w-full table-fixed border-collapse text-sm">
@@ -224,17 +223,5 @@ export function TeamMembersTable(props: TeamMembersTableProps) {
         </table>
       </div>
     </Panel>
-  )
-}
-
-function SummaryPill(props: {
-  label: string
-  value: string
-}) {
-  return (
-    <div className="min-w-[160px] rounded-[18px] border border-stone-900/10 bg-stone-50/90 px-4 py-3">
-      <p className="text-xs uppercase tracking-[0.18em] text-stone-500">{props.label}</p>
-      <p className="mt-1.5 text-lg font-bold text-stone-950">{props.value}</p>
-    </div>
   )
 }

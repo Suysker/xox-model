@@ -1,6 +1,6 @@
 import { BriefcaseBusiness, Plus, Trash2 } from 'lucide-react'
 import type { Employee } from '../../types'
-import { CompactNumberInput, HeaderCell, Panel, SectionTitle } from '../common/ui'
+import { CompactNumberInput, HeaderCell, InlineStatPill, Panel, SectionTitle } from '../common/ui'
 import { formatCurrency } from '../../lib/format'
 
 export function EmployeesTable(props: {
@@ -22,22 +22,21 @@ export function EmployeesTable(props: {
         eyebrow="输入"
         title="运营员工配置"
         aside={
-          <button
-            type="button"
-            onClick={props.onAdd}
-            className="inline-flex items-center gap-2 rounded-full border border-stone-900/10 bg-stone-950 px-4 py-2 text-sm font-medium text-white transition hover:bg-stone-800"
-          >
-            <Plus className="h-4 w-4" />
-            添加员工
-          </button>
+          <div className="flex flex-wrap items-center justify-end gap-3">
+            <InlineStatPill label="员工数量" value={`${props.employees.length} 人`} className="min-w-[150px]" />
+            <InlineStatPill label="月固定人力" value={formatCurrency(monthlyPayroll)} className="min-w-[188px]" />
+            <InlineStatPill label="单场员工成本" value={formatCurrency(perEventPayroll)} className="min-w-[196px]" />
+            <button
+              type="button"
+              onClick={props.onAdd}
+              className="inline-flex h-[54px] items-center gap-2 rounded-full border border-stone-900/10 bg-stone-950 px-5 text-sm font-medium text-white transition hover:bg-stone-800"
+            >
+              <Plus className="h-4 w-4" />
+              添加员工
+            </button>
+          </div>
         }
       />
-
-      <div className="mt-5 flex flex-wrap gap-3">
-        <SummaryPill label="员工数量" value={`${props.employees.length} 人`} />
-        <SummaryPill label="月固定人力" value={formatCurrency(monthlyPayroll)} />
-        <SummaryPill label="单场员工成本" value={formatCurrency(perEventPayroll)} />
-      </div>
 
       <div className="mt-5 rounded-[24px] border border-stone-900/10 bg-white">
         <table className="w-full table-fixed border-collapse text-sm">
@@ -117,17 +116,5 @@ export function EmployeesTable(props: {
         </table>
       </div>
     </Panel>
-  )
-}
-
-function SummaryPill(props: {
-  label: string
-  value: string
-}) {
-  return (
-    <div className="min-w-[160px] rounded-[18px] border border-stone-900/10 bg-stone-50/90 px-4 py-3">
-      <p className="text-xs uppercase tracking-[0.18em] text-stone-500">{props.label}</p>
-      <p className="mt-1.5 text-lg font-bold text-stone-950">{props.value}</p>
-    </div>
   )
 }

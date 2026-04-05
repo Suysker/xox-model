@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
@@ -17,7 +17,7 @@ BOOKKEEPING_SUBJECTS = (
     {
         "subjectKey": "cost.other.refund",
         "subjectName": "退费退款",
-        "subjectType": "cost",
+        "subjectType": "revenue",
         "subjectGroup": "other",
         "entityType": None,
         "entityId": None,
@@ -45,6 +45,18 @@ def _base_months(result: ModelResult):
     return scenario.months if scenario is not None else []
 
 
+def _month_number_from_label(month_label: str | None) -> int | None:
+    if not month_label:
+        return None
+    if not month_label.endswith("月"):
+        return None
+    try:
+        month_number = int(month_label[:-1])
+    except ValueError:
+        return None
+    return month_number if 1 <= month_number <= 12 else None
+
+
 def sync_periods_with_current_draft(
     session: Session, workspace: Workspace, *, result: ModelResult | None = None
 ) -> list[LedgerPeriod]:
@@ -60,7 +72,9 @@ def sync_periods_with_current_draft(
         if period.baseline_version_id is not None:
             period.baseline_version_id = None
 
-    for month in _base_months(result):
+    active_months = _base_months(result)
+
+    for month in active_months:
         period = existing_periods.get(month.monthIndex)
         if period is None:
             period = LedgerPeriod(
@@ -76,7 +90,7 @@ def sync_periods_with_current_draft(
 
         period.month_label = month.label
 
-    return sorted(existing_periods.values(), key=lambda item: item.month_index)
+    return [existing_periods[month.monthIndex] for month in active_months]
 
 
 def _get_period(session: Session, workspace: Workspace, period_id: str) -> LedgerPeriod:
@@ -86,6 +100,82 @@ def _get_period(session: Session, workspace: Workspace, period_id: str) -> Ledge
     if period.workspace_id != workspace.id:
         raise PermissionError("Forbidden")
     return period
+
+
+def _resolve_period_for_occurred_at(
+    active_periods: list[LedgerPeriod],
+    occurred_at: datetime,
+    *,
+    fallback_period: LedgerPeriod | None = None,
+) -> LedgerPeriod | None:
+    target_month = occurred_at.month
+    matching_periods = [period for period in active_periods if _month_number_from_label(period.month_label) == target_month]
+    if not matching_periods:
+        return fallback_period
+
+    if fallback_period is not None:
+        for period in matching_periods:
+            if period.id == fallback_period.id:
+                return period
+        return min(matching_periods, key=lambda period: abs(period.month_index - fallback_period.month_index))
+
+    return matching_periods[0]
+
+
+DEFAULT_OCCURRED_AT_GRACE = timedelta(minutes=5)
+
+
+def _coerce_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _entry_has_explicit_occurred_at(entry: ActualEntry) -> bool:
+    if entry.posted_at is None:
+        return True
+    return abs(_coerce_utc(entry.occurred_at) - _coerce_utc(entry.posted_at)) > DEFAULT_OCCURRED_AT_GRACE
+
+
+def _realign_workspace_entries_to_occurred_at(
+    session: Session, workspace: Workspace, *, active_periods: list[LedgerPeriod] | None = None
+) -> bool:
+    periods = active_periods or sync_periods_with_current_draft(session, workspace)
+    period_by_id = {period.id: period for period in periods}
+    entries = session.scalars(
+        select(ActualEntry)
+        .where(ActualEntry.workspace_id == workspace.id)
+        .order_by(ActualEntry.created_at.asc(), ActualEntry.id.asc())
+    ).all()
+    entry_by_id = {entry.id: entry for entry in entries}
+    changed = False
+
+    for entry in entries:
+        if entry.entry_origin == "derived" and entry.source_entry_id:
+            source_entry = entry_by_id.get(entry.source_entry_id)
+            if source_entry is None:
+                continue
+            target_period_id = source_entry.ledger_period_id
+            if entry.occurred_at != source_entry.occurred_at:
+                entry.occurred_at = source_entry.occurred_at
+                changed = True
+        else:
+            current_period = period_by_id.get(entry.ledger_period_id)
+            if current_period is not None and not _entry_has_explicit_occurred_at(entry):
+                continue
+            target_period = _resolve_period_for_occurred_at(periods, entry.occurred_at, fallback_period=current_period)
+            if target_period is None:
+                continue
+            target_period_id = target_period.id
+
+        if entry.ledger_period_id != target_period_id:
+            entry.ledger_period_id = target_period_id
+            changed = True
+
+    if changed:
+        session.flush()
+
+    return changed
 
 
 def _get_entry(session: Session, workspace: Workspace, entry_id: str) -> ActualEntry:
@@ -222,6 +312,7 @@ def _cumulative_summary(
 def list_periods(session: Session, workspace: Workspace) -> list[dict]:
     _, result = _current_draft_context(session, workspace)
     periods = sync_periods_with_current_draft(session, workspace, result=result)
+    _realign_workspace_entries_to_occurred_at(session, workspace, active_periods=periods)
     session.commit()
     return [
         {
@@ -247,6 +338,9 @@ def list_subjects_for_period(session: Session, workspace: Workspace, period_id: 
 
 def list_entries(session: Session, workspace: Workspace, period_id: str) -> list[dict]:
     period = _get_period(session, workspace, period_id)
+    active_periods = sync_periods_with_current_draft(session, workspace)
+    if _realign_workspace_entries_to_occurred_at(session, workspace, active_periods=active_periods):
+        session.commit()
     entries = session.scalars(
         select(ActualEntry)
         .where(ActualEntry.ledger_period_id == period_id)
@@ -456,7 +550,7 @@ def create_actual_entry(
     ledger_period_id: str,
     direction: str,
     amount: float,
-    occurred_at: datetime,
+    occurred_at: datetime | None,
     counterparty: str | None,
     description: str | None,
     related_entity_type: str | None,
@@ -465,7 +559,14 @@ def create_actual_entry(
     allocations: list[AllocationInput],
     timestamp: datetime,
 ) -> dict:
-    period = _get_period(session, workspace, ledger_period_id)
+    fallback_period = _get_period(session, workspace, ledger_period_id)
+    active_periods = sync_periods_with_current_draft(session, workspace)
+    period = (
+        _resolve_period_for_occurred_at(active_periods, occurred_at, fallback_period=fallback_period)
+        if occurred_at is not None
+        else fallback_period
+    ) or fallback_period
+    effective_occurred_at = occurred_at or timestamp
     if period.status == "locked":
         raise ValueError("Ledger period is locked")
     _, available_subjects, normalized_allocations, totals_by_subject, canonical_related_name = _normalize_entry_payload(
@@ -485,7 +586,7 @@ def create_actual_entry(
         ledger_period_id=period.id,
         direction=direction,
         amount=amount,
-        occurred_at=occurred_at,
+        occurred_at=effective_occurred_at,
         counterparty=counterparty,
         description=description,
         related_entity_type=related_entity_type,
@@ -552,7 +653,14 @@ def update_actual_entry(
     timestamp: datetime,
 ) -> dict:
     entry = _get_entry(session, workspace, entry_id)
-    period = session.get(LedgerPeriod, entry.ledger_period_id)
+    active_periods = sync_periods_with_current_draft(session, workspace)
+    fallback_period = session.get(LedgerPeriod, entry.ledger_period_id)
+    target_period = (
+        _resolve_period_for_occurred_at(active_periods, occurred_at, fallback_period=fallback_period)
+        if occurred_at is not None
+        else fallback_period
+    ) or fallback_period
+    period = target_period
     if period and period.status == "locked":
         raise ValueError("Ledger period is locked")
     if entry.entry_origin == "derived":
@@ -573,6 +681,8 @@ def update_actual_entry(
     )
 
     entry.amount = amount
+    if period is not None:
+        entry.ledger_period_id = period.id
     entry.occurred_at = occurred_at or entry.occurred_at
     entry.counterparty = counterparty
     entry.description = description
@@ -658,7 +768,13 @@ def void_entry(session: Session, workspace: Workspace, entry_id: str, *, actor_i
 
 def restore_entry(session: Session, workspace: Workspace, entry_id: str, *, actor_id: str) -> None:
     entry = _get_entry(session, workspace, entry_id)
-    period = session.get(LedgerPeriod, entry.ledger_period_id)
+    active_periods = sync_periods_with_current_draft(session, workspace)
+    fallback_period = session.get(LedgerPeriod, entry.ledger_period_id)
+    period = (
+        _resolve_period_for_occurred_at(active_periods, entry.occurred_at, fallback_period=fallback_period)
+        if _entry_has_explicit_occurred_at(entry) or fallback_period is None
+        else fallback_period
+    ) or fallback_period
     if period and period.status == "locked":
         raise ValueError("Ledger period is locked")
     if entry.entry_origin == "derived":
@@ -666,6 +782,8 @@ def restore_entry(session: Session, workspace: Workspace, entry_id: str, *, acto
     if entry.status != "voided":
         raise ValueError("Entry is not voided")
 
+    if period is not None:
+        entry.ledger_period_id = period.id
     entry.status = "posted"
     derived_entries = session.scalars(
         select(ActualEntry)
@@ -729,6 +847,9 @@ def set_period_status(session: Session, workspace: Workspace, period_id: str, *,
 def variance_for_period(session: Session, workspace: Workspace, period_id: str) -> dict:
     period = _get_period(session, workspace, period_id)
     config, result = _current_draft_context(session, workspace)
+    active_periods = sync_periods_with_current_draft(session, workspace, result=result)
+    if _realign_workspace_entries_to_occurred_at(session, workspace, active_periods=active_periods):
+        session.commit()
     planned = defaultdict(float)
     labels: dict[str, tuple[str, str]] = {}
     for row in build_forecast_line_items(config):

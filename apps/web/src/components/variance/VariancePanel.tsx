@@ -52,28 +52,37 @@ export function VariancePanel(props: {
           icon={BarChart3}
           eyebrow="预实分析"
           title={props.variance?.baselineVersionName ? `基线 ${props.variance.baselineVersionName}` : '计划与实际'}
-          description={selectedPeriod ? `当前期间：${selectedPeriod.monthLabel}` : undefined}
+          aside={
+            props.periods.length > 0 ? (
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {selectedPeriod ? (
+                  <span className="rounded-full border border-stone-900/10 bg-stone-50 px-3 py-2 text-sm font-semibold text-stone-600">
+                    当前期间：{selectedPeriod.monthLabel}
+                  </span>
+                ) : null}
+                <div className="flex flex-wrap justify-end gap-2">
+                  {props.periods.map((period) => (
+                    <button
+                      key={period.id}
+                      type="button"
+                      onClick={() => props.onSelectPeriod(period.id)}
+                      className={
+                        props.selectedPeriodId === period.id
+                          ? 'rounded-full border border-stone-950 bg-stone-950 px-4 py-2 text-sm font-semibold text-white'
+                          : 'rounded-full border border-stone-900/10 bg-stone-50 px-4 py-2 text-sm font-semibold text-stone-700'
+                      }
+                    >
+                      {period.monthLabel}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null
+          }
         />
 
-        <div className="mt-5 flex flex-wrap gap-2">
-          {props.periods.map((period) => (
-            <button
-              key={period.id}
-              type="button"
-              onClick={() => props.onSelectPeriod(period.id)}
-              className={
-                props.selectedPeriodId === period.id
-                  ? 'rounded-full border border-stone-950 bg-stone-950 px-4 py-2 text-sm font-semibold text-white'
-                  : 'rounded-full border border-stone-900/10 bg-stone-50 px-4 py-2 text-sm font-semibold text-stone-700'
-              }
-            >
-              {period.monthLabel}
-            </button>
-          ))}
-        </div>
-
         {props.variance ? (
-          <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <QuickStat
               label="收入达成"
               value={revenueCompletion === null ? '-' : formatPercent(revenueCompletion)}

@@ -24,6 +24,7 @@ import { VariancePanel } from './components/variance/VariancePanel'
 import { WorkspacePanel } from './components/workspace/WorkspacePanel'
 import { useWorkspace } from './hooks/useWorkspace'
 import { api, type AuthUser, type EntryResponse, type PeriodResponse, type SubjectResponse, type VarianceResponse } from './lib/api'
+import { findMonthIdForPeriod, findPeriodIdForDateValue, findPeriodIdForSelectedMonth, getTodayInputDate } from './lib/bookkeeping'
 import {
   createCostItem,
   createEmployee,
@@ -269,6 +270,7 @@ export default function App() {
   const [ledgerBusy, setLedgerBusy] = useState(false)
   const [workspaceOpen, setWorkspaceOpen] = useState(false)
   const [banner, setBanner] = useState<BannerState | null>(null)
+  const previousMainTabRef = useRef(mainTab)
 
   const projection = projectModel(config)
   const selectedScenarioResult =
@@ -283,8 +285,9 @@ export default function App() {
 
   async function refreshPeriods() {
     const nextPeriods = await api.listPeriods()
+    const fallbackPeriodId = findPeriodIdForSelectedMonth(nextPeriods, config.months, selectedMonthId)
     setPeriods(nextPeriods)
-    setSelectedPeriodId((current) => (nextPeriods.some((period) => period.id === current) ? current : (nextPeriods[0]?.id ?? '')))
+    setSelectedPeriodId((current) => (nextPeriods.some((period) => period.id === current) ? current : fallbackPeriodId))
   }
 
   async function refreshSelectedPeriodData(periodId: string) {
@@ -392,6 +395,30 @@ export default function App() {
       setSelectedMonthId(firstMonthId)
     }
   }, [config.months, selectedMonthId])
+
+  useEffect(() => {
+    const previousMainTab = previousMainTabRef.current
+    previousMainTabRef.current = mainTab
+
+    if (mainTab !== 'bookkeeping' || previousMainTab === 'bookkeeping' || periods.length === 0) {
+      return
+    }
+
+    const fallbackPeriodId = findPeriodIdForSelectedMonth(periods, config.months, selectedMonthId)
+    const targetPeriodId = findPeriodIdForDateValue(periods, getTodayInputDate(), fallbackPeriodId)
+    if (targetPeriodId && targetPeriodId !== selectedPeriodId) {
+      setSelectedPeriodId(targetPeriodId)
+    }
+  }, [config.months, mainTab, periods, selectedMonthId, selectedPeriodId])
+
+  function handleSelectPeriod(periodId: string) {
+    setSelectedPeriodId(periodId)
+
+    const nextMonthId = findMonthIdForPeriod(periods, config.months, periodId)
+    if (nextMonthId && nextMonthId !== selectedMonthId) {
+      setSelectedMonthId(nextMonthId)
+    }
+  }
 
   async function handleLogin(payload: { email: string; password: string }) {
     setAuthBusy(true)
@@ -1445,7 +1472,7 @@ export default function App() {
                 plannedMonthResult={selectedPlannedMonthResult}
                 offlineUnitPrice={config.operating.offlineUnitPrice}
                 onlineUnitPrice={config.operating.onlineUnitPrice}
-                onSelectPeriod={setSelectedPeriodId}
+                onSelectPeriod={handleSelectPeriod}
                 onSubmit={handleSubmitEntry}
                 onUpdate={handleUpdateEntry}
                 onVoid={handleVoidEntry}
@@ -1459,7 +1486,7 @@ export default function App() {
                 periods={periods}
                 selectedPeriodId={selectedPeriodId}
                 variance={variance}
-                onSelectPeriod={setSelectedPeriodId}
+                onSelectPeriod={handleSelectPeriod}
               />
             ) : null}
           </main>

@@ -45,9 +45,10 @@
 - `GET /api/v1/ledger/periods`
   - 返回期间列表，以及计划 / 实际汇总
   - 若当前草稿已有月份但账期尚未生成，会按草稿自动补齐
+  - 只返回当前草稿规划范围内仍然有效的月份；当规划月数从 24 缩到 12 时，超出的账期会从列表里收回
 - `GET /api/v1/ledger/periods/{id}/subjects`
   - 返回该期间当前草稿计划对应的标准化预测科目
-  - 会包含少量计划值为 `0` 的通用挂账科目，例如 `退费退款`
+  - 会包含少量计划值为 `0` 的通用挂账科目，例如收入侧的 `退费退款`
 - `POST /api/v1/ledger/periods/{id}/lock`
 - `POST /api/v1/ledger/periods/{id}/unlock`
 - `GET /api/v1/ledger/entries?periodId=...`
@@ -55,9 +56,11 @@
   - 支持一笔分录分摊到多个科目
   - 分摊总额必须等于分录金额
   - 分摊科目方向必须与 `direction` 一致
+  - 若显式传入 `occurredAt`，后端会按该日期的月份归到账期；若未传，则继续使用请求里的 `ledgerPeriodId`
   - 锁定期间拒绝写入
 - `PATCH /api/v1/ledger/entries/{id}`
   - 更新已过账的手工分录
+  - 若本次更新显式改了 `occurredAt`，分录会同步移动到对应月份的账期
   - 自动生成的提成分录不能直接编辑，需要从源收入分录一起修改
 - `POST /api/v1/ledger/entries/{id}/void`
   - 锁定期间拒绝作废

@@ -2,7 +2,7 @@ import { CalendarRange, RefreshCcw } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { cx, formatDecimal } from '../../lib/format'
 import type { MonthlyPlan, MonthlyPlanTemplate } from '../../types'
-import { BodyCell, CompactNumberInput, HeaderCell, Panel, SectionTitle } from '../common/ui'
+import { CompactNumberInput, Panel, SectionTitle } from '../common/ui'
 
 type RevenueNumberKey = 'events' | 'salesMultiplier' | 'onlineSalesFactor'
 type RhythmSeriesKey = 'events' | 'salesMultiplier'
@@ -89,19 +89,20 @@ export function TimelineEditor(props: {
         icon={CalendarRange}
         eyebrow="输入"
         title="收入引擎"
+        aside={
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <LegendPill color="bg-amber-400" label="场次" />
+            <LegendPill color="bg-emerald-500" label="销售系数" />
+            <button
+              type="button"
+              onClick={props.onApplyTemplateToAll}
+              className="inline-flex items-center justify-center rounded-full border border-stone-900/10 bg-stone-950 px-4 py-2 text-sm font-medium text-white transition hover:bg-stone-800"
+            >
+              同步默认
+            </button>
+          </div>
+        }
       />
-
-      <div className="mt-5 flex flex-wrap items-center justify-end gap-2">
-        <LegendPill color="bg-amber-400" label="场次" />
-        <LegendPill color="bg-emerald-500" label="销售系数" />
-        <button
-          type="button"
-          onClick={props.onApplyTemplateToAll}
-          className="inline-flex items-center justify-center rounded-full border border-stone-900/10 bg-stone-950 px-4 py-2 text-sm font-medium text-white transition hover:bg-stone-800"
-        >
-          同步默认
-        </button>
-      </div>
 
       <div
         ref={chartRef}
@@ -121,121 +122,144 @@ export function TimelineEditor(props: {
         />
       </div>
 
-      <div className="mt-4 rounded-[20px] border border-stone-900/10 bg-white">
-        <table className="w-full table-fixed text-sm">
-          <colgroup>
-            <col className="w-[18%]" />
-            <col className="w-[18%]" />
-            <col className="w-[20%]" />
-            <col className="w-[20%]" />
-            <col className="w-[24%]" />
-          </colgroup>
-          <thead className="bg-stone-100/90 text-stone-700">
-            <tr className="border-b border-stone-900/10">
-              <HeaderCell align="center">月份</HeaderCell>
-              <HeaderCell align="center">场次</HeaderCell>
-              <HeaderCell align="center">销售系数</HeaderCell>
-              <HeaderCell align="center">线上系数</HeaderCell>
-              <HeaderCell align="center">恢复</HeaderCell>
-            </tr>
-          </thead>
-          <tbody>
-            <tr className="border-b border-stone-900/10 bg-amber-50/60">
-              <BodyCell align="center" className="font-semibold text-amber-900">
-                默认
-              </BodyCell>
-              <BodyCell align="center">
-                <CompactNumberInput
-                  value={props.template.events}
-                  min={0}
-                  step={1}
-                  size="sm"
-                  align="center"
-                  className="mx-auto max-w-[112px]"
-                  onChange={(value) => props.onTemplateNumberChange('events', value)}
-                />
-              </BodyCell>
-              <BodyCell align="center">
-                <CompactNumberInput
-                  value={props.template.salesMultiplier}
-                  min={0}
-                  step={0.01}
-                  size="sm"
-                  align="center"
-                  className="mx-auto max-w-[120px]"
-                  onChange={(value) => props.onTemplateNumberChange('salesMultiplier', value)}
-                />
-              </BodyCell>
-              <BodyCell align="center">
-                <CompactNumberInput
-                  value={props.template.onlineSalesFactor}
-                  min={0}
-                  step={0.01}
-                  size="sm"
-                  align="center"
-                  className="mx-auto max-w-[120px]"
-                  onChange={(value) => props.onTemplateNumberChange('onlineSalesFactor', value)}
-                />
-              </BodyCell>
-              <BodyCell align="center" className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-400">
-                --
-              </BodyCell>
-            </tr>
+      <div className="mt-4 space-y-3">
+        <TimelineRow
+          label="默认"
+          tone="template"
+          events={props.template.events}
+          salesMultiplier={props.template.salesMultiplier}
+          onlineSalesFactor={props.template.onlineSalesFactor}
+          onEventsChange={(value) => props.onTemplateNumberChange('events', value)}
+          onSalesMultiplierChange={(value) => props.onTemplateNumberChange('salesMultiplier', value)}
+          onOnlineSalesFactorChange={(value) => props.onTemplateNumberChange('onlineSalesFactor', value)}
+        />
 
-            {props.months.map((month) => (
-              <tr key={month.id} className="border-b border-stone-900/10 last:border-none">
-                <BodyCell align="center" className="font-semibold text-stone-900">
-                  {month.label}
-                </BodyCell>
-                <BodyCell align="center">
-                  <CompactNumberInput
-                    value={month.events}
-                    min={0}
-                    step={1}
-                    size="sm"
-                    align="center"
-                    className="mx-auto max-w-[112px]"
-                    onChange={(value) => props.onNumberChange(month.id, 'events', value)}
-                  />
-                </BodyCell>
-                <BodyCell align="center">
-                  <CompactNumberInput
-                    value={month.salesMultiplier}
-                    min={0}
-                    step={0.01}
-                    size="sm"
-                    align="center"
-                    className="mx-auto max-w-[120px]"
-                    onChange={(value) => props.onNumberChange(month.id, 'salesMultiplier', value)}
-                  />
-                </BodyCell>
-                <BodyCell align="center">
-                  <CompactNumberInput
-                    value={month.onlineSalesFactor}
-                    min={0}
-                    step={0.01}
-                    size="sm"
-                    align="center"
-                    className="mx-auto max-w-[120px]"
-                    onChange={(value) => props.onNumberChange(month.id, 'onlineSalesFactor', value)}
-                  />
-                </BodyCell>
-                <BodyCell align="center">
-                  <button
-                    type="button"
-                    onClick={() => props.onResetMonthFromTemplate(month.id)}
-                    className="inline-flex items-center gap-1 rounded-full border border-stone-900/10 bg-white px-2.5 py-1 text-[11px] font-semibold text-stone-700 transition hover:bg-stone-100"
-                  >
-                    <RefreshCcw className="h-3.5 w-3.5" />
-                    默认
-                  </button>
-                </BodyCell>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="grid gap-3 xl:grid-cols-2">
+          {props.months.map((month) => (
+            <TimelineRow
+              key={month.id}
+              label={month.label}
+              events={month.events}
+              salesMultiplier={month.salesMultiplier}
+              onlineSalesFactor={month.onlineSalesFactor}
+              onEventsChange={(value) => props.onNumberChange(month.id, 'events', value)}
+              onSalesMultiplierChange={(value) => props.onNumberChange(month.id, 'salesMultiplier', value)}
+              onOnlineSalesFactorChange={(value) => props.onNumberChange(month.id, 'onlineSalesFactor', value)}
+              onReset={() => props.onResetMonthFromTemplate(month.id)}
+            />
+          ))}
+        </div>
       </div>
     </Panel>
+  )
+}
+
+function TimelineRow(props: {
+  label: string
+  events: number
+  salesMultiplier: number
+  onlineSalesFactor: number
+  onEventsChange: (value: number) => void
+  onSalesMultiplierChange: (value: number) => void
+  onOnlineSalesFactorChange: (value: number) => void
+  onReset?: (() => void) | undefined
+  tone?: 'default' | 'template' | undefined
+}) {
+  return (
+    <section
+      className={
+        props.tone === 'template'
+          ? 'rounded-[20px] border border-amber-200/70 bg-amber-50/60 p-4'
+          : 'rounded-[20px] border border-stone-900/10 bg-white p-4'
+      }
+    >
+      <div className="grid gap-2.5 xl:grid-cols-[78px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)] xl:items-center">
+        <TimelineRowMonthLabel label={props.label} tone={props.tone} onReset={props.onReset} />
+        <TimelineMetricField
+          label="场次"
+          value={props.events}
+          step={1}
+          onChange={props.onEventsChange}
+          tone={props.tone}
+        />
+        <TimelineMetricField
+          label="销售系数"
+          value={props.salesMultiplier}
+          step={0.01}
+          onChange={props.onSalesMultiplierChange}
+          tone={props.tone}
+        />
+        <TimelineMetricField
+          label="线上系数"
+          value={props.onlineSalesFactor}
+          step={0.01}
+          onChange={props.onOnlineSalesFactorChange}
+          tone={props.tone}
+        />
+      </div>
+    </section>
+  )
+}
+
+function TimelineRowMonthLabel(props: {
+  label: string
+  tone?: 'default' | 'template' | undefined
+  onReset?: (() => void) | undefined
+}) {
+  return (
+    <div className="inline-flex min-h-[24px] items-center gap-2 whitespace-nowrap">
+      <span
+        className={
+          props.tone === 'template'
+            ? 'block font-semibold leading-none text-amber-900'
+            : 'block font-semibold leading-none text-stone-950'
+        }
+      >
+        {props.label}
+      </span>
+      {props.onReset ? (
+        <button
+          type="button"
+          onClick={props.onReset}
+          className="inline-flex h-5.5 w-5.5 items-center justify-center rounded-full border border-stone-900/10 bg-white text-stone-700 transition hover:bg-stone-100"
+          aria-label={`恢复${props.label}默认值`}
+          title={`恢复${props.label}默认值`}
+        >
+          <RefreshCcw className="h-3 w-3" />
+        </button>
+      ) : null}
+    </div>
+  )
+}
+
+function TimelineMetricField(props: {
+  label: string
+  value: number
+  step: number | 'any'
+  onChange: (value: number) => void
+  tone?: 'default' | 'template' | undefined
+}) {
+  return (
+    <label className="flex min-w-0 items-center gap-2">
+      <span
+        className={
+          props.tone === 'template'
+            ? 'shrink-0 text-xs font-semibold tracking-[0.16em] text-amber-800/80'
+            : 'shrink-0 text-xs font-semibold tracking-[0.16em] text-stone-500'
+        }
+      >
+        {props.label}
+      </span>
+      <CompactNumberInput
+        value={props.value}
+        min={0}
+        step={props.step}
+        size="sm"
+        align="center"
+        className={props.tone === 'template' ? 'h-10 min-w-0 flex-1 rounded-xl bg-white' : 'h-10 min-w-0 flex-1 rounded-xl bg-stone-50'}
+        onChange={props.onChange}
+      />
+    </label>
   )
 }
 

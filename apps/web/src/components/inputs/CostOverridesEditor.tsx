@@ -150,10 +150,12 @@ function MonthResetCell(props: {
   tone?: 'default' | 'template' | undefined
 }) {
   return (
-    <div className="flex items-start justify-between gap-2">
+    <div className={props.onReset ? 'relative min-h-[28px] w-full pr-8' : 'w-full'}>
       <span
         className={
-          props.tone === 'template' ? 'font-semibold text-amber-900' : 'font-semibold text-stone-900'
+          props.tone === 'template'
+            ? 'block font-semibold leading-none text-amber-900'
+            : 'block font-semibold leading-none text-stone-900'
         }
       >
         {props.label}
@@ -162,7 +164,7 @@ function MonthResetCell(props: {
         <button
           type="button"
           onClick={props.onReset}
-          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-stone-900/10 bg-white text-stone-700 transition hover:bg-stone-100"
+          className="absolute right-0 top-0 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-stone-900/10 bg-white text-stone-700 transition hover:bg-stone-100"
           aria-label={props.resetLabel}
           title={props.resetLabel}
         >
@@ -256,6 +258,12 @@ export function CostOverridesEditor(props: {
         <section className="mt-5 rounded-[24px] border border-stone-900/10 bg-stone-50/80 p-4">
             <div className="rounded-[20px] border border-stone-900/10">
               <table className="w-full table-fixed text-sm">
+                <colgroup>
+                  <col className="w-[88px]" />
+                  {trainingColumns.map((column) => (
+                    <col key={`${column.key}-column`} />
+                  ))}
+                </colgroup>
                 <thead className="bg-stone-100/90 text-stone-700">
                   <tr className="border-b border-stone-900/10">
                     <HeaderCell align="center">月份</HeaderCell>
@@ -321,7 +329,7 @@ export function CostOverridesEditor(props: {
             <div className="overflow-x-auto rounded-[20px] border border-stone-900/10 pb-1">
               <table className="w-max min-w-full table-fixed text-sm">
                 <colgroup>
-                  <col className="w-[116px]" />
+                  <col className="w-[88px]" />
                   {orderedStageCostItems.map((item) => (
                     <col key={`${item.id}-column`} className="w-[138px]" />
                   ))}
