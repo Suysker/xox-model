@@ -2,7 +2,7 @@ import { BarChart3 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import type { PeriodResponse, VarianceResponse } from '../../lib/api'
 import { cx, formatCompactNumber, formatCurrency, formatPercent } from '../../lib/format'
-import { Panel, SectionTitle, SegmentTabs } from '../common/ui'
+import { BodyCell, HeaderCell, Panel, SectionTitle, SegmentTabs } from '../common/ui'
 
 type VarianceMetric = 'revenue' | 'cost'
 type VarianceScope = 'current' | 'cumulative'
@@ -553,12 +553,4 @@ function getTopVarianceDrivers(variance: VarianceResponse | null) {
 function getVarianceToneClass(subjectType: 'revenue' | 'cost', amount: number) {
   const positive = subjectType === 'revenue' ? amount >= 0 : amount <= 0
   return positive ? 'font-semibold text-emerald-700' : 'font-semibold text-rose-700'
-}
-
-function HeaderCell(props: { children: string }) {
-  return <th className="px-4 py-3 text-center text-xs font-semibold tracking-[0.16em]">{props.children}</th>
-}
-
-function BodyCell(props: { children: React.ReactNode; className?: string | undefined }) {
-  return <td className={cx('px-4 py-3 text-center text-stone-700', props.className)}>{props.children}</td>
 }

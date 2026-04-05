@@ -2,7 +2,7 @@ import { Coins, Plus, Trash2 } from 'lucide-react'
 import { monthLabelOptions } from '../../lib/defaults'
 import { formatCurrency, formatPercent } from '../../lib/format'
 import type { PlanningConfig, Shareholder } from '../../types'
-import { CompactNumberInput, HeaderCell, InlineStatPill, Panel, SectionTitle } from '../common/ui'
+import { BodyCell, CompactNumberInput, DenseFieldInput, DenseFieldSelect, HeaderCell, InlineStatPill, Panel, SectionTitle } from '../common/ui'
 
 export function OperatingWorkbench(props: {
   shareholders: Shareholder[]
@@ -27,8 +27,10 @@ export function OperatingWorkbench(props: {
           <div className="flex flex-wrap items-center justify-end gap-3">
             <label className="inline-flex min-w-[220px] items-center justify-between gap-3 rounded-[18px] border border-stone-900/10 bg-stone-50/90 px-4 py-3">
               <span className="text-sm font-semibold text-stone-600">经营开始月份</span>
-              <select
-                className="h-10 w-[110px] shrink-0 rounded-xl border border-stone-900/10 bg-white px-3 text-[11px] font-medium text-stone-900 outline-none transition focus:border-emerald-500"
+              <DenseFieldSelect
+                fieldSize="xs"
+                surface="white"
+                className="h-10 w-[110px] shrink-0 rounded-xl px-3"
                 value={props.planning.startMonth}
                 onChange={(event) => props.onPlanningChange('startMonth', Number(event.target.value))}
               >
@@ -37,7 +39,7 @@ export function OperatingWorkbench(props: {
                     {label}
                   </option>
                 ))}
-              </select>
+              </DenseFieldSelect>
             </label>
 
             <label className="inline-flex min-w-[190px] items-center justify-between gap-3 rounded-[18px] border border-stone-900/10 bg-stone-50/90 px-4 py-3">
@@ -86,23 +88,24 @@ export function OperatingWorkbench(props: {
           </colgroup>
           <thead className="bg-stone-100/90 text-stone-700">
             <tr className="border-b border-stone-900/10">
-              <HeaderCell align="center" className="px-2 py-2 text-[11px]">股东</HeaderCell>
-              <HeaderCell align="center" className="px-2 py-2 text-[11px]">投资额</HeaderCell>
-              <HeaderCell align="center" className="px-2 py-2 text-[11px]">分红比例</HeaderCell>
-              <HeaderCell align="center" className="px-2 py-2 text-[11px]">删除</HeaderCell>
+              <HeaderCell>股东</HeaderCell>
+              <HeaderCell>投资额</HeaderCell>
+              <HeaderCell>分红比例</HeaderCell>
+              <HeaderCell>删除</HeaderCell>
             </tr>
           </thead>
           <tbody>
             {props.shareholders.map((shareholder) => (
               <tr key={shareholder.id} className="border-b border-stone-900/10 last:border-none">
-                <td className="px-2 py-1.5 text-center">
-                  <input
-                    className="h-8 w-full rounded-md border border-stone-900/10 bg-stone-50 px-2.5 text-center text-[11px] font-medium text-stone-900 outline-none transition focus:border-emerald-500 focus:bg-white"
+                <BodyCell>
+                  <DenseFieldInput
                     value={shareholder.name}
                     onChange={(event) => props.onShareholderNameChange(shareholder.id, event.target.value)}
+                    fieldSize="xs"
+                    align="center"
                   />
-                </td>
-                <td className="px-1.5 py-1.5">
+                </BodyCell>
+                <BodyCell className="px-1.5 py-1.5">
                   <CompactNumberInput
                     value={shareholder.investmentAmount}
                     min={0}
@@ -111,8 +114,8 @@ export function OperatingWorkbench(props: {
                     align="center"
                     onChange={(value) => props.onShareholderInvestmentChange(shareholder.id, value)}
                   />
-                </td>
-                <td className="px-1.5 py-1.5">
+                </BodyCell>
+                <BodyCell className="px-1.5 py-1.5">
                   <CompactNumberInput
                     value={shareholder.dividendRate * 100}
                     min={0}
@@ -122,8 +125,8 @@ export function OperatingWorkbench(props: {
                     align="center"
                     onChange={(value) => props.onShareholderDividendChange(shareholder.id, value / 100)}
                   />
-                </td>
-                <td className="px-1.5 py-1.5 text-center">
+                </BodyCell>
+                <BodyCell className="px-1.5 py-1.5">
                   <button
                     type="button"
                     onClick={() => props.onShareholderRemove(shareholder.id)}
@@ -133,7 +136,7 @@ export function OperatingWorkbench(props: {
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
-                </td>
+                </BodyCell>
               </tr>
             ))}
           </tbody>

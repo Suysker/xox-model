@@ -1,8 +1,7 @@
 import { Table2 } from 'lucide-react'
-import type { ReactNode } from 'react'
 import type { MonthlyScenarioResult } from '../../types'
 import { cx, formatCurrency, formatDecimal, formatPaybackMonths } from '../../lib/format'
-import { Panel, SectionTitle, StatCard } from '../common/ui'
+import { BodyCell, HeaderCell, Panel, SectionTitle, StatCard } from '../common/ui'
 
 export function MonthlyResultsTable(props: {
   months: MonthlyScenarioResult[]
@@ -98,43 +97,5 @@ export function MonthlyResultsTable(props: {
         </table>
       </div>
     </Panel>
-  )
-}
-
-function HeaderCell(props: {
-  children: string
-  align?: 'left' | 'right' | 'center' | undefined
-}) {
-  return (
-    <th
-      className={cx(
-        'px-4 py-3 text-center text-xs font-semibold uppercase tracking-[0.16em]',
-        props.align === 'right' && 'text-right',
-        props.align === 'center' && 'text-center',
-        props.align === 'left' && 'text-left',
-      )}
-    >
-      {props.children}
-    </th>
-  )
-}
-
-function BodyCell(props: {
-  children: ReactNode
-  align?: 'left' | 'right' | 'center' | undefined
-  className?: string | undefined
-}) {
-  return (
-    <td
-      className={cx(
-        'px-4 py-3 align-top text-center text-stone-700',
-        props.align === 'left' && 'text-left',
-        props.align === 'right' && 'text-right',
-        props.align === 'center' && 'text-center',
-        props.className,
-      )}
-    >
-      {props.children}
-    </td>
   )
 }

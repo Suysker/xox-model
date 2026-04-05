@@ -1,6 +1,6 @@
 import { Plus, Trash2, Users } from 'lucide-react'
 import type { EmploymentType, ScenarioKey } from '../../types'
-import { CompactNumberInput, HeaderCell, InlineStatPill, Panel, SectionTitle } from '../common/ui'
+import { BodyCell, CompactNumberInput, DenseFieldInput, DenseFieldSelect, HeaderCell, InlineStatPill, Panel, SectionTitle } from '../common/ui'
 import { formatCurrency, formatDecimal } from '../../lib/format'
 
 const employmentOptions: Array<{ label: string; value: EmploymentType }> = [
@@ -85,30 +85,14 @@ export function TeamMembersTable(props: TeamMembersTableProps) {
           </colgroup>
           <thead className="bg-stone-100/90 text-stone-700">
             <tr className="border-b border-stone-900/10">
-              <HeaderCell rowSpan={2} align="center" className="px-2 py-2 text-[11px]">
-                成员
-              </HeaderCell>
-              <HeaderCell rowSpan={2} align="center" className="px-2 py-2 text-[11px]">
-                类型
-              </HeaderCell>
-              <HeaderCell rowSpan={2} align="center" className="px-2 py-2 text-[11px]">
-                提成 %
-              </HeaderCell>
-              <HeaderCell rowSpan={2} align="center" className="px-2 py-2 text-[11px]">
-                底薪 / 月
-              </HeaderCell>
-              <HeaderCell rowSpan={2} align="center" className="px-2 py-2 text-[11px]">
-                路费 / 场
-              </HeaderCell>
-              <HeaderCell rowSpan={2} align="center" className="px-2 py-2 text-[11px]">
-                离团至
-              </HeaderCell>
-              <HeaderCell colSpan={3} align="center" className="px-2 py-2 text-[11px]">
-                单场张数
-              </HeaderCell>
-              <HeaderCell rowSpan={2} align="center" className="px-2 py-2 text-[11px]">
-                删
-              </HeaderCell>
+              <HeaderCell rowSpan={2}>成员</HeaderCell>
+              <HeaderCell rowSpan={2}>类型</HeaderCell>
+              <HeaderCell rowSpan={2}>提成 %</HeaderCell>
+              <HeaderCell rowSpan={2}>底薪 / 月</HeaderCell>
+              <HeaderCell rowSpan={2}>路费 / 场</HeaderCell>
+              <HeaderCell rowSpan={2}>离团至</HeaderCell>
+              <HeaderCell colSpan={3}>单场张数</HeaderCell>
+              <HeaderCell rowSpan={2}>删</HeaderCell>
             </tr>
             <tr className="border-b border-stone-900/10">
               <HeaderCell align="center" className="px-1.5 py-1.5 text-[10px]">悲</HeaderCell>
@@ -119,33 +103,36 @@ export function TeamMembersTable(props: TeamMembersTableProps) {
           <tbody>
             {props.members.map((member) => (
               <tr key={member.id} className="border-b border-stone-900/10 last:border-none">
-                <td className="px-2 py-1.5 text-center">
-                  <input
-                    className="h-8 w-full rounded-md border border-stone-900/10 bg-stone-50 px-2.5 text-center text-[11px] font-medium text-stone-900 outline-none transition focus:border-emerald-500 focus:bg-white"
+                <BodyCell>
+                  <DenseFieldInput
                     value={member.name}
                     onChange={(event) => props.onNameChange(member.id, event.target.value)}
+                    fieldSize="xs"
+                    align="center"
                   />
-                </td>
-                <td className="px-1.5 py-1.5 text-center">
-                  <select
+                </BodyCell>
+                <BodyCell className="px-1.5 py-1.5">
+                  <DenseFieldSelect
                     className={
                       member.employmentType === 'salary'
-                        ? 'h-8 w-full rounded-md border border-amber-200 bg-amber-50 px-1.5 text-center text-[11px] font-semibold text-amber-800 outline-none transition focus:border-amber-400'
-                        : 'h-8 w-full rounded-md border border-sky-200 bg-sky-50 px-1.5 text-center text-[11px] font-semibold text-sky-800 outline-none transition focus:border-sky-400'
+                        ? 'border-amber-200 bg-amber-50 text-amber-800 focus:border-amber-400'
+                        : 'border-sky-200 bg-sky-50 text-sky-800 focus:border-sky-400'
                     }
                     value={member.employmentType}
+                    fieldSize="xs"
+                    align="center"
                     onChange={(event) =>
                       props.onEmploymentTypeChange(member.id, event.target.value as EmploymentType)
                     }
-                  >
-                    {employmentOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </td>
-                <td className="px-1.5 py-1.5">
+                    >
+                      {employmentOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </DenseFieldSelect>
+                </BodyCell>
+                <BodyCell className="px-1.5 py-1.5">
                   <CompactNumberInput
                     value={member.commissionRate * 100}
                     min={0}
@@ -155,8 +142,8 @@ export function TeamMembersTable(props: TeamMembersTableProps) {
                     align="center"
                     onChange={(value) => props.onCommissionChange(member.id, value / 100)}
                   />
-                </td>
-                <td className="px-1.5 py-1.5">
+                </BodyCell>
+                <BodyCell className="px-1.5 py-1.5">
                   <CompactNumberInput
                     value={member.monthlyBasePay}
                     min={0}
@@ -165,8 +152,8 @@ export function TeamMembersTable(props: TeamMembersTableProps) {
                     align="center"
                     onChange={(value) => props.onBasePayChange(member.id, value)}
                   />
-                </td>
-                <td className="px-1.5 py-1.5">
+                </BodyCell>
+                <BodyCell className="px-1.5 py-1.5">
                   <CompactNumberInput
                     value={member.perEventTravelCost}
                     min={0}
@@ -175,11 +162,12 @@ export function TeamMembersTable(props: TeamMembersTableProps) {
                     align="center"
                     onChange={(value) => props.onTravelCostChange(member.id, value)}
                   />
-                </td>
-                <td className="px-1.5 py-1.5 text-center">
-                  <select
-                    className="h-8 w-full rounded-md border border-stone-900/10 bg-stone-50 px-1.5 text-center text-[11px] font-medium text-stone-900 outline-none transition focus:border-emerald-500 focus:bg-white"
+                </BodyCell>
+                <BodyCell className="px-1.5 py-1.5">
+                  <DenseFieldSelect
                     value={member.departureMonthIndex === null ? '' : String(member.departureMonthIndex)}
+                    fieldSize="xs"
+                    align="center"
                     onChange={(event) =>
                       props.onDepartureMonthChange(
                         member.id,
@@ -191,11 +179,11 @@ export function TeamMembersTable(props: TeamMembersTableProps) {
                       <option key={option.label} value={option.value}>
                         {option.label}
                       </option>
-                    ))}
-                  </select>
-                </td>
+                      ))}
+                    </DenseFieldSelect>
+                </BodyCell>
                 {scenarioOrder.map((key) => (
-                  <td key={key} className="px-1.5 py-1.5">
+                  <BodyCell key={key} className="px-1.5 py-1.5">
                     <CompactNumberInput
                       value={member.unitsPerEvent[key]}
                       min={0}
@@ -204,9 +192,9 @@ export function TeamMembersTable(props: TeamMembersTableProps) {
                       align="center"
                       onChange={(value) => props.onUnitsChange(member.id, key, value)}
                     />
-                  </td>
+                  </BodyCell>
                 ))}
-                <td className="px-1.5 py-1.5 text-center">
+                <BodyCell className="px-1.5 py-1.5">
                   <button
                     type="button"
                     onClick={() => props.onRemove(member.id)}
@@ -216,7 +204,7 @@ export function TeamMembersTable(props: TeamMembersTableProps) {
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
-                </td>
+                </BodyCell>
               </tr>
             ))}
           </tbody>

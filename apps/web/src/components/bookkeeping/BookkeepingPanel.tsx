@@ -1,11 +1,11 @@
 import { Building2, Lock, LockOpen, ReceiptText, WalletCards } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { ReactNode, RefObject } from 'react'
+import type { RefObject } from 'react'
 import type { EntryAllocation, EntryResponse, PeriodResponse, SubjectResponse } from '../../lib/api'
 import { findPeriodIdForDateValue, getTodayInputDate, syncInputDateForPeriodChange } from '../../lib/bookkeeping'
 import { cx, formatCurrency } from '../../lib/format'
 import type { MonthlyScenarioResult } from '../../types'
-import { CompactNumberInput, Panel, SectionTitle, SegmentTabs } from '../common/ui'
+import { BodyCell as HistoryCell, CompactNumberInput, DenseFieldInput, DenseFieldSelect, HeaderCell as HistoryHeader, Panel, SectionTitle, SegmentTabs } from '../common/ui'
 import { HistorySection } from './HistorySection'
 
 export type BookkeepingSubmitPayload = {
@@ -1057,14 +1057,16 @@ function ExpenseComposer(props: {
             <div className="mt-4 grid gap-3 xl:grid-cols-[170px_170px_minmax(0,1fr)_144px] xl:items-end">
               <label className="grid gap-2">
                 <span className="text-sm font-semibold text-stone-700">业务发生日</span>
-                <input
+                <DenseFieldInput
                   ref={props.expenseOccurredOnInputRef}
                   type="date"
                   value={props.expenseOccurredOn}
                   disabled={props.isLocked}
                   onInput={(event) => props.onExpenseOccurredOnChange((event.target as HTMLInputElement).value)}
                   onChange={(event) => props.onExpenseOccurredOnChange(event.target.value)}
-                  className="h-11 rounded-2xl border border-stone-900/10 bg-white px-4 text-sm font-medium text-stone-900 outline-none transition focus:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
+                  fieldSize="md"
+                  surface="white"
+                  className="focus:border-amber-300"
                 />
               </label>
 
@@ -1102,23 +1104,27 @@ function ExpenseComposer(props: {
                   <span className="text-sm font-semibold text-stone-700">对方单位</span>
                   <div className="relative">
                     <Building2 className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
-                    <input
+                    <DenseFieldInput
                       disabled={props.isLocked}
                       value={props.counterparty}
                       onChange={(event) => props.onCounterpartyChange(event.target.value)}
-                      className="h-11 w-full rounded-2xl border border-stone-900/10 bg-white px-11 pr-4 text-sm font-medium text-stone-900 outline-none transition focus:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
+                      fieldSize="md"
+                      surface="white"
+                      className="px-11 pr-4 focus:border-amber-300"
                     />
                   </div>
                 </label>
 
                 <label className="grid gap-2">
                   <span className="text-sm font-semibold text-stone-700">备注</span>
-                  <input
+                  <DenseFieldInput
                     type="text"
                     disabled={props.isLocked}
                     value={props.description}
                     onChange={(event) => props.onDescriptionChange(event.target.value)}
-                    className="h-11 rounded-2xl border border-stone-900/10 bg-white px-4 text-sm font-medium text-stone-900 outline-none transition focus:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
+                    fieldSize="md"
+                    surface="white"
+                    className="focus:border-amber-300"
                   />
                 </label>
               </div>
@@ -1562,30 +1568,34 @@ function OtherIncomeComposer(props: {
       <div className="mt-4 grid gap-3 xl:grid-cols-[200px_170px_170px_minmax(0,1fr)_144px] xl:items-end">
         <label className="grid gap-2">
           <span className="text-sm font-semibold text-stone-700">挂账科目</span>
-          <select
+          <DenseFieldSelect
             value={props.selectedSubjectKey}
             disabled={props.isLocked}
             onChange={(event) => props.onSelectSubject(event.target.value)}
-            className="h-11 rounded-2xl border border-stone-900/10 bg-white px-4 text-sm font-medium text-stone-900 outline-none transition focus:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
+            fieldSize="md"
+            surface="white"
+            className="focus:border-amber-300"
           >
             {props.subjects.map((subject) => (
               <option key={subject.subjectKey} value={subject.subjectKey}>
                 {subject.subjectName}
               </option>
             ))}
-          </select>
+          </DenseFieldSelect>
         </label>
 
         <label className="grid gap-2">
           <span className="text-sm font-semibold text-stone-700">业务发生日</span>
-          <input
+          <DenseFieldInput
             ref={props.occurredOnInputRef}
             type="date"
             value={props.occurredOn}
             disabled={props.isLocked}
             onInput={(event) => props.onOccurredOnChange((event.target as HTMLInputElement).value)}
             onChange={(event) => props.onOccurredOnChange(event.target.value)}
-            className="h-11 rounded-2xl border border-stone-900/10 bg-white px-4 text-sm font-medium text-stone-900 outline-none transition focus:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
+            fieldSize="md"
+            surface="white"
+            className="focus:border-amber-300"
           />
         </label>
 
@@ -1627,23 +1637,27 @@ function OtherIncomeComposer(props: {
             <span className="text-sm font-semibold text-stone-700">对方单位</span>
             <div className="relative">
               <Building2 className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
-              <input
+              <DenseFieldInput
                 disabled={props.isLocked}
                 value={props.counterparty}
                 onChange={(event) => props.onCounterpartyChange(event.target.value)}
-                className="h-11 w-full rounded-2xl border border-stone-900/10 bg-white px-11 pr-4 text-sm font-medium text-stone-900 outline-none transition focus:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
+                fieldSize="md"
+                surface="white"
+                className="px-11 pr-4 focus:border-amber-300"
               />
             </div>
           </label>
 
           <label className="grid gap-2">
             <span className="text-sm font-semibold text-stone-700">备注</span>
-            <input
+            <DenseFieldInput
               type="text"
               disabled={props.isLocked}
               value={props.description}
               onChange={(event) => props.onDescriptionChange(event.target.value)}
-              className="h-11 rounded-2xl border border-stone-900/10 bg-white px-4 text-sm font-medium text-stone-900 outline-none transition focus:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
+              fieldSize="md"
+              surface="white"
+              className="focus:border-amber-300"
             />
           </label>
         </div>
@@ -1705,43 +1719,18 @@ function LedgerDatePill(props: {
   return (
     <label className="flex items-center gap-3 rounded-[18px] border border-stone-900/10 bg-white px-4 py-3">
       <span className="shrink-0 text-xs font-semibold tracking-[0.16em] text-stone-500">业务发生日</span>
-      <input
+      <DenseFieldInput
         ref={props.inputRef}
         type="date"
         value={props.value}
         disabled={props.disabled}
         onInput={(event) => props.onChange((event.target as HTMLInputElement).value)}
         onChange={(event) => props.onChange(event.target.value)}
-        className="h-7 min-w-[132px] bg-transparent text-sm font-medium text-stone-900 outline-none transition disabled:cursor-not-allowed disabled:opacity-60"
+        fieldSize="md"
+        surface="ghost"
+        className="h-7 min-w-[132px] rounded-none px-0"
       />
     </label>
-  )
-}
-
-function HistoryHeader(props: { children: string; align?: 'left' | 'center' | 'right' }) {
-  return (
-    <th
-      className={cx(
-        'whitespace-nowrap px-2.5 py-2 text-[11px] font-semibold tracking-[0.12em]',
-        props.align === 'right' ? 'text-right' : props.align === 'center' ? 'text-center' : 'text-left',
-      )}
-    >
-      {props.children}
-    </th>
-  )
-}
-
-function HistoryCell(props: { children: ReactNode; className?: string; align?: 'left' | 'center' | 'right' }) {
-  return (
-    <td
-      className={cx(
-        'px-2.5 py-2 align-middle',
-        props.align === 'right' ? 'text-right' : props.align === 'center' ? 'text-center' : 'text-left',
-        props.className,
-      )}
-    >
-      {props.children}
-    </td>
   )
 }
 

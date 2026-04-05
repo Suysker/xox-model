@@ -9,7 +9,7 @@ import type {
   StageCostMode,
   TeamMember,
 } from '../../types'
-import { BodyCell, CompactNumberInput, HeaderCell, Panel, SegmentTabs } from '../common/ui'
+import { BodyCell, CompactNumberInput, DenseFieldInput, DenseFieldSelect, HeaderCell, Panel, SegmentTabs } from '../common/ui'
 
 type CostTab = 'training' | 'special'
 type TrainingNumberKey =
@@ -266,9 +266,9 @@ export function CostOverridesEditor(props: {
                 </colgroup>
                 <thead className="bg-stone-100/90 text-stone-700">
                   <tr className="border-b border-stone-900/10">
-                    <HeaderCell align="center" className="px-2 py-2 text-[11px]">月份</HeaderCell>
+                    <HeaderCell>月份</HeaderCell>
                     {trainingColumns.map((column) => (
-                      <HeaderCell key={column.key} align="center" className="px-2 py-2 text-[11px]">
+                      <HeaderCell key={column.key}>
                         {column.label}
                       </HeaderCell>
                     ))}
@@ -337,31 +337,35 @@ export function CostOverridesEditor(props: {
 
                 <thead className="bg-stone-100/90 text-stone-700">
                   <tr className="border-b border-stone-900/10">
-                    <HeaderCell align="center" rowSpan={2} className="px-2 py-2 text-[11px]">
-                      月份
-                    </HeaderCell>
+                    <HeaderCell rowSpan={2}>月份</HeaderCell>
                     {orderedStageCostItems.map((item) => (
                       <th key={item.id} className="border-l border-stone-900/10 px-1 py-1.5 align-top">
                         <div className="grid gap-1">
-                          <input
+                          <DenseFieldInput
                             type="text"
                             value={item.name}
                             placeholder="成本名称"
                             onChange={(event) => props.onStageCostItemNameChange(item.id, event.target.value)}
-                            className="h-7 min-w-0 rounded-lg border border-stone-900/10 bg-white px-1.5 text-center text-[11px] font-semibold text-stone-900 outline-none transition focus:border-emerald-500"
+                            fieldSize="xs"
+                            surface="white"
+                            align="center"
+                            className="h-7 min-w-0 rounded-lg px-1.5"
                           />
                           <div className="grid grid-cols-[1fr_24px] gap-0.5">
-                            <select
+                            <DenseFieldSelect
                               value={item.mode}
                               onChange={(event) =>
                                 props.onStageCostItemModeChange(item.id, event.target.value as StageCostMode)
                               }
-                              className="h-[26px] rounded-lg border border-stone-900/10 bg-white px-1 text-center text-[10px] font-semibold text-stone-700 outline-none transition focus:border-emerald-500"
+                              fieldSize="xs"
+                              surface="white"
+                              align="center"
+                              className="h-[26px] rounded-lg px-1 text-[10px]"
                             >
                               <option value="monthly">按月</option>
                               <option value="perEvent">按场</option>
                               <option value="perUnit">按张</option>
-                            </select>
+                            </DenseFieldSelect>
                             <button
                               type="button"
                               onClick={() => props.onStageCostItemRemove(item.id)}
@@ -378,7 +382,7 @@ export function CostOverridesEditor(props: {
                   </tr>
                   <tr className="border-b border-stone-900/10">
                     {orderedStageCostItems.map((item) => (
-                      <HeaderCell key={`${item.id}-detail`} align="center" className="px-1.5 py-1.5 text-[10px]">
+                      <HeaderCell key={`${item.id}-detail`} className="px-1.5 py-1.5 text-[10px]">
                         {getStageHeaderLabel(item.mode)}
                       </HeaderCell>
                     ))}

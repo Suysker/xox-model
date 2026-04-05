@@ -1,6 +1,6 @@
 import { BriefcaseBusiness, Plus, Trash2 } from 'lucide-react'
 import type { Employee } from '../../types'
-import { CompactNumberInput, HeaderCell, InlineStatPill, Panel, SectionTitle } from '../common/ui'
+import { BodyCell, CompactNumberInput, DenseFieldInput, HeaderCell, InlineStatPill, Panel, SectionTitle } from '../common/ui'
 import { formatCurrency } from '../../lib/format'
 
 export function EmployeesTable(props: {
@@ -49,31 +49,33 @@ export function EmployeesTable(props: {
           </colgroup>
           <thead className="bg-stone-100/90 text-stone-700">
             <tr className="border-b border-stone-900/10">
-              <HeaderCell align="center" className="px-2 py-2 text-[11px]">员工</HeaderCell>
-              <HeaderCell align="center" className="px-2 py-2 text-[11px]">岗位</HeaderCell>
-              <HeaderCell align="center" className="px-2 py-2 text-[11px]">月薪/月</HeaderCell>
-              <HeaderCell align="center" className="px-2 py-2 text-[11px]">场次成本/场</HeaderCell>
-              <HeaderCell align="center" className="px-2 py-2 text-[11px]">删</HeaderCell>
+              <HeaderCell>员工</HeaderCell>
+              <HeaderCell>岗位</HeaderCell>
+              <HeaderCell>月薪/月</HeaderCell>
+              <HeaderCell>场次成本/场</HeaderCell>
+              <HeaderCell>删</HeaderCell>
             </tr>
           </thead>
           <tbody>
             {props.employees.map((employee) => (
               <tr key={employee.id} className="border-b border-stone-900/10 last:border-none">
-                <td className="px-2 py-1.5 text-center">
-                  <input
-                    className="h-8 w-full rounded-md border border-stone-900/10 bg-stone-50 px-2.5 text-center text-[11px] font-medium text-stone-900 outline-none transition focus:border-emerald-500 focus:bg-white"
+                <BodyCell>
+                  <DenseFieldInput
                     value={employee.name}
                     onChange={(event) => props.onNameChange(employee.id, event.target.value)}
+                    fieldSize="xs"
+                    align="center"
                   />
-                </td>
-                <td className="px-2 py-1.5 text-center">
-                  <input
-                    className="h-8 w-full rounded-md border border-stone-900/10 bg-stone-50 px-2.5 text-center text-[11px] font-medium text-stone-900 outline-none transition focus:border-emerald-500 focus:bg-white"
+                </BodyCell>
+                <BodyCell>
+                  <DenseFieldInput
                     value={employee.role}
                     onChange={(event) => props.onRoleChange(employee.id, event.target.value)}
+                    fieldSize="xs"
+                    align="center"
                   />
-                </td>
-                <td className="px-1.5 py-1.5">
+                </BodyCell>
+                <BodyCell className="px-1.5 py-1.5">
                   <CompactNumberInput
                     value={employee.monthlyBasePay}
                     min={0}
@@ -82,8 +84,8 @@ export function EmployeesTable(props: {
                     align="center"
                     onChange={(value) => props.onBasePayChange(employee.id, value)}
                   />
-                </td>
-                <td className="px-1.5 py-1.5">
+                </BodyCell>
+                <BodyCell className="px-1.5 py-1.5">
                   <CompactNumberInput
                     value={employee.perEventCost}
                     min={0}
@@ -92,8 +94,8 @@ export function EmployeesTable(props: {
                     align="center"
                     onChange={(value) => props.onPerEventCostChange(employee.id, value)}
                   />
-                </td>
-                <td className="px-1.5 py-1.5 text-center">
+                </BodyCell>
+                <BodyCell className="px-1.5 py-1.5">
                   <button
                     type="button"
                     onClick={() => props.onRemove(employee.id)}
@@ -102,7 +104,7 @@ export function EmployeesTable(props: {
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
-                </td>
+                </BodyCell>
               </tr>
             ))}
             {props.employees.length === 0 ? (

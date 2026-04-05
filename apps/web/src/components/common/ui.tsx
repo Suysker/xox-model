@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { forwardRef, useState, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import { cx } from '../../lib/format'
 
@@ -199,7 +199,7 @@ export function HeaderCell(props: {
       rowSpan={props.rowSpan}
       colSpan={props.colSpan}
       className={cx(
-        'whitespace-nowrap px-3 py-2.5 align-middle text-center text-xs font-semibold uppercase tracking-[0.16em]',
+        'whitespace-nowrap px-2 py-2 align-middle text-center text-[11px] font-semibold tracking-[0.12em]',
         props.align === 'left' && 'text-left',
         props.align === 'right' && 'text-right',
         props.align === 'center' && 'text-center',
@@ -219,7 +219,7 @@ export function BodyCell(props: {
   return (
     <td
       className={cx(
-        'px-3 py-2.5 align-middle text-center text-stone-700',
+        'px-2 py-1.5 align-middle text-center text-stone-700',
         props.align === 'left' && 'text-left',
         props.align === 'right' && 'text-right',
         props.align === 'center' && 'text-center',
@@ -230,6 +230,87 @@ export function BodyCell(props: {
     </td>
   )
 }
+
+type DenseFieldSize = 'xs' | 'sm' | 'md'
+type DenseFieldSurface = 'soft' | 'white' | 'ghost'
+
+function getDenseFieldSizeClass(fieldSize: DenseFieldSize) {
+  if (fieldSize === 'xs') {
+    return 'h-8 rounded-md px-2 text-[11px] font-medium'
+  }
+
+  if (fieldSize === 'sm') {
+    return 'h-9 rounded-lg px-2.5 text-[13px] font-medium'
+  }
+
+  return 'h-11 rounded-2xl px-4 text-sm font-medium'
+}
+
+function getDenseFieldSurfaceClass(surface: DenseFieldSurface) {
+  if (surface === 'ghost') {
+    return 'border-transparent bg-transparent focus:border-transparent focus:bg-transparent'
+  }
+
+  if (surface === 'white') {
+    return 'border-stone-900/10 bg-white focus:border-emerald-500'
+  }
+
+  return 'border-stone-900/10 bg-stone-50 focus:border-emerald-500 focus:bg-white'
+}
+
+export const DenseFieldInput = forwardRef<HTMLInputElement, Omit<InputHTMLAttributes<HTMLInputElement>, 'size'> & {
+  fieldSize?: DenseFieldSize | undefined
+  align?: 'left' | 'center' | 'right' | undefined
+  surface?: DenseFieldSurface | undefined
+}>(function DenseFieldInput(
+  props,
+  ref,
+) {
+  const { fieldSize = 'sm', align, surface = 'soft', className, ...rest } = props
+
+  return (
+    <input
+      {...rest}
+      ref={ref}
+      className={cx(
+        'w-full border text-stone-900 outline-none transition disabled:cursor-not-allowed disabled:opacity-60',
+        getDenseFieldSizeClass(fieldSize),
+        getDenseFieldSurfaceClass(surface),
+        align === 'center' && 'text-center',
+        align === 'right' && 'text-right',
+        className,
+      )}
+    />
+  )
+})
+
+export const DenseFieldSelect = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSelectElement> & {
+  fieldSize?: DenseFieldSize | undefined
+  align?: 'left' | 'center' | 'right' | undefined
+  surface?: DenseFieldSurface | undefined
+}>(function DenseFieldSelect(
+  props,
+  ref,
+) {
+  const { fieldSize = 'sm', align, surface = 'soft', className, children, ...rest } = props
+
+  return (
+    <select
+      {...rest}
+      ref={ref}
+      className={cx(
+        'w-full border text-stone-900 outline-none transition disabled:cursor-not-allowed disabled:opacity-60',
+        getDenseFieldSizeClass(fieldSize),
+        getDenseFieldSurfaceClass(surface),
+        align === 'center' && 'text-center',
+        align === 'right' && 'text-right',
+        className,
+      )}
+    >
+      {children}
+    </select>
+  )
+})
 
 export function CompactNumberInput(props: {
   value: number

@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { ReactNode } from 'react'
 import { CalendarRange, ReceiptText, Search } from 'lucide-react'
 import type { EntryAllocation, EntryResponse, SubjectResponse } from '../../lib/api'
 import { cx, formatCurrency } from '../../lib/format'
 import type { MonthlyScenarioResult } from '../../types'
-import { Panel, SectionTitle, SegmentTabs } from '../common/ui'
+import { BodyCell as HistoryCell, DenseFieldInput, HeaderCell as HistoryHeader, Panel, SectionTitle, SegmentTabs } from '../common/ui'
 
 type HistoryDirectionFilter = 'all' | 'income' | 'expense'
 type HistoryStatusFilter = 'all' | 'posted' | 'voided'
@@ -212,19 +211,21 @@ export function HistorySection(props: {
                 ))}
               </div>
               {dateFilterMode === 'day' ? (
-                <input
+                <DenseFieldInput
                   type="date"
                   value={selectedDay}
                   onChange={(event) => setSelectedDay(event.target.value)}
-                  className="h-8 rounded-xl border border-stone-900/10 bg-stone-50 px-3 text-sm font-medium text-stone-900 outline-none transition focus:border-amber-300"
+                  fieldSize="sm"
+                  className="h-8 rounded-xl px-3"
                 />
               ) : null}
               {dateFilterMode === 'week' ? (
-                <input
+                <DenseFieldInput
                   type="week"
                   value={selectedWeek}
                   onChange={(event) => setSelectedWeek(event.target.value)}
-                  className="h-8 rounded-xl border border-stone-900/10 bg-stone-50 px-3 text-sm font-medium text-stone-900 outline-none transition focus:border-amber-300"
+                  fieldSize="sm"
+                  className="h-8 rounded-xl px-3"
                 />
               ) : null}
               {hasActiveDateFilter ? (
@@ -655,33 +656,6 @@ function HistoryNumberInput(props: {
         style={{ width: `${widthChars + 1}ch` }}
       />
     </div>
-  )
-}
-
-function HistoryHeader(props: { children: string; align?: 'left' | 'center' | 'right' }) {
-  return (
-    <th
-      className={cx(
-        'whitespace-nowrap px-2.5 py-2 text-[11px] font-semibold tracking-[0.12em]',
-        props.align === 'right' ? 'text-right' : props.align === 'center' ? 'text-center' : 'text-left',
-      )}
-    >
-      {props.children}
-    </th>
-  )
-}
-
-function HistoryCell(props: { children: ReactNode; className?: string; align?: 'left' | 'center' | 'right' }) {
-  return (
-    <td
-      className={cx(
-        'px-2.5 py-2 align-middle',
-        props.align === 'right' ? 'text-right' : props.align === 'center' ? 'text-center' : 'text-left',
-        props.className,
-      )}
-    >
-      {props.children}
-    </td>
   )
 }
 
