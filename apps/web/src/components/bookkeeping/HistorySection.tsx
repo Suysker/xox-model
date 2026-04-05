@@ -267,11 +267,11 @@ export function HistorySection(props: {
                   </colgroup>
                   <thead className="bg-stone-100/90 text-stone-600">
                     <tr className="border-b border-stone-900/10">
-                      <HistoryHeader>时间</HistoryHeader>
+                      <HistoryHeader align="center">时间</HistoryHeader>
                       <HistoryHeader align="center">方向</HistoryHeader>
-                      <HistoryHeader>摘要</HistoryHeader>
-                      <HistoryHeader>关联对象</HistoryHeader>
-                      <HistoryHeader align="right">金额</HistoryHeader>
+                      <HistoryHeader align="center">摘要</HistoryHeader>
+                      <HistoryHeader align="center">关联对象</HistoryHeader>
+                      <HistoryHeader align="center">金额</HistoryHeader>
                       <HistoryHeader align="center">操作</HistoryHeader>
                     </tr>
                   </thead>
@@ -490,7 +490,7 @@ function HistorySummaryEditor(props: {
 }) {
   if (props.entry.status === 'voided') {
     return (
-      <div className="truncate line-through text-sm font-medium text-stone-400">
+      <div className="truncate line-through font-medium text-stone-400">
         {buildHistorySummary(props.entry, props.derivedEntries)}
       </div>
     )
@@ -633,7 +633,7 @@ function HistoryNumberInput(props: {
         props.disabled && 'opacity-60',
       )}
     >
-      {props.prefix ? <span className="shrink-0 text-sm font-semibold text-stone-500">{props.prefix}</span> : null}
+      {props.prefix ? <span className="shrink-0 text-[13px] font-medium text-stone-500">{props.prefix}</span> : null}
       <input
         type="number"
         value={displayValue}
@@ -649,7 +649,7 @@ function HistoryNumberInput(props: {
           props.onChange(Number.isFinite(nextValue) ? nextValue : 0)
         }}
         className={cx(
-          'h-full bg-transparent text-sm font-semibold text-stone-900 outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none',
+          'h-full bg-transparent text-[13px] font-medium text-stone-900 outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none',
           props.align === 'center' ? 'text-center' : props.align === 'right' ? 'text-right' : 'text-left',
         )}
         style={{ width: `${widthChars + 1}ch` }}

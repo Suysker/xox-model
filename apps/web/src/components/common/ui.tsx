@@ -192,6 +192,7 @@ export function HeaderCell(props: {
   align?: 'left' | 'right' | 'center' | undefined
   rowSpan?: number | undefined
   colSpan?: number | undefined
+  className?: string | undefined
 }) {
   return (
     <th
@@ -202,6 +203,7 @@ export function HeaderCell(props: {
         props.align === 'left' && 'text-left',
         props.align === 'right' && 'text-right',
         props.align === 'center' && 'text-center',
+        props.className,
       )}
     >
       {props.children}
@@ -236,7 +238,7 @@ export function CompactNumberInput(props: {
   min?: number | undefined
   max?: number | undefined
   suffix?: string | undefined
-  size?: 'sm' | 'md' | undefined
+  size?: 'xs' | 'sm' | 'md' | undefined
   align?: 'left' | 'center' | 'right' | undefined
   className?: string | undefined
   inputClassName?: string | undefined
@@ -250,14 +252,22 @@ export function CompactNumberInput(props: {
     <div
       className={cx(
         'flex items-center overflow-hidden border border-stone-900/10 bg-stone-50 focus-within:border-emerald-500 focus-within:bg-white',
-        props.size === 'sm' ? 'h-9 rounded-lg' : 'h-10 rounded-xl',
+        props.size === 'xs'
+          ? 'h-8 rounded-md'
+          : props.size === 'sm'
+            ? 'h-9 rounded-lg'
+            : 'h-10 rounded-xl',
         props.className,
       )}
     >
       <input
         className={cx(
-          'compact-number-input-field h-full min-w-0 flex-1 border-none bg-transparent text-sm font-medium tabular-nums text-stone-900 outline-none',
-          props.size === 'sm' ? 'px-2.5' : 'px-3',
+          'compact-number-input-field h-full min-w-0 flex-1 border-none bg-transparent tabular-nums text-stone-900 outline-none',
+          props.size === 'xs'
+            ? 'px-2 text-[11px] font-medium'
+            : props.size === 'sm'
+              ? 'px-2.5 text-[13px] font-medium'
+              : 'px-3 text-sm font-medium',
           props.align === 'center' && 'text-center',
           props.align === 'right' && 'text-right',
           props.inputClassName,
@@ -278,7 +288,7 @@ export function CompactNumberInput(props: {
         <span
           className={cx(
             'font-semibold uppercase tracking-[0.12em] text-stone-500',
-            props.size === 'sm' ? 'pr-2 text-[10px]' : 'pr-3 text-[11px]',
+            props.size === 'xs' ? 'pr-1.5 text-[10px]' : props.size === 'sm' ? 'pr-2 text-[10px]' : 'pr-3 text-[11px]',
           )}
         >
           {props.suffix}

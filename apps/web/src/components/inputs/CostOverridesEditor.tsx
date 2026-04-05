@@ -27,11 +27,11 @@ const trainingColumns: Array<{ key: TrainingNumberKey; label: string; step: numb
 
 function getStageHeaderLabel(mode: StageCostMode) {
   if (mode === 'perEvent') {
-    return '单价 / 场次'
+    return '单价 × 场次'
   }
 
   if (mode === 'perUnit') {
-    return '单价 / 系数'
+    return '单价 × 系数'
   }
 
   return '金额'
@@ -75,22 +75,22 @@ function EventCostCell(props: {
   onCountChange: (value: number) => void
 }) {
   return (
-    <div className="mx-auto grid max-w-[114px] grid-cols-[1fr_auto_40px] items-center gap-1">
+    <div className="mx-auto grid max-w-[92px] grid-cols-[1fr_auto_30px] items-center gap-0.5">
       <CompactNumberInput
         value={props.amount}
         min={0}
         step="any"
-        size="sm"
+        size="xs"
         align="center"
         className="w-full"
         onChange={props.onAmountChange}
       />
-      <span className="text-xs font-semibold text-stone-400">/</span>
+      <span className="text-xs font-semibold text-stone-400">×</span>
       <CompactNumberInput
         value={props.count}
         min={0}
         step={1}
-        size="sm"
+        size="xs"
         align="center"
         className="w-full"
         onChange={props.onCountChange}
@@ -106,36 +106,36 @@ function PerUnitCostCell(props: {
   onFactorChange?: ((value: number) => void) | undefined
 }) {
   return (
-    <div className="mx-auto grid max-w-[120px] grid-cols-[1fr_auto_44px] items-center gap-1">
+    <div className="mx-auto grid max-w-[98px] grid-cols-[1fr_auto_34px] items-center gap-0.5">
       {props.onAmountChange ? (
         <CompactNumberInput
           value={props.amount}
           min={0}
           step="any"
-          size="sm"
+          size="xs"
           align="center"
           className="w-full"
           onChange={props.onAmountChange}
         />
       ) : (
-        <div className="flex h-9 items-center justify-center rounded-lg border border-stone-900/10 bg-stone-50 px-2.5 text-sm font-medium text-stone-500">
+        <div className="flex h-8 items-center justify-center rounded-md border border-stone-900/10 bg-stone-50 px-2 text-[11px] font-medium text-stone-500">
           {formatSplitValue(props.amount)}
         </div>
       )}
-      <span className="text-xs font-semibold text-stone-400">/</span>
+      <span className="text-xs font-semibold text-stone-400">×</span>
       {props.onFactorChange ? (
         <CompactNumberInput
           value={props.factor}
           min={0}
           max={1}
           step={0.05}
-          size="sm"
+          size="xs"
           align="center"
           className="w-full"
           onChange={(value) => props.onFactorChange?.(clampUnitFactor(value))}
         />
       ) : (
-        <div className="flex h-9 items-center justify-center rounded-lg border border-stone-900/10 bg-stone-50 px-2 text-sm font-medium text-stone-500">
+        <div className="flex h-8 items-center justify-center rounded-md border border-stone-900/10 bg-stone-50 px-2 text-[11px] font-medium text-stone-500">
           {formatSplitValue(props.factor)}
         </div>
       )}
@@ -150,12 +150,12 @@ function MonthResetCell(props: {
   tone?: 'default' | 'template' | undefined
 }) {
   return (
-    <div className={props.onReset ? 'relative min-h-[28px] w-full pr-8' : 'w-full'}>
+    <div className={props.onReset ? 'relative min-h-[24px] w-full pr-6' : 'w-full'}>
       <span
         className={
           props.tone === 'template'
-            ? 'block font-semibold leading-none text-amber-900'
-            : 'block font-semibold leading-none text-stone-900'
+            ? 'block text-[12px] font-semibold leading-none text-amber-900'
+            : 'block text-[12px] font-semibold leading-none text-stone-900'
         }
       >
         {props.label}
@@ -164,11 +164,11 @@ function MonthResetCell(props: {
         <button
           type="button"
           onClick={props.onReset}
-          className="absolute right-0 top-0 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-stone-900/10 bg-white text-stone-700 transition hover:bg-stone-100"
+          className="absolute right-0 top-0 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-stone-900/10 bg-white text-stone-700 transition hover:bg-stone-100"
           aria-label={props.resetLabel}
           title={props.resetLabel}
         >
-          <RefreshCcw className="h-3.5 w-3.5" />
+          <RefreshCcw className="h-3 w-3" />
         </button>
       ) : null}
     </div>
@@ -255,7 +255,7 @@ export function CostOverridesEditor(props: {
       </div>
 
       {tab === 'training' ? (
-        <section className="mt-5 rounded-[24px] border border-stone-900/10 bg-stone-50/80 p-4">
+        <section className="mt-5 rounded-[24px] border border-stone-900/10 bg-stone-50/80 p-3">
             <div className="rounded-[20px] border border-stone-900/10">
               <table className="w-full table-fixed text-sm">
                 <colgroup>
@@ -266,9 +266,9 @@ export function CostOverridesEditor(props: {
                 </colgroup>
                 <thead className="bg-stone-100/90 text-stone-700">
                   <tr className="border-b border-stone-900/10">
-                    <HeaderCell align="center">月份</HeaderCell>
+                    <HeaderCell align="center" className="px-2 py-2 text-[11px]">月份</HeaderCell>
                     {trainingColumns.map((column) => (
-                      <HeaderCell key={column.key} align="center">
+                      <HeaderCell key={column.key} align="center" className="px-2 py-2 text-[11px]">
                         {column.label}
                       </HeaderCell>
                     ))}
@@ -276,18 +276,18 @@ export function CostOverridesEditor(props: {
                 </thead>
                 <tbody>
                   <tr className="border-b border-stone-900/10 bg-amber-50/60">
-                    <BodyCell align="left">
+                    <BodyCell align="left" className="px-2 py-1.5">
                       <MonthResetCell label="默认" tone="template" />
                     </BodyCell>
                     {trainingColumns.map((column) => (
-                      <BodyCell key={`template-${column.key}`} align="center">
+                      <BodyCell key={`template-${column.key}`} align="center" className="px-2 py-1.5">
                         <CompactNumberInput
                           value={props.template[column.key]}
                           min={0}
                           step={column.step}
-                          size="sm"
+                          size="xs"
                           align="center"
-                          className="mx-auto max-w-[110px]"
+                          className="mx-auto max-w-[104px]"
                           onChange={(value) => props.onTrainingTemplateChange(column.key, value)}
                         />
                       </BodyCell>
@@ -296,7 +296,7 @@ export function CostOverridesEditor(props: {
 
                   {props.months.map((month) => (
                     <tr key={month.id} className="border-b border-stone-900/10 last:border-none">
-                      <BodyCell align="left">
+                      <BodyCell align="left" className="px-2 py-1.5">
                         <MonthResetCell
                           label={month.label}
                           resetLabel={`恢复${month.label}训练默认值`}
@@ -304,14 +304,14 @@ export function CostOverridesEditor(props: {
                         />
                       </BodyCell>
                       {trainingColumns.map((column) => (
-                        <BodyCell key={`${month.id}-${column.key}`} align="center">
+                        <BodyCell key={`${month.id}-${column.key}`} align="center" className="px-2 py-1.5">
                           <CompactNumberInput
                             value={month[column.key]}
                             min={0}
                             step={column.step}
-                            size="sm"
+                            size="xs"
                             align="center"
-                            className="mx-auto max-w-[110px]"
+                            className="mx-auto max-w-[104px]"
                             onChange={(value) => props.onTrainingMonthChange(month.id, column.key, value)}
                           />
                         </BodyCell>
@@ -325,38 +325,38 @@ export function CostOverridesEditor(props: {
       ) : null}
 
       {tab === 'special' ? (
-        <section className="mt-5 rounded-[24px] border border-stone-900/10 bg-stone-50/80 p-4">
+        <section className="mt-5 rounded-[24px] border border-stone-900/10 bg-stone-50/80 p-3">
             <div className="overflow-x-auto rounded-[20px] border border-stone-900/10 pb-1">
               <table className="w-max min-w-full table-fixed text-sm">
                 <colgroup>
-                  <col className="w-[88px]" />
+                  <col className="w-[80px]" />
                   {orderedStageCostItems.map((item) => (
-                    <col key={`${item.id}-column`} className="w-[138px]" />
+                    <col key={`${item.id}-column`} className="w-[114px]" />
                   ))}
                 </colgroup>
 
                 <thead className="bg-stone-100/90 text-stone-700">
                   <tr className="border-b border-stone-900/10">
-                    <HeaderCell align="center" rowSpan={2}>
+                    <HeaderCell align="center" rowSpan={2} className="px-2 py-2 text-[11px]">
                       月份
                     </HeaderCell>
                     {orderedStageCostItems.map((item) => (
-                      <th key={item.id} className="border-l border-stone-900/10 px-2 py-2 align-top">
-                        <div className="grid gap-2">
+                      <th key={item.id} className="border-l border-stone-900/10 px-1 py-1.5 align-top">
+                        <div className="grid gap-1">
                           <input
                             type="text"
                             value={item.name}
                             placeholder="成本名称"
                             onChange={(event) => props.onStageCostItemNameChange(item.id, event.target.value)}
-                            className="h-9 min-w-0 rounded-lg border border-stone-900/10 bg-white px-2.5 text-center text-xs font-semibold text-stone-900 outline-none transition focus:border-emerald-500"
+                            className="h-7 min-w-0 rounded-lg border border-stone-900/10 bg-white px-1.5 text-center text-[11px] font-semibold text-stone-900 outline-none transition focus:border-emerald-500"
                           />
-                          <div className="grid grid-cols-[1fr_30px] gap-1.5">
+                          <div className="grid grid-cols-[1fr_24px] gap-0.5">
                             <select
                               value={item.mode}
                               onChange={(event) =>
                                 props.onStageCostItemModeChange(item.id, event.target.value as StageCostMode)
                               }
-                              className="h-8 rounded-lg border border-stone-900/10 bg-white px-2 text-center text-[11px] font-semibold text-stone-700 outline-none transition focus:border-emerald-500"
+                              className="h-[26px] rounded-lg border border-stone-900/10 bg-white px-1 text-center text-[10px] font-semibold text-stone-700 outline-none transition focus:border-emerald-500"
                             >
                               <option value="monthly">按月</option>
                               <option value="perEvent">按场</option>
@@ -365,11 +365,11 @@ export function CostOverridesEditor(props: {
                             <button
                               type="button"
                               onClick={() => props.onStageCostItemRemove(item.id)}
-                              className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-stone-900/10 bg-white text-stone-500 transition hover:bg-stone-100 hover:text-stone-900"
+                              className="inline-flex h-[26px] w-[26px] items-center justify-center rounded-full border border-stone-900/10 bg-white text-stone-500 transition hover:bg-stone-100 hover:text-stone-900"
                               aria-label={`删除${item.name}`}
                               title={`删除${item.name}`}
                             >
-                              <Trash2 className="h-3.5 w-3.5" />
+                              <Trash2 className="h-3 w-3" />
                             </button>
                           </div>
                         </div>
@@ -378,7 +378,7 @@ export function CostOverridesEditor(props: {
                   </tr>
                   <tr className="border-b border-stone-900/10">
                     {orderedStageCostItems.map((item) => (
-                      <HeaderCell key={`${item.id}-detail`} align="center">
+                      <HeaderCell key={`${item.id}-detail`} align="center" className="px-1.5 py-1.5 text-[10px]">
                         {getStageHeaderLabel(item.mode)}
                       </HeaderCell>
                     ))}
@@ -387,7 +387,7 @@ export function CostOverridesEditor(props: {
 
                 <tbody>
                   <tr className="border-b border-stone-900/10 bg-amber-50/60">
-                    <BodyCell align="left">
+                    <BodyCell align="left" className="px-2 py-1.5">
                       <MonthResetCell label="默认" tone="template" />
                     </BodyCell>
                     {orderedStageCostItems.map((item) => {
@@ -395,7 +395,7 @@ export function CostOverridesEditor(props: {
 
                       if (item.mode === 'perEvent') {
                         return (
-                          <BodyCell key={`${item.id}-template-event`} align="center">
+                          <BodyCell key={`${item.id}-template-event`} align="center" className="px-1.5 py-1.5">
                             <EventCostCell
                               amount={value?.amount ?? 0}
                               count={value?.count ?? 0}
@@ -408,7 +408,7 @@ export function CostOverridesEditor(props: {
 
                       if (item.mode === 'perUnit') {
                         return (
-                          <BodyCell key={`${item.id}-template-unit`} align="center">
+                          <BodyCell key={`${item.id}-template-unit`} align="center" className="px-1.5 py-1.5">
                             <PerUnitCostCell
                               amount={value?.amount ?? 0}
                               factor={1}
@@ -419,14 +419,14 @@ export function CostOverridesEditor(props: {
                       }
 
                       return (
-                        <BodyCell key={`${item.id}-template-amount`} align="center">
+                        <BodyCell key={`${item.id}-template-amount`} align="center" className="px-1.5 py-1.5">
                           <CompactNumberInput
                             value={value?.amount ?? 0}
                             min={0}
                             step="any"
-                            size="sm"
+                            size="xs"
                             align="center"
-                            className="mx-auto max-w-[96px]"
+                            className="mx-auto max-w-[80px]"
                             onChange={(nextValue) => props.onTemplateStageCostChange(item.id, 'amount', nextValue)}
                           />
                         </BodyCell>
@@ -436,7 +436,7 @@ export function CostOverridesEditor(props: {
 
                   {props.months.map((month) => (
                     <tr key={month.id} className="border-b border-stone-900/10 last:border-none">
-                      <BodyCell align="left">
+                      <BodyCell align="left" className="px-2 py-1.5">
                         <MonthResetCell
                           label={month.label}
                           resetLabel={`恢复${month.label}专项默认值`}
@@ -449,7 +449,7 @@ export function CostOverridesEditor(props: {
 
                         if (item.mode === 'perEvent') {
                           return (
-                            <BodyCell key={`${month.id}-${item.id}-event`} align="center">
+                            <BodyCell key={`${month.id}-${item.id}-event`} align="center" className="px-1.5 py-1.5">
                               <EventCostCell
                                 amount={value?.amount ?? 0}
                                 count={value?.count ?? 0}
@@ -466,7 +466,7 @@ export function CostOverridesEditor(props: {
 
                         if (item.mode === 'perUnit') {
                           return (
-                            <BodyCell key={`${month.id}-${item.id}-factor`} align="center">
+                            <BodyCell key={`${month.id}-${item.id}-factor`} align="center" className="px-1.5 py-1.5">
                               <PerUnitCostCell
                                 amount={templateValue?.amount ?? 0}
                                 factor={getPerUnitFactor(templateValue?.amount ?? 0, value?.amount ?? 0)}
@@ -484,14 +484,14 @@ export function CostOverridesEditor(props: {
                         }
 
                         return (
-                          <BodyCell key={`${month.id}-${item.id}-amount`} align="center">
+                          <BodyCell key={`${month.id}-${item.id}-amount`} align="center" className="px-1.5 py-1.5">
                             <CompactNumberInput
                               value={value?.amount ?? 0}
                               min={0}
                               step="any"
-                              size="sm"
+                              size="xs"
                               align="center"
-                              className="mx-auto max-w-[96px]"
+                              className="mx-auto max-w-[80px]"
                               onChange={(nextValue) => props.onMonthStageCostChange(month.id, item.id, 'amount', nextValue)}
                             />
                           </BodyCell>

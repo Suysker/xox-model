@@ -85,53 +85,53 @@ export function TeamMembersTable(props: TeamMembersTableProps) {
           </colgroup>
           <thead className="bg-stone-100/90 text-stone-700">
             <tr className="border-b border-stone-900/10">
-              <HeaderCell rowSpan={2} align="center">
+              <HeaderCell rowSpan={2} align="center" className="px-2 py-2 text-[11px]">
                 成员
               </HeaderCell>
-              <HeaderCell rowSpan={2} align="center">
+              <HeaderCell rowSpan={2} align="center" className="px-2 py-2 text-[11px]">
                 类型
               </HeaderCell>
-              <HeaderCell rowSpan={2} align="center">
+              <HeaderCell rowSpan={2} align="center" className="px-2 py-2 text-[11px]">
                 提成 %
               </HeaderCell>
-              <HeaderCell rowSpan={2} align="center">
+              <HeaderCell rowSpan={2} align="center" className="px-2 py-2 text-[11px]">
                 底薪 / 月
               </HeaderCell>
-              <HeaderCell rowSpan={2} align="center">
+              <HeaderCell rowSpan={2} align="center" className="px-2 py-2 text-[11px]">
                 路费 / 场
               </HeaderCell>
-              <HeaderCell rowSpan={2} align="center">
+              <HeaderCell rowSpan={2} align="center" className="px-2 py-2 text-[11px]">
                 离团至
               </HeaderCell>
-              <HeaderCell colSpan={3} align="center">
+              <HeaderCell colSpan={3} align="center" className="px-2 py-2 text-[11px]">
                 单场张数
               </HeaderCell>
-              <HeaderCell rowSpan={2} align="center">
+              <HeaderCell rowSpan={2} align="center" className="px-2 py-2 text-[11px]">
                 删
               </HeaderCell>
             </tr>
             <tr className="border-b border-stone-900/10">
-              <HeaderCell align="center">悲</HeaderCell>
-              <HeaderCell align="center">基</HeaderCell>
-              <HeaderCell align="center">乐</HeaderCell>
+              <HeaderCell align="center" className="px-1.5 py-1.5 text-[10px]">悲</HeaderCell>
+              <HeaderCell align="center" className="px-1.5 py-1.5 text-[10px]">基</HeaderCell>
+              <HeaderCell align="center" className="px-1.5 py-1.5 text-[10px]">乐</HeaderCell>
             </tr>
           </thead>
           <tbody>
             {props.members.map((member) => (
               <tr key={member.id} className="border-b border-stone-900/10 last:border-none">
-                <td className="px-3 py-2.5 text-center">
+                <td className="px-2 py-1.5 text-center">
                   <input
-                    className="h-9 w-full rounded-lg border border-stone-900/10 bg-stone-50 px-3 text-center text-sm font-medium text-stone-900 outline-none transition focus:border-emerald-500 focus:bg-white"
+                    className="h-8 w-full rounded-md border border-stone-900/10 bg-stone-50 px-2.5 text-center text-[11px] font-medium text-stone-900 outline-none transition focus:border-emerald-500 focus:bg-white"
                     value={member.name}
                     onChange={(event) => props.onNameChange(member.id, event.target.value)}
                   />
                 </td>
-                <td className="px-2 py-2.5 text-center">
+                <td className="px-1.5 py-1.5 text-center">
                   <select
                     className={
                       member.employmentType === 'salary'
-                        ? 'h-9 w-full rounded-lg border border-amber-200 bg-amber-50 px-2 text-center text-sm font-semibold text-amber-800 outline-none transition focus:border-amber-400'
-                        : 'h-9 w-full rounded-lg border border-sky-200 bg-sky-50 px-2 text-center text-sm font-semibold text-sky-800 outline-none transition focus:border-sky-400'
+                        ? 'h-8 w-full rounded-md border border-amber-200 bg-amber-50 px-1.5 text-center text-[11px] font-semibold text-amber-800 outline-none transition focus:border-amber-400'
+                        : 'h-8 w-full rounded-md border border-sky-200 bg-sky-50 px-1.5 text-center text-[11px] font-semibold text-sky-800 outline-none transition focus:border-sky-400'
                     }
                     value={member.employmentType}
                     onChange={(event) =>
@@ -145,40 +145,40 @@ export function TeamMembersTable(props: TeamMembersTableProps) {
                     ))}
                   </select>
                 </td>
-                <td className="px-2 py-2.5">
+                <td className="px-1.5 py-1.5">
                   <CompactNumberInput
                     value={member.commissionRate * 100}
                     min={0}
                     max={100}
                     step="any"
-                    size="sm"
+                    size="xs"
                     align="center"
                     onChange={(value) => props.onCommissionChange(member.id, value / 100)}
                   />
                 </td>
-                <td className="px-2 py-2.5">
+                <td className="px-1.5 py-1.5">
                   <CompactNumberInput
                     value={member.monthlyBasePay}
                     min={0}
                     step={100}
-                    size="sm"
+                    size="xs"
                     align="center"
                     onChange={(value) => props.onBasePayChange(member.id, value)}
                   />
                 </td>
-                <td className="px-2 py-2.5">
+                <td className="px-1.5 py-1.5">
                   <CompactNumberInput
                     value={member.perEventTravelCost}
                     min={0}
                     step={100}
-                    size="sm"
+                    size="xs"
                     align="center"
                     onChange={(value) => props.onTravelCostChange(member.id, value)}
                   />
                 </td>
-                <td className="px-2 py-2.5 text-center">
+                <td className="px-1.5 py-1.5 text-center">
                   <select
-                    className="h-9 w-full rounded-lg border border-stone-900/10 bg-stone-50 px-2 text-center text-sm font-medium text-stone-900 outline-none transition focus:border-emerald-500 focus:bg-white"
+                    className="h-8 w-full rounded-md border border-stone-900/10 bg-stone-50 px-1.5 text-center text-[11px] font-medium text-stone-900 outline-none transition focus:border-emerald-500 focus:bg-white"
                     value={member.departureMonthIndex === null ? '' : String(member.departureMonthIndex)}
                     onChange={(event) =>
                       props.onDepartureMonthChange(
@@ -195,26 +195,26 @@ export function TeamMembersTable(props: TeamMembersTableProps) {
                   </select>
                 </td>
                 {scenarioOrder.map((key) => (
-                  <td key={key} className="px-2 py-2.5">
+                  <td key={key} className="px-1.5 py-1.5">
                     <CompactNumberInput
                       value={member.unitsPerEvent[key]}
                       min={0}
                       step={1}
-                      size="sm"
+                      size="xs"
                       align="center"
                       onChange={(value) => props.onUnitsChange(member.id, key, value)}
                     />
                   </td>
                 ))}
-                <td className="px-2 py-2.5 text-center">
+                <td className="px-1.5 py-1.5 text-center">
                   <button
                     type="button"
                     onClick={() => props.onRemove(member.id)}
                     disabled={props.members.length === 1}
                     aria-label={`删除 ${member.name}`}
-                    className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-stone-900/10 bg-white text-stone-600 transition hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-stone-900/10 bg-white text-stone-600 transition hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-40"
                   >
-                    <Trash2 className="h-4 w-4" />
+                    <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 </td>
               </tr>

@@ -169,11 +169,11 @@ function TimelineRow(props: {
     <section
       className={
         props.tone === 'template'
-          ? 'rounded-[20px] border border-amber-200/70 bg-amber-50/60 p-4'
-          : 'rounded-[20px] border border-stone-900/10 bg-white p-4'
+          ? 'rounded-[18px] border border-amber-200/70 bg-amber-50/60 px-3 py-2.5'
+          : 'rounded-[18px] border border-stone-900/10 bg-white px-3 py-2.5'
       }
     >
-      <div className="grid gap-2.5 xl:grid-cols-[78px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)] xl:items-center">
+      <div className="grid gap-2 xl:grid-cols-[72px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)] xl:items-center">
         <TimelineRowMonthLabel label={props.label} tone={props.tone} onReset={props.onReset} />
         <TimelineMetricField
           label="场次"
@@ -211,8 +211,8 @@ function TimelineRowMonthLabel(props: {
       <span
         className={
           props.tone === 'template'
-            ? 'block font-semibold leading-none text-amber-900'
-            : 'block font-semibold leading-none text-stone-950'
+            ? 'block text-[12px] font-semibold leading-none text-amber-900'
+            : 'block text-[12px] font-semibold leading-none text-stone-950'
         }
       >
         {props.label}
@@ -240,7 +240,7 @@ function TimelineMetricField(props: {
   tone?: 'default' | 'template' | undefined
 }) {
   return (
-    <label className="flex min-w-0 items-center gap-2">
+    <label className="flex min-w-0 items-center gap-1.5">
       <span
         className={
           props.tone === 'template'
@@ -254,9 +254,9 @@ function TimelineMetricField(props: {
         value={props.value}
         min={0}
         step={props.step}
-        size="sm"
+        size="xs"
         align="center"
-        className={props.tone === 'template' ? 'h-10 min-w-0 flex-1 rounded-xl bg-white' : 'h-10 min-w-0 flex-1 rounded-xl bg-stone-50'}
+        className={props.tone === 'template' ? 'min-w-0 flex-1 bg-white' : 'min-w-0 flex-1 bg-stone-50'}
         onChange={props.onChange}
       />
     </label>

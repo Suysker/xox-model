@@ -49,58 +49,58 @@ export function EmployeesTable(props: {
           </colgroup>
           <thead className="bg-stone-100/90 text-stone-700">
             <tr className="border-b border-stone-900/10">
-              <HeaderCell align="center">员工</HeaderCell>
-              <HeaderCell align="center">岗位</HeaderCell>
-              <HeaderCell align="center">月薪/月</HeaderCell>
-              <HeaderCell align="center">场次成本/场</HeaderCell>
-              <HeaderCell align="center">删</HeaderCell>
+              <HeaderCell align="center" className="px-2 py-2 text-[11px]">员工</HeaderCell>
+              <HeaderCell align="center" className="px-2 py-2 text-[11px]">岗位</HeaderCell>
+              <HeaderCell align="center" className="px-2 py-2 text-[11px]">月薪/月</HeaderCell>
+              <HeaderCell align="center" className="px-2 py-2 text-[11px]">场次成本/场</HeaderCell>
+              <HeaderCell align="center" className="px-2 py-2 text-[11px]">删</HeaderCell>
             </tr>
           </thead>
           <tbody>
             {props.employees.map((employee) => (
               <tr key={employee.id} className="border-b border-stone-900/10 last:border-none">
-                <td className="px-3 py-2.5 text-center">
+                <td className="px-2 py-1.5 text-center">
                   <input
-                    className="h-9 w-full rounded-lg border border-stone-900/10 bg-stone-50 px-3 text-center text-sm font-medium text-stone-900 outline-none transition focus:border-emerald-500 focus:bg-white"
+                    className="h-8 w-full rounded-md border border-stone-900/10 bg-stone-50 px-2.5 text-center text-[11px] font-medium text-stone-900 outline-none transition focus:border-emerald-500 focus:bg-white"
                     value={employee.name}
                     onChange={(event) => props.onNameChange(employee.id, event.target.value)}
                   />
                 </td>
-                <td className="px-3 py-2.5 text-center">
+                <td className="px-2 py-1.5 text-center">
                   <input
-                    className="h-9 w-full rounded-lg border border-stone-900/10 bg-stone-50 px-3 text-center text-sm font-medium text-stone-900 outline-none transition focus:border-emerald-500 focus:bg-white"
+                    className="h-8 w-full rounded-md border border-stone-900/10 bg-stone-50 px-2.5 text-center text-[11px] font-medium text-stone-900 outline-none transition focus:border-emerald-500 focus:bg-white"
                     value={employee.role}
                     onChange={(event) => props.onRoleChange(employee.id, event.target.value)}
                   />
                 </td>
-                <td className="px-2 py-2.5">
+                <td className="px-1.5 py-1.5">
                   <CompactNumberInput
                     value={employee.monthlyBasePay}
                     min={0}
                     step={100}
-                    size="sm"
+                    size="xs"
                     align="center"
                     onChange={(value) => props.onBasePayChange(employee.id, value)}
                   />
                 </td>
-                <td className="px-2 py-2.5">
+                <td className="px-1.5 py-1.5">
                   <CompactNumberInput
                     value={employee.perEventCost}
                     min={0}
                     step={50}
-                    size="sm"
+                    size="xs"
                     align="center"
                     onChange={(value) => props.onPerEventCostChange(employee.id, value)}
                   />
                 </td>
-                <td className="px-2 py-2.5 text-center">
+                <td className="px-1.5 py-1.5 text-center">
                   <button
                     type="button"
                     onClick={() => props.onRemove(employee.id)}
                     aria-label={`删除 ${employee.name}`}
-                    className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-stone-900/10 bg-white text-stone-600 transition hover:bg-stone-100"
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-stone-900/10 bg-white text-stone-600 transition hover:bg-stone-100"
                   >
-                    <Trash2 className="h-4 w-4" />
+                    <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 </td>
               </tr>

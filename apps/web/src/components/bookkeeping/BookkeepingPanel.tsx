@@ -5,7 +5,7 @@ import type { EntryAllocation, EntryResponse, PeriodResponse, SubjectResponse } 
 import { findPeriodIdForDateValue, getTodayInputDate, syncInputDateForPeriodChange } from '../../lib/bookkeeping'
 import { cx, formatCurrency } from '../../lib/format'
 import type { MonthlyScenarioResult } from '../../types'
-import { CompactNumberInput, InlineStatPill, Panel, SectionTitle, SegmentTabs } from '../common/ui'
+import { CompactNumberInput, Panel, SectionTitle, SegmentTabs } from '../common/ui'
 import { HistorySection } from './HistorySection'
 
 export type BookkeepingSubmitPayload = {
@@ -722,14 +722,6 @@ export function BookkeepingPanel(props: {
           }
         />
 
-        {selectedPeriod ? (
-          <div className="mt-4 flex flex-wrap gap-2.5">
-            <InlineStatPill label="计划收入" value={formatCurrency(selectedPeriod.plannedRevenue)} />
-            <InlineStatPill label="计划成本" value={formatCurrency(selectedPeriod.plannedCost)} />
-            <InlineStatPill label="实际收入" value={formatCurrency(selectedPeriod.actualRevenue)} />
-            <InlineStatPill label="实际成本" value={formatCurrency(selectedPeriod.actualCost)} />
-          </div>
-        ) : null}
       </Panel>
 
       <Panel>
@@ -1072,7 +1064,7 @@ function ExpenseComposer(props: {
                   disabled={props.isLocked}
                   onInput={(event) => props.onExpenseOccurredOnChange((event.target as HTMLInputElement).value)}
                   onChange={(event) => props.onExpenseOccurredOnChange(event.target.value)}
-                  className="h-11 rounded-2xl border border-stone-900/10 bg-white px-4 text-sm font-semibold text-stone-900 outline-none transition focus:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="h-11 rounded-2xl border border-stone-900/10 bg-white px-4 text-sm font-medium text-stone-900 outline-none transition focus:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
                 />
               </label>
 
@@ -1085,7 +1077,7 @@ function ExpenseComposer(props: {
                   min={0}
                   step={0.01}
                   className="h-11 rounded-2xl bg-white"
-                  inputClassName="text-lg font-semibold"
+                  inputClassName="text-lg font-medium"
                   align="right"
                 />
               </label>
@@ -1234,7 +1226,6 @@ function IncomeEntrySection(props: {
                         size="sm"
                         className="mx-auto h-8 max-w-[96px] rounded-xl bg-stone-50"
                         align="center"
-                        inputClassName="text-sm font-semibold"
                       />
                     </HistoryCell>
                     <HistoryCell align="center">
@@ -1247,7 +1238,6 @@ function IncomeEntrySection(props: {
                         size="sm"
                         className="mx-auto h-8 max-w-[96px] rounded-xl bg-stone-50"
                         align="center"
-                        inputClassName="text-sm font-semibold"
                       />
                     </HistoryCell>
                     <HistoryCell align="right" className="whitespace-nowrap font-semibold tabular-nums text-stone-950">
@@ -1303,7 +1293,7 @@ function IncomeEntrySection(props: {
                       step={1}
                       className="h-11 rounded-2xl bg-stone-50"
                       align="center"
-                      inputClassName="font-semibold"
+                      inputClassName="font-medium"
                     />
                   </label>
                   <label className="grid gap-1">
@@ -1316,7 +1306,7 @@ function IncomeEntrySection(props: {
                       step={1}
                       className="h-11 rounded-2xl bg-stone-50"
                       align="center"
-                      inputClassName="font-semibold"
+                      inputClassName="font-medium"
                     />
                   </label>
                 </div>
@@ -1434,7 +1424,6 @@ function MemberExpenseEntrySection(props: {
                         size="sm"
                         className="mx-auto h-8 max-w-[116px] rounded-xl bg-stone-50"
                         align="right"
-                        inputClassName="text-sm font-semibold"
                       />
                     </HistoryCell>
                     <HistoryCell align="center">
@@ -1482,7 +1471,7 @@ function MemberExpenseEntrySection(props: {
                     step={0.01}
                     className="h-11 rounded-2xl bg-stone-50"
                     align="right"
-                    inputClassName="font-semibold"
+                    inputClassName="font-medium"
                   />
                 </label>
                 <div className="mt-3 flex gap-2">
@@ -1577,7 +1566,7 @@ function OtherIncomeComposer(props: {
             value={props.selectedSubjectKey}
             disabled={props.isLocked}
             onChange={(event) => props.onSelectSubject(event.target.value)}
-            className="h-11 rounded-2xl border border-stone-900/10 bg-white px-4 text-sm font-semibold text-stone-900 outline-none transition focus:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
+            className="h-11 rounded-2xl border border-stone-900/10 bg-white px-4 text-sm font-medium text-stone-900 outline-none transition focus:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {props.subjects.map((subject) => (
               <option key={subject.subjectKey} value={subject.subjectKey}>
@@ -1596,7 +1585,7 @@ function OtherIncomeComposer(props: {
             disabled={props.isLocked}
             onInput={(event) => props.onOccurredOnChange((event.target as HTMLInputElement).value)}
             onChange={(event) => props.onOccurredOnChange(event.target.value)}
-            className="h-11 rounded-2xl border border-stone-900/10 bg-white px-4 text-sm font-semibold text-stone-900 outline-none transition focus:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
+            className="h-11 rounded-2xl border border-stone-900/10 bg-white px-4 text-sm font-medium text-stone-900 outline-none transition focus:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
           />
         </label>
 
@@ -1609,7 +1598,7 @@ function OtherIncomeComposer(props: {
             min={0}
             step={0.01}
             className="h-11 rounded-2xl bg-white"
-            inputClassName="text-lg font-semibold"
+            inputClassName="text-lg font-medium"
             align="right"
           />
         </label>
@@ -1723,7 +1712,7 @@ function LedgerDatePill(props: {
         disabled={props.disabled}
         onInput={(event) => props.onChange((event.target as HTMLInputElement).value)}
         onChange={(event) => props.onChange(event.target.value)}
-        className="h-7 min-w-[132px] bg-transparent text-sm font-semibold text-stone-900 outline-none transition disabled:cursor-not-allowed disabled:opacity-60"
+        className="h-7 min-w-[132px] bg-transparent text-sm font-medium text-stone-900 outline-none transition disabled:cursor-not-allowed disabled:opacity-60"
       />
     </label>
   )
