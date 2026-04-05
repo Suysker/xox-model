@@ -18,11 +18,11 @@ type TrainingNumberKey =
   | 'teacherCount'
   | 'teacherCost'
 
-const trainingColumns: Array<{ key: TrainingNumberKey; label: string; step: number | 'any' }> = [
-  { key: 'rehearsalCount', label: '排练次数', step: 1 },
-  { key: 'rehearsalCost', label: '排练单价', step: 50 },
-  { key: 'teacherCount', label: '老师次数', step: 1 },
-  { key: 'teacherCost', label: '老师单价', step: 50 },
+const trainingColumns: Array<{ key: TrainingNumberKey; label: string; shortLabel: string; step: number | 'any' }> = [
+  { key: 'rehearsalCount', label: '排练次数', shortLabel: '排练次', step: 1 },
+  { key: 'rehearsalCost', label: '排练单价', shortLabel: '排练价', step: 50 },
+  { key: 'teacherCount', label: '老师次数', shortLabel: '老师次', step: 1 },
+  { key: 'teacherCost', label: '老师单价', shortLabel: '老师价', step: 50 },
 ]
 
 function getStageHeaderLabel(mode: StageCostMode) {
@@ -175,6 +175,102 @@ function MonthResetCell(props: {
   )
 }
 
+function TrainingRow(props: {
+  label: string
+  values: Record<TrainingNumberKey, number>
+  onChange: (key: TrainingNumberKey, value: number) => void
+  onReset?: (() => void) | undefined
+  tone?: 'default' | 'template' | undefined
+}) {
+  return (
+    <section
+      className={
+        props.tone === 'template'
+          ? 'rounded-[18px] border border-amber-200/70 bg-amber-50/60 px-3 py-2.5'
+          : 'rounded-[18px] border border-stone-900/10 bg-white px-3 py-2.5'
+      }
+    >
+      <div className="grid gap-2 xl:grid-cols-[68px_repeat(4,minmax(0,1fr))] xl:items-center">
+        <TrainingRowMonthLabel label={props.label} tone={props.tone} onReset={props.onReset} />
+        {trainingColumns.map((column) => (
+          <TrainingMetricField
+            key={`${props.label}-${column.key}`}
+            label={column.shortLabel}
+            title={column.label}
+            value={props.values[column.key]}
+            step={column.step}
+            tone={props.tone}
+            onChange={(value) => props.onChange(column.key, value)}
+          />
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function TrainingRowMonthLabel(props: {
+  label: string
+  tone?: 'default' | 'template' | undefined
+  onReset?: (() => void) | undefined
+}) {
+  return (
+    <div className="inline-flex min-h-[24px] items-center gap-2 whitespace-nowrap">
+      <span
+        className={
+          props.tone === 'template'
+            ? 'block text-[12px] font-semibold leading-none text-amber-900'
+            : 'block text-[12px] font-semibold leading-none text-stone-950'
+        }
+      >
+        {props.label}
+      </span>
+      {props.onReset ? (
+        <button
+          type="button"
+          onClick={props.onReset}
+          className="inline-flex h-5.5 w-5.5 items-center justify-center rounded-full border border-stone-900/10 bg-white text-stone-700 transition hover:bg-stone-100"
+          aria-label={`恢复${props.label}训练默认值`}
+          title={`恢复${props.label}训练默认值`}
+        >
+          <RefreshCcw className="h-3 w-3" />
+        </button>
+      ) : null}
+    </div>
+  )
+}
+
+function TrainingMetricField(props: {
+  label: string
+  title: string
+  value: number
+  step: number | 'any'
+  onChange: (value: number) => void
+  tone?: 'default' | 'template' | undefined
+}) {
+  return (
+    <label className="flex min-w-0 items-center gap-1.5" title={props.title}>
+      <span
+        className={
+          props.tone === 'template'
+            ? 'shrink-0 text-xs font-semibold tracking-[0.16em] text-amber-800/80'
+            : 'shrink-0 text-xs font-semibold tracking-[0.16em] text-stone-500'
+        }
+      >
+        {props.label}
+      </span>
+      <CompactNumberInput
+        value={props.value}
+        min={0}
+        step={props.step}
+        size="xs"
+        align="center"
+        className={props.tone === 'template' ? 'min-w-0 flex-1 bg-white' : 'min-w-0 flex-1 bg-stone-50'}
+        onChange={props.onChange}
+      />
+    </label>
+  )
+}
+
 export function CostOverridesEditor(props: {
   operating: ModelConfig['operating']
   teamMembers: TeamMember[]
@@ -256,71 +352,36 @@ export function CostOverridesEditor(props: {
 
       {tab === 'training' ? (
         <section className="mt-5 rounded-[24px] border border-stone-900/10 bg-stone-50/80 p-3">
-            <div className="rounded-[20px] border border-stone-900/10">
-              <table className="w-full table-fixed text-sm">
-                <colgroup>
-                  <col className="w-[88px]" />
-                  {trainingColumns.map((column) => (
-                    <col key={`${column.key}-column`} />
-                  ))}
-                </colgroup>
-                <thead className="bg-stone-100/90 text-stone-700">
-                  <tr className="border-b border-stone-900/10">
-                    <HeaderCell>月份</HeaderCell>
-                    {trainingColumns.map((column) => (
-                      <HeaderCell key={column.key}>
-                        {column.label}
-                      </HeaderCell>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr className="border-b border-stone-900/10 bg-amber-50/60">
-                    <BodyCell align="left" className="px-2 py-1.5">
-                      <MonthResetCell label="默认" tone="template" />
-                    </BodyCell>
-                    {trainingColumns.map((column) => (
-                      <BodyCell key={`template-${column.key}`} align="center" className="px-2 py-1.5">
-                        <CompactNumberInput
-                          value={props.template[column.key]}
-                          min={0}
-                          step={column.step}
-                          size="xs"
-                          align="center"
-                          className="mx-auto max-w-[104px]"
-                          onChange={(value) => props.onTrainingTemplateChange(column.key, value)}
-                        />
-                      </BodyCell>
-                    ))}
-                  </tr>
+          <div className="space-y-3">
+            <TrainingRow
+              label="默认"
+              tone="template"
+              values={{
+                rehearsalCount: props.template.rehearsalCount,
+                rehearsalCost: props.template.rehearsalCost,
+                teacherCount: props.template.teacherCount,
+                teacherCost: props.template.teacherCost,
+              }}
+              onChange={(key, value) => props.onTrainingTemplateChange(key, value)}
+            />
 
-                  {props.months.map((month) => (
-                    <tr key={month.id} className="border-b border-stone-900/10 last:border-none">
-                      <BodyCell align="left" className="px-2 py-1.5">
-                        <MonthResetCell
-                          label={month.label}
-                          resetLabel={`恢复${month.label}训练默认值`}
-                          onReset={() => props.onResetMonthFromTemplate(month.id, 'training')}
-                        />
-                      </BodyCell>
-                      {trainingColumns.map((column) => (
-                        <BodyCell key={`${month.id}-${column.key}`} align="center" className="px-2 py-1.5">
-                          <CompactNumberInput
-                            value={month[column.key]}
-                            min={0}
-                            step={column.step}
-                            size="xs"
-                            align="center"
-                            className="mx-auto max-w-[104px]"
-                            onChange={(value) => props.onTrainingMonthChange(month.id, column.key, value)}
-                          />
-                        </BodyCell>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="grid gap-3 xl:grid-cols-2">
+              {props.months.map((month) => (
+                <TrainingRow
+                  key={month.id}
+                  label={month.label}
+                  values={{
+                    rehearsalCount: month.rehearsalCount,
+                    rehearsalCost: month.rehearsalCost,
+                    teacherCount: month.teacherCount,
+                    teacherCost: month.teacherCost,
+                  }}
+                  onChange={(key, value) => props.onTrainingMonthChange(month.id, key, value)}
+                  onReset={() => props.onResetMonthFromTemplate(month.id, 'training')}
+                />
+              ))}
             </div>
+          </div>
         </section>
       ) : null}
 

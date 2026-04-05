@@ -135,7 +135,6 @@ export function BookkeepingPanel(props: {
   const [amount, setAmount] = useState(0)
   const [counterparty, setCounterparty] = useState('')
   const [description, setDescription] = useState('')
-  const [showDetails, setShowDetails] = useState(false)
   const [memberIncomeDrafts, setMemberIncomeDrafts] = useState<Record<string, MemberIncomeDraft>>({})
   const [memberExpenseDrafts, setMemberExpenseDrafts] = useState<Record<string, number>>({})
   const [incomeOccurredOn, setIncomeOccurredOn] = useState(() => getTodayInputDate())
@@ -144,7 +143,6 @@ export function BookkeepingPanel(props: {
   const [otherIncomeAmount, setOtherIncomeAmount] = useState(0)
   const [otherIncomeCounterparty, setOtherIncomeCounterparty] = useState('')
   const [otherIncomeDescription, setOtherIncomeDescription] = useState('')
-  const [showOtherIncomeDetails, setShowOtherIncomeDetails] = useState(false)
   const [expenseOccurredOn, setExpenseOccurredOn] = useState(() => getTodayInputDate())
   const incomeOccurredOnInputRef = useRef<HTMLInputElement | null>(null)
   const otherIncomeOccurredOnInputRef = useRef<HTMLInputElement | null>(null)
@@ -347,7 +345,6 @@ export function BookkeepingPanel(props: {
     setAmount(0)
     setCounterparty('')
     setDescription('')
-    setShowDetails(false)
   }, [props.selectedPeriodId, direction, selectedCategory])
 
   useEffect(() => {
@@ -400,7 +397,6 @@ export function BookkeepingPanel(props: {
     setOtherIncomeAmount(0)
     setOtherIncomeCounterparty('')
     setOtherIncomeDescription('')
-    setShowOtherIncomeDetails(false)
   }, [direction, props.selectedPeriodId])
 
   useEffect(() => {
@@ -586,7 +582,6 @@ export function BookkeepingPanel(props: {
       setOtherIncomeAmount(0)
       setOtherIncomeCounterparty('')
       setOtherIncomeDescription('')
-      setShowOtherIncomeDetails(false)
     }
   }
 
@@ -677,7 +672,6 @@ export function BookkeepingPanel(props: {
       setAmount(0)
       setCounterparty('')
       setDescription('')
-      setShowDetails(false)
     }
   }
 
@@ -766,8 +760,6 @@ export function BookkeepingPanel(props: {
                 onCounterpartyChange={setOtherIncomeCounterparty}
                 description={otherIncomeDescription}
                 onDescriptionChange={setOtherIncomeDescription}
-                showDetails={showOtherIncomeDetails}
-                onToggleDetails={() => setShowOtherIncomeDetails((current) => !current)}
                 isLocked={isLocked}
                 loading={props.loading}
                 canSubmit={otherIncomeCanSubmit}
@@ -810,8 +802,6 @@ export function BookkeepingPanel(props: {
               onCounterpartyChange={setCounterparty}
               description={description}
               onDescriptionChange={setDescription}
-              showDetails={showDetails}
-              onToggleDetails={() => setShowDetails((current) => !current)}
               canSubmit={canSubmit}
               onMemberAmountChange={setMemberExpenseDraft}
               onFillPlannedMemberExpense={fillPlannedMemberExpense}
@@ -873,8 +863,6 @@ function ExpenseComposer(props: {
   onCounterpartyChange: (value: string) => void
   description: string
   onDescriptionChange: (value: string) => void
-  showDetails: boolean
-  onToggleDetails: () => void
   canSubmit: boolean
   onMemberAmountChange: (subjectKey: string, entityId: string, value: number) => void
   onFillPlannedMemberExpense: (subjectKey: string, entityId: string, plannedAmount: number) => void
@@ -1044,20 +1032,23 @@ function ExpenseComposer(props: {
                 />
               </div>
 
-              <button
-                type="button"
-                disabled={props.isLocked}
-                onClick={props.onToggleDetails}
-                className="rounded-full border border-stone-900/10 bg-white px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {props.showDetails ? '收起对方与备注' : '补充对方与备注'}
-              </button>
             </div>
 
-            <div className="mt-4 grid gap-3 xl:grid-cols-[170px_170px_minmax(0,1fr)_144px] xl:items-end">
-              <label className="grid gap-2">
-                <span className="text-sm font-semibold text-stone-700">业务发生日</span>
+            <div
+              className={cx(
+                'mt-4 grid items-end gap-x-3 gap-y-2',
+                'xl:grid-cols-[minmax(138px,0.72fr)_minmax(150px,0.8fr)_minmax(170px,0.9fr)_minmax(220px,1fr)_132px]',
+              )}
+            >
+              <span className="text-sm font-semibold text-stone-700">业务发生日</span>
+              <span className="text-sm font-semibold text-stone-700">金额</span>
+              <span className="text-sm font-semibold text-stone-700">对方单位</span>
+              <span className="text-sm font-semibold text-stone-700">备注</span>
+              <span className="hidden xl:block" aria-hidden="true" />
+
+              <label className="min-w-0">
                 <DenseFieldInput
+                  aria-label="业务发生日"
                   ref={props.expenseOccurredOnInputRef}
                   type="date"
                   value={props.expenseOccurredOn}
@@ -1070,11 +1061,12 @@ function ExpenseComposer(props: {
                 />
               </label>
 
-              <label className="grid gap-2">
-                <span className="text-sm font-semibold text-stone-700">金额</span>
+              <label className="min-w-0">
                 <CompactNumberInput
+                  aria-label="金额"
                   value={props.amount}
                   onChange={props.onAmountChange}
+                  prefix="￥"
                   emptyWhenZero
                   min={0}
                   step={0.01}
@@ -1084,51 +1076,45 @@ function ExpenseComposer(props: {
                 />
               </label>
 
-              <div className="flex min-h-11 items-center text-sm font-medium text-stone-500">
-                {props.selectedSubject ? '金额会直接挂到当前科目；需要时再补对方单位和备注。' : '先选一个预算科目，再录金额。'}
-              </div>
-
-              <button
-                type="button"
-                onClick={props.onSubmit}
-                disabled={!props.canSubmit}
-                className="inline-flex h-11 items-center justify-center rounded-2xl bg-stone-950 px-4 text-sm font-semibold text-white transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400"
-              >
-                {props.loading ? '保存中...' : '确认入账'}
-              </button>
-            </div>
-
-            {props.showDetails ? (
-              <div className="mt-4 grid gap-3 md:grid-cols-[220px_minmax(0,1fr)] md:items-end">
-                <label className="grid gap-2">
-                  <span className="text-sm font-semibold text-stone-700">对方单位</span>
-                  <div className="relative">
-                    <Building2 className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
-                    <DenseFieldInput
-                      disabled={props.isLocked}
-                      value={props.counterparty}
-                      onChange={(event) => props.onCounterpartyChange(event.target.value)}
-                      fieldSize="md"
-                      surface="white"
-                      className="px-11 pr-4 focus:border-amber-300"
-                    />
-                  </div>
-                </label>
-
-                <label className="grid gap-2">
-                  <span className="text-sm font-semibold text-stone-700">备注</span>
+              <label className="min-w-0">
+                <div className="relative">
+                  <Building2 className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
                   <DenseFieldInput
-                    type="text"
+                    aria-label="对方单位"
                     disabled={props.isLocked}
-                    value={props.description}
-                    onChange={(event) => props.onDescriptionChange(event.target.value)}
+                    value={props.counterparty}
+                    onChange={(event) => props.onCounterpartyChange(event.target.value)}
                     fieldSize="md"
                     surface="white"
-                    className="focus:border-amber-300"
+                    className="min-w-[170px] w-full px-11 pr-4 focus:border-amber-300"
                   />
-                </label>
+                </div>
+              </label>
+
+              <label className="min-w-0">
+                <DenseFieldInput
+                  aria-label="备注"
+                  type="text"
+                  disabled={props.isLocked}
+                  value={props.description}
+                  onChange={(event) => props.onDescriptionChange(event.target.value)}
+                  fieldSize="md"
+                  surface="white"
+                  className="min-w-[220px] w-full focus:border-amber-300"
+                />
+              </label>
+
+              <div className="min-w-0">
+                <button
+                  type="button"
+                  onClick={props.onSubmit}
+                  disabled={!props.canSubmit}
+                  className="inline-flex h-11 w-full min-w-[132px] items-center justify-center rounded-2xl bg-stone-950 px-4 text-sm font-semibold text-white transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400"
+                >
+                  {props.loading ? '保存中...' : '确认入账'}
+                </button>
               </div>
-            ) : null}
+            </div>
           </section>
         </>
       )}
@@ -1198,28 +1184,32 @@ function IncomeEntrySection(props: {
               <thead className="bg-stone-100/90 text-stone-600">
                 <tr className="border-b border-stone-900/10">
                   <HistoryHeader>团员</HistoryHeader>
-                  <HistoryHeader align="right">计划总收入</HistoryHeader>
-                  <HistoryHeader align="right">已记总收入</HistoryHeader>
+                  <HistoryHeader align="center">计划总收入</HistoryHeader>
+                  <HistoryHeader align="center">已记总收入</HistoryHeader>
                   <HistoryHeader align="center">线下张数</HistoryHeader>
                   <HistoryHeader align="center">线上张数</HistoryHeader>
-                  <HistoryHeader align="right">本次收入</HistoryHeader>
-                  <HistoryHeader align="right">自动提成</HistoryHeader>
+                  <HistoryHeader align="center">本次收入</HistoryHeader>
+                  <HistoryHeader align="center">自动提成</HistoryHeader>
                   <HistoryHeader align="center">操作</HistoryHeader>
                 </tr>
               </thead>
               <tbody>
                 {props.rows.map((row) => (
                   <tr key={row.member.memberId} className="border-b border-stone-900/10 last:border-none">
-                    <HistoryCell className="min-w-0 whitespace-nowrap text-stone-950">
-                      <div className="flex items-center gap-2 overflow-hidden">
-                        <span className="shrink-0 font-semibold">{row.member.name}</span>
-                        <span className="truncate text-[11px] tabular-nums text-stone-500">{buildMemberPlanCaption(row)}</span>
+                    <HistoryCell align="center" className="min-w-0 whitespace-nowrap text-stone-950">
+                      <div className="flex justify-center overflow-hidden">
+                        <div className="inline-flex max-w-full items-center gap-2 overflow-hidden">
+                          <span className="shrink-0 font-semibold">{row.member.name}</span>
+                          <span className="min-w-0 truncate text-[11px] tabular-nums text-stone-500">
+                            {buildMemberPlanCaption(row)}
+                          </span>
+                        </div>
                       </div>
                     </HistoryCell>
-                    <HistoryCell align="right" className="whitespace-nowrap font-semibold tabular-nums text-stone-950">
+                    <HistoryCell align="center" className="whitespace-nowrap font-semibold tabular-nums text-stone-950">
                       {formatCurrency(row.plannedAmount)}
                     </HistoryCell>
-                    <HistoryCell align="right" className="whitespace-nowrap tabular-nums text-stone-700">
+                    <HistoryCell align="center" className="whitespace-nowrap tabular-nums text-stone-700">
                       {formatCurrency(row.postedAmount)}
                     </HistoryCell>
                     <HistoryCell align="center">
@@ -1246,10 +1236,10 @@ function IncomeEntrySection(props: {
                         align="center"
                       />
                     </HistoryCell>
-                    <HistoryCell align="right" className="whitespace-nowrap font-semibold tabular-nums text-stone-950">
+                    <HistoryCell align="center" className="whitespace-nowrap font-semibold tabular-nums text-stone-950">
                       {formatCurrency(row.draftAmount)}
                     </HistoryCell>
-                    <HistoryCell align="right" className="whitespace-nowrap font-semibold tabular-nums text-amber-700">
+                    <HistoryCell align="center" className="whitespace-nowrap font-semibold tabular-nums text-amber-700">
                       {formatCurrency(row.draftCommission)}
                     </HistoryCell>
                     <HistoryCell align="center">
@@ -1526,8 +1516,6 @@ function OtherIncomeComposer(props: {
   onCounterpartyChange: (value: string) => void
   description: string
   onDescriptionChange: (value: string) => void
-  showDetails: boolean
-  onToggleDetails: () => void
   isLocked: boolean
   loading: boolean
   canSubmit: boolean
@@ -1555,20 +1543,24 @@ function OtherIncomeComposer(props: {
             layout="inline"
           />
         </div>
-        <button
-          type="button"
-          disabled={props.isLocked}
-          onClick={props.onToggleDetails}
-          className="rounded-full border border-stone-900/10 bg-white px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {props.showDetails ? '收起对方与备注' : '补充对方与备注'}
-        </button>
       </div>
 
-      <div className="mt-4 grid gap-3 xl:grid-cols-[200px_170px_170px_minmax(0,1fr)_144px] xl:items-end">
-        <label className="grid gap-2">
-          <span className="text-sm font-semibold text-stone-700">挂账科目</span>
+      <div
+        className={cx(
+          'mt-4 grid items-end gap-x-3 gap-y-2',
+          'xl:grid-cols-[minmax(144px,0.72fr)_minmax(138px,0.72fr)_minmax(150px,0.8fr)_minmax(170px,0.9fr)_minmax(200px,1fr)_132px]',
+        )}
+      >
+        <span className="text-sm font-semibold text-stone-700">挂账科目</span>
+        <span className="text-sm font-semibold text-stone-700">业务发生日</span>
+        <span className="text-sm font-semibold text-stone-700">金额</span>
+        <span className="text-sm font-semibold text-stone-700">对方单位</span>
+        <span className="text-sm font-semibold text-stone-700">备注</span>
+        <span className="hidden xl:block" aria-hidden="true" />
+
+        <label className="min-w-0">
           <DenseFieldSelect
+            aria-label="挂账科目"
             value={props.selectedSubjectKey}
             disabled={props.isLocked}
             onChange={(event) => props.onSelectSubject(event.target.value)}
@@ -1584,9 +1576,9 @@ function OtherIncomeComposer(props: {
           </DenseFieldSelect>
         </label>
 
-        <label className="grid gap-2">
-          <span className="text-sm font-semibold text-stone-700">业务发生日</span>
+        <label className="min-w-0">
           <DenseFieldInput
+            aria-label="业务发生日"
             ref={props.occurredOnInputRef}
             type="date"
             value={props.occurredOn}
@@ -1599,11 +1591,11 @@ function OtherIncomeComposer(props: {
           />
         </label>
 
-        <label className="grid gap-2">
-          <span className="text-sm font-semibold text-stone-700">金额</span>
+        <label className="min-w-0">
           <CompactNumberInput
             value={props.amount}
             onChange={props.onAmountChange}
+            prefix="￥"
             emptyWhenZero
             min={0}
             step={0.01}
@@ -1613,55 +1605,43 @@ function OtherIncomeComposer(props: {
           />
         </label>
 
-        <div className="flex min-h-11 items-center text-sm font-medium text-stone-500">
-          {props.selectedSubject
-            ? props.selectedSubject.subjectKey === 'cost.other.refund'
-              ? '这笔记录会直接挂到退费退款科目，适合录退费回款或退款返还。'
-              : '这笔记录会直接挂到所选营收科目，适合录商业演出或一次性回款。'
-            : '先选择一个挂账科目，再录入金额。'}
-        </div>
-
-        <button
-          type="button"
-          onClick={props.onSubmit}
-          disabled={!props.canSubmit}
-          className="inline-flex h-11 items-center justify-center rounded-2xl bg-stone-950 px-4 text-sm font-semibold text-white transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400"
-        >
-          {props.loading ? '保存中...' : '确认入账'}
-        </button>
-      </div>
-
-      {props.showDetails ? (
-        <div className="mt-4 grid gap-3 md:grid-cols-[220px_minmax(0,1fr)] md:items-end">
-          <label className="grid gap-2">
-            <span className="text-sm font-semibold text-stone-700">对方单位</span>
-            <div className="relative">
-              <Building2 className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
-              <DenseFieldInput
-                disabled={props.isLocked}
-                value={props.counterparty}
-                onChange={(event) => props.onCounterpartyChange(event.target.value)}
-                fieldSize="md"
-                surface="white"
-                className="px-11 pr-4 focus:border-amber-300"
-              />
-            </div>
-          </label>
-
-          <label className="grid gap-2">
-            <span className="text-sm font-semibold text-stone-700">备注</span>
+        <label className="min-w-0">
+          <div className="relative">
+            <Building2 className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
             <DenseFieldInput
-              type="text"
               disabled={props.isLocked}
-              value={props.description}
-              onChange={(event) => props.onDescriptionChange(event.target.value)}
+              value={props.counterparty}
+              onChange={(event) => props.onCounterpartyChange(event.target.value)}
               fieldSize="md"
               surface="white"
-              className="focus:border-amber-300"
+              className="min-w-[180px] w-full px-11 pr-4 focus:border-amber-300"
             />
-          </label>
+          </div>
+        </label>
+
+        <label className="min-w-0">
+          <DenseFieldInput
+            type="text"
+            disabled={props.isLocked}
+            value={props.description}
+            onChange={(event) => props.onDescriptionChange(event.target.value)}
+            fieldSize="md"
+            surface="white"
+            className="min-w-[220px] w-full focus:border-amber-300"
+          />
+        </label>
+
+        <div className="min-w-0">
+          <button
+            type="button"
+            onClick={props.onSubmit}
+            disabled={!props.canSubmit}
+            className="inline-flex h-11 w-full min-w-[132px] items-center justify-center rounded-2xl bg-stone-950 px-4 text-sm font-semibold text-white transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400"
+          >
+            {props.loading ? '保存中...' : '确认入账'}
+          </button>
         </div>
-      ) : null}
+      </div>
     </section>
   )
 }
@@ -1717,7 +1697,7 @@ function LedgerDatePill(props: {
   onChange: (value: string) => void
 }) {
   return (
-    <label className="flex items-center gap-3 rounded-[18px] border border-stone-900/10 bg-white px-4 py-3">
+    <label className="flex h-[45px] items-center gap-3 rounded-[18px] border border-stone-900/10 bg-white px-4">
       <span className="shrink-0 text-xs font-semibold tracking-[0.16em] text-stone-500">业务发生日</span>
       <DenseFieldInput
         ref={props.inputRef}
@@ -1728,7 +1708,7 @@ function LedgerDatePill(props: {
         onChange={(event) => props.onChange(event.target.value)}
         fieldSize="md"
         surface="ghost"
-        className="h-7 min-w-[132px] rounded-none px-0"
+        className="h-auto min-w-[132px] rounded-none px-0 py-0"
       />
     </label>
   )

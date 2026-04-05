@@ -315,6 +315,7 @@ export const DenseFieldSelect = forwardRef<HTMLSelectElement, SelectHTMLAttribut
 export function CompactNumberInput(props: {
   value: number
   onChange: (value: number) => void
+  prefix?: string | undefined
   step?: number | 'any' | undefined
   min?: number | undefined
   max?: number | undefined
@@ -341,6 +342,16 @@ export function CompactNumberInput(props: {
         props.className,
       )}
     >
+      {props.prefix ? (
+        <span
+          className={cx(
+            'shrink-0 font-semibold text-stone-500',
+            props.size === 'xs' ? 'pl-1.5 text-[10px]' : props.size === 'sm' ? 'pl-2 text-[10px]' : 'pl-3 text-[11px]',
+          )}
+        >
+          {props.prefix}
+        </span>
+      ) : null}
       <input
         className={cx(
           'compact-number-input-field h-full min-w-0 flex-1 border-none bg-transparent tabular-nums text-stone-900 outline-none',
