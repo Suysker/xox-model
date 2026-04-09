@@ -6,6 +6,7 @@ import { findPeriodIdForDateValue, getTodayInputDate, syncInputDateForPeriodChan
 import { cx, formatCurrency } from '../../lib/format'
 import type { MonthlyScenarioResult } from '../../types'
 import { BodyCell as HistoryCell, CompactNumberInput, DenseFieldInput, DenseFieldSelect, HeaderCell as HistoryHeader, Panel, SectionTitle, SegmentTabs } from '../common/ui'
+import { actionText, label, meta, sectionTitle, summaryValue } from '../common/typography'
 import { HistorySection } from './HistorySection'
 
 export type BookkeepingSubmitPayload = {
@@ -682,6 +683,7 @@ export function BookkeepingPanel(props: {
           icon={ReceiptText}
           eyebrow="记账"
           title="本期账本"
+          titleScale="page"
           aside={
             props.periods.length > 0 ? (
               <div className="flex flex-wrap items-center justify-end gap-2">
@@ -693,8 +695,8 @@ export function BookkeepingPanel(props: {
                       onClick={() => props.onSelectPeriod(period.id)}
                       className={
                         props.selectedPeriodId === period.id
-                          ? 'rounded-full border border-stone-950 bg-stone-950 px-4 py-2 text-sm font-semibold text-white'
-                          : 'rounded-full border border-stone-900/10 bg-stone-50 px-4 py-2 text-sm font-semibold text-stone-700'
+                          ? cx('rounded-full border border-stone-950 bg-stone-950 px-4 py-2 text-white', actionText)
+                          : cx('rounded-full border border-stone-900/10 bg-stone-50 px-4 py-2 text-stone-700', actionText)
                       }
                     >
                       {period.monthLabel}
@@ -705,7 +707,10 @@ export function BookkeepingPanel(props: {
                   <button
                     type="button"
                     onClick={props.onToggleLock}
-                    className="inline-flex items-center gap-2 rounded-full border border-stone-900/10 bg-white px-4 py-2 text-sm font-semibold text-stone-700"
+                    className={cx(
+                      'inline-flex items-center gap-2 rounded-full border border-stone-900/10 bg-white px-4 py-2 text-stone-700',
+                      actionText,
+                    )}
                   >
                     {isLocked ? <LockOpen className="h-4 w-4" /> : <Lock className="h-4 w-4" />}
                     {isLocked ? '解锁期间' : '锁定期间'}
@@ -723,6 +728,7 @@ export function BookkeepingPanel(props: {
           icon={WalletCards}
           eyebrow="录入"
           title="记一笔"
+          titleScale="page"
           aside={<SegmentTabs value={direction} items={directionTabs} onChange={setDirection} />}
         />
         <div className="mt-5 space-y-4">
@@ -875,7 +881,7 @@ function ExpenseComposer(props: {
       <section className="rounded-[24px] border border-stone-900/10 bg-stone-50/80 p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-3">
-            <h3 className="text-lg font-semibold text-stone-950">先选预算科目</h3>
+            <h3 className={cx('text-stone-950', sectionTitle)}>先选预算科目</h3>
             {props.categoryOptions.length > 1 ? (
               <div className="flex flex-wrap gap-2">
                 {props.categoryOptions.map((item) => (
@@ -885,7 +891,7 @@ function ExpenseComposer(props: {
                     disabled={props.isLocked}
                     onClick={() => props.onSelectCategory(item.value)}
                     className={cx(
-                      'rounded-full border px-3 py-2 text-sm font-semibold transition',
+                      cx('rounded-full border px-3 py-2 transition', actionText),
                       props.selectedCategory === item.value
                         ? 'border-amber-300 bg-amber-100 text-amber-800'
                         : 'border-stone-900/10 bg-stone-50 text-stone-600 hover:bg-white',
@@ -898,7 +904,7 @@ function ExpenseComposer(props: {
               </div>
             ) : null}
           </div>
-          <span className="rounded-full border border-stone-900/10 bg-white px-3 py-1 text-xs font-semibold text-stone-600">
+          <span className={cx('rounded-full border border-stone-900/10 bg-white px-3 py-1 text-stone-600', summaryValue)}>
             {props.visibleSubjects.length} 项
           </span>
         </div>
@@ -919,12 +925,12 @@ function ExpenseComposer(props: {
               )}
             >
               <div className="flex items-center justify-between gap-3">
-                <span className="truncate text-sm font-semibold">{subject.subjectName}</span>
+                <span className={cx('truncate', label)}>{subject.subjectName}</span>
                 <span
                   className={
                     props.selectedSubjectKey === subject.subjectKey
-                      ? 'shrink-0 rounded-full border border-amber-300 bg-white px-2 py-0.5 text-[10px] font-semibold text-amber-700'
-                      : 'shrink-0 rounded-full border border-stone-900/10 bg-stone-50 px-2 py-0.5 text-[10px] font-semibold text-stone-500'
+                      ? cx('shrink-0 rounded-full border border-amber-300 bg-white px-2 py-0.5 text-amber-700', summaryValue)
+                      : cx('shrink-0 rounded-full border border-stone-900/10 bg-stone-50 px-2 py-0.5 text-stone-500', summaryValue)
                   }
                 >
                   {formatCurrency(subject.plannedAmount)}
@@ -933,8 +939,8 @@ function ExpenseComposer(props: {
               <div
                 className={
                   props.selectedSubjectKey === subject.subjectKey
-                    ? 'mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px] text-stone-600'
-                    : 'mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px] text-stone-500'
+                    ? cx('mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-stone-600', meta)
+                    : cx('mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-stone-500', meta)
                 }
               >
                 <span>已 {formatCurrency(props.postedAmountsBySubject.get(subject.subjectKey) ?? 0)}</span>
@@ -969,12 +975,12 @@ function ExpenseComposer(props: {
           {props.relatedOptions.length > 0 ? (
             <section className="rounded-[24px] border border-stone-900/10 bg-stone-50/80 p-4">
               <div className="flex items-center justify-between gap-3">
-                <h3 className="text-lg font-semibold text-stone-950">
+                <h3 className={cx('text-stone-950', sectionTitle)}>
                   {props.selectedRelatedEntity?.type === 'employee' || getRelatedEntityType(props.selectedSubjectKey) === 'employee'
                     ? '再挂到员工'
                     : '再挂到成员'}
                 </h3>
-                <span className="rounded-full border border-stone-900/10 bg-white px-3 py-1 text-xs font-semibold text-stone-600">
+                <span className={cx('rounded-full border border-stone-900/10 bg-white px-3 py-1 text-stone-600', summaryValue)}>
                   选中后自动带入对应计划
                 </span>
               </div>
@@ -994,10 +1000,10 @@ function ExpenseComposer(props: {
                       props.isLocked && 'cursor-not-allowed opacity-60',
                     )}
                   >
-                    <div className="text-sm font-semibold text-stone-950">{option.name}</div>
-                    <div className="mt-2 flex items-center justify-between gap-3 text-xs text-stone-500">
+                    <div className={cx('text-stone-950', label)}>{option.name}</div>
+                    <div className={cx('mt-2 flex items-center justify-between gap-3 text-stone-500', meta)}>
                       <span>{option.caption}</span>
-                      <span className="font-semibold text-stone-700">{formatCurrency(option.plannedAmount)}</span>
+                      <span className={cx('text-stone-700', summaryValue)}>{formatCurrency(option.plannedAmount)}</span>
                     </div>
                   </button>
                 ))}
@@ -1040,10 +1046,10 @@ function ExpenseComposer(props: {
                 'xl:grid-cols-[minmax(138px,0.72fr)_minmax(150px,0.8fr)_minmax(170px,0.9fr)_minmax(220px,1fr)_132px]',
               )}
             >
-              <span className="text-sm font-semibold text-stone-700">业务发生日</span>
-              <span className="text-sm font-semibold text-stone-700">金额</span>
-              <span className="text-sm font-semibold text-stone-700">对方单位</span>
-              <span className="text-sm font-semibold text-stone-700">备注</span>
+              <span className={cx('text-stone-700', label)}>业务发生日</span>
+              <span className={cx('text-stone-700', label)}>金额</span>
+              <span className={cx('text-stone-700', label)}>对方单位</span>
+              <span className={cx('text-stone-700', label)}>备注</span>
               <span className="hidden xl:block" aria-hidden="true" />
 
               <label className="min-w-0">
@@ -1071,7 +1077,6 @@ function ExpenseComposer(props: {
                   min={0}
                   step={0.01}
                   className="h-11 rounded-2xl bg-white"
-                  inputClassName="text-lg font-medium"
                   align="right"
                 />
               </label>
@@ -1109,7 +1114,10 @@ function ExpenseComposer(props: {
                   type="button"
                   onClick={props.onSubmit}
                   disabled={!props.canSubmit}
-                  className="inline-flex h-11 w-full min-w-[132px] items-center justify-center rounded-2xl bg-stone-950 px-4 text-sm font-semibold text-white transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400"
+                  className={cx(
+                    'inline-flex h-11 w-full min-w-[132px] items-center justify-center rounded-2xl bg-stone-950 px-4 text-white transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400',
+                    actionText,
+                  )}
                 >
                   {props.loading ? '保存中...' : '确认入账'}
                 </button>
@@ -1143,7 +1151,7 @@ function IncomeEntrySection(props: {
   return (
     <section className="rounded-[24px] border border-stone-900/10 bg-stone-50/80 p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h3 className="text-lg font-semibold text-stone-950">团员收入台账</h3>
+        <h3 className={cx('text-stone-950', sectionTitle)}>团员收入台账</h3>
         <div className="flex flex-wrap items-center gap-2">
           <LedgerDatePill
             value={props.occurredOn}
@@ -1160,7 +1168,10 @@ function IncomeEntrySection(props: {
             type="button"
             disabled={props.isLocked || props.pendingCount === 0 || props.loading}
             onClick={props.onSubmitAll}
-            className="rounded-full border border-stone-900/10 bg-amber-400 px-4 py-2 text-sm font-semibold text-stone-950 transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400"
+            className={cx(
+              'rounded-full border border-stone-900/10 bg-amber-400 px-4 py-2 text-stone-950 transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400',
+              actionText,
+            )}
           >
             {props.loading ? '保存中...' : props.pendingCount > 0 ? `一键入账 ${props.pendingCount} 笔` : '一键入账'}
           </button>
@@ -1170,7 +1181,7 @@ function IncomeEntrySection(props: {
       {props.rows.length > 0 ? (
         <>
           <div className="mt-4 hidden overflow-hidden rounded-[20px] border border-stone-900/10 bg-white md:block">
-            <table className="w-full table-fixed border-collapse text-[12px]">
+            <table className="w-full table-fixed border-collapse">
               <colgroup>
                 <col className="w-[26%]" />
                 <col className="w-[12%]" />
@@ -1199,8 +1210,8 @@ function IncomeEntrySection(props: {
                     <HistoryCell align="center" className="min-w-0 whitespace-nowrap text-stone-950">
                       <div className="flex justify-center overflow-hidden">
                         <div className="inline-flex max-w-full items-center gap-2 overflow-hidden">
-                          <span className="shrink-0 font-semibold">{row.member.name}</span>
-                          <span className="min-w-0 truncate text-[11px] tabular-nums text-stone-500">
+                          <span className={cx('shrink-0', label)}>{row.member.name}</span>
+                          <span className={cx('min-w-0 truncate tabular-nums text-stone-500', meta)}>
                             {buildMemberPlanCaption(row)}
                           </span>
                         </div>
@@ -1248,7 +1259,10 @@ function IncomeEntrySection(props: {
                           type="button"
                           disabled={props.isLocked}
                           onClick={() => props.onFillPlannedMember(row.member.memberId, row.plannedOfflineUnits, row.plannedOnlineUnits)}
-                          className="rounded-full border border-stone-900/10 bg-stone-50 px-2.5 py-1 text-[11px] font-semibold text-stone-700 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+                          className={cx(
+                            'rounded-full border border-stone-900/10 bg-stone-50 px-2.5 py-1 text-stone-700 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60',
+                            actionText,
+                          )}
                         >
                           计划
                         </button>
@@ -1256,7 +1270,10 @@ function IncomeEntrySection(props: {
                           type="button"
                           disabled={props.isLocked || row.draftAmount <= 0 || props.loading}
                           onClick={() => props.onSubmitMember(row.member.memberId)}
-                          className="rounded-full border border-stone-900/10 bg-amber-400 px-2.5 py-1 text-[11px] font-semibold text-stone-950 transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400"
+                          className={cx(
+                            'rounded-full border border-stone-900/10 bg-amber-400 px-2.5 py-1 text-stone-950 transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400',
+                            actionText,
+                          )}
                         >
                           入账
                         </button>
@@ -1271,8 +1288,8 @@ function IncomeEntrySection(props: {
           <div className="mt-4 grid gap-3 md:hidden">
             {props.rows.map((row) => (
               <article key={row.member.memberId} className="rounded-[20px] border border-stone-900/10 bg-white p-4">
-                <div className="truncate text-base font-semibold text-stone-950">{row.member.name}</div>
-                <div className="truncate text-xs tabular-nums text-stone-500">{buildMemberPlanCaption(row)}</div>
+                <div className={cx('truncate text-stone-950', label)}>{row.member.name}</div>
+                <div className={cx('truncate tabular-nums text-stone-500', meta)}>{buildMemberPlanCaption(row)}</div>
                 <div className="mt-3 grid grid-cols-3 gap-2">
                   <LedgerPill label="计划总收入" value={formatCurrency(row.plannedAmount)} />
                   <LedgerPill label="本次收入" value={formatCurrency(row.draftAmount)} />
@@ -1280,7 +1297,7 @@ function IncomeEntrySection(props: {
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-2">
                   <label className="grid gap-1">
-                    <span className="text-xs font-semibold tracking-[0.16em] text-stone-500">线下张数</span>
+                    <span className={cx('text-stone-500 tracking-[0.16em]', label)}>线下张数</span>
                     <CompactNumberInput
                       value={row.draftOfflineUnits}
                       onChange={(value) => props.onMemberUnitsChange(row.member.memberId, 'offlineUnits', value)}
@@ -1289,11 +1306,10 @@ function IncomeEntrySection(props: {
                       step={1}
                       className="h-11 rounded-2xl bg-stone-50"
                       align="center"
-                      inputClassName="font-medium"
                     />
                   </label>
                   <label className="grid gap-1">
-                    <span className="text-xs font-semibold tracking-[0.16em] text-stone-500">线上张数</span>
+                    <span className={cx('text-stone-500 tracking-[0.16em]', label)}>线上张数</span>
                     <CompactNumberInput
                       value={row.draftOnlineUnits}
                       onChange={(value) => props.onMemberUnitsChange(row.member.memberId, 'onlineUnits', value)}
@@ -1302,7 +1318,6 @@ function IncomeEntrySection(props: {
                       step={1}
                       className="h-11 rounded-2xl bg-stone-50"
                       align="center"
-                      inputClassName="font-medium"
                     />
                   </label>
                 </div>
@@ -1311,7 +1326,10 @@ function IncomeEntrySection(props: {
                     type="button"
                     disabled={props.isLocked}
                     onClick={() => props.onFillPlannedMember(row.member.memberId, row.plannedOfflineUnits, row.plannedOnlineUnits)}
-                    className="flex-1 rounded-2xl border border-stone-900/10 bg-stone-50 px-3 py-2.5 text-sm font-semibold text-stone-700 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+                    className={cx(
+                      'flex-1 rounded-2xl border border-stone-900/10 bg-stone-50 px-3 py-2.5 text-stone-700 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60',
+                      actionText,
+                    )}
                   >
                     计划
                   </button>
@@ -1319,7 +1337,10 @@ function IncomeEntrySection(props: {
                     type="button"
                     disabled={props.isLocked || row.draftAmount <= 0 || props.loading}
                     onClick={() => props.onSubmitMember(row.member.memberId)}
-                    className="flex-1 rounded-2xl border border-stone-900/10 bg-amber-400 px-3 py-2.5 text-sm font-semibold text-stone-950 transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400"
+                    className={cx(
+                      'flex-1 rounded-2xl border border-stone-900/10 bg-amber-400 px-3 py-2.5 text-stone-950 transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400',
+                      actionText,
+                    )}
                   >
                     入账
                   </button>
@@ -1329,7 +1350,7 @@ function IncomeEntrySection(props: {
           </div>
         </>
       ) : (
-        <div className="mt-4 rounded-[20px] border border-dashed border-stone-900/10 bg-white/80 px-4 py-10 text-center text-sm text-stone-500">
+        <div className={cx('mt-4 rounded-[20px] border border-dashed border-stone-900/10 bg-white/80 px-4 py-10 text-center text-stone-500', meta)}>
           当前期间没有可按团员记录的收入计划。
         </div>
       )}
@@ -1358,7 +1379,7 @@ function MemberExpenseEntrySection(props: {
   return (
     <section className="rounded-[24px] border border-stone-900/10 bg-stone-50/80 p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h3 className="text-lg font-semibold text-stone-950">{props.subject ? `${props.subject.subjectName}台账` : '成员支出台账'}</h3>
+        <h3 className={cx('text-stone-950', sectionTitle)}>{props.subject ? `${props.subject.subjectName}台账` : '成员支出台账'}</h3>
         <div className="flex flex-wrap items-center gap-2">
           <LedgerDatePill
             value={props.occurredOn}
@@ -1373,7 +1394,10 @@ function MemberExpenseEntrySection(props: {
             type="button"
             disabled={props.isLocked || props.pendingCount === 0 || props.loading}
             onClick={props.onSubmitAll}
-            className="rounded-full border border-stone-900/10 bg-amber-400 px-4 py-2 text-sm font-semibold text-stone-950 transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400"
+            className={cx(
+              'rounded-full border border-stone-900/10 bg-amber-400 px-4 py-2 text-stone-950 transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400',
+              actionText,
+            )}
           >
             {props.loading ? '保存中...' : props.pendingCount > 0 ? `一键入账 ${props.pendingCount} 笔` : '一键入账'}
           </button>
@@ -1383,7 +1407,7 @@ function MemberExpenseEntrySection(props: {
       {props.rows.length > 0 ? (
         <>
           <div className="mt-4 hidden overflow-hidden rounded-[20px] border border-stone-900/10 bg-white md:block">
-            <table className="w-full table-fixed border-collapse text-[12px]">
+            <table className="w-full table-fixed border-collapse">
               <colgroup>
                 <col className="w-[32%]" />
                 <col className="w-[16%]" />
@@ -1428,7 +1452,10 @@ function MemberExpenseEntrySection(props: {
                           type="button"
                           disabled={props.isLocked}
                           onClick={() => props.onFillPlanned(props.subjectKey, row.option.id, row.option.plannedAmount)}
-                          className="rounded-full border border-stone-900/10 bg-stone-50 px-2.5 py-1 text-[11px] font-semibold text-stone-700 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+                          className={cx(
+                            'rounded-full border border-stone-900/10 bg-stone-50 px-2.5 py-1 text-stone-700 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60',
+                            actionText,
+                          )}
                         >
                           计划
                         </button>
@@ -1436,7 +1463,10 @@ function MemberExpenseEntrySection(props: {
                           type="button"
                           disabled={props.isLocked || row.draftAmount <= 0 || props.loading}
                           onClick={() => props.onSubmitRow(row.option.id)}
-                          className="rounded-full border border-stone-900/10 bg-amber-400 px-2.5 py-1 text-[11px] font-semibold text-stone-950 transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400"
+                          className={cx(
+                            'rounded-full border border-stone-900/10 bg-amber-400 px-2.5 py-1 text-stone-950 transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400',
+                            actionText,
+                          )}
                         >
                           入账
                         </button>
@@ -1451,14 +1481,14 @@ function MemberExpenseEntrySection(props: {
           <div className="mt-4 grid gap-3 md:hidden">
             {props.rows.map((row) => (
               <article key={row.option.id} className="rounded-[20px] border border-stone-900/10 bg-white p-4">
-                <div className="truncate text-base font-semibold text-stone-950">{row.option.name}</div>
+                <div className={cx('truncate text-stone-950', label)}>{row.option.name}</div>
                 <div className="mt-3 grid grid-cols-3 gap-2">
                   <LedgerPill label="计划参考" value={formatCurrency(row.option.plannedAmount)} />
                   <LedgerPill label="本期已记" value={formatCurrency(row.postedAmount)} />
                   <LedgerPill label="本次支出" value={formatCurrency(row.draftAmount)} tone="accent" />
                 </div>
                 <label className="mt-3 grid gap-1">
-                  <span className="text-xs font-semibold tracking-[0.16em] text-stone-500">本次支出</span>
+                  <span className={cx('text-stone-500 tracking-[0.16em]', label)}>本次支出</span>
                   <CompactNumberInput
                     value={row.draftAmount}
                     onChange={(value) => props.onAmountChange(props.subjectKey, row.option.id, value)}
@@ -1467,7 +1497,6 @@ function MemberExpenseEntrySection(props: {
                     step={0.01}
                     className="h-11 rounded-2xl bg-stone-50"
                     align="right"
-                    inputClassName="font-medium"
                   />
                 </label>
                 <div className="mt-3 flex gap-2">
@@ -1475,7 +1504,10 @@ function MemberExpenseEntrySection(props: {
                     type="button"
                     disabled={props.isLocked}
                     onClick={() => props.onFillPlanned(props.subjectKey, row.option.id, row.option.plannedAmount)}
-                    className="flex-1 rounded-2xl border border-stone-900/10 bg-stone-50 px-3 py-2.5 text-sm font-semibold text-stone-700 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+                    className={cx(
+                      'flex-1 rounded-2xl border border-stone-900/10 bg-stone-50 px-3 py-2.5 text-stone-700 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60',
+                      actionText,
+                    )}
                   >
                     计划
                   </button>
@@ -1483,7 +1515,10 @@ function MemberExpenseEntrySection(props: {
                     type="button"
                     disabled={props.isLocked || row.draftAmount <= 0 || props.loading}
                     onClick={() => props.onSubmitRow(row.option.id)}
-                    className="flex-1 rounded-2xl border border-stone-900/10 bg-amber-400 px-3 py-2.5 text-sm font-semibold text-stone-950 transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400"
+                    className={cx(
+                      'flex-1 rounded-2xl border border-stone-900/10 bg-amber-400 px-3 py-2.5 text-stone-950 transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400',
+                      actionText,
+                    )}
                   >
                     入账
                   </button>
@@ -1493,7 +1528,7 @@ function MemberExpenseEntrySection(props: {
           </div>
         </>
       ) : (
-        <div className="mt-4 rounded-[20px] border border-dashed border-stone-900/10 bg-white/80 px-4 py-10 text-center text-sm text-stone-500">
+        <div className={cx('mt-4 rounded-[20px] border border-dashed border-stone-900/10 bg-white/80 px-4 py-10 text-center text-stone-500', meta)}>
           当前期间没有可按成员记录的支出计划。
         </div>
       )}
@@ -1526,7 +1561,7 @@ function OtherIncomeComposer(props: {
     <section className="rounded-[24px] border border-stone-900/10 bg-stone-50/80 p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-          <h3 className="text-lg font-semibold text-stone-950">其他收支</h3>
+          <h3 className={cx('text-stone-950', sectionTitle)}>其他收支</h3>
           <LedgerPill
             label="本期已记"
             value={props.selectedSubject ? formatCurrency(props.postedAmount) : '无'}
@@ -1551,11 +1586,11 @@ function OtherIncomeComposer(props: {
           'xl:grid-cols-[minmax(144px,0.72fr)_minmax(138px,0.72fr)_minmax(150px,0.8fr)_minmax(170px,0.9fr)_minmax(200px,1fr)_132px]',
         )}
       >
-        <span className="text-sm font-semibold text-stone-700">挂账科目</span>
-        <span className="text-sm font-semibold text-stone-700">业务发生日</span>
-        <span className="text-sm font-semibold text-stone-700">金额</span>
-        <span className="text-sm font-semibold text-stone-700">对方单位</span>
-        <span className="text-sm font-semibold text-stone-700">备注</span>
+        <span className={cx('text-stone-700', label)}>挂账科目</span>
+        <span className={cx('text-stone-700', label)}>业务发生日</span>
+        <span className={cx('text-stone-700', label)}>金额</span>
+        <span className={cx('text-stone-700', label)}>对方单位</span>
+        <span className={cx('text-stone-700', label)}>备注</span>
         <span className="hidden xl:block" aria-hidden="true" />
 
         <label className="min-w-0">
@@ -1600,7 +1635,6 @@ function OtherIncomeComposer(props: {
             min={0}
             step={0.01}
             className="h-11 rounded-2xl bg-white"
-            inputClassName="text-lg font-medium"
             align="right"
           />
         </label>
@@ -1636,7 +1670,10 @@ function OtherIncomeComposer(props: {
             type="button"
             onClick={props.onSubmit}
             disabled={!props.canSubmit}
-            className="inline-flex h-11 w-full min-w-[132px] items-center justify-center rounded-2xl bg-stone-950 px-4 text-sm font-semibold text-white transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400"
+            className={cx(
+              'inline-flex h-11 w-full min-w-[132px] items-center justify-center rounded-2xl bg-stone-950 px-4 text-white transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400',
+              actionText,
+            )}
           >
             {props.loading ? '保存中...' : '确认入账'}
           </button>
@@ -1670,8 +1707,8 @@ function LedgerPill(props: {
       <p
         className={cx(
           props.dark
-            ? 'text-xs font-semibold tracking-[0.16em] text-stone-400'
-            : 'text-xs font-semibold tracking-[0.16em] text-stone-500',
+            ? cx('text-stone-400', label, 'tracking-[0.16em]')
+            : cx('text-stone-500', label, 'tracking-[0.16em]'),
           props.layout === 'inline' && 'shrink-0',
         )}
       >
@@ -1679,7 +1716,7 @@ function LedgerPill(props: {
       </p>
       <p
         className={cx(
-          props.layout === 'inline' ? 'text-sm font-semibold' : 'mt-1.5 text-sm font-semibold',
+          props.layout === 'inline' ? summaryValue : cx('mt-1.5', summaryValue),
           props.layout === 'inline' && 'truncate',
           props.dark ? (props.tone === 'accent' ? 'text-amber-200' : 'text-white') : 'text-stone-950',
         )}
@@ -1698,7 +1735,7 @@ function LedgerDatePill(props: {
 }) {
   return (
     <label className="flex h-[45px] items-center gap-3 rounded-[18px] border border-stone-900/10 bg-white px-4">
-      <span className="shrink-0 text-xs font-semibold tracking-[0.16em] text-stone-500">业务发生日</span>
+      <span className={cx('shrink-0 text-stone-500', label, 'tracking-[0.16em]')}>业务发生日</span>
       <DenseFieldInput
         ref={props.inputRef}
         type="date"

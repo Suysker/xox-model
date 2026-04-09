@@ -32,7 +32,7 @@ export function MonthlyResultsTable(props: {
       </div>
 
       <div className="mt-5 rounded-[24px] border border-stone-900/10">
-        <table className="w-full table-fixed border-collapse text-sm">
+        <table className="w-full table-fixed border-collapse">
           <thead className="bg-stone-100/90 text-stone-700">
             <tr className="border-b border-stone-900/10">
               <HeaderCell align="center">月份</HeaderCell>

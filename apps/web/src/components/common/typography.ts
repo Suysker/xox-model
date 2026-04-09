@@ -1,0 +1,11 @@
+export const pageTitle = 'text-[16px] font-bold leading-6'
+export const sectionTitle = 'text-[14px] font-semibold leading-5'
+export const summaryValue = 'text-[12px] font-semibold leading-4'
+export const actionText = 'text-[12px] font-semibold leading-4'
+export const controlValue = 'text-[11px] font-medium leading-4'
+export const label = 'text-[11px] font-semibold leading-4'
+export const meta = 'text-[11px] font-medium leading-4'
+
+export const eyebrowTracking = 'uppercase tracking-[0.28em]'
+export const labelTracking = 'tracking-[0.16em]'
+export const headerTracking = 'tracking-[0.12em]'

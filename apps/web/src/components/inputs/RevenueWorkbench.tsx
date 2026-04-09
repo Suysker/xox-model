@@ -1,5 +1,7 @@
 import { BadgeDollarSign } from 'lucide-react'
+import { cx } from '../../lib/format'
 import { Panel, SectionTitle } from '../common/ui'
+import { controlValue, label, meta } from '../common/typography'
 
 export function RevenueWorkbench(props: {
   offlineUnitPrice: number
@@ -50,7 +52,7 @@ export function RevenueWorkbench(props: {
           />
         </div>
 
-        <div className="flex h-full items-end rounded-[22px] border border-stone-900/10 bg-stone-50/80 px-4 py-4 text-sm leading-7 text-stone-600 xl:col-span-4">
+        <div className={cx('flex h-full items-end rounded-[22px] border border-stone-900/10 bg-stone-50/80 px-4 py-4 leading-6 text-stone-600 xl:col-span-4', meta)}>
           <p>线下看单价，线上看系数，拍立得损耗率只影响按张成本，不改变收入张数。</p>
         </div>
       </div>
@@ -70,19 +72,22 @@ function ValueField(props: {
   return (
     <label className="grid h-full gap-2">
       <div className="flex min-h-[72px] flex-col justify-between gap-1">
-        <span className="text-sm font-semibold text-stone-800">{props.label}</span>
-        <p className="text-xs leading-5 text-stone-500">{props.helper}</p>
+        <span className={cx('text-stone-800', label)}>{props.label}</span>
+        <p className={cx('leading-5 text-stone-500', meta)}>{props.helper}</p>
       </div>
       <div className="flex h-11 items-center overflow-hidden rounded-2xl border border-stone-900/10 bg-stone-100/80 focus-within:border-emerald-500 focus-within:bg-white">
         <input
-          className="compact-number-input-field h-full min-w-0 flex-1 border-none bg-transparent px-4 text-sm font-medium tabular-nums text-stone-900 outline-none"
+          className={cx(
+            'compact-number-input-field h-full min-w-0 flex-1 border-none bg-transparent px-4 tabular-nums text-stone-900 outline-none',
+            controlValue,
+          )}
           type="number"
           value={Number.isFinite(props.value) ? props.value : 0}
           min={props.min}
           step={props.step}
           onChange={(event) => props.onChange(Number(event.target.value))}
         />
-        <span className="shrink-0 pr-4 text-xs font-semibold tracking-[0.18em] text-stone-500">
+        <span className={cx('shrink-0 pr-4 tracking-[0.18em] text-stone-500', label)}>
           {props.suffix}
         </span>
       </div>

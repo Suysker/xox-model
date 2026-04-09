@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react'
 import type { PeriodResponse, VarianceResponse } from '../../lib/api'
 import { cx, formatCompactNumber, formatCurrency, formatPercent } from '../../lib/format'
 import { BodyCell, HeaderCell, Panel, SectionTitle, SegmentTabs } from '../common/ui'
+import { actionText, label, meta, summaryValue } from '../common/typography'
 
 type VarianceMetric = 'revenue' | 'cost'
 type VarianceScope = 'current' | 'cumulative'
@@ -52,11 +53,12 @@ export function VariancePanel(props: {
           icon={BarChart3}
           eyebrow="预实分析"
           title={props.variance?.baselineVersionName ? `基线 ${props.variance.baselineVersionName}` : '计划与实际'}
+          titleScale="page"
           aside={
             props.periods.length > 0 ? (
               <div className="flex flex-wrap items-center justify-end gap-2">
                 {selectedPeriod ? (
-                  <span className="rounded-full border border-stone-900/10 bg-stone-50 px-3 py-2 text-sm font-semibold text-stone-600">
+                  <span className={cx('rounded-full border border-stone-900/10 bg-stone-50 px-3 py-2 text-stone-600', summaryValue)}>
                     当前期间：{selectedPeriod.monthLabel}
                   </span>
                 ) : null}
@@ -68,8 +70,8 @@ export function VariancePanel(props: {
                       onClick={() => props.onSelectPeriod(period.id)}
                       className={
                         props.selectedPeriodId === period.id
-                          ? 'rounded-full border border-stone-950 bg-stone-950 px-4 py-2 text-sm font-semibold text-white'
-                          : 'rounded-full border border-stone-900/10 bg-stone-50 px-4 py-2 text-sm font-semibold text-stone-700'
+                          ? cx('rounded-full border border-stone-950 bg-stone-950 px-4 py-2 text-white', actionText)
+                          : cx('rounded-full border border-stone-900/10 bg-stone-50 px-4 py-2 text-stone-700', actionText)
                       }
                     >
                       {period.monthLabel}
@@ -178,7 +180,7 @@ export function VariancePanel(props: {
                   type="button"
                   onClick={() => setShowOnlyVariance((current) => !current)}
                   className={cx(
-                    'rounded-full border px-3 py-2 text-xs font-semibold transition',
+                    cx('rounded-full border px-3 py-2 transition', actionText),
                     showOnlyVariance
                       ? 'border-amber-300 bg-amber-100 text-amber-800'
                       : 'border-stone-900/10 bg-stone-50 text-stone-600 hover:bg-white',
@@ -191,7 +193,7 @@ export function VariancePanel(props: {
 
             {visibleLines.length > 0 ? (
               <div className="mt-5 overflow-hidden rounded-[24px] border border-stone-900/10">
-                <table className="w-full table-fixed border-collapse text-sm">
+                <table className="w-full table-fixed border-collapse">
                   <thead className="bg-stone-100/90 text-stone-700">
                     <tr className="border-b border-stone-900/10">
                       <HeaderCell>科目</HeaderCell>
@@ -217,7 +219,7 @@ export function VariancePanel(props: {
                 </table>
               </div>
             ) : (
-              <div className="mt-5 rounded-[24px] border border-dashed border-stone-900/10 bg-stone-50/80 px-4 py-10 text-center text-sm text-stone-500">
+              <div className={cx('mt-5 rounded-[24px] border border-dashed border-stone-900/10 bg-stone-50/80 px-4 py-10 text-center text-stone-500', meta)}>
                 当前筛选下没有需要关注的差异科目。
               </div>
             )}
@@ -243,14 +245,14 @@ function QuickStat(props: {
             : 'rounded-[22px] border border-stone-900/10 bg-stone-50/90 p-4'
       }
     >
-      <p className="text-xs font-semibold tracking-[0.16em] text-stone-500">{props.label}</p>
+      <p className={cx('tracking-[0.16em] text-stone-500', label)}>{props.label}</p>
       <p
         className={
           props.tone === 'success'
-            ? 'mt-2 text-xl font-bold text-emerald-700'
+            ? cx('mt-2 text-emerald-700', summaryValue)
             : props.tone === 'warning'
-              ? 'mt-2 text-xl font-bold text-rose-700'
-              : 'mt-2 text-xl font-bold text-stone-950'
+              ? cx('mt-2 text-rose-700', summaryValue)
+              : cx('mt-2 text-stone-950', summaryValue)
         }
       >
         {props.value}
@@ -313,7 +315,7 @@ function VarianceStack(props: {
 
   return (
     <div className="rounded-[22px] border border-stone-900/10 bg-stone-50/80 p-4">
-      <p className="text-xs font-semibold tracking-[0.16em] text-stone-500">{props.label}</p>
+      <p className={cx('tracking-[0.16em] text-stone-500', label)}>{props.label}</p>
       <div className="mt-3 grid gap-3">
         <MetricRow label="计划" value={formatCurrency(props.planned)} />
         <MetricRow label="实际" value={formatCurrency(props.actual)} />
@@ -327,8 +329,8 @@ function VarianceStack(props: {
 
       <div className="mt-4 rounded-[18px] border border-stone-900/10 bg-white px-3 py-3">
         <div className="flex items-center justify-between gap-3">
-          <span className="text-xs font-semibold tracking-[0.16em] text-stone-500">{ratioLabel}</span>
-          <span className={cx('text-sm font-semibold', ratioToneClass)}>
+          <span className={cx('tracking-[0.16em] text-stone-500', label)}>{ratioLabel}</span>
+          <span className={cx(summaryValue, ratioToneClass)}>
             {ratio === null ? '-' : formatPercent(ratio)}
           </span>
         </div>
@@ -349,8 +351,8 @@ function VarianceStack(props: {
 function MetricRow(props: { label: string; value: string; className?: string | undefined }) {
   return (
     <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3">
-      <span className="text-sm text-stone-500">{props.label}</span>
-      <span className={cx('text-right text-base font-semibold text-stone-950', props.className)}>{props.value}</span>
+      <span className={cx('text-stone-500', meta)}>{props.label}</span>
+      <span className={cx('text-right text-stone-950', summaryValue, props.className)}>{props.value}</span>
     </div>
   )
 }
@@ -474,7 +476,7 @@ function VarianceDriverBars(props: {
 }) {
   if (props.rows.length === 0) {
     return (
-      <div className="rounded-[22px] border border-dashed border-stone-900/10 bg-stone-50/80 px-4 py-10 text-center text-sm text-stone-500">
+      <div className={cx('rounded-[22px] border border-dashed border-stone-900/10 bg-stone-50/80 px-4 py-10 text-center text-stone-500', meta)}>
         当前期间还没有偏差驱动。
       </div>
     )
@@ -491,8 +493,8 @@ function VarianceDriverBars(props: {
         return (
           <div key={row.label} className="rounded-[22px] border border-stone-900/10 bg-stone-50/80 p-4">
             <div className="flex items-center justify-between gap-3">
-              <span className="text-sm font-semibold text-stone-950">{row.label}</span>
-              <span className={positive ? 'text-sm font-semibold text-emerald-700' : 'text-sm font-semibold text-rose-700'}>
+              <span className={cx('text-stone-950', label)}>{row.label}</span>
+              <span className={positive ? cx(summaryValue, 'text-emerald-700') : cx(summaryValue, 'text-rose-700')}>
                 {formatCurrency(row.amount)}
               </span>
             </div>

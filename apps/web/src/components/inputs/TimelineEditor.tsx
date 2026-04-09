@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { cx, formatDecimal } from '../../lib/format'
 import type { MonthlyPlan, MonthlyPlanTemplate } from '../../types'
 import { CompactNumberInput, Panel, SectionTitle } from '../common/ui'
+import { actionText, label, meta } from '../common/typography'
 
 type RevenueNumberKey = 'events' | 'salesMultiplier' | 'onlineSalesFactor'
 type RhythmSeriesKey = 'events' | 'salesMultiplier'
@@ -96,7 +97,10 @@ export function TimelineEditor(props: {
             <button
               type="button"
               onClick={props.onApplyTemplateToAll}
-              className="inline-flex items-center justify-center rounded-full border border-stone-900/10 bg-stone-950 px-4 py-2 text-sm font-medium text-white transition hover:bg-stone-800"
+              className={cx(
+                'inline-flex items-center justify-center rounded-full border border-stone-900/10 bg-stone-950 px-4 py-2 text-white transition hover:bg-stone-800',
+                actionText,
+              )}
             >
               同步默认
             </button>
@@ -211,8 +215,8 @@ function TimelineRowMonthLabel(props: {
       <span
         className={
           props.tone === 'template'
-            ? 'block text-[12px] font-semibold leading-none text-amber-900'
-            : 'block text-[12px] font-semibold leading-none text-stone-950'
+            ? cx('block leading-none text-amber-900', label)
+            : cx('block leading-none text-stone-950', label)
         }
       >
         {props.label}
@@ -244,8 +248,8 @@ function TimelineMetricField(props: {
       <span
         className={
           props.tone === 'template'
-            ? 'shrink-0 text-xs font-semibold tracking-[0.16em] text-amber-800/80'
-            : 'shrink-0 text-xs font-semibold tracking-[0.16em] text-stone-500'
+            ? cx('shrink-0 tracking-[0.16em] text-amber-800/80', label)
+            : cx('shrink-0 tracking-[0.16em] text-stone-500', label)
         }
       >
         {props.label}
@@ -434,7 +438,7 @@ function LegendPill(props: {
   label: string
 }) {
   return (
-    <span className="inline-flex items-center gap-2 rounded-full border border-stone-900/10 bg-stone-50 px-3 py-1 text-xs font-semibold text-stone-600">
+    <span className={cx('inline-flex items-center gap-2 rounded-full border border-stone-900/10 bg-stone-50 px-3 py-1 text-stone-600', meta)}>
       <span className={cx('h-2.5 w-2.5 rounded-full', props.color)} />
       {props.label}
     </span>

@@ -1,9 +1,10 @@
 import { Coins } from 'lucide-react'
 import { useState } from 'react'
-import { formatCurrency } from '../../lib/format'
+import { cx, formatCurrency } from '../../lib/format'
 import { getStageCostValue } from '../../lib/costs'
 import type { Employee, ModelConfig, MonthlyPlan, MonthlyScenarioResult, TeamMember } from '../../types'
 import { Panel, SectionTitle } from '../common/ui'
+import { label, meta, sectionTitle, summaryValue } from '../common/typography'
 
 type LeafCostItem = {
   id: string
@@ -193,10 +194,10 @@ export function CostWorkbench(props: {
       <section className="mt-5 rounded-[24px] border border-stone-900/10 bg-white p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h3 className="text-lg font-semibold text-stone-950">按月成本结构</h3>
-            <p className="mt-1 text-sm leading-6 text-stone-600">点击柱子切换月份，右侧细项会跟着变化。</p>
+            <h3 className={cx('text-stone-950', sectionTitle)}>按月成本结构</h3>
+            <p className={cx('mt-1 leading-6 text-stone-600', meta)}>点击柱子切换月份，右侧细项会跟着变化。</p>
           </div>
-          <div className="rounded-full border border-stone-900/10 bg-stone-50 px-4 py-2 text-sm font-semibold text-stone-700">
+          <div className={cx('rounded-full border border-stone-900/10 bg-stone-50 px-4 py-2 text-stone-700', summaryValue)}>
             {props.selectedMonthPlan.label} · 月总成本 {formatCurrency(props.selectedMonthResult.totalCost)}
           </div>
         </div>
@@ -206,13 +207,13 @@ export function CostWorkbench(props: {
             {axisTicks.map((tick) => (
               <div
                 key={tick.key}
-                className="absolute inset-x-0 flex -translate-y-1/2 items-center justify-end text-xs font-semibold text-stone-400"
+                className={cx('absolute inset-x-0 flex -translate-y-1/2 items-center justify-end text-stone-400', label)}
                 style={{ top: `${(1 - tick.key) * 100}%` }}
               >
                 {formatCompactCurrency(tick.value)}
               </div>
             ))}
-            <div className="absolute inset-x-0 bottom-0 flex items-center justify-end text-xs font-semibold text-stone-400">
+            <div className={cx('absolute inset-x-0 bottom-0 flex items-center justify-end text-stone-400', label)}>
               0
             </div>
           </div>
@@ -234,10 +235,10 @@ export function CostWorkbench(props: {
               >
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">{tooltipMonth.label}</p>
-                    <p className="mt-1 text-lg font-bold text-stone-950">{formatCurrency(tooltipMonth.totalCost)}</p>
+                    <p className={cx('uppercase tracking-[0.18em] text-stone-500', label)}>{tooltipMonth.label}</p>
+                    <p className={cx('mt-1 text-stone-950', summaryValue)}>{formatCurrency(tooltipMonth.totalCost)}</p>
                   </div>
-                  <span className="rounded-full border border-stone-900/10 bg-stone-50 px-2.5 py-1 text-[11px] font-semibold text-stone-600">
+                  <span className={cx('rounded-full border border-stone-900/10 bg-stone-50 px-2.5 py-1 text-stone-600', summaryValue)}>
                     月总成本
                   </span>
                 </div>
@@ -246,14 +247,14 @@ export function CostWorkbench(props: {
                     .slice()
                     .sort((left, right) => right.value - left.value)
                     .map((item) => (
-                      <div key={item.id} className="flex items-center justify-between gap-3 text-sm">
+                      <div key={item.id} className={cx('flex items-center justify-between gap-3', meta)}>
                         <div className="flex min-w-0 items-center gap-2">
                           <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />
                           <span className="truncate text-stone-600">{item.label}</span>
                         </div>
                         <div className="text-right">
-                          <div className="font-semibold text-stone-900">{formatCurrency(item.value)}</div>
-                          <div className="text-[11px] font-medium text-stone-500">
+                          <div className={cx('text-stone-900', summaryValue)}>{formatCurrency(item.value)}</div>
+                          <div className={cx('text-stone-500', meta)}>
                             占比 {formatPercent(item.value / Math.max(tooltipMonth.totalCost, 1))}
                           </div>
                         </div>
@@ -283,7 +284,7 @@ export function CostWorkbench(props: {
                     <div className="flex h-full w-full max-w-[86px] flex-col justify-end gap-2 pt-5">
                       <div className="relative flex h-[244px] items-end overflow-visible">
                         <div
-                          className={`pointer-events-none absolute left-1/2 z-10 whitespace-nowrap text-[11px] font-semibold ${
+                          className={`pointer-events-none absolute left-1/2 z-10 whitespace-nowrap ${label} ${
                             isSelected ? 'text-stone-950' : 'text-stone-500'
                           }`}
                           style={{
@@ -315,7 +316,7 @@ export function CostWorkbench(props: {
                           </div>
                         </div>
                       </div>
-                      <div className={`text-center text-sm font-semibold ${isSelected ? 'text-stone-950' : 'text-stone-500'}`}>
+                      <div className={cx('text-center', label, isSelected ? 'text-stone-950' : 'text-stone-500')}>
                         {month.label}
                       </div>
                     </div>
@@ -330,7 +331,7 @@ export function CostWorkbench(props: {
           {legendItems.map((item) => (
             <div
               key={item.id}
-              className="inline-flex items-center gap-2 rounded-full border border-stone-900/10 bg-white px-3 py-1.5 text-xs font-semibold text-stone-700"
+              className={cx('inline-flex items-center gap-2 rounded-full border border-stone-900/10 bg-white px-3 py-1.5 text-stone-700', label)}
             >
               <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />
               {item.label}

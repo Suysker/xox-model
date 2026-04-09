@@ -4,6 +4,7 @@ import type { EntryAllocation, EntryResponse, SubjectResponse } from '../../lib/
 import { cx, formatCurrency } from '../../lib/format'
 import type { MonthlyScenarioResult } from '../../types'
 import { BodyCell as HistoryCell, DenseFieldInput, HeaderCell as HistoryHeader, Panel, SectionTitle, SegmentTabs } from '../common/ui'
+import { actionText, controlValue, headerTracking, label, meta, summaryValue } from '../common/typography'
 
 type HistoryDirectionFilter = 'all' | 'income' | 'expense'
 type HistoryStatusFilter = 'all' | 'posted' | 'voided'
@@ -184,7 +185,7 @@ export function HistorySection(props: {
 
   return (
     <Panel>
-      <SectionTitle icon={ReceiptText} eyebrow="历史" title="账本记录" />
+      <SectionTitle icon={ReceiptText} eyebrow="历史" title="账本记录" titleScale="page" />
 
       {hasHistory ? (
         <>
@@ -194,7 +195,7 @@ export function HistorySection(props: {
 
             <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-stone-900/10 bg-white px-3 py-2">
               <CalendarRange className="h-4 w-4 text-stone-400" />
-              <span className="text-xs font-semibold tracking-[0.12em] text-stone-500">业务日期</span>
+              <span className={cx('text-stone-500', label, headerTracking)}>业务日期</span>
               <div className="inline-flex flex-wrap gap-1 rounded-full border border-stone-900/10 bg-stone-100/70 p-1">
                 {historyDateTabs.map((item) => (
                   <button
@@ -202,7 +203,8 @@ export function HistorySection(props: {
                     type="button"
                     onClick={() => handleDateFilterModeChange(item.value)}
                     className={cx(
-                      'rounded-full px-3 py-1.5 text-xs font-medium transition',
+                      'rounded-full px-3 py-1.5 transition',
+                      actionText,
                       dateFilterMode === item.value ? 'bg-stone-950 text-white' : 'text-stone-600 hover:bg-white',
                     )}
                   >
@@ -232,7 +234,10 @@ export function HistorySection(props: {
                 <button
                   type="button"
                   onClick={() => setDateFilterMode('all')}
-                  className="rounded-full border border-stone-900/10 bg-stone-50 px-2.5 py-1 text-[11px] font-semibold text-stone-600 transition hover:bg-white"
+                  className={cx(
+                    'rounded-full border border-stone-900/10 bg-stone-50 px-2.5 py-1 text-stone-600 transition hover:bg-white',
+                    actionText,
+                  )}
                 >
                   回到全部
                 </button>
@@ -245,11 +250,14 @@ export function HistorySection(props: {
                 value={keyword}
                 onChange={(event) => setKeyword(event.target.value)}
                 placeholder="筛科目、成员、对方单位"
-                className="h-10 w-full rounded-2xl border border-stone-900/10 bg-white pl-10 pr-4 text-sm font-medium text-stone-900 outline-none transition focus:border-amber-300"
+                className={cx(
+                  'h-10 w-full rounded-2xl border border-stone-900/10 bg-white pl-10 pr-4 text-stone-900 outline-none transition focus:border-amber-300',
+                  controlValue,
+                )}
               />
             </label>
 
-            <span className="rounded-full border border-stone-900/10 bg-stone-50 px-3 py-2 text-xs font-semibold text-stone-600">
+            <span className={cx('rounded-full border border-stone-900/10 bg-stone-50 px-3 py-2 text-stone-600', summaryValue)}>
               {filteredHistoryGroups.length} 条
             </span>
           </div>
@@ -257,7 +265,7 @@ export function HistorySection(props: {
           {hasFilteredHistory ? (
             <div className="mt-4 overflow-hidden rounded-[24px] border border-stone-900/10 bg-white">
               <div className="hidden md:block">
-                <table className="w-full table-fixed border-collapse text-[12px]">
+                <table className="w-full table-fixed border-collapse">
                   <colgroup>
                     <col className="w-[18%]" />
                     <col className="w-[7%]" />
@@ -298,7 +306,8 @@ export function HistorySection(props: {
                           <HistoryCell align="center">
                             <span
                               className={cx(
-                                'rounded-full px-2.5 py-1 text-xs font-semibold',
+                                'rounded-full px-2.5 py-1',
+                                actionText,
                                 isVoided && 'opacity-45',
                                 entry.direction === 'income'
                                   ? 'border border-emerald-200 bg-emerald-50 text-emerald-700'
@@ -338,7 +347,10 @@ export function HistorySection(props: {
                                   type="button"
                                   disabled={!canSave}
                                   onClick={() => void handleSaveRow(entry, draft)}
-                                  className="rounded-full bg-stone-950 px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400"
+                                  className={cx(
+                                    'rounded-full bg-stone-950 px-2.5 py-1 text-white transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400',
+                                    actionText,
+                                  )}
                                 >
                                   保存
                                 </button>
@@ -346,7 +358,10 @@ export function HistorySection(props: {
                                   type="button"
                                   disabled={props.isLocked || props.loading}
                                   onClick={() => props.onVoid(entry.id)}
-                                  className="rounded-full border border-stone-900/10 bg-stone-50 px-2.5 py-1 text-[11px] font-semibold text-stone-700 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+                                  className={cx(
+                                    'rounded-full border border-stone-900/10 bg-stone-50 px-2.5 py-1 text-stone-700 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60',
+                                    actionText,
+                                  )}
                                   >
                                     作废
                                   </button>
@@ -356,7 +371,10 @@ export function HistorySection(props: {
                                   type="button"
                                   disabled={props.isLocked || props.loading}
                                   onClick={() => void props.onRestore(entry.id)}
-                                  className="rounded-full border border-stone-900/10 bg-white px-2.5 py-1 text-[11px] font-semibold text-stone-700 transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                  className={cx(
+                                    'rounded-full border border-stone-900/10 bg-white px-2.5 py-1 text-stone-700 transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60',
+                                    actionText,
+                                  )}
                                 >
                                   取消作废
                                 </button>
@@ -384,16 +402,17 @@ export function HistorySection(props: {
                     <article key={entry.id} className={cx('rounded-[20px] border border-stone-900/10 bg-white p-4', isVoided && 'bg-stone-50/80')}>
                       <div className="flex items-start justify-between gap-3">
                         <div>
-                          <div className={cx('truncate text-base font-semibold text-stone-950', isVoided && 'line-through text-stone-400')}>
+                          <div className={cx('truncate text-stone-950', label, isVoided && 'line-through text-stone-400')}>
                             {buildHistorySummary(entry, derivedEntries)}
                           </div>
-                          <div className={cx('mt-1 text-xs text-stone-500', isVoided && 'line-through text-stone-400')}>
+                          <div className={cx('mt-1 text-stone-500', meta, isVoided && 'line-through text-stone-400')}>
                             {formatEntryDate(entry.occurredAt)} · 记账 {formatPostedAt(entry.postedAt)}
                           </div>
                         </div>
                         <span
                           className={cx(
-                            'rounded-full px-2.5 py-1 text-xs font-semibold',
+                            'rounded-full px-2.5 py-1',
+                            actionText,
                             isVoided && 'opacity-45',
                             entry.direction === 'income'
                               ? 'border border-emerald-200 bg-emerald-50 text-emerald-700'
@@ -404,7 +423,7 @@ export function HistorySection(props: {
                         </span>
                       </div>
 
-                      <div className={cx('mt-2 text-sm text-stone-600', isVoided && 'line-through text-stone-400')}>{relatedEntityLabel(entry)}</div>
+                      <div className={cx('mt-2 text-stone-600', meta, isVoided && 'line-through text-stone-400')}>{relatedEntityLabel(entry)}</div>
 
                       <div className="mt-3">
                         <HistorySummaryEditor
@@ -418,7 +437,7 @@ export function HistorySection(props: {
                       </div>
 
                       <div className="mt-3 flex items-center justify-between gap-3">
-                        <span className={cx('text-sm font-semibold text-stone-500', isVoided && 'line-through text-stone-400')}>金额</span>
+                        <span className={cx('text-stone-500', label, isVoided && 'line-through text-stone-400')}>金额</span>
                         <HistoryAmountEditor
                           entry={entry}
                           draft={draft}
@@ -437,7 +456,10 @@ export function HistorySection(props: {
                             type="button"
                             disabled={!canSave}
                             onClick={() => void handleSaveRow(entry, draft)}
-                            className="rounded-full bg-stone-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400"
+                            className={cx(
+                              'rounded-full bg-stone-950 px-4 py-2 text-white transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400',
+                              actionText,
+                            )}
                           >
                             保存
                           </button>
@@ -445,7 +467,10 @@ export function HistorySection(props: {
                             type="button"
                             disabled={props.isLocked || props.loading}
                             onClick={() => props.onVoid(entry.id)}
-                            className="rounded-full border border-stone-900/10 bg-stone-50 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+                            className={cx(
+                              'rounded-full border border-stone-900/10 bg-stone-50 px-4 py-2 text-stone-700 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60',
+                              actionText,
+                            )}
                           >
                             作废
                           </button>
@@ -455,7 +480,10 @@ export function HistorySection(props: {
                             type="button"
                             disabled={props.isLocked || props.loading}
                             onClick={() => void props.onRestore(entry.id)}
-                            className="rounded-full border border-stone-900/10 bg-white px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+                            className={cx(
+                              'rounded-full border border-stone-900/10 bg-white px-4 py-2 text-stone-700 transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60',
+                              actionText,
+                            )}
                           >
                             取消作废
                           </button>
@@ -467,13 +495,13 @@ export function HistorySection(props: {
               </div>
             </div>
           ) : (
-            <div className="mt-4 rounded-[24px] border border-dashed border-stone-900/10 bg-stone-50/80 px-4 py-10 text-center text-sm text-stone-500">
+            <div className={cx('mt-4 rounded-[24px] border border-dashed border-stone-900/10 bg-stone-50/80 px-4 py-10 text-center text-stone-500', meta)}>
               当前筛选条件下还没有记录。
             </div>
           )}
         </>
       ) : (
-        <div className="mt-5 rounded-[24px] border border-dashed border-stone-900/10 bg-stone-50/80 px-4 py-10 text-center text-sm text-stone-500">
+        <div className={cx('mt-5 rounded-[24px] border border-dashed border-stone-900/10 bg-stone-50/80 px-4 py-10 text-center text-stone-500', meta)}>
           当前期间还没有过账记录。
         </div>
       )}
@@ -491,7 +519,7 @@ function HistorySummaryEditor(props: {
 }) {
   if (props.entry.status === 'voided') {
     return (
-      <div className="truncate line-through font-medium text-stone-400">
+      <div className={cx('truncate line-through text-stone-400', controlValue)}>
         {buildHistorySummary(props.entry, props.derivedEntries)}
       </div>
     )
@@ -500,10 +528,10 @@ function HistorySummaryEditor(props: {
   if (props.quantityState) {
     return (
       <div className="flex items-center gap-2 overflow-x-auto whitespace-nowrap">
-        <span className="shrink-0 font-medium text-stone-900">{allocationTitle(props.entry.allocations)}</span>
+        <span className={cx('shrink-0 text-stone-900', label)}>{allocationTitle(props.entry.allocations)}</span>
         {props.quantityState.hasOffline ? (
           <div className="flex items-center gap-2">
-            <span className="shrink-0 text-[11px] font-semibold tracking-[0.12em] text-stone-500">线下</span>
+            <span className={cx('shrink-0 text-stone-500', label, headerTracking)}>线下</span>
             <HistoryUnitCell
               labelHidden
               label="线下张数"
@@ -511,12 +539,12 @@ function HistorySummaryEditor(props: {
               disabled={props.isLocked || props.loading}
               onChange={(value) => props.onQuantityChange(OFFLINE_REVENUE_KEY, value)}
             />
-            <span className="shrink-0 text-[11px] font-semibold text-stone-500">张</span>
+            <span className={cx('shrink-0 text-stone-500', label)}>张</span>
           </div>
         ) : null}
         {props.quantityState.hasOnline ? (
           <div className="flex items-center gap-2">
-            <span className="shrink-0 text-[11px] font-semibold tracking-[0.12em] text-stone-500">线上</span>
+            <span className={cx('shrink-0 text-stone-500', label, headerTracking)}>线上</span>
             <HistoryUnitCell
               labelHidden
               label="线上张数"
@@ -524,17 +552,17 @@ function HistorySummaryEditor(props: {
               disabled={props.isLocked || props.loading}
               onChange={(value) => props.onQuantityChange(ONLINE_REVENUE_KEY, value)}
             />
-            <span className="shrink-0 text-[11px] font-semibold text-stone-500">张</span>
+            <span className={cx('shrink-0 text-stone-500', label)}>张</span>
           </div>
         ) : null}
         {props.derivedEntries.length > 0 ? (
-          <span className="shrink-0 text-[11px] font-medium text-stone-500">· 自动提成 {summarizeDerivedEntries(props.derivedEntries)}</span>
+          <span className={cx('shrink-0 text-stone-500', meta)}>· 自动提成 {summarizeDerivedEntries(props.derivedEntries)}</span>
         ) : null}
       </div>
     )
   }
 
-  return <div className="truncate font-medium text-stone-900">{buildHistorySummary(props.entry, props.derivedEntries)}</div>
+  return <div className={cx('truncate text-stone-900', controlValue)}>{buildHistorySummary(props.entry, props.derivedEntries)}</div>
 }
 
 function HistoryAmountEditor(props: {
@@ -547,11 +575,11 @@ function HistoryAmountEditor(props: {
   onAmountChange: (allocationId: string, amount: number) => void
 }) {
   if (props.entry.status === 'voided') {
-    return <span className="font-semibold tabular-nums text-stone-400">{formatRmb(props.entry.amount)}</span>
+    return <span className={cx('tabular-nums text-stone-400', summaryValue)}>{formatRmb(props.entry.amount)}</span>
   }
 
   if (props.quantityState) {
-    return <span className="font-semibold tabular-nums text-amber-700">{formatRmb(props.totalAmount)}</span>
+    return <span className={cx('tabular-nums text-amber-700', summaryValue)}>{formatRmb(props.totalAmount)}</span>
   }
 
   if (props.draft.allocations.length === 1) {
@@ -586,7 +614,7 @@ function HistoryAmountEditor(props: {
           onChange={(value) => props.onAmountChange(allocation.id, value)}
         />
       ))}
-      <span className="text-[11px] font-semibold tabular-nums text-amber-700">{formatRmb(props.totalAmount)}</span>
+      <span className={cx('tabular-nums text-amber-700', summaryValue)}>{formatRmb(props.totalAmount)}</span>
     </div>
   )
 }
@@ -600,7 +628,7 @@ function HistoryUnitCell(props: {
 }) {
   return (
     <label className={cx('grid gap-1', props.labelHidden && 'contents')}>
-      {props.labelHidden ? null : <span className="text-[11px] font-semibold tracking-[0.12em] text-stone-500">{props.label}</span>}
+      {props.labelHidden ? null : <span className={cx('text-stone-500', label, headerTracking)}>{props.label}</span>}
       <HistoryNumberInput
         value={props.value}
         disabled={props.disabled}
@@ -634,7 +662,7 @@ function HistoryNumberInput(props: {
         props.disabled && 'opacity-60',
       )}
     >
-      {props.prefix ? <span className="shrink-0 text-[13px] font-medium text-stone-500">{props.prefix}</span> : null}
+      {props.prefix ? <span className={cx('shrink-0 text-stone-500', controlValue)}>{props.prefix}</span> : null}
       <input
         type="number"
         value={displayValue}
@@ -650,7 +678,8 @@ function HistoryNumberInput(props: {
           props.onChange(Number.isFinite(nextValue) ? nextValue : 0)
         }}
         className={cx(
-          'h-full bg-transparent text-[13px] font-medium text-stone-900 outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none',
+          'h-full bg-transparent text-stone-900 outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none',
+          controlValue,
           props.align === 'center' ? 'text-center' : props.align === 'right' ? 'text-right' : 'text-left',
         )}
         style={{ width: `${widthChars + 1}ch` }}

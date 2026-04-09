@@ -1,6 +1,7 @@
 import { forwardRef, useState, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import { cx } from '../../lib/format'
+import { actionText, controlValue, eyebrowTracking, headerTracking, label, meta, pageTitle, sectionTitle, summaryValue } from './typography'
 
 export function Panel(props: {
   children: ReactNode
@@ -25,8 +26,10 @@ export function SectionTitle(props: {
   description?: string | undefined
   dark?: boolean | undefined
   aside?: ReactNode
+  titleScale?: 'page' | 'section' | undefined
 }) {
   const Icon = props.icon
+  const titleClass = props.titleScale === 'page' ? pageTitle : sectionTitle
 
   return (
     <div className="flex flex-col gap-4 md:flex-row md:flex-wrap md:items-start md:justify-between">
@@ -45,19 +48,19 @@ export function SectionTitle(props: {
             <p
               className={
                 props.dark
-                  ? 'shrink-0 text-xs font-semibold uppercase tracking-[0.28em] text-stone-400'
-                  : 'shrink-0 text-xs font-semibold uppercase tracking-[0.28em] text-stone-500'
+                  ? cx('shrink-0 text-stone-400', label, eyebrowTracking)
+                  : cx('shrink-0 text-stone-500', label, eyebrowTracking)
               }
             >
               {props.eyebrow}
             </p>
-            <h2 className={cx('min-w-0', props.dark ? 'text-2xl font-bold text-white' : 'text-2xl font-bold text-stone-950')}>
+            <h2 className={cx('min-w-0', titleClass, props.dark ? 'text-white' : 'text-stone-950')}>
               {props.title}
             </h2>
           </div>
           {props.description ? (
             <p
-              className={props.dark ? 'max-w-4xl text-sm leading-7 text-stone-300' : 'max-w-4xl text-sm leading-7 text-stone-600'}
+              className={props.dark ? cx('max-w-4xl text-stone-300', meta) : cx('max-w-4xl text-stone-600', meta)}
             >
               {props.description}
             </p>
@@ -90,11 +93,11 @@ export function StatCard(props: {
         className={cx(
           props.dark
             ? inline
-              ? 'text-sm font-semibold text-stone-300'
-              : 'text-xs uppercase tracking-[0.2em] text-stone-400'
+              ? cx('text-stone-300', label)
+              : cx('text-stone-400 uppercase tracking-[0.2em]', label)
             : inline
-              ? 'text-sm font-semibold text-stone-600'
-              : 'text-xs uppercase tracking-[0.2em] text-stone-500',
+              ? cx('text-stone-600', label)
+              : cx('text-stone-500 uppercase tracking-[0.2em]', label),
           inline && 'whitespace-nowrap',
         )}
       >
@@ -102,7 +105,7 @@ export function StatCard(props: {
       </p>
       <p
         className={cx(
-          props.dark ? 'text-lg font-bold text-white' : 'text-lg font-bold text-stone-950',
+          props.dark ? cx('text-white', summaryValue) : cx('text-stone-950', summaryValue),
           !inline && 'mt-2',
           inline && 'whitespace-nowrap',
         )}
@@ -139,10 +142,10 @@ export function InlineStatPill(props: {
         props.className,
       )}
     >
-      <span className={props.dark ? 'text-sm font-semibold text-stone-300' : 'text-sm font-semibold text-stone-600'}>
+      <span className={props.dark ? cx('text-stone-300', label) : cx('text-stone-600', label)}>
         {props.label}
       </span>
-      <span className={props.dark ? 'text-lg font-bold text-white' : 'text-lg font-bold text-stone-950'}>
+      <span className={props.dark ? cx('text-white', summaryValue) : cx('text-stone-950', summaryValue)}>
         {props.value}
       </span>
     </div>
@@ -169,8 +172,9 @@ export function SegmentTabs<T extends string>(props: {
           type="button"
           onClick={() => props.onChange(item.value)}
           className={cx(
-            'rounded-full px-4 font-medium transition',
-            props.compact ? 'py-1.5 text-xs' : 'py-2 text-sm',
+            'rounded-full px-4 transition',
+            props.compact ? 'py-1.5' : 'py-2',
+            actionText,
             props.value === item.value
               ? props.dark
                 ? 'bg-amber-300/15 text-amber-100'
@@ -199,7 +203,9 @@ export function HeaderCell(props: {
       rowSpan={props.rowSpan}
       colSpan={props.colSpan}
       className={cx(
-        'whitespace-nowrap px-2 py-2 align-middle text-center text-[11px] font-semibold tracking-[0.12em]',
+        'whitespace-nowrap px-2 py-2 align-middle text-center',
+        meta,
+        headerTracking,
         props.align === 'left' && 'text-left',
         props.align === 'right' && 'text-right',
         props.align === 'center' && 'text-center',
@@ -220,6 +226,7 @@ export function BodyCell(props: {
     <td
       className={cx(
         'px-2 py-1.5 align-middle text-center text-stone-700',
+        controlValue,
         props.align === 'left' && 'text-left',
         props.align === 'right' && 'text-right',
         props.align === 'center' && 'text-center',
@@ -236,14 +243,14 @@ type DenseFieldSurface = 'soft' | 'white' | 'ghost'
 
 function getDenseFieldSizeClass(fieldSize: DenseFieldSize) {
   if (fieldSize === 'xs') {
-    return 'h-8 rounded-md px-2 text-[11px] font-medium'
+    return cx('h-8 rounded-md px-2', controlValue)
   }
 
   if (fieldSize === 'sm') {
-    return 'h-9 rounded-lg px-2.5 text-[13px] font-medium'
+    return cx('h-9 rounded-lg px-2.5', controlValue)
   }
 
-  return 'h-11 rounded-2xl px-4 text-sm font-medium'
+  return cx('h-11 rounded-2xl px-4', controlValue)
 }
 
 function getDenseFieldSurfaceClass(surface: DenseFieldSurface) {
@@ -345,8 +352,9 @@ export function CompactNumberInput(props: {
       {props.prefix ? (
         <span
           className={cx(
-            'shrink-0 font-semibold text-stone-500',
-            props.size === 'xs' ? 'pl-1.5 text-[10px]' : props.size === 'sm' ? 'pl-2 text-[10px]' : 'pl-3 text-[11px]',
+            'shrink-0 text-stone-500',
+            meta,
+            props.size === 'xs' ? 'pl-1.5' : props.size === 'sm' ? 'pl-2' : 'pl-3',
           )}
         >
           {props.prefix}
@@ -355,11 +363,8 @@ export function CompactNumberInput(props: {
       <input
         className={cx(
           'compact-number-input-field h-full min-w-0 flex-1 border-none bg-transparent tabular-nums text-stone-900 outline-none',
-          props.size === 'xs'
-            ? 'px-2 text-[11px] font-medium'
-            : props.size === 'sm'
-              ? 'px-2.5 text-[13px] font-medium'
-              : 'px-3 text-sm font-medium',
+          controlValue,
+          props.size === 'xs' ? 'px-2' : props.size === 'sm' ? 'px-2.5' : 'px-3',
           props.align === 'center' && 'text-center',
           props.align === 'right' && 'text-right',
           props.inputClassName,
@@ -379,8 +384,10 @@ export function CompactNumberInput(props: {
       {props.suffix ? (
         <span
           className={cx(
-            'font-semibold uppercase tracking-[0.12em] text-stone-500',
-            props.size === 'xs' ? 'pr-1.5 text-[10px]' : props.size === 'sm' ? 'pr-2 text-[10px]' : 'pr-3 text-[11px]',
+            'uppercase text-stone-500',
+            meta,
+            headerTracking,
+            props.size === 'xs' ? 'pr-1.5' : props.size === 'sm' ? 'pr-2' : 'pr-3',
           )}
         >
           {props.suffix}
@@ -398,8 +405,8 @@ function FieldShell(props: {
   return (
     <label className="grid gap-2">
       <div className="space-y-1">
-        <span className="text-sm font-semibold text-stone-800">{props.label}</span>
-        {props.helper ? <p className="text-xs leading-5 text-stone-500">{props.helper}</p> : null}
+        <span className={cx('text-stone-800', label)}>{props.label}</span>
+        {props.helper ? <p className={cx('text-stone-500', meta)}>{props.helper}</p> : null}
       </div>
       {props.children}
     </label>
@@ -426,7 +433,7 @@ export function NumberField(props: {
         )}
       >
         <input
-          className="h-full flex-1 border-none bg-transparent px-4 text-sm font-medium text-stone-900 outline-none"
+          className={cx('h-full flex-1 border-none bg-transparent px-4 text-stone-900 outline-none', controlValue)}
           type="number"
           value={Number.isFinite(props.value) ? props.value : 0}
           step={props.step}
@@ -435,7 +442,7 @@ export function NumberField(props: {
           onChange={(event) => props.onChange(Number(event.target.value))}
         />
         {props.suffix ? (
-          <span className="pr-4 text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">
+          <span className={cx('pr-4 uppercase text-stone-500 tracking-[0.18em]', meta)}>
             {props.suffix}
           </span>
         ) : null}
@@ -453,7 +460,10 @@ export function TextAreaField(props: {
   return (
     <FieldShell label={props.label} helper={props.helper}>
       <textarea
-        className="min-h-28 rounded-2xl border border-stone-900/10 bg-stone-100/80 px-4 py-3 text-sm font-medium text-stone-900 outline-none transition focus:border-emerald-500 focus:bg-white"
+        className={cx(
+          'min-h-28 rounded-2xl border border-stone-900/10 bg-stone-100/80 px-4 py-3 text-stone-900 outline-none transition focus:border-emerald-500 focus:bg-white',
+          controlValue,
+        )}
         value={props.value}
         onChange={(event) => props.onChange(event.target.value)}
       />

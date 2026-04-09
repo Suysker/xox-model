@@ -1,7 +1,8 @@
 import { Plus, Trash2, Users } from 'lucide-react'
 import type { EmploymentType, ScenarioKey } from '../../types'
 import { BodyCell, CompactNumberInput, DenseFieldInput, DenseFieldSelect, HeaderCell, InlineStatPill, Panel, SectionTitle } from '../common/ui'
-import { formatCurrency, formatDecimal } from '../../lib/format'
+import { cx, formatCurrency, formatDecimal } from '../../lib/format'
+import { actionText } from '../common/typography'
 
 const employmentOptions: Array<{ label: string; value: EmploymentType }> = [
   { label: '底薪', value: 'salary' },
@@ -60,7 +61,10 @@ export function TeamMembersTable(props: TeamMembersTableProps) {
             <button
               type="button"
               onClick={props.onAdd}
-              className="inline-flex h-[54px] items-center gap-2 rounded-full border border-stone-900/10 bg-stone-950 px-5 text-sm font-medium text-white transition hover:bg-stone-800"
+              className={cx(
+                'inline-flex h-[54px] items-center gap-2 rounded-full border border-stone-900/10 bg-stone-950 px-5 text-white transition hover:bg-stone-800',
+                actionText,
+              )}
             >
               <Plus className="h-4 w-4" />
               添加成员
@@ -70,7 +74,7 @@ export function TeamMembersTable(props: TeamMembersTableProps) {
       />
 
       <div className="mt-5 rounded-[24px] border border-stone-900/10 bg-white">
-        <table className="w-full table-fixed border-collapse text-sm">
+        <table className="w-full table-fixed border-collapse">
           <colgroup>
             <col className="w-[14%]" />
             <col className="w-[10%]" />

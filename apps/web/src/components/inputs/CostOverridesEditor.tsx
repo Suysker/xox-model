@@ -1,5 +1,6 @@
 import { Plus, Receipt, RefreshCcw, Trash2 } from 'lucide-react'
 import { useState } from 'react'
+import { cx } from '../../lib/format'
 import type {
   CostCategory,
   Employee,
@@ -10,6 +11,7 @@ import type {
   TeamMember,
 } from '../../types'
 import { BodyCell, CompactNumberInput, DenseFieldInput, DenseFieldSelect, HeaderCell, Panel, SegmentTabs } from '../common/ui'
+import { actionText, controlValue, eyebrowTracking, label, sectionTitle } from '../common/typography'
 
 type CostTab = 'training' | 'special'
 type TrainingNumberKey =
@@ -85,7 +87,7 @@ function EventCostCell(props: {
         className="w-full"
         onChange={props.onAmountChange}
       />
-      <span className="text-xs font-semibold text-stone-400">×</span>
+      <span className={cx('text-stone-400', label)}>×</span>
       <CompactNumberInput
         value={props.count}
         min={0}
@@ -118,11 +120,11 @@ function PerUnitCostCell(props: {
           onChange={props.onAmountChange}
         />
       ) : (
-        <div className="flex h-8 items-center justify-center rounded-md border border-stone-900/10 bg-stone-50 px-2 text-[11px] font-medium text-stone-500">
+        <div className={cx('flex h-8 items-center justify-center rounded-md border border-stone-900/10 bg-stone-50 px-2 text-stone-500', controlValue)}>
           {formatSplitValue(props.amount)}
         </div>
       )}
-      <span className="text-xs font-semibold text-stone-400">×</span>
+      <span className={cx('text-stone-400', label)}>×</span>
       {props.onFactorChange ? (
         <CompactNumberInput
           value={props.factor}
@@ -135,7 +137,7 @@ function PerUnitCostCell(props: {
           onChange={(value) => props.onFactorChange?.(clampUnitFactor(value))}
         />
       ) : (
-        <div className="flex h-8 items-center justify-center rounded-md border border-stone-900/10 bg-stone-50 px-2 text-[11px] font-medium text-stone-500">
+        <div className={cx('flex h-8 items-center justify-center rounded-md border border-stone-900/10 bg-stone-50 px-2 text-stone-500', controlValue)}>
           {formatSplitValue(props.factor)}
         </div>
       )}
@@ -154,8 +156,8 @@ function MonthResetCell(props: {
       <span
         className={
           props.tone === 'template'
-            ? 'block text-[12px] font-semibold leading-none text-amber-900'
-            : 'block text-[12px] font-semibold leading-none text-stone-900'
+            ? cx('block leading-none text-amber-900', label)
+            : cx('block leading-none text-stone-900', label)
         }
       >
         {props.label}
@@ -218,8 +220,8 @@ function TrainingRowMonthLabel(props: {
       <span
         className={
           props.tone === 'template'
-            ? 'block text-[12px] font-semibold leading-none text-amber-900'
-            : 'block text-[12px] font-semibold leading-none text-stone-950'
+            ? cx('block leading-none text-amber-900', label)
+            : cx('block leading-none text-stone-950', label)
         }
       >
         {props.label}
@@ -252,8 +254,8 @@ function TrainingMetricField(props: {
       <span
         className={
           props.tone === 'template'
-            ? 'shrink-0 text-xs font-semibold tracking-[0.16em] text-amber-800/80'
-            : 'shrink-0 text-xs font-semibold tracking-[0.16em] text-stone-500'
+            ? cx('shrink-0 tracking-[0.16em] text-amber-800/80', label)
+            : cx('shrink-0 tracking-[0.16em] text-stone-500', label)
         }
       >
         {props.label}
@@ -304,9 +306,9 @@ export function CostOverridesEditor(props: {
             <Receipt className="h-5 w-5" />
           </div>
           <div className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-stone-500">输入</p>
+            <p className={cx('uppercase text-stone-500', label, eyebrowTracking)}>输入</p>
             <div className="flex flex-wrap items-center gap-3">
-              <h2 className="text-2xl font-bold text-stone-950">成本编辑</h2>
+              <h2 className={cx('text-stone-950', sectionTitle)}>成本编辑</h2>
               <SegmentTabs<CostTab>
                 value={tab}
                 items={[
@@ -325,14 +327,20 @@ export function CostOverridesEditor(props: {
               <button
                 type="button"
                 onClick={() => props.onApplyTemplateToAll('special')}
-                className="inline-flex items-center justify-center rounded-full border border-stone-900/10 bg-stone-950 px-4 py-2 text-sm font-medium text-white transition hover:bg-stone-800"
+                className={cx(
+                  'inline-flex items-center justify-center rounded-full border border-stone-900/10 bg-stone-950 px-4 py-2 text-white transition hover:bg-stone-800',
+                  actionText,
+                )}
               >
                 同步默认
               </button>
               <button
                 type="button"
                 onClick={props.onStageCostItemAdd}
-                className="inline-flex items-center gap-2 rounded-full border border-stone-900/10 bg-stone-950 px-4 py-2 text-sm font-medium text-white transition hover:bg-stone-800"
+                className={cx(
+                  'inline-flex items-center gap-2 rounded-full border border-stone-900/10 bg-stone-950 px-4 py-2 text-white transition hover:bg-stone-800',
+                  actionText,
+                )}
               >
                 <Plus className="h-4 w-4" />
                 添加成本列
@@ -342,7 +350,10 @@ export function CostOverridesEditor(props: {
             <button
               type="button"
               onClick={() => props.onApplyTemplateToAll('training')}
-              className="inline-flex items-center justify-center rounded-full border border-stone-900/10 bg-stone-950 px-4 py-2 text-sm font-medium text-white transition hover:bg-stone-800"
+              className={cx(
+                'inline-flex items-center justify-center rounded-full border border-stone-900/10 bg-stone-950 px-4 py-2 text-white transition hover:bg-stone-800',
+                actionText,
+              )}
             >
               同步默认
             </button>
@@ -388,7 +399,7 @@ export function CostOverridesEditor(props: {
       {tab === 'special' ? (
         <section className="mt-5 rounded-[24px] border border-stone-900/10 bg-stone-50/80 p-3">
             <div className="overflow-x-auto rounded-[20px] border border-stone-900/10 pb-1">
-              <table className="w-max min-w-full table-fixed text-sm">
+              <table className="w-max min-w-full table-fixed">
                 <colgroup>
                   <col className="w-[80px]" />
                   {orderedStageCostItems.map((item) => (
@@ -443,7 +454,7 @@ export function CostOverridesEditor(props: {
                   </tr>
                   <tr className="border-b border-stone-900/10">
                     {orderedStageCostItems.map((item) => (
-                      <HeaderCell key={`${item.id}-detail`} className="px-1.5 py-1.5 text-[10px]">
+                      <HeaderCell key={`${item.id}-detail`} className="px-1.5 py-1.5">
                         {getStageHeaderLabel(item.mode)}
                       </HeaderCell>
                     ))}

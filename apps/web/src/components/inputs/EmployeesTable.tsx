@@ -1,7 +1,8 @@
 import { BriefcaseBusiness, Plus, Trash2 } from 'lucide-react'
 import type { Employee } from '../../types'
+import { cx, formatCurrency } from '../../lib/format'
 import { BodyCell, CompactNumberInput, DenseFieldInput, HeaderCell, InlineStatPill, Panel, SectionTitle } from '../common/ui'
-import { formatCurrency } from '../../lib/format'
+import { actionText, meta } from '../common/typography'
 
 export function EmployeesTable(props: {
   employees: Employee[]
@@ -29,7 +30,10 @@ export function EmployeesTable(props: {
             <button
               type="button"
               onClick={props.onAdd}
-              className="inline-flex h-[54px] items-center gap-2 rounded-full border border-stone-900/10 bg-stone-950 px-5 text-sm font-medium text-white transition hover:bg-stone-800"
+              className={cx(
+                'inline-flex h-[54px] items-center gap-2 rounded-full border border-stone-900/10 bg-stone-950 px-5 text-white transition hover:bg-stone-800',
+                actionText,
+              )}
             >
               <Plus className="h-4 w-4" />
               添加员工
@@ -39,7 +43,7 @@ export function EmployeesTable(props: {
       />
 
       <div className="mt-5 rounded-[24px] border border-stone-900/10 bg-white">
-        <table className="w-full table-fixed border-collapse text-sm">
+        <table className="w-full table-fixed border-collapse">
           <colgroup>
             <col className="w-[132px]" />
             <col className="w-[128px]" />
@@ -109,7 +113,7 @@ export function EmployeesTable(props: {
             ))}
             {props.employees.length === 0 ? (
               <tr>
-                <td colSpan={5} className="px-4 py-6 text-center text-sm text-stone-500">
+                <td colSpan={5} className={cx('px-4 py-6 text-center text-stone-500', meta)}>
                   当前还没有员工配置。需要录入场务、助理或执行人员时，在这里补上。
                 </td>
               </tr>

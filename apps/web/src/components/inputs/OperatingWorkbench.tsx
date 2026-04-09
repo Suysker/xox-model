@@ -1,8 +1,9 @@
 import { Coins, Plus, Trash2 } from 'lucide-react'
 import { monthLabelOptions } from '../../lib/defaults'
-import { formatCurrency, formatPercent } from '../../lib/format'
+import { cx, formatCurrency, formatPercent } from '../../lib/format'
 import type { PlanningConfig, Shareholder } from '../../types'
 import { BodyCell, CompactNumberInput, DenseFieldInput, DenseFieldSelect, HeaderCell, InlineStatPill, Panel, SectionTitle } from '../common/ui'
+import { actionText, label } from '../common/typography'
 
 export function OperatingWorkbench(props: {
   shareholders: Shareholder[]
@@ -26,7 +27,7 @@ export function OperatingWorkbench(props: {
         aside={
           <div className="flex flex-wrap items-center justify-end gap-3">
             <label className="inline-flex min-w-[220px] items-center justify-between gap-3 rounded-[18px] border border-stone-900/10 bg-stone-50/90 px-4 py-3">
-              <span className="text-sm font-semibold text-stone-600">经营开始月份</span>
+              <span className={cx('text-stone-600', label)}>经营开始月份</span>
               <DenseFieldSelect
                 fieldSize="xs"
                 surface="white"
@@ -43,7 +44,7 @@ export function OperatingWorkbench(props: {
             </label>
 
             <label className="inline-flex min-w-[190px] items-center justify-between gap-3 rounded-[18px] border border-stone-900/10 bg-stone-50/90 px-4 py-3">
-              <span className="text-sm font-semibold text-stone-600">规划月数</span>
+              <span className={cx('text-stone-600', label)}>规划月数</span>
               <CompactNumberInput
                 value={props.planning.horizonMonths}
                 min={1}
@@ -69,7 +70,10 @@ export function OperatingWorkbench(props: {
             <button
               type="button"
               onClick={props.onShareholderAdd}
-              className="inline-flex h-[54px] items-center justify-center gap-2 rounded-full border border-stone-900/10 bg-stone-950 px-5 text-sm font-medium text-white transition hover:bg-stone-800"
+              className={cx(
+                'inline-flex h-[54px] items-center justify-center gap-2 rounded-full border border-stone-900/10 bg-stone-950 px-5 text-white transition hover:bg-stone-800',
+                actionText,
+              )}
             >
               <Plus className="h-4 w-4" />
               添加股东
@@ -79,7 +83,7 @@ export function OperatingWorkbench(props: {
       />
 
       <div className="mt-5 rounded-[24px] border border-stone-900/10 bg-white">
-        <table className="w-full table-fixed text-sm">
+        <table className="w-full table-fixed">
           <colgroup>
             <col className="w-[34%]" />
             <col className="w-[26%]" />
