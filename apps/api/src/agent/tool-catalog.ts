@@ -91,10 +91,11 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
     type: 'function',
     function: {
       name: 'ledger_set_period_lock',
-      description: '规划锁定或解锁某个月账期。',
+      description:
+        '规划账期锁定状态变更。当用户说“锁定账期 / 锁账 / 封账 / 关闭账期 / 不允许再记账”时调用并设置 locked=true；当用户说“解锁账期 / 打开账期 / 允许继续记账”时调用并设置 locked=false。该工具只生成确认卡，不直接改账期。',
       parameters: objectSchema({
         monthLabel,
-        locked: { type: 'boolean', description: 'true 表示锁定，false 表示解锁。' },
+        locked: { type: 'boolean', description: 'true 表示锁定账期，false 表示解锁账期。' },
       }, ['monthLabel', 'locked']),
     },
   },

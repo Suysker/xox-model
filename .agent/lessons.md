@@ -53,6 +53,8 @@
 - Background Agent requests should enqueue durable run records and let a worker drain the queue. Starting provider work directly from the request handler recreates one-shot behavior; the request path should persist input, publish state, and schedule/let a worker claim the run by lease.
 - Agent run progress should be a persisted backend trace, not transient UI text. Store user-visible run events for queueing, lease claim, model planning, tool plan, confirmation card edits, execution, cancellation, and failures, and return them through the same ThreadState/SSE contract without raw prompts, provider responses, or secrets.
 - When reducing the Agent route module, peel off backend-owned lifecycle services first. Moving run event persistence into a dedicated service preserves behavior while creating a clean boundary for later kernel, tool, confirmation, and route extraction.
+- Agent thread recovery deserves its own store boundary. Keep thread ownership checks, message writes, ThreadState hydration, and DTO serialization out of route files so refresh recovery, SSE, history, and future kernel code all read the same server-owned state.
+- Real-provider tool reliability depends on explicit tool semantics, not backend guessing. When a DeepSeek/OpenAI-compatible smoke misses a tool call, improve the tool description and planner prompt with verb-to-tool and parameter mapping, then re-run real smoke with planner source locked to provider-native `tool_calls`.
 
 ## Testing
 

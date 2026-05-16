@@ -73,6 +73,7 @@
 - [x] 账号登录、退出、注销、删除账号和密码类动作不允许 Agent 自动执行
 - [x] Agent 写入动作会记录 `agent_action_requests` 和 `audit_logs`
 - [x] `npm.cmd run smoke:agent` 提供受控真实 OpenAI-compatible provider smoke：默认使用 DeepSeek，但通过 `OPENAI_COMPATIBLE_*` 可切换豆包、Qwen 等兼容服务；不允许无 key 回退，覆盖 26 个真实模型方向：只读预测、Data agent、background run 恢复、持久运行轨迹、缺信息澄清提问、memory 写入、新对话记忆注入、多步骤、账号动作拒绝、记账确认卡、确认卡载荷编辑、作废分录、草稿专用字段保存、通用草稿 patch、工作区 bundle 导出、工作区 bundle 导入、锁账、解锁、保存快照、发布、创建分享、撤销分享、恢复版本、删除版本、重置草稿和审计
+- [x] 真实 DeepSeek smoke 已验证锁账/解锁不是后端规则推断：planner source 为 `openai_compatible_tool_calls`，模型会根据 tool catalog 和 planner prompt 调用 `ledger_set_period_lock` 并生成确认卡
 - [x] 后端接口级 Agent capability matrix 覆盖超过 10 个不同方向的复杂任务，并全部通过：
   - 记忆写入
   - 新对话记忆注入
@@ -111,6 +112,7 @@
 - [x] Context compaction 有测试证明 summary 只来自同一 thread / user / workspace，并且 summary 不包含 API key/token 原文
 - [x] React Agent OS 展示 action graph、导航事件、确认卡状态、确认卡编辑、取消、失败和执行后刷新；当前为后端状态刷新式 timeline
 - [x] Agent 历史对话和当前线程恢复已由 `/api/v1/agent/threads` 与 `/api/v1/agent/threads/{threadId}` 提供；API 测试覆盖 messages、runs、planSteps、actionRequests、navigationEvents、跨用户隔离和确认后状态恢复，React hook 会用本地 threadId 指针恢复服务端状态
+- [x] Agent thread store 已从 `apps/api/src/modules/agent.ts` 拆到 `apps/api/src/agent/thread-store.ts`，集中处理 thread ownership、message 写入、ThreadState 恢复和 DTO 序列化，避免 routes 自己拼恢复状态
 - [x] React 默认使用 background run 发送 Agent 消息；`POST /api/v1/agent/messages` 会先返回 `status=running`，后台 run 由持久化 `agent_runs` 队列和 worker lease 认领执行，刷新后通过 SSE thread state 或 REST polling 恢复 completed/failed run、assistant message、计划步骤和确认卡；API 测试和真实 provider smoke 已覆盖后台启动与恢复
 - [x] React Agent OS 优先通过 `/api/v1/agent/threads/{threadId}/events` SSE 接收服务端 `thread_state`，连接失败时回退到 REST polling；API 测试覆盖 SSE 初始状态、后续动作事件和跨用户隔离，web 测试覆盖事件 URL 编码
 - [x] `agent_runs` 持久化输入消息，API 启动时会恢复可安全重跑的 `running` run；如果重启前已经产生部分 `planSteps/actionRequests`，系统 fail-closed 标记 run failed 并取消未执行确认卡，防止重复确认或重复执行
