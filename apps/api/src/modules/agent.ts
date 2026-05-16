@@ -105,6 +105,24 @@ type PlannedItem = ActionDraft | ReadDraft
 type RuntimePlannerStep = RuntimePlanResult['steps'][number]
 const activeRunControllers = new Map<string, AbortController>()
 
+type AgentRunQueueState = {
+  draining: boolean
+  scheduled: boolean
+  stopped: boolean
+  interval: NodeJS.Timeout | null
+}
+
+const agentRunQueueStates = new WeakMap<Kysely<Database>, AgentRunQueueState>()
+
+function getAgentRunQueueState(db: Kysely<Database>) {
+  let state = agentRunQueueStates.get(db)
+  if (!state) {
+    state = { draining: false, scheduled: false, stopped: false, interval: null }
+    agentRunQueueStates.set(db, state)
+  }
+  return state
+}
+
 function serializeAction(row: Row<'agent_action_requests'>): AgentActionRequest {
   return {
     id: row.id,
@@ -1621,47 +1639,88 @@ async function recoverRunMessage(db: Kysely<Database>, run: Row<'agent_runs'>) {
 }
 
 export async function recoverRunningAgentRuns(db: Kysely<Database>, settings: Settings) {
-  const runs = await claimRecoverableAgentRuns(db, settings)
+  const queueState = getAgentRunQueueState(db)
+  if (queueState.draining || queueState.stopped) return 0
+  queueState.draining = true
+  let started = 0
+  try {
+    const runs = await claimRecoverableAgentRuns(db, settings)
 
-  for (const run of runs) {
-    const thread = await db.selectFrom('agent_threads').selectAll().where('id', '=', run.thread_id).executeTakeFirst()
-    if (!thread) {
-      await db.updateTable('agent_runs').set({ status: 'failed', completed_at: utcNow(), lease_expires_at: null }).where('id', '=', run.id).execute()
-      continue
+    for (const run of runs) {
+      if (activeRunControllers.has(run.id)) continue
+      const thread = await db.selectFrom('agent_threads').selectAll().where('id', '=', run.thread_id).executeTakeFirst()
+      if (!thread) {
+        await db.updateTable('agent_runs').set({ status: 'failed', completed_at: utcNow(), lease_expires_at: null }).where('id', '=', run.id).execute()
+        continue
+      }
+      const [workspace, user, planStepCount, actionCount] = await Promise.all([
+        db.selectFrom('workspaces').selectAll().where('id', '=', thread.workspace_id).executeTakeFirst(),
+        db.selectFrom('users').selectAll().where('id', '=', run.user_id).executeTakeFirst(),
+        countRunRows(db, 'agent_plan_steps', run.id),
+        countRunRows(db, 'agent_action_requests', run.id),
+      ])
+      if (!workspace || !user || thread.user_id !== run.user_id) {
+        await failInterruptedAgentRun(db, thread, run.id, 'Agent run 无法恢复：用户或工作区已不存在。')
+        continue
+      }
+      if (planStepCount > 0 || actionCount > 0) {
+        await failInterruptedAgentRun(db, thread, run.id, 'Agent run 在服务重启时已有部分运行产物，系统已取消未执行确认卡以避免重复执行。请重新发送这条指令。')
+        continue
+      }
+      const message = await recoverRunMessage(db, run)
+      if (!message) {
+        await failInterruptedAgentRun(db, thread, run.id, 'Agent run 无法恢复：缺少原始用户指令。请重新发送这条指令。')
+        continue
+      }
+      agentThreadEvents.publish(thread.id, 'thread_restored')
+      const controller = new AbortController()
+      activeRunControllers.set(run.id, controller)
+      void completeAgentRun({
+        db,
+        settings,
+        user,
+        workspace,
+        thread,
+        threadId: thread.id,
+        runId: run.id,
+        message,
+        abortSignal: controller.signal,
+      }).catch(() => undefined)
+      started += 1
     }
-    const [workspace, user, planStepCount, actionCount] = await Promise.all([
-      db.selectFrom('workspaces').selectAll().where('id', '=', thread.workspace_id).executeTakeFirst(),
-      db.selectFrom('users').selectAll().where('id', '=', run.user_id).executeTakeFirst(),
-      countRunRows(db, 'agent_plan_steps', run.id),
-      countRunRows(db, 'agent_action_requests', run.id),
-    ])
-    if (!workspace || !user || thread.user_id !== run.user_id) {
-      await failInterruptedAgentRun(db, thread, run.id, 'Agent run 无法恢复：用户或工作区已不存在。')
-      continue
-    }
-    if (planStepCount > 0 || actionCount > 0) {
-      await failInterruptedAgentRun(db, thread, run.id, 'Agent run 在服务重启时已有部分运行产物，系统已取消未执行确认卡以避免重复执行。请重新发送这条指令。')
-      continue
-    }
-    const message = await recoverRunMessage(db, run)
-    if (!message) {
-      await failInterruptedAgentRun(db, thread, run.id, 'Agent run 无法恢复：缺少原始用户指令。请重新发送这条指令。')
-      continue
-    }
-    agentThreadEvents.publish(thread.id, 'thread_restored')
-    const controller = new AbortController()
-    activeRunControllers.set(run.id, controller)
-    void completeAgentRun({
-      db,
-      settings,
-      user,
-      workspace,
-      thread,
-      threadId: thread.id,
-      runId: run.id,
-      message,
-      abortSignal: controller.signal,
-    }).catch(() => undefined)
+    return started
+  } finally {
+    queueState.draining = false
+  }
+}
+
+function scheduleAgentRunQueueDrain(db: Kysely<Database>, settings: Settings) {
+  const queueState = getAgentRunQueueState(db)
+  if (queueState.scheduled || queueState.stopped) return
+  queueState.scheduled = true
+  const timer = setTimeout(() => {
+    queueState.scheduled = false
+    void recoverRunningAgentRuns(db, settings).catch(() => undefined)
+  }, 0)
+  timer.unref?.()
+}
+
+function startAgentRunQueueWorker(db: Kysely<Database>, settings: Settings) {
+  const queueState = getAgentRunQueueState(db)
+  queueState.stopped = false
+  if (queueState.interval) return () => undefined
+
+  scheduleAgentRunQueueDrain(db, settings)
+  queueState.interval = setInterval(() => {
+    void recoverRunningAgentRuns(db, settings).catch(() => undefined)
+  }, settings.agentRunWorkerPollMs)
+  queueState.interval.unref?.()
+
+  return () => {
+    queueState.stopped = true
+    queueState.scheduled = false
+    if (queueState.interval) clearInterval(queueState.interval)
+    queueState.interval = null
   }
 }
 
@@ -1874,15 +1933,11 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
       const userMessage = await addMessage(db, thread.id, 'user', message)
       await db.updateTable('agent_runs').set({ input_message_id: userMessage.id }).where('id', '=', runId).execute()
       await rememberFromUserMessage({ db, workspace, user, threadId: thread.id, messageId: userMessage.id, message })
-      const claimed = await claimAgentRunLease(db, settings, runId)
-      if (!claimed) throw conflict('Agent run could not be claimed by this worker')
 
       if (body.background === true) {
         await touchThreadAfterRun(db, thread, message)
         agentThreadEvents.publish(thread.id, 'thread_started')
-        const controller = new AbortController()
-        activeRunControllers.set(runId, controller)
-        void completeAgentRun({ db, settings, user, workspace, thread, threadId: thread.id, runId, message, abortSignal: controller.signal }).catch(() => undefined)
+        scheduleAgentRunQueueDrain(db, settings)
         return {
           threadId: thread.id,
           runId,
@@ -1895,6 +1950,8 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
         }
       }
 
+      const claimed = await claimAgentRunLease(db, settings, runId)
+      if (!claimed) throw conflict('Agent run could not be claimed by this worker')
       const controller = new AbortController()
       activeRunControllers.set(runId, controller)
       const completed = await completeAgentRun({ db, settings, user, workspace, thread, threadId: thread.id, runId, message, abortSignal: controller.signal })
@@ -2057,5 +2114,6 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
     }
   })
 
-  void recoverRunningAgentRuns(db, settings).catch(() => undefined)
+  const stopAgentRunQueueWorker = startAgentRunQueueWorker(db, settings)
+  app.addHook('onClose', async () => stopAgentRunQueueWorker())
 }

@@ -18,6 +18,7 @@ export type Settings = {
   openaiCompatibleApiKey: string | null
   agentWorkerId: string
   agentRunLeaseTtlMs: number
+  agentRunWorkerPollMs: number
 }
 
 const generatedAgentWorkerId = `api-${hostname()}-${process.pid}-${randomUUID().slice(0, 8)}`
@@ -35,6 +36,7 @@ function numberEnv(value: string | undefined, fallback: number) {
 export function getSettings(): Settings {
   const llmProvider = process.env.LLM_PROVIDER ?? process.env.OPENAI_COMPATIBLE_PROVIDER ?? 'deepseek'
   const agentRunLeaseTtlMs = Math.max(1000, numberEnv(process.env.AGENT_RUN_LEASE_TTL_MS, 45_000))
+  const agentRunWorkerPollMs = Math.max(250, numberEnv(process.env.AGENT_RUN_WORKER_POLL_MS, 2_000))
   return {
     databaseUrl: process.env.XOX_DATABASE_URL ?? defaultDatabaseUrl(),
     sessionCookieName: process.env.XOX_SESSION_COOKIE_NAME ?? 'xox_session',
@@ -50,6 +52,7 @@ export function getSettings(): Settings {
     openaiCompatibleApiKey: process.env.OPENAI_COMPATIBLE_API_KEY ?? process.env.DEEPSEEK_API_KEY ?? null,
     agentWorkerId: process.env.AGENT_WORKER_ID ?? generatedAgentWorkerId,
     agentRunLeaseTtlMs,
+    agentRunWorkerPollMs,
   }
 }
 

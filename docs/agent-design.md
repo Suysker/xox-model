@@ -474,11 +474,11 @@ domain/tool execution
 - 前端启动时先加载历史列表，再尝试读取 `localStorage` 中的当前 `threadId` 并调用 state API 恢复；如果线程不存在或越权，清掉本地指针。
 - 新建对话只清前端指针和当前视图，不删除服务端历史。
 - 确认、取消、编辑确认卡后更新线程 `updated_at`，历史列表能反映最后活动。
-- 前端发送消息使用 background run：`POST /api/v1/agent/messages` 传 `background=true` 后立即返回 `threadId/runId/status=running` 和用户消息，服务端在同一 API 进程内继续执行模型规划并持久化结果。
+- 前端发送消息使用 background run：`POST /api/v1/agent/messages` 传 `background=true` 后立即返回 `threadId/runId/status=running` 和用户消息；请求路径只把 run 写入 `agent_runs` 队列，Agent run worker 认领 lease 后继续执行模型规划并持久化结果。
 - 前端拿到 `threadId` 后立即写入本地指针，并优先订阅 `GET /api/v1/agent/threads/:threadId/events`；如果 SSE 断开、浏览器不支持或多实例连接到非执行 worker，则回退到轮询 `GET /api/v1/agent/threads/:threadId`。刷新、网络断开或请求响应丢失后，只要浏览器已拿到启动响应，就能恢复 running/completed/failed run、消息、运行图和待确认动作。
 - 普通同步模式仍保留给 API 集成测试和后端调用；产品 UI 默认使用 background 模式。
 - `agent_runs` 持久化 `input_message_id` 和 `input_message`，使 running run 在 API 进程重启后仍有足够输入上下文恢复模型规划。
-- API 启动后会扫描 `status=running` 的 run：如果该 run 还没有 `planSteps/actionRequests` 产物，则重新调用同一套 planner/tool/confirmation 流程并落库为 completed/failed；如果已有部分产物，则 fail-closed 标记为 failed 并写 assistant 提示，避免重复创建确认卡或让用户确认半成品动作。
+- API 启动和周期 worker 会扫描 `status=running` 的 run：如果该 run 还没有 `planSteps/actionRequests` 产物，则重新调用同一套 planner/tool/confirmation 流程并落库为 completed/failed；如果已有部分产物，则 fail-closed 标记为 failed 并写 assistant 提示，避免重复创建确认卡或让用户确认半成品动作。
 - 用户可取消当前 running run：`POST /api/v1/agent/runs/:runId/cancel` 会把 run 标记为 `cancelled`、取消该 run 下尚未执行的确认卡和计划步骤、写入 assistant 提示，并中止当前进程里的 provider 请求（OpenAI-compatible adapter 通过 `AbortSignal`）。
 - 取消是服务端状态，不是前端假按钮；即使模型响应晚于取消请求，后台任务在回写前会重新检查 run 状态，不能把 cancelled run 改回 completed，也不能留下 pending 确认卡。
 - 该恢复/取消机制覆盖单实例 API 进程重启和临时崩溃后的安全续跑；多实例并发抢占通过 run lease gate 管理。当前 SSE 是 thread state 级实时事件，provider token streaming / tracing 仍是下一阶段 maturity gate。
@@ -495,9 +495,15 @@ apps/api/src/agent/run-lease.ts
   -> 只依赖 Settings、Kysely Database、UTC 时间
 
 apps/api/src/modules/agent.ts
-  -> 创建 run 后先 claim lease
-  -> background/sync/recovery 都通过 completeAgentRun 的 lease guard 回写
+  -> 创建 background run 后只入队，不在请求线程里直接执行模型
+  -> sync/recovery/worker 都通过 completeAgentRun 的 lease guard 回写
   -> 取消仍由路由按用户 + workspace 校验后写最终状态
+
+apps/api/src/modules/agent.ts queue worker
+  -> scheduleAgentRunQueueDrain
+  -> startAgentRunQueueWorker
+  -> recoverRunningAgentRuns / drainAgentRunQueue
+  -> 只认领无 lease、同 worker 或过期 lease 的 running run
 
 apps/api/src/db/schema.ts + migrations.ts
   -> agent_runs.worker_id
@@ -510,7 +516,13 @@ apps/api/src/db/schema.ts + migrations.ts
 ```text
 POST /agent/messages
   -> insert agent_runs(status=running)
-  -> claimAgentRunLease(settings.agentWorkerId)
+  -> background=true: publish thread_started, schedule queue drain, return threadId/runId
+  -> background=false: claimAgentRunLease(settings.agentWorkerId), completeAgentRun
+
+Agent queue worker
+  -> periodic drain every AGENT_RUN_WORKER_POLL_MS
+  -> claim recoverable running runs
+  -> skip runs already active in this process
   -> completeAgentRun
       -> startAgentRunLeaseHeartbeat
       -> runtime planner
@@ -528,12 +540,14 @@ API startup / recovery
 - `worker_id` 表示当前拥有执行权的 API worker；默认来自 `AGENT_WORKER_ID`，未配置时由进程生成，不进入前端 contract。
 - `lease_expires_at` 是抢占边界；其他实例只能认领未租约、同 worker 或过期租约的 `running` run。
 - `heartbeat_at` 是诊断字段；长模型调用期间由 heartbeat 刷新，避免 DeepSeek/OpenAI-compatible 慢响应期间租约自然过期。
+- `AGENT_RUN_WORKER_POLL_MS` 控制每个 API worker 的后台扫描间隔；默认较低延迟，测试可调小。
 - 所有模型 provider 共用同一 lease 层；DeepSeek、Doubao、Qwen 等 OpenAI-compatible provider 不允许各自特调 run 状态逻辑。
 - `modules/agent.ts` 只判断“是否仍拥有 lease”，不直接拼接 worker id 规则，避免多个回写点出现重复判断。
 
 验收：
 
 - stale/unleased run 可以被当前 worker 认领并恢复。
+- background 请求返回后即使请求处理栈结束，worker loop 也会认领并执行未租约 run。
 - 未来未过期、属于其他 worker 的 run 不会被当前 worker 恢复。
 - provider 响应晚于租约丢失时，旧 worker 不能写入 assistant message、plan step 或 pending confirmation card。
 - 取消路径仍能终结当前用户自己的 running run，并中止本进程里的 provider 请求。

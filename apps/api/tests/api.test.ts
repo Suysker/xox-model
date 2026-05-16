@@ -34,6 +34,7 @@ function testSettings(databasePath: string): Settings {
     openaiCompatibleApiKey: null,
     agentWorkerId: `test-worker-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     agentRunLeaseTtlMs: 10_000,
+    agentRunWorkerPollMs: 10_000,
   }
 }
 
@@ -1291,6 +1292,60 @@ describe('xox TypeScript API', () => {
       const run = await harness.db.selectFrom('agent_runs').select(['worker_id', 'lease_expires_at']).where('id', '=', started.json.runId).executeTakeFirstOrThrow()
       expect(run.worker_id).toBe('worker-b')
       expect(run.lease_expires_at).toBe(stolenLeaseExpiresAt)
+      await closeHarness(harness)
+    })
+  })
+
+  it('sweeps queued running agent runs without an explicit recovery call', async () => {
+    let releaseProvider!: () => void
+    const providerGate = new Promise<void>((resolve) => {
+      releaseProvider = resolve
+    })
+
+    await withFakeOpenAICompatibleProvider(async () => {
+      await providerGate
+      return fakeToolResponse('data_query_workspace', {
+        question: '3 月计划收入是多少',
+        scope: 'period_summary',
+        monthLabel: '3月',
+        metrics: ['plannedRevenue'],
+      })
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-queue-worker-sweep', {
+        llmProvider: 'openai-compatible',
+        openaiCompatibleProvider: 'test-compatible',
+        openaiCompatibleBaseUrl: baseUrl,
+        openaiCompatibleApiKey: 'test-key',
+        agentWorkerId: 'queue-worker',
+        agentRunWorkerPollMs: 50,
+      })
+      const client = new Client(harness.app)
+      const user = await registerUser(client, 'agent-queue-worker-sweep@example.com')
+      const run = await insertRunningAgentRun(harness.db, user.id, {
+        suffix: 'queue-sweep',
+        message: '3 月计划收入是多少？',
+      })
+
+      let claimed = await harness.db.selectFrom('agent_runs').select(['worker_id']).where('id', '=', run.runId).executeTakeFirstOrThrow()
+      for (let attempt = 0; attempt < 20 && claimed.worker_id !== 'queue-worker'; attempt += 1) {
+        await sleep(25)
+        claimed = await harness.db.selectFrom('agent_runs').select(['worker_id']).where('id', '=', run.runId).executeTakeFirstOrThrow()
+      }
+      expect(claimed.worker_id).toBe('queue-worker')
+
+      releaseProvider()
+      let completedState = await client.get(`/api/v1/agent/threads/${run.threadId}`)
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        await sleep(25)
+        const nextState = await client.get(`/api/v1/agent/threads/${run.threadId}`)
+        completedState = nextState
+        if (completedState.json.runs[0].status === 'completed') break
+      }
+
+      expect(completedState.json.runs[0].status).toBe('completed')
+      expect(completedState.json.runs[0].planner).toBe('openai_compatible_tool_calls')
+      expect(completedState.json.messages.map((message: any) => message.role)).toEqual(['user', 'assistant'])
+      expect(completedState.json.actionRequests).toHaveLength(0)
       await closeHarness(harness)
     })
   })
