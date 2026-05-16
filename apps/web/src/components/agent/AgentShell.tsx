@@ -34,6 +34,7 @@ export function AgentShell(props: {
         actionRequests={agent.actionRequests}
         navigationEvents={agent.navigationEvents}
         memories={agent.memories}
+        providerSetting={agent.providerSetting}
         threadSummaries={agent.threadSummaries}
         runningRunId={agent.runningRunId}
         eventConnectionMode={agent.eventConnectionMode}
@@ -49,6 +50,9 @@ export function AgentShell(props: {
         onRefreshThreads={() => void agent.refreshThreads()}
         onRefreshMemories={() => void agent.refreshMemories()}
         onDeleteMemory={(id) => void agent.deleteMemory(id)}
+        onRefreshProviderSetting={() => void agent.refreshProviderSetting()}
+        onSaveProviderSetting={(payload) => agent.saveProviderSetting(payload)}
+        onDeleteProviderSetting={() => void agent.deleteProviderSetting()}
       />
     </div>
   )

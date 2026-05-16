@@ -1,6 +1,6 @@
-import { useState, type FormEvent } from 'react'
-import { Bot, Database, History, Plus, RefreshCw, SendHorizontal, Trash2, XCircle } from 'lucide-react'
-import type { AgentActionRequest, AgentActionUpdatePayload, AgentMemoryRecord, AgentMessage, AgentNavigationEvent, AgentPlanStep, AgentRunEvent, AgentSendResponse, AgentThreadSummary } from '../../lib/api'
+import { useEffect, useState, type FormEvent } from 'react'
+import { Bot, Database, History, KeyRound, Plus, RefreshCw, Save, SendHorizontal, Trash2, XCircle } from 'lucide-react'
+import type { AgentActionRequest, AgentActionUpdatePayload, AgentMemoryRecord, AgentMessage, AgentNavigationEvent, AgentPlanStep, AgentProviderSettingRecord, AgentProviderSettingUpdatePayload, AgentRunEvent, AgentSendResponse, AgentThreadSummary } from '../../lib/api'
 import { AgentActionCard } from './AgentActionCard'
 import { AgentPlanTimeline } from './AgentPlanTimeline'
 
@@ -20,6 +20,7 @@ export function AgentConsole(props: {
   actionRequests: AgentActionRequest[]
   navigationEvents: AgentNavigationEvent[]
   memories: AgentMemoryRecord[]
+  providerSetting: AgentProviderSettingRecord | null
   threadSummaries: AgentThreadSummary[]
   runningRunId: string | null
   eventConnectionMode: 'idle' | 'connecting' | 'sse' | 'polling'
@@ -35,10 +36,20 @@ export function AgentConsole(props: {
   onRefreshThreads: () => void
   onRefreshMemories: () => void
   onDeleteMemory: (id: string) => void
+  onRefreshProviderSetting: () => void
+  onSaveProviderSetting: (payload: AgentProviderSettingUpdatePayload) => Promise<void> | void
+  onDeleteProviderSetting: () => void
 }) {
   const [draft, setDraft] = useState('')
   const [memoryOpen, setMemoryOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [providerOpen, setProviderOpen] = useState(false)
+  const [providerDraft, setProviderDraft] = useState({
+    provider: 'deepseek',
+    baseUrl: 'https://api.deepseek.com',
+    model: 'deepseek-v4-pro',
+    apiKey: '',
+  })
   const pendingActions = props.actionRequests.filter((action) => action.status === 'pending')
   const recentMessages = props.messages.slice(-6)
   const plannerLabel =
@@ -58,12 +69,42 @@ export function AgentConsole(props: {
         ? '轮询'
         : '待机'
 
+  useEffect(() => {
+    if (!providerOpen) return
+    setProviderDraft({
+      provider: props.providerSetting?.provider ?? 'deepseek',
+      baseUrl: props.providerSetting?.baseUrl ?? 'https://api.deepseek.com',
+      model: props.providerSetting?.model ?? 'deepseek-v4-pro',
+      apiKey: '',
+    })
+  }, [providerOpen, props.providerSetting])
+
   function handleSubmit(event: FormEvent) {
     event.preventDefault()
     const message = draft.trim()
     if (!message || props.busy) return
     setDraft('')
     props.onSend(message)
+  }
+
+  async function handleProviderSubmit(event: FormEvent) {
+    event.preventDefault()
+    const provider = providerDraft.provider.trim()
+    const baseUrl = providerDraft.baseUrl.trim()
+    const model = providerDraft.model.trim()
+    const apiKey = providerDraft.apiKey.trim()
+    if (!provider || !baseUrl || !model || props.busy) return
+    try {
+      await props.onSaveProviderSetting({
+        provider,
+        baseUrl,
+        model,
+        ...(apiKey ? { apiKey } : {}),
+      })
+      setProviderDraft((current) => ({ ...current, apiKey: '' }))
+    } catch {
+      // The hook owns the visible error message; keep the typed key for correction.
+    }
   }
 
   return (
@@ -122,6 +163,15 @@ export function AgentConsole(props: {
             >
               <Database className="h-3.5 w-3.5" />
               记忆 {props.memories.length}
+            </button>
+            <button
+              type="button"
+              onClick={() => setProviderOpen((current) => !current)}
+              className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-stone-900/10 bg-white px-2 text-xs font-semibold text-stone-700 transition hover:bg-stone-100"
+              title="模型配置"
+            >
+              <KeyRound className="h-3.5 w-3.5" />
+              模型 {props.providerSetting?.provider ?? '默认'}
             </button>
           </div>
 
@@ -207,6 +257,85 @@ export function AgentConsole(props: {
                 )}
               </div>
             </div>
+          ) : null}
+
+          {providerOpen ? (
+            <form onSubmit={handleProviderSubmit} className="mt-2 rounded-md border border-stone-900/10 bg-white px-3 py-2 text-xs">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-semibold text-stone-800">模型配置</span>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={props.onRefreshProviderSetting}
+                    disabled={props.busy}
+                    className="inline-flex h-7 items-center justify-center rounded-md border border-stone-900/10 px-2 text-stone-600 transition hover:bg-stone-100 disabled:opacity-50"
+                    title="刷新模型配置"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={props.onDeleteProviderSetting}
+                    disabled={props.busy || !props.providerSetting}
+                    className="inline-flex h-7 items-center justify-center rounded-md border border-red-100 px-2 text-red-600 transition hover:bg-red-50 disabled:opacity-40"
+                    title="删除模型配置"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+              <div className="mt-2 grid gap-2 md:grid-cols-[0.8fr_1.4fr_1fr]">
+                <label className="grid gap-1">
+                  <span className="text-[10px] font-semibold text-stone-500">provider</span>
+                  <input
+                    value={providerDraft.provider}
+                    onChange={(event) => setProviderDraft((current) => ({ ...current, provider: event.target.value }))}
+                    className="h-8 rounded-md border border-stone-900/10 px-2 text-xs outline-none transition focus:border-emerald-500"
+                    placeholder="deepseek"
+                  />
+                </label>
+                <label className="grid gap-1">
+                  <span className="text-[10px] font-semibold text-stone-500">base URL</span>
+                  <input
+                    value={providerDraft.baseUrl}
+                    onChange={(event) => setProviderDraft((current) => ({ ...current, baseUrl: event.target.value }))}
+                    className="h-8 rounded-md border border-stone-900/10 px-2 text-xs outline-none transition focus:border-emerald-500"
+                    placeholder="https://api.deepseek.com"
+                  />
+                </label>
+                <label className="grid gap-1">
+                  <span className="text-[10px] font-semibold text-stone-500">model</span>
+                  <input
+                    value={providerDraft.model}
+                    onChange={(event) => setProviderDraft((current) => ({ ...current, model: event.target.value }))}
+                    className="h-8 rounded-md border border-stone-900/10 px-2 text-xs outline-none transition focus:border-emerald-500"
+                    placeholder="deepseek-v4-pro"
+                  />
+                </label>
+              </div>
+              <div className="mt-2 flex flex-wrap items-end gap-2">
+                <label className="grid min-w-[220px] flex-1 gap-1">
+                  <span className="text-[10px] font-semibold text-stone-500">
+                    API key {props.providerSetting?.hasApiKey ? '已保存' : '未保存'}
+                  </span>
+                  <input
+                    type="password"
+                    value={providerDraft.apiKey}
+                    onChange={(event) => setProviderDraft((current) => ({ ...current, apiKey: event.target.value }))}
+                    className="h-8 rounded-md border border-stone-900/10 px-2 text-xs outline-none transition focus:border-emerald-500"
+                    placeholder={props.providerSetting?.hasApiKey ? '留空保留当前 key' : '首次保存需要 key'}
+                  />
+                </label>
+                <button
+                  type="submit"
+                  disabled={props.busy || !providerDraft.provider.trim() || !providerDraft.baseUrl.trim() || !providerDraft.model.trim()}
+                  className="inline-flex h-8 items-center justify-center gap-1 rounded-md bg-stone-950 px-3 text-xs font-semibold text-white transition hover:bg-stone-800 disabled:opacity-50"
+                >
+                  <Save className="h-3.5 w-3.5" />
+                  保存
+                </button>
+              </div>
+            </form>
           ) : null}
 
           <div className="mt-3 h-24 overflow-y-auto rounded-md border border-stone-900/10 bg-white px-3 py-2 text-xs leading-5 text-stone-700">

@@ -62,7 +62,7 @@
 - [x] Agent 可把一条复合指令拆成多步骤计划，并像任务清单一样展示步骤状态
 - [x] 待确认动作可在执行前编辑摘要、明细和执行载荷
 - [x] Agent 台支持新建对话，且新对话不会清空当前用户 / 当前工作区记忆
-- [x] Agent 台展示当前 planner 来源、对话 id、工作区记忆列表，并支持刷新和删除记忆
+- [x] Agent 台展示当前 planner 来源、对话 id、工作区记忆列表和当前用户 / 工作区 provider 设置，并支持刷新、保存、删除记忆或模型配置
 - [x] API 集成测试覆盖通用 OpenAI-compatible Chat Completions `tool_calls` 协议；假 provider 分别以 `qwen`、`doubao`、`openai-compatible` 配置接入，证明业务工具不特调 DeepSeek；当 provider 已配置或被选择时，模型未返回 tool call 不会回退规则规划
 - [x] 当前用户 / 当前工作区可保存 OpenAI-compatible provider 设置，运行时优先使用该设置；API 测试覆盖用户隔离、key 不回传、无 key fail-closed 和删除后回到环境变量兜底
 - [x] Agent prompts、tool catalog、memory/context 模块有独立代码边界，不把系统提示词散在路由代码里

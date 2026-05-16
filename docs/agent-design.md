@@ -187,11 +187,12 @@ React Agent OS：
 - `AgentPlanTimeline`：展示多步骤 action graph，类似 Codex 的步骤状态。
 - `AgentActionCard`：写入确认卡，可编辑摘要、明细、导航和执行载荷。
 - `AgentMemoryPanel`：查看和删除当前用户 / 当前工作区 memory。
+- `AgentProviderSettings`：在 Agent 台内配置当前用户 / 当前工作区 OpenAI-compatible provider；保存后只展示 `hasApiKey` 状态，不回显 key。
 - `AgentEventLog`：调试 run/event/tool 状态。
 
 前端 action graph 的实现约束：
 
-- 模块划分：`AgentConsole` 只编排输入、消息、记忆入口和左右布局；`AgentPlanTimeline` 负责把 `planSteps + actionRequests + navigationEvents` 投影为运行图；`AgentActionCard` 只负责单个写入动作的确认、取消和编辑。
+- 模块划分：`AgentConsole` 只编排输入、消息、记忆入口、provider 设置入口和左右布局；`AgentPlanTimeline` 负责把 `planSteps + actionRequests + navigationEvents` 投影为运行图；`AgentActionCard` 只负责单个写入动作的确认、取消和编辑。
 - 依赖图：`useAgentThread -> api/contracts -> AgentConsole -> AgentPlanTimeline / AgentActionCard`。展示层不得重新推导业务权限，也不得维护第二套动作状态。
 - 复用与抽象：`AgentPlanTimeline` 复用 `AgentPlanStep.actionRequestId` 关联确认卡状态，复用 `AgentNavigationEvent` 渲染“打开页面 / 面板 / 定位记录”，并导出纯函数供测试覆盖，不依赖 DOM 测试库。
 - 命名与样式：运行态统一叫 `run graph / timeline / event`；中文界面使用 `步骤 / 导航 / 确认 / 执行 / 失败`；紧凑 SaaS 工作台样式保持 8px 以内圆角、信息密度优先，不做营销式大卡片。

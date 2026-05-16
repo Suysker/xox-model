@@ -7,6 +7,8 @@ import {
   type AgentMessage,
   type AgentNavigationEvent,
   type AgentPlanStep,
+  type AgentProviderSettingRecord,
+  type AgentProviderSettingUpdatePayload,
   type AgentRunEvent,
   type AgentSendResponse,
   type AgentThreadEvent,
@@ -48,6 +50,7 @@ export function useAgentThread(props: {
   const [navigationEvents, setNavigationEvents] = useState<AgentNavigationEvent[]>([])
   const [planner, setPlanner] = useState<AgentSendResponse['planner'] | null>(null)
   const [memories, setMemories] = useState<AgentMemoryRecord[]>([])
+  const [providerSetting, setProviderSetting] = useState<AgentProviderSettingRecord | null>(null)
   const [threadSummaries, setThreadSummaries] = useState<AgentThreadSummary[]>([])
   const [busy, setBusy] = useState(false)
   const [runningRunId, setRunningRunId] = useState<string | null>(null)
@@ -85,6 +88,15 @@ export function useAgentThread(props: {
     }
   }
 
+  async function refreshProviderSetting() {
+    try {
+      const response = await api.getAgentProviderSetting()
+      setProviderSetting(response.setting)
+    } catch (providerError) {
+      setError(providerError instanceof Error ? providerError.message : String(providerError))
+    }
+  }
+
   async function refreshThreads() {
     try {
       const response = await api.listAgentThreads()
@@ -111,7 +123,7 @@ export function useAgentThread(props: {
 
   useEffect(() => {
     async function bootstrapAgentState() {
-      await Promise.all([refreshMemories(), refreshThreads()])
+      await Promise.all([refreshMemories(), refreshThreads(), refreshProviderSetting()])
       const storedThreadId = readCurrentThreadId()
       if (storedThreadId) {
         await loadThread(storedThreadId, true)
@@ -338,6 +350,33 @@ export function useAgentThread(props: {
     }
   }
 
+  async function saveProviderSetting(payload: AgentProviderSettingUpdatePayload) {
+    setBusy(true)
+    setError(null)
+    try {
+      const response = await api.updateAgentProviderSetting(payload)
+      setProviderSetting(response.setting)
+    } catch (providerError) {
+      setError(providerError instanceof Error ? providerError.message : String(providerError))
+      throw providerError
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function deleteProviderSetting() {
+    setBusy(true)
+    setError(null)
+    try {
+      await api.deleteAgentProviderSetting()
+      setProviderSetting(null)
+    } catch (providerError) {
+      setError(providerError instanceof Error ? providerError.message : String(providerError))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return {
     threadId,
     messages,
@@ -347,6 +386,7 @@ export function useAgentThread(props: {
     navigationEvents,
     planner,
     memories,
+    providerSetting,
     threadSummaries,
     runningRunId,
     eventConnectionMode,
@@ -361,6 +401,9 @@ export function useAgentThread(props: {
     startNewThread,
     refreshMemories,
     refreshThreads,
+    refreshProviderSetting,
     deleteMemory,
+    saveProviderSetting,
+    deleteProviderSetting,
   }
 }
