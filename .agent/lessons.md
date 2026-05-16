@@ -57,6 +57,7 @@
 - Real-provider tool reliability depends on explicit tool semantics, not backend guessing. When a DeepSeek/OpenAI-compatible smoke misses a tool call, improve the tool description and planner prompt with verb-to-tool and parameter mapping, then re-run real smoke with planner source locked to provider-native `tool_calls`.
 - Confirmation cards need a lifecycle service, not route-local SQL. Keep creation, editing, confirmation, cancellation, execution status, assistant messages, run events, and audit writes together so refresh recovery and SSE read one consistent backend-owned state.
 - Agent server tool execution should sit behind a tool executor boundary. Confirmation services should validate and manage lifecycle, then delegate confirmed action payloads to a dedicated executor that calls existing domain modules instead of duplicating business branches in routes or provider adapters.
+- Data Agent answer generation should be a read-only service. Keep structured data questions in a module that reads tenant-scoped projections and ledger summaries, returns answer text plus navigation, and never creates confirmation cards or mixes with route-level planning code.
 
 ## Testing
 
