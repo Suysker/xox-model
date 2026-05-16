@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   api,
   type AgentActionRequest,
@@ -8,6 +8,7 @@ import {
   type AgentNavigationEvent,
   type AgentPlanStep,
   type AgentSendResponse,
+  type AgentThreadEvent,
   type AgentThreadState,
   type AgentThreadSummary,
 } from '../lib/api'
@@ -49,6 +50,8 @@ export function useAgentThread(props: {
   const [busy, setBusy] = useState(false)
   const [runningRunId, setRunningRunId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [eventConnectionMode, setEventConnectionMode] = useState<'idle' | 'connecting' | 'sse' | 'polling'>('idle')
+  const replayedNavigationKeys = useRef(new Set<string>())
 
   function applyThreadState(state: AgentThreadState, replayNavigation: boolean) {
     const latestRun = state.runs[0] ?? null
@@ -61,8 +64,12 @@ export function useAgentThread(props: {
     setRunningRunId(latestRun?.status === 'running' ? latestRun.id : null)
     writeCurrentThreadId(state.thread.id)
     if (replayNavigation) {
-      const latestNavigation = state.navigationEvents.at(-1)
-      if (latestNavigation) props.onNavigate(latestNavigation)
+      for (const navigation of state.navigationEvents) {
+        const key = `${state.thread.id}:${JSON.stringify(navigation)}`
+        if (replayedNavigationKeys.current.has(key)) continue
+        replayedNavigationKeys.current.add(key)
+        props.onNavigate(navigation)
+      }
     }
   }
 
@@ -112,8 +119,10 @@ export function useAgentThread(props: {
 
   useEffect(() => {
     if (!threadId || !runningRunId) return
+    if (eventConnectionMode === 'connecting' || eventConnectionMode === 'sse') return
 
     let active = true
+    setEventConnectionMode('polling')
 
     async function pollThreadState() {
       try {
@@ -136,7 +145,54 @@ export function useAgentThread(props: {
       active = false
       globalThis.clearInterval(timer)
     }
-  }, [threadId, runningRunId])
+  }, [threadId, runningRunId, eventConnectionMode])
+
+  useEffect(() => {
+    if (!threadId) {
+      setEventConnectionMode('idle')
+      return
+    }
+    if (typeof globalThis.EventSource !== 'function') {
+      setEventConnectionMode(runningRunId ? 'polling' : 'idle')
+      return
+    }
+
+    let active = true
+    const source = new globalThis.EventSource(api.agentThreadEventsPath(threadId), { withCredentials: true })
+    setEventConnectionMode('connecting')
+
+    source.onopen = () => {
+      if (active) setEventConnectionMode('sse')
+    }
+
+    source.addEventListener('thread_state', (event) => {
+      if (!active) return
+      try {
+        const payload = JSON.parse(event.data) as AgentThreadEvent
+        if (payload.threadId !== threadId) return
+        const latestRun = payload.state.runs[0] ?? null
+        applyThreadState(payload.state, true)
+        if (latestRun?.status !== 'running') {
+          void refreshMemories()
+          void refreshThreads()
+        }
+      } catch (parseError) {
+        setError(parseError instanceof Error ? parseError.message : String(parseError))
+      }
+    })
+
+    source.onerror = () => {
+      if (!active) return
+      source.close()
+      setEventConnectionMode('polling')
+    }
+
+    return () => {
+      active = false
+      source.close()
+      setEventConnectionMode('idle')
+    }
+  }, [threadId])
 
   function mergeActions(nextActions: AgentActionRequest[]) {
     setActionRequests((current) => {
@@ -248,6 +304,7 @@ export function useAgentThread(props: {
 
   function startNewThread() {
     writeCurrentThreadId(null)
+    replayedNavigationKeys.current.clear()
     setThreadId(null)
     setMessages([])
     setActionRequests([])
@@ -283,6 +340,7 @@ export function useAgentThread(props: {
     memories,
     threadSummaries,
     runningRunId,
+    eventConnectionMode,
     busy: busy || Boolean(runningRunId),
     error,
     sendMessage,

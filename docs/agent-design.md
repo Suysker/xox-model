@@ -411,6 +411,7 @@ apps/web/src/components/agent/AgentConsole.tsx
 ```text
 React Agent Shell
   -> api.listAgentThreads / api.getAgentThread
+  -> EventSource /agent/threads/:threadId/events
   -> contracts DTO
   -> Fastify agent routes
   -> Kysely agent_* tables
@@ -423,21 +424,64 @@ POST /agent/messages
   -> agent_threads(updated_at, title)
 ```
 
+### 实时事件通道
+
+REST thread state 是恢复事实源；SSE 是更低延迟的投影通道。前端不能因为有 SSE 就维护第二套动作状态。
+
+模块划分：
+
+```text
+apps/api/src/agent/thread-events.ts
+  -> in-process broker
+  -> subscribe(threadId, listener)
+  -> publish(threadId, reason)
+
+apps/api/src/modules/agent.ts
+  -> 所有 message/run/action/memory 变更后 publish
+  -> GET /api/v1/agent/threads/:threadId/events
+  -> 每次事件都重新 buildThreadState 后发送
+
+apps/web/src/hooks/useAgentThread.ts
+  -> 优先 EventSource 订阅 thread_state
+  -> 断线或浏览器不支持 EventSource 时回退到 REST polling
+  -> applyThreadState 仍是唯一前端状态入口
+```
+
+依赖图：
+
+```text
+domain/tool execution
+  -> agent_* tables
+  -> agentThreadEvents.publish(threadId)
+  -> SSE route validates user/workspace/thread
+  -> buildThreadState
+  -> React applyThreadState
+```
+
+约束：
+
+- SSE 事件只发送 `AgentThreadState`，不发送 provider 原始响应、token、key 或内部 worker lease 信息。
+- SSE 不替代数据库事实源；刷新、网络断开、多实例进程切换后，前端仍用 `GET /api/v1/agent/threads/:threadId` 恢复。
+- 现阶段 broker 是单 API 进程内事件总线；多实例部署下如果浏览器连接到非执行 worker，前端会自动回到 polling。后续持久化队列/Redis pubsub 才能把 SSE 做成跨实例强实时。
+- 每个 SSE 连接必须先通过 `getThreadForUser` 校验 `workspace_id + user_id`；越权不能建立事件流。
+- 写入动作确认、取消、编辑、run 完成、run 失败、run 取消、启动后台 run 都要 publish，保证确认卡、timeline 和消息区不会等到下一轮轮询。
+
 ### 恢复语义
 
 - `GET /api/v1/agent/threads` 返回当前登录用户、当前工作区内的线程摘要，包含最近消息、最新 run 状态、planner source 和待确认动作数量。
 - `GET /api/v1/agent/threads/:threadId` 返回完整可恢复状态：messages、runs、最新 run 的 planSteps、该线程 actionRequests、navigationEvents 和 planner source。
+- `GET /api/v1/agent/threads/:threadId/events` 建立 SSE 事件流，初始发送一次 `thread_state`，后续每次服务端状态变化推送新的 `thread_state`。连接失败不影响 REST 恢复语义。
 - 前端启动时先加载历史列表，再尝试读取 `localStorage` 中的当前 `threadId` 并调用 state API 恢复；如果线程不存在或越权，清掉本地指针。
 - 新建对话只清前端指针和当前视图，不删除服务端历史。
 - 确认、取消、编辑确认卡后更新线程 `updated_at`，历史列表能反映最后活动。
 - 前端发送消息使用 background run：`POST /api/v1/agent/messages` 传 `background=true` 后立即返回 `threadId/runId/status=running` 和用户消息，服务端在同一 API 进程内继续执行模型规划并持久化结果。
-- 前端拿到 `threadId` 后立即写入本地指针，并轮询 `GET /api/v1/agent/threads/:threadId`；刷新、网络断开或请求响应丢失后，只要浏览器已拿到启动响应，就能恢复 running/completed/failed run、消息、运行图和待确认动作。
+- 前端拿到 `threadId` 后立即写入本地指针，并优先订阅 `GET /api/v1/agent/threads/:threadId/events`；如果 SSE 断开、浏览器不支持或多实例连接到非执行 worker，则回退到轮询 `GET /api/v1/agent/threads/:threadId`。刷新、网络断开或请求响应丢失后，只要浏览器已拿到启动响应，就能恢复 running/completed/failed run、消息、运行图和待确认动作。
 - 普通同步模式仍保留给 API 集成测试和后端调用；产品 UI 默认使用 background 模式。
 - `agent_runs` 持久化 `input_message_id` 和 `input_message`，使 running run 在 API 进程重启后仍有足够输入上下文恢复模型规划。
 - API 启动后会扫描 `status=running` 的 run：如果该 run 还没有 `planSteps/actionRequests` 产物，则重新调用同一套 planner/tool/confirmation 流程并落库为 completed/failed；如果已有部分产物，则 fail-closed 标记为 failed 并写 assistant 提示，避免重复创建确认卡或让用户确认半成品动作。
 - 用户可取消当前 running run：`POST /api/v1/agent/runs/:runId/cancel` 会把 run 标记为 `cancelled`、取消该 run 下尚未执行的确认卡和计划步骤、写入 assistant 提示，并中止当前进程里的 provider 请求（OpenAI-compatible adapter 通过 `AbortSignal`）。
 - 取消是服务端状态，不是前端假按钮；即使模型响应晚于取消请求，后台任务在回写前会重新检查 run 状态，不能把 cancelled run 改回 completed，也不能留下 pending 确认卡。
-- 该恢复/取消机制覆盖单实例 API 进程重启和临时崩溃后的安全续跑；多实例并发抢占通过 run lease gate 管理，SSE/WebSocket progress 仍是下一阶段 maturity gate。
+- 该恢复/取消机制覆盖单实例 API 进程重启和临时崩溃后的安全续跑；多实例并发抢占通过 run lease gate 管理。当前 SSE 是 thread state 级实时事件，provider token streaming / tracing 仍是下一阶段 maturity gate。
 
 ### 多实例后台 Run 租约
 

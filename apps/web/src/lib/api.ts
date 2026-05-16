@@ -2,6 +2,7 @@ import type { ModelConfig, ModelResult } from '../types'
 import type {
   AgentActionRequest,
   AgentActionUpdatePayload,
+  AgentThreadEvent,
   AgentMemoryRecord,
   AgentMessage,
   AgentNavigationEvent,
@@ -373,6 +374,8 @@ export const api = {
     apiRequest<{ threads: AgentThreadSummary[] }>('GET', '/api/v1/agent/threads'),
   getAgentThread: (threadId: string) =>
     apiRequest<AgentThreadState>('GET', `/api/v1/agent/threads/${encodeURIComponent(threadId)}`),
+  agentThreadEventsPath: (threadId: string) =>
+    `/api/v1/agent/threads/${encodeURIComponent(threadId)}/events`,
   cancelAgentRun: (runId: string) =>
     apiRequest<AgentThreadState>('POST', `/api/v1/agent/runs/${encodeURIComponent(runId)}/cancel`),
   listAgentMemories: () =>
@@ -396,3 +399,5 @@ export const api = {
       payload,
     ),
 }
+
+export type { AgentThreadEvent }

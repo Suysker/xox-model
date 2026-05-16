@@ -94,6 +94,11 @@
 - `GET /api/v1/agent/threads/{threadId}`
   - 返回可恢复的线程状态：messages、runs、最新 run 的 `planSteps`、`actionRequests`、`navigationEvents` 和 planner source
   - 只能读取当前用户 / 当前工作区下的 thread；跨用户或跨工作区返回 `403`
+- `GET /api/v1/agent/threads/{threadId}/events`
+  - 建立 `text/event-stream` 事件流，事件名为 `thread_state`
+  - 初始连接会立即返回一次完整 `AgentThreadState`；后续 run/message/action 状态变化会推送新的完整 thread state
+  - SSE 只投影服务端状态，不包含 provider 原始响应、API key、worker lease 或内部提示词
+  - 只能订阅当前用户 / 当前工作区下的 thread；跨用户或跨工作区不能建立事件流
 - `POST /api/v1/agent/runs/{runId}/cancel`
   - 取消当前用户 / 当前工作区下仍在 `running` 的 run，并返回最新 thread state
   - 服务端会中止当前进程内 provider 请求，标记 run 为 `cancelled`，取消该 run 下未执行确认卡和未执行计划步骤
@@ -102,7 +107,7 @@
   - 入参：`threadId?`、`message`、`background?`
   - 同步模式返回新增对话消息、`status=completed`、`planner`、显式页面导航事件、`planSteps`、待确认动作卡
   - 产品前端默认传 `background=true`：接口先创建 `agent_runs` 和用户消息并立即返回 `status=running / planner=null`，模型规划、确认卡生成和 assistant 回复在服务端后台继续落库
-  - 前端应保存返回的 `threadId`，并轮询 `GET /api/v1/agent/threads/{threadId}` 恢复 running/completed/failed run、消息、计划步骤、导航事件和待确认动作
+  - 前端应保存返回的 `threadId`，优先订阅 `GET /api/v1/agent/threads/{threadId}/events`，连接失败时轮询 `GET /api/v1/agent/threads/{threadId}`，以恢复 running/completed/failed run、消息、计划步骤、导航事件和待确认动作
   - `agent_runs` 保存输入消息、worker lease 和 heartbeat；API 启动时只会认领未租约、同 worker 或租约已过期且尚未产生运行产物的 `running` run。若 run 已经有部分计划步骤或确认卡，则标记 failed 并取消未执行确认卡，避免重复创建或执行半成品动作
   - 后台执行在回写 assistant message、计划步骤和确认卡前会刷新 worker lease；如果租约已经被其他 worker 认领，迟到的模型结果会被丢弃，不能写入 pending 动作
   - `planner` 为 `openai_agents`、`openai_compatible_tool_calls`、`rules` 或运行中时的 `null`

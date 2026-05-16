@@ -105,6 +105,10 @@ class Client {
   delete(url: string) {
     return this.request('DELETE', url)
   }
+
+  cookieHeader() {
+    return this.cookie
+  }
 }
 
 async function registerUser(client: Client, email: string, displayName = 'User') {
@@ -267,6 +271,58 @@ async function insertRunningAgentRun(
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function parseSseEvents(buffer: string) {
+  return buffer
+    .split(/\r?\n\r?\n/)
+    .filter((chunk) => chunk.includes('data: '))
+    .map((chunk) => {
+      const event = chunk.match(/^event: (.+)$/m)?.[1] ?? 'message'
+      const data = chunk
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith('data: '))
+        .map((line) => line.slice('data: '.length))
+        .join('\n')
+      return { event, data: JSON.parse(data) }
+    })
+}
+
+async function collectSseEvents(
+  url: string,
+  cookie: string,
+  count: number,
+  onFirstEvent?: () => Promise<void>,
+) {
+  const controller = new AbortController()
+  const response = await fetch(url, {
+    headers: { cookie },
+    signal: controller.signal,
+  })
+  expect(response.status).toBe(200)
+  expect(response.headers.get('content-type')).toContain('text/event-stream')
+  const reader = response.body?.getReader()
+  if (!reader) throw new Error('SSE response body is not readable')
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let triggered = false
+  try {
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const events = parseSseEvents(buffer)
+      if (!triggered && events.length >= 1 && onFirstEvent) {
+        triggered = true
+        await onFirstEvent()
+      }
+      if (events.length >= count) return events.slice(0, count)
+    }
+  } finally {
+    controller.abort()
+    reader.releaseLock()
+  }
+  return parseSseEvents(buffer)
 }
 
 describe('xox TypeScript API', () => {
@@ -1413,6 +1469,54 @@ describe('xox TypeScript API', () => {
     const threadsAfterConfirm = await firstClient.get('/api/v1/agent/threads')
     expect(threadsAfterConfirm.json.threads[0].pendingActionCount).toBe(0)
     await closeHarness(harness)
+  })
+
+  it('streams server-owned thread state through SSE and keeps events tenant scoped', async () => {
+    const harness = await buildHarness('agent-thread-events')
+    const client = new Client(harness.app)
+    await registerUser(client, 'agent-thread-events@example.com')
+    const initial = await client.post('/api/v1/agent/messages', {
+      message: '打开看测算',
+    })
+    expect(initial.statusCode).toBe(200)
+
+    await harness.app.listen({ port: 0, host: '127.0.0.1' })
+    const address = harness.app.server.address() as AddressInfo
+    const baseUrl = `http://127.0.0.1:${address.port}`
+
+    try {
+      const events = await collectSseEvents(
+        `${baseUrl}/api/v1/agent/threads/${initial.json.threadId}/events`,
+        client.cookieHeader(),
+        2,
+        async () => {
+          const next = await client.post('/api/v1/agent/messages', {
+            threadId: initial.json.threadId,
+            message: '把 3 月成员 A 线下 1 张入账',
+          })
+          expect(next.statusCode).toBe(200)
+        },
+      )
+
+      expect(events).toHaveLength(2)
+      const initialEvent = events[0]!
+      const updateEvent = events[1]!
+      expect(initialEvent.event).toBe('thread_state')
+      expect(initialEvent.data.threadId).toBe(initial.json.threadId)
+      expect(initialEvent.data.state.thread.id).toBe(initial.json.threadId)
+      expect(updateEvent.event).toBe('thread_state')
+      expect(updateEvent.data.threadId).toBe(initial.json.threadId)
+      expect(updateEvent.data.state.actionRequests.some((action: any) => action.kind === 'ledger.create_entry')).toBe(true)
+
+      const outsider = new Client(harness.app)
+      await registerUser(outsider, 'agent-thread-events-outsider@example.com')
+      const forbidden = await fetch(`${baseUrl}/api/v1/agent/threads/${initial.json.threadId}/events`, {
+        headers: { cookie: outsider.cookieHeader() },
+      })
+      expect(forbidden.status).toBe(403)
+    } finally {
+      await closeHarness(harness)
+    }
   })
 
   it('keeps agent memory scoped by user and workspace and compacts long thread context', async () => {

@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify'
+import type { ServerResponse } from 'node:http'
 import type { Kysely } from 'kysely'
 import { createProductDefaultModel, hydrateModelConfig, projectModel, type ModelConfig } from '@xox/domain'
 import type {
@@ -11,6 +12,7 @@ import type {
   AgentPlanStep,
   AgentPlanStepStatus,
   AgentRunRecord,
+  AgentThreadEvent,
   AgentThreadState,
   AgentThreadSummary,
 } from '@xox/contracts'
@@ -63,6 +65,7 @@ import {
   refreshAgentRunLease,
   startAgentRunLeaseHeartbeat,
 } from '../agent/run-lease.js'
+import { agentThreadEvents, type AgentThreadEventSignal } from '../agent/thread-events.js'
 import { buildAgentWritableConfigContext } from '../agent/tool-coverage.js'
 import { extractWorkspaceBundleArtifact, type ParsedWorkspaceBundleArtifact } from '../agent/workspace-bundle-artifact.js'
 import { assertActionDraftAllowed, assertActionExecutionAllowed, assertActionUpdateAllowed, coerceAgentActionKind } from '../agent/tool-policy.js'
@@ -1431,6 +1434,7 @@ async function planResponse(ctx: PlannerContext) {
     messages.push(item.message)
   }
 
+  agentThreadEvents.publish(ctx.threadId, 'plan_ready')
   if (items.length > 0) {
     const actionCount = actionRows.length
     const assistant =
@@ -1487,6 +1491,7 @@ async function failAgentRun(
   await addMessage(db, thread.id, 'assistant', `运行失败：${message}`).catch(() => undefined)
   await db.updateTable('agent_runs').set({ status: 'failed', completed_at: utcNow(), lease_expires_at: null }).where('id', '=', runId).execute().catch(() => undefined)
   await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', thread.id).execute().catch(() => undefined)
+  agentThreadEvents.publish(thread.id, 'run_failed')
 }
 
 async function failInterruptedAgentRun(
@@ -1539,6 +1544,7 @@ async function cancelRunArtifacts(
     .execute()
   if (addAssistantMessage) await addMessage(db, thread.id, 'assistant', message)
   await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', thread.id).execute()
+  agentThreadEvents.publish(thread.id, 'run_cancelled')
 }
 
 async function completeAgentRun(ctx: PlannerContext & { thread: Row<'agent_threads'> }): Promise<CompletedAgentRun | null> {
@@ -1560,6 +1566,7 @@ async function completeAgentRun(ctx: PlannerContext & { thread: Row<'agent_threa
       .where('worker_id', '=', ctx.settings.agentWorkerId)
       .execute()
     await touchThreadAfterRun(ctx.db, ctx.thread, ctx.message)
+    agentThreadEvents.publish(ctx.thread.id, 'run_completed')
     return {
       plannerSource: planned.plannerSource,
       assistantMessage,
@@ -1641,6 +1648,7 @@ export async function recoverRunningAgentRuns(db: Kysely<Database>, settings: Se
       await failInterruptedAgentRun(db, thread, run.id, 'Agent run 无法恢复：缺少原始用户指令。请重新发送这条指令。')
       continue
     }
+    agentThreadEvents.publish(thread.id, 'thread_restored')
     const controller = new AbortController()
     activeRunControllers.set(run.id, controller)
     void completeAgentRun({
@@ -1727,6 +1735,36 @@ async function executeAction(db: Kysely<Database>, settings: Settings, user: Cur
   return result
 }
 
+function writeSseEvent(response: ServerResponse, event: string, data: unknown) {
+  if (response.destroyed || response.writableEnded) return
+  response.write(`event: ${event}\n`)
+  response.write(`data: ${JSON.stringify(data)}\n\n`)
+}
+
+function writeSseComment(response: ServerResponse, comment: string) {
+  if (response.destroyed || response.writableEnded) return
+  response.write(`: ${comment}\n\n`)
+}
+
+async function writeAgentThreadStateEvent(
+  response: ServerResponse,
+  db: Kysely<Database>,
+  workspace: Row<'workspaces'>,
+  user: CurrentUser,
+  threadId: string,
+  signal: AgentThreadEventSignal,
+) {
+  const state = await buildThreadState(db, workspace, user, threadId)
+  const event: AgentThreadEvent = {
+    type: 'thread_state',
+    threadId,
+    sequence: signal.sequence,
+    reason: signal.reason,
+    state,
+  }
+  writeSseEvent(response, 'thread_state', event)
+}
+
 export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, settings: Settings) {
   app.get('/api/v1/agent/threads', async (request, reply) => {
     try {
@@ -1753,6 +1791,50 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
       const workspace = await getWorkspaceForUser(db, user)
       const { threadId } = request.params as { threadId: string }
       return buildThreadState(db, workspace, user, threadId)
+    } catch (error) {
+      const { sendError } = await import('../core/http.js')
+      return sendError(reply, error)
+    }
+  })
+
+  app.get('/api/v1/agent/threads/:threadId/events', async (request, reply) => {
+    try {
+      const user = await requireCurrentUser(db, settings, request)
+      const workspace = await getWorkspaceForUser(db, user)
+      const { threadId } = request.params as { threadId: string }
+      await getThreadForUser(db, workspace, user, threadId)
+
+      reply.hijack()
+      reply.raw.writeHead(200, {
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-cache, no-transform',
+        Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no',
+      })
+      reply.raw.flushHeaders?.()
+
+      let closed = false
+      let unsubscribe: () => void = () => undefined
+      let heartbeat: NodeJS.Timeout | null = null
+      const close = () => {
+        if (closed) return
+        closed = true
+        if (heartbeat) clearInterval(heartbeat)
+        unsubscribe()
+      }
+      const sendState = (signal: AgentThreadEventSignal) => {
+        void writeAgentThreadStateEvent(reply.raw, db, workspace, user, threadId, signal).catch((error) => {
+          writeSseEvent(reply.raw, 'error', { message: safeRunErrorMessage(error) })
+          close()
+        })
+      }
+      unsubscribe = agentThreadEvents.subscribe(threadId, sendState)
+      heartbeat = setInterval(() => writeSseComment(reply.raw, 'heartbeat'), 15_000)
+      heartbeat.unref?.()
+
+      request.raw.on('close', close)
+      request.raw.on('aborted', close)
+      sendState({ threadId, sequence: 0, reason: 'thread_restored' })
     } catch (error) {
       const { sendError } = await import('../core/http.js')
       return sendError(reply, error)
@@ -1797,6 +1879,7 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
 
       if (body.background === true) {
         await touchThreadAfterRun(db, thread, message)
+        agentThreadEvents.publish(thread.id, 'thread_started')
         const controller = new AbortController()
         activeRunControllers.set(runId, controller)
         void completeAgentRun({ db, settings, user, workspace, thread, threadId: thread.id, runId, message, abortSignal: controller.signal }).catch(() => undefined)
@@ -1830,6 +1913,7 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
       if (runId && activeThread) {
         await db.updateTable('agent_runs').set({ status: 'failed', completed_at: utcNow(), lease_expires_at: null }).where('id', '=', runId).execute().catch(() => undefined)
         await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', activeThread.id).execute().catch(() => undefined)
+        agentThreadEvents.publish(activeThread.id, 'run_failed')
       }
       return reply.send(error)
     }
@@ -1899,6 +1983,7 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
       const planSteps = await db.selectFrom('agent_plan_steps').selectAll().where('run_id', '=', action.run_id).orderBy('sequence_no', 'asc').execute()
       const assistant = await addMessage(db, action.thread_id, 'assistant', `已执行：${action.title}`)
       await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', action.thread_id).execute()
+      agentThreadEvents.publish(action.thread_id, 'action_executed')
       return { actionRequest: serializeAction(updated), result, messages: [serializeMessage(assistant)], planSteps: planSteps.map(serializePlanStep) }
     } catch (error) {
       const { sendError } = await import('../core/http.js')
@@ -1920,6 +2005,7 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
       const planSteps = await db.selectFrom('agent_plan_steps').selectAll().where('run_id', '=', action.run_id).orderBy('sequence_no', 'asc').execute()
       const assistant = await addMessage(db, action.thread_id, 'assistant', `已取消：${action.title}`)
       await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', action.thread_id).execute()
+      agentThreadEvents.publish(action.thread_id, 'action_cancelled')
       return { actionRequest: serializeAction(updated), messages: [serializeMessage(assistant)], planSteps: planSteps.map(serializePlanStep) }
     } catch (error) {
       const { sendError } = await import('../core/http.js')
@@ -1963,6 +2049,7 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
         .execute()
       await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', action.thread_id).execute()
       const planSteps = await db.selectFrom('agent_plan_steps').selectAll().where('run_id', '=', action.run_id).orderBy('sequence_no', 'asc').execute()
+      agentThreadEvents.publish(action.thread_id, 'action_updated')
       return { actionRequest: serializeAction(updated), planSteps: planSteps.map(serializePlanStep) }
     } catch (error) {
       const { sendError } = await import('../core/http.js')

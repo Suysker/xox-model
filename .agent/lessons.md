@@ -49,6 +49,7 @@
 - A flexible Agent needs a first-class clarification tool. When required fields are missing and memory cannot safely fill them, the model should call a read-only clarification tool instead of local code guessing parameters or generating an invalid confirmation card.
 - Run cancellation must be backend-owned. Mark the run cancelled, abort active provider calls where possible, and re-check run status before writing assistant messages or confirmation cards so late model results cannot resurrect cancelled work.
 - Background Agent runs in a SaaS deployment need database-backed worker leases. A process-local controller is not enough; every assistant message, plan step, and confirmation card write must be guarded by the current `worker_id` lease so another worker can recover expired runs without duplicate late writes.
+- Agent realtime UI should stream server-owned thread state, not frontend-inferred progress. SSE/WebSocket events should carry the same `AgentThreadState` shape returned by REST so disconnects can fall back to polling without state drift.
 
 ## Testing
 

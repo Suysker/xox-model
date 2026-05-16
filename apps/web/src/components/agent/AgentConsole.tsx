@@ -21,6 +21,7 @@ export function AgentConsole(props: {
   memories: AgentMemoryRecord[]
   threadSummaries: AgentThreadSummary[]
   runningRunId: string | null
+  eventConnectionMode: 'idle' | 'connecting' | 'sse' | 'polling'
   busy: boolean
   error: string | null
   onSend: (message: string) => void
@@ -47,6 +48,14 @@ export function AgentConsole(props: {
       : props.planner === 'rules'
         ? '本地规则'
         : '未运行'
+  const connectionLabel =
+    props.eventConnectionMode === 'sse'
+      ? '实时'
+      : props.eventConnectionMode === 'connecting'
+      ? '连接中'
+      : props.eventConnectionMode === 'polling'
+        ? '轮询'
+        : '待机'
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault()
@@ -68,7 +77,9 @@ export function AgentConsole(props: {
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-stone-950">Agent OS</p>
                 <p className="truncate text-xs text-stone-500">
-                  {props.busy ? '执行中' : `规划器：${plannerLabel}${props.threadId ? ` / 对话 ${props.threadId.slice(0, 8)}` : ''}`}
+                  {props.busy
+                    ? `执行中 / ${connectionLabel}`
+                    : `规划器：${plannerLabel} / ${connectionLabel}${props.threadId ? ` / 对话 ${props.threadId.slice(0, 8)}` : ''}`}
                 </p>
               </div>
             </div>

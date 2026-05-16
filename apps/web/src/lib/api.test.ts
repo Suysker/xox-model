@@ -1,4 +1,4 @@
-import { formatApiErrorMessage } from './api'
+import { api, formatApiErrorMessage } from './api'
 
 describe('api error formatting', () => {
   it('returns string details directly', () => {
@@ -21,5 +21,9 @@ describe('api error formatting', () => {
 
   it('falls back to status when payload is empty', () => {
     expect(formatApiErrorMessage(null, 500)).toBe('请求失败（状态码 500）')
+  })
+
+  it('builds encoded Agent SSE thread event paths', () => {
+    expect(api.agentThreadEventsPath('thread/with space')).toBe('/api/v1/agent/threads/thread%2Fwith%20space/events')
   })
 })

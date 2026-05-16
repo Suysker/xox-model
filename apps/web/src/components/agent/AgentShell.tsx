@@ -35,6 +35,7 @@ export function AgentShell(props: {
         memories={agent.memories}
         threadSummaries={agent.threadSummaries}
         runningRunId={agent.runningRunId}
+        eventConnectionMode={agent.eventConnectionMode}
         busy={agent.busy}
         error={agent.error}
         onSend={(message) => void agent.sendMessage(message)}

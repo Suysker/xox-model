@@ -242,6 +242,14 @@ export type AgentThreadState = {
   actionRequests: AgentActionRequest[]
 }
 
+export type AgentThreadEvent = {
+  type: 'thread_state'
+  threadId: string
+  sequence: number
+  reason: string
+  state: AgentThreadState
+}
+
 export type AgentMemoryRecord = {
   id: string
   workspaceId: string
