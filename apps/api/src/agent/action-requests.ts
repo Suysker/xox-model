@@ -1,5 +1,4 @@
 import type { Kysely } from 'kysely'
-import { createProductDefaultModel, hydrateModelConfig } from '@xox/domain'
 import type {
   AgentActionKind,
   AgentActionUpdatePayload,
@@ -7,33 +6,18 @@ import type {
   AgentPlanStepStatus,
 } from '@xox/contracts'
 import type { Database, Row } from '../db/schema.js'
-import { jsonString, parseJson } from '../db/database.js'
+import { jsonString } from '../db/database.js'
 import { conflict, forbidden, notFound, unprocessable } from '../core/http.js'
 import type { Settings } from '../core/settings.js'
 import { newId } from '../core/security.js'
 import { utcNow } from '../core/time.js'
 import { recordAudit } from '../modules/audit.js'
 import type { CurrentUser } from '../modules/auth.js'
-import {
-  deleteVersion,
-  getWorkspaceDraft,
-  getWorkspaceForUser,
-  importWorkspaceBundle,
-  publishVersion,
-  rollbackToVersion,
-  saveDraft,
-} from '../modules/workspace.js'
-import {
-  createActualEntry,
-  restoreEntry,
-  setPeriodStatus,
-  updateActualEntry,
-  voidEntry,
-} from '../modules/ledger.js'
-import { createVersionShare, revokeVersionShare } from '../modules/share.js'
+import { getWorkspaceForUser } from '../modules/workspace.js'
 import { addRunEvent, listSerializedRunEvents } from './run-events.js'
 import { addMessage } from './thread-store.js'
 import { redactSecretLikeContent } from './memory.js'
+import { executeAgentTool } from './tool-executor.js'
 import {
   assertActionDraftAllowed,
   assertActionExecutionAllowed,
@@ -144,51 +128,7 @@ export async function addAgentPlanStep(ctx: AgentPlanContext, input: AddAgentPla
 export async function executeAgentActionRequest(db: Kysely<Database>, settings: Settings, user: CurrentUser, action: Row<'agent_action_requests'>) {
   const workspace = await getWorkspaceForUser(db, user)
   await assertActionExecutionAllowed(db, workspace, user, action)
-  const payload = parseJson<any>(action.payload_json, {})
-  let result: unknown = null
-
-  if (action.kind === 'ledger.create_entry') {
-    result = await createActualEntry(db, { workspace, actor: user, ...payload })
-  } else if (action.kind === 'ledger.update_entry') {
-    result = await updateActualEntry(db, { workspace, actor: user, entryId: payload.entryId, ...payload })
-  } else if (action.kind === 'ledger.void_entry') {
-    await voidEntry(db, workspace, payload.entryId, user.id)
-    result = { ok: true }
-  } else if (action.kind === 'ledger.restore_entry') {
-    await restoreEntry(db, workspace, payload.entryId, user.id)
-    result = { ok: true }
-  } else if (action.kind === 'workspace.update_draft') {
-    result = await saveDraft(db, { workspace, actor: user, revision: payload.revision, workspaceName: payload.workspaceName, config: hydrateModelConfig(payload.config) })
-  } else if (action.kind === 'workspace.save_snapshot') {
-    result = await publishVersion(db, { workspace, actor: user, kind: 'snapshot' })
-  } else if (action.kind === 'workspace.publish_release') {
-    const version = await publishVersion(db, { workspace, actor: user, kind: 'release' })
-    result = { version }
-    if (payload.createShare) {
-      result = { version, share: await createVersionShare(db, { workspace: { ...workspace, active_version_id: version.id }, actor: user, versionId: version.id }) }
-    }
-  } else if (action.kind === 'workspace.rollback_version') {
-    result = await rollbackToVersion(db, { workspace, actor: user, versionId: payload.versionId })
-  } else if (action.kind === 'workspace.delete_version') {
-    await deleteVersion(db, workspace, payload.versionId)
-    result = { ok: true }
-  } else if (action.kind === 'workspace.reset_draft') {
-    const draft = await getWorkspaceDraft(db, workspace)
-    result = await saveDraft(db, { workspace, actor: user, revision: draft.revision, workspaceName: '默认工作区', config: createProductDefaultModel() })
-  } else if (action.kind === 'workspace.import_bundle') {
-    result = await importWorkspaceBundle(db, { workspace, actor: user, bundle: payload.bundle })
-  } else if (action.kind === 'ledger.lock_period') {
-    result = await setPeriodStatus(db, workspace, payload.periodId, user.id, 'locked')
-  } else if (action.kind === 'ledger.unlock_period') {
-    result = await setPeriodStatus(db, workspace, payload.periodId, user.id, 'open')
-  } else if (action.kind === 'share.create') {
-    result = await createVersionShare(db, { workspace, actor: user, versionId: payload.versionId })
-  } else if (action.kind === 'share.revoke') {
-    await revokeVersionShare(db, { workspace, actor: user, versionId: payload.versionId })
-    result = { ok: true }
-  } else {
-    throw unprocessable(`Unsupported agent action: ${action.kind}`)
-  }
+  const result = await executeAgentTool(db, workspace, user, action)
 
   await db
     .updateTable('agent_action_requests')

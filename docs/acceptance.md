@@ -100,6 +100,7 @@
 - [ ] `apps/api/src/modules/agent.ts` 拆分为 routes、kernel、runtime adapters、tools、memory/context、confirmation service
 - [x] OpenAI-compatible Chat Completions provider 调用已从 `modules/agent.ts` 抽到 `apps/api/src/agent/runtime/openai-compatible-chat-adapter.ts`，通过 `adapter-router.ts` 输出统一 runtime plan result
 - [x] Confirmation service 已从 `modules/agent.ts` 抽到 `apps/api/src/agent/action-requests.ts`，统一处理确认卡创建、编辑、确认、取消、执行状态、assistant message、run event 和审计；routes 只做 HTTP 编排与 thread publish
+- [x] Server tool execution 已从 confirmation service 抽到 `apps/api/src/agent/tool-executor.ts`，确认执行时先走 tool policy，再由 executor 调用 workspace / ledger / share 领域服务；provider/runtime 仍不能直接写业务数据
 - [x] `packages/contracts` 的 planner source 已改为 `openai_agents / openai_compatible_tool_calls / rules`，不再把 DeepSeek planner source 作为唯一主语义，也不再接受 assistant JSON 文本冒充 tool call
 - [x] 常规 Agent 请求在 `LLM_PROVIDER != rules` 时不会用本地正则/规则替模型生成业务动作；API 测试覆盖“provider 有 key 但未返回 tool_calls”和“provider 被选择但无 key”两种情况，均不生成确认卡
 - [x] Data agent 只读问答必须由模型调用 `data_query_workspace`，API 测试和真实 smoke 覆盖“3 月计划收入和计划成本是多少”这类问题；该路径不生成确认卡、不写业务数据，并打开对应分析页面
