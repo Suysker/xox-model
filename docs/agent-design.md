@@ -72,15 +72,17 @@ provider adapter 层。所有 provider 必须输出统一的内部 plan/event，
 
 ```text
 modules/agent.ts
-  -> build tenant/workspace planning context
-  -> runtime/adapter-router.ts
-      -> runtime/openai-agents-adapter.ts
-          -> OpenAI Agents SDK Agent / Runner / tools
-      -> runtime/openai-compatible-chat-adapter.ts
-          -> OpenAI-compatible Chat Completions tools/tool_calls
-      -> runtime/runtime-adapter.ts
-          -> provider-neutral plan result
-  -> normalize runtime steps into read steps / action request drafts
+  -> enqueue / recover / cancel run
+  -> planner.ts
+      -> build tenant/workspace planning context
+      -> runtime/adapter-router.ts
+          -> runtime/openai-agents-adapter.ts
+              -> OpenAI Agents SDK Agent / Runner / tools
+          -> runtime/openai-compatible-chat-adapter.ts
+              -> OpenAI-compatible Chat Completions tools/tool_calls
+          -> runtime/runtime-adapter.ts
+              -> provider-neutral plan result
+      -> normalize runtime steps into read steps / action request drafts
   -> action-requests.ts
       -> persist confirmation cards and plan steps
       -> edit / confirm / cancel lifecycle
@@ -92,7 +94,8 @@ modules/agent.ts
 - runtime adapter 不读取数据库、不写数据库、不创建确认卡、不执行业务工具。
 - OpenAI Agents SDK adapter 使用 SDK 的 `Agent / Runner / tool / OpenAIChatCompletionsModel` 做 orchestration；SDK tool 的 `execute` 只把工具参数收集为内部 `AgentToolCallStep`，返回 model-visible preview receipt，不执行领域服务。
 - `LLM_PROVIDER=openai` 只选择 OpenAI Agents SDK adapter；`LLM_PROVIDER=openai-compatible / deepseek / doubao / qwen` 继续走通用 Chat Completions adapter。两条路径都输出同一个 `RuntimePlanResult`。
-- `modules/agent.ts` 暂时继续负责业务预览和 planner orchestration，以保证 API 语义不变。
+- `planner.ts` 负责 tenant/workspace planning context、provider-native tool_call 结果归一、多步骤拆分、只读步骤和待确认动作草稿；它不处理 HTTP DTO、不执行已确认写入。
+- `modules/agent.ts` 继续负责 HTTP routes、SSE、run queue/recovery/cancel 和 worker lease 回写；它只调用 `planResponse` 获取后端持久化的 plan/actions。
 - 确认卡创建、编辑、确认、取消、执行状态更新、assistant message、run event 和审计已下沉到 `apps/api/src/agent/action-requests.ts`；route 只负责认证、HTTP DTO 序列化和 thread publish。
 - 已确认 action 的业务执行已下沉到 `apps/api/src/agent/tool-executor.ts`；confirmation service 先做 policy，再把当前 workspace/user 和 action payload 交给 executor 调用 workspace / ledger / share 模块。
 - 后续再把业务预览下沉到 `agent/kernel` 与 `agent/tools`。
@@ -688,7 +691,8 @@ Agent: workspace_import_bundle
 
 仍需重构：
 
-- `apps/api/src/modules/agent.ts` 过大，混合 routes、runtime、planning、tools 和 execution。
+- `apps/api/src/modules/agent.ts` 已不再承载 provider/tool_call planner，但仍承载 routes、SSE、run queue/recovery/cancel 和 worker lifecycle；后续继续拆到 routes 与 kernel/worker 边界。
+- `apps/api/src/agent/planner.ts` 当前承载业务预览和 tool_call 归一，是下一阶段拆分 `agent/tools/*` 和 `agent/kernel` 的中间边界。
 - OpenAI Agents SDK adapter 已形成最小可验证路径，但还没有把 SDK streaming/tracing/human-in-the-loop events 映射为前端实时事件。
 - 前端已有后端状态刷新式 action graph / memory panel，仍缺真正 token/tool progress 流式事件。
 - 文档验收需要区分当前可验证能力和下一阶段 runtime maturity gate。

@@ -62,6 +62,7 @@
 - Agent server tool execution should sit behind a tool executor boundary. Confirmation services should validate and manage lifecycle, then delegate confirmed action payloads to a dedicated executor that calls existing domain modules instead of duplicating business branches in routes or provider adapters.
 - Data Agent answer generation should be a read-only service. Keep structured data questions in a module that reads tenant-scoped projections and ledger summaries, returns answer text plus navigation, and never creates confirmation cards or mixes with route-level planning code.
 - Generic draft patch support should use a shared config-path service. Agent coverage for manual UI fields depends on reliable dot/array path parsing, old/new preview values, and model hydration after edits; do not duplicate that traversal inside planner routes.
+- Agent planner code should live outside HTTP route modules. Keep provider-native tool_call normalization, tenant planning context, multi-step decomposition, read steps, and action drafts in a planner boundary so routes only own authentication, transport, run lifecycle, and serialization.
 
 ## Testing
 
