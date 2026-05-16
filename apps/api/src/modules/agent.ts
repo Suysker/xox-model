@@ -1,9 +1,8 @@
 import type { FastifyInstance } from 'fastify'
 import type { ServerResponse } from 'node:http'
 import type { Kysely } from 'kysely'
-import { createProductDefaultModel, hydrateModelConfig, projectModel, type ModelConfig } from '@xox/domain'
+import { hydrateModelConfig, projectModel, type ModelConfig } from '@xox/domain'
 import type {
-  AgentActionKind,
   AgentActionRequest,
   AgentActionUpdatePayload,
   AgentNavigationEvent,
@@ -13,7 +12,7 @@ import type {
   AgentThreadEvent,
 } from '@xox/contracts'
 import type { Database, Row } from '../db/schema.js'
-import { jsonString, parseJson } from '../db/database.js'
+import { parseJson } from '../db/database.js'
 import { conflict, forbidden, notFound, unprocessable } from '../core/http.js'
 import type { Settings } from '../core/settings.js'
 import { newId } from '../core/security.js'
@@ -21,27 +20,12 @@ import { utcNow } from '../core/time.js'
 import { recordAudit } from './audit.js'
 import { requireCurrentUser, type CurrentUser } from './auth.js'
 import {
-  deleteVersion,
   exportWorkspaceBundle,
   getWorkspaceDraft,
   getWorkspaceForUser,
-  importWorkspaceBundle,
   listVersions,
-  rollbackToVersion,
-  saveDraft,
-  publishVersion,
 } from './workspace.js'
-import {
-  createActualEntry,
-  listEntries,
-  listPeriods,
-  listSubjectsForPeriod,
-  restoreEntry,
-  setPeriodStatus,
-  updateActualEntry,
-  voidEntry,
-} from './ledger.js'
-import { createVersionShare, revokeVersionShare } from './share.js'
+import { listEntries, listPeriods, listSubjectsForPeriod } from './ledger.js'
 import {
   archiveAgentMemory,
   compactThreadContextIfNeeded,
@@ -64,8 +48,15 @@ import {
 import { agentThreadEvents, type AgentThreadEventSignal } from '../agent/thread-events.js'
 import { buildAgentWritableConfigContext } from '../agent/tool-coverage.js'
 import { extractWorkspaceBundleArtifact, type ParsedWorkspaceBundleArtifact } from '../agent/workspace-bundle-artifact.js'
-import { assertActionDraftAllowed, assertActionExecutionAllowed, assertActionUpdateAllowed, coerceAgentActionKind } from '../agent/tool-policy.js'
 import { addRunEvent, listSerializedRunEvents, serializeRunEvent } from '../agent/run-events.js'
+import {
+  addAgentActionRequest,
+  addAgentPlanStep,
+  cancelAgentActionRequest,
+  confirmAgentActionRequest,
+  updateAgentActionRequest,
+  type AgentActionDraft,
+} from '../agent/action-requests.js'
 import {
   addMessage,
   buildThreadState,
@@ -90,17 +81,6 @@ type PlannerContext = {
   providedWorkspaceBundle?: ParsedWorkspaceBundleArtifact
 }
 
-type ActionDraft = {
-  kind: AgentActionKind
-  title: string
-  summary: string
-  targetLabel: string
-  riskLevel: 'low' | 'medium' | 'high'
-  details: Array<{ label: string; value: string }>
-  navigation: AgentNavigationEvent
-  payload: unknown
-}
-
 type ReadDraft = {
   title: string
   message: string
@@ -108,7 +88,7 @@ type ReadDraft = {
   status?: AgentPlanStepStatus
 }
 
-type PlannedItem = ActionDraft | ReadDraft
+type PlannedItem = AgentActionDraft | ReadDraft
 
 type RuntimePlannerStep = RuntimePlanResult['steps'][number]
 const activeRunControllers = new Map<string, AbortController>()
@@ -129,67 +109,6 @@ function getAgentRunQueueState(db: Kysely<Database>) {
     agentRunQueueStates.set(db, state)
   }
   return state
-}
-
-async function addActionRequest(ctx: PlannerContext, draft: ActionDraft) {
-  assertActionDraftAllowed(draft)
-  const id = newId()
-  const now = utcNow()
-  await ctx.db
-    .insertInto('agent_action_requests')
-    .values({
-      id,
-      thread_id: ctx.threadId,
-      run_id: ctx.runId,
-      workspace_id: ctx.workspace.id,
-      user_id: ctx.user.id,
-      kind: draft.kind,
-      status: 'pending',
-      title: draft.title,
-      summary: draft.summary,
-      target_label: draft.targetLabel,
-      risk_level: draft.riskLevel,
-      details_json: jsonString(draft.details),
-      navigation_json: jsonString(draft.navigation),
-      payload_json: jsonString(draft.payload),
-      created_at: now,
-      executed_at: null,
-      error_message: null,
-    })
-    .execute()
-  return ctx.db.selectFrom('agent_action_requests').selectAll().where('id', '=', id).executeTakeFirstOrThrow()
-}
-
-async function addPlanStep(
-  ctx: PlannerContext,
-  input: {
-    sequence: number
-    title: string
-    description: string
-    status: AgentPlanStepStatus
-    actionRequestId?: string | null
-    navigation?: AgentNavigationEvent | null
-  },
-) {
-  const id = newId()
-  const now = utcNow()
-  await ctx.db
-    .insertInto('agent_plan_steps')
-    .values({
-      id,
-      thread_id: ctx.threadId,
-      run_id: ctx.runId,
-      action_request_id: input.actionRequestId ?? null,
-      sequence_no: input.sequence,
-      title: input.title,
-      description: input.description,
-      status: input.status,
-      navigation_json: input.navigation ? jsonString(input.navigation) : null,
-      created_at: now,
-      updated_at: now,
-    })
-    .execute()
-  return ctx.db.selectFrom('agent_plan_steps').selectAll().where('id', '=', id).executeTakeFirstOrThrow()
 }
 
 function accountActionRequested(message: string) {
@@ -263,8 +182,8 @@ function memberFromMessage(config: ModelConfig, message: string) {
   return config.teamMembers.find((member) => message.includes(member.name)) ?? null
 }
 
-function isActionDraft(item: PlannedItem): item is ActionDraft {
-  return Boolean((item as ActionDraft).kind)
+function isActionDraft(item: PlannedItem): item is AgentActionDraft {
+  return Boolean((item as AgentActionDraft).kind)
 }
 
 function cloneConfig(config: ModelConfig) {
@@ -445,7 +364,7 @@ async function planLedgerCreateFromFields(
       occurredAt,
       allocations,
     },
-  } satisfies ActionDraft
+  } satisfies AgentActionDraft
 }
 
 async function planOnlineFactor(ctx: PlannerContext) {
@@ -502,7 +421,7 @@ async function planOnlineFactorFromFields(
       workspaceName: ctx.workspace.name,
       config: nextConfig,
     },
-  } satisfies ActionDraft
+  } satisfies AgentActionDraft
 }
 
 async function planPublish(ctx: PlannerContext) {
@@ -525,7 +444,7 @@ async function planPublish(ctx: PlannerContext) {
       reason: '发布版本属于版本管理动作，需要打开版本管理面板。',
     },
     payload: { kind: 'release', createShare },
-  } satisfies ActionDraft
+  } satisfies AgentActionDraft
 }
 
 async function planWorkspacePatch(
@@ -565,7 +484,7 @@ async function planWorkspacePatch(
       config: normalized,
       patches,
     },
-  } satisfies ActionDraft
+  } satisfies AgentActionDraft
 }
 
 async function planSnapshot(ctx: PlannerContext) {
@@ -584,7 +503,7 @@ async function planSnapshot(ctx: PlannerContext) {
       reason: '保存快照属于版本管理动作，需要打开版本管理面板。',
     },
     payload: { kind: 'snapshot' },
-  } satisfies ActionDraft
+  } satisfies AgentActionDraft
 }
 
 async function planResetDraft(ctx: PlannerContext) {
@@ -607,7 +526,7 @@ async function planResetDraft(ctx: PlannerContext) {
       reason: '重置草稿会覆盖当前输入，需要打开版本管理面板。',
     },
     payload: { revision: draft.revision },
-  } satisfies ActionDraft
+  } satisfies AgentActionDraft
 }
 
 async function planRollback(ctx: PlannerContext) {
@@ -635,7 +554,7 @@ async function planRollback(ctx: PlannerContext) {
       reason: '恢复版本会覆盖当前草稿，需要打开版本管理面板。',
     },
     payload: { versionId: version.id },
-  } satisfies ActionDraft
+  } satisfies AgentActionDraft
 }
 
 async function versionFromMessage(ctx: PlannerContext, message: string, versionNo?: number | null, versionName?: string | null) {
@@ -668,7 +587,7 @@ async function planDeleteVersion(ctx: PlannerContext) {
       reason: '删除版本属于版本管理动作，需要打开版本管理面板。',
     },
     payload: { versionId: version.id },
-  } satisfies ActionDraft
+  } satisfies AgentActionDraft
 }
 
 async function planShare(ctx: PlannerContext, input?: { versionNo?: number; versionName?: string; revoke?: boolean }) {
@@ -695,7 +614,7 @@ async function planShare(ctx: PlannerContext, input?: { versionNo?: number; vers
       reason: '分享链接属于版本管理动作，需要打开版本管理面板。',
     },
     payload: { versionId: version.id },
-  } satisfies ActionDraft
+  } satisfies AgentActionDraft
 }
 
 async function planLedgerVoid(ctx: PlannerContext) {
@@ -732,7 +651,7 @@ async function planLedgerVoid(ctx: PlannerContext) {
       reason: '作废分录需要打开本期账本并定位记录。',
     },
     payload: { entryId: entry.id },
-  } satisfies ActionDraft
+  } satisfies AgentActionDraft
 }
 
 async function planPeriodLock(ctx: PlannerContext) {
@@ -756,7 +675,7 @@ async function planPeriodLock(ctx: PlannerContext) {
       reason: '锁账动作需要打开本期账本并选中目标账期。',
     },
     payload: { periodId: period.id },
-  } satisfies ActionDraft
+  } satisfies AgentActionDraft
 }
 
 function planNavigationOnly(message: string): { message: string; navigation: AgentNavigationEvent } | null {
@@ -943,7 +862,7 @@ function planImportBundleFromValue(ctx: PlannerContext, rawBundle: unknown) {
       reason: '导入 bundle 会覆盖当前草稿，需要打开版本管理面板。',
     },
     payload: { bundle },
-  } satisfies ActionDraft
+  } satisfies AgentActionDraft
 }
 
 async function planImportBundle(ctx: PlannerContext) {
@@ -1054,7 +973,7 @@ async function plannedItemFromRuntimeStep(ctx: PlannerContext, step: RuntimePlan
         reason: '发布版本属于版本管理动作，需要打开版本管理面板。',
       },
       payload: { kind: 'release', createShare: Boolean(step.createShare) },
-    } satisfies ActionDraft
+    } satisfies AgentActionDraft
   }
   if (step.intent === 'workspace.rollback_version') {
     const version = await versionFromMessage(ctx, ctx.message, step.versionNo, step.versionName)
@@ -1076,7 +995,7 @@ async function plannedItemFromRuntimeStep(ctx: PlannerContext, step: RuntimePlan
         reason: '恢复版本会覆盖当前草稿，需要打开版本管理面板。',
       },
       payload: { versionId: version.id },
-    } satisfies ActionDraft
+    } satisfies AgentActionDraft
   }
   if (step.intent === 'workspace.delete_version') return planDeleteVersion(ctx)
   if (step.intent === 'workspace.reset_draft') return planResetDraft(ctx)
@@ -1122,7 +1041,7 @@ async function plannedItemFromRuntimeStep(ctx: PlannerContext, step: RuntimePlan
         reason: '锁账动作需要打开本期账本并选中目标账期。',
       },
       payload: { periodId: period.id },
-    } satisfies ActionDraft
+    } satisfies AgentActionDraft
   }
   if (step.intent === 'ledger.void_entry') return planLedgerVoid(ctx)
   if (step.intent === 'data.query_workspace') return planDataQueryRead(ctx, step)
@@ -1226,8 +1145,8 @@ async function planResponse(ctx: PlannerContext) {
     const sequence = index + 1
     await assertAgentRunLease(ctx.db, ctx.settings, ctx.runId)
     if (isActionDraft(item)) {
-      const action = await addActionRequest(ctx, item)
-      const step = await addPlanStep(ctx, {
+      const action = await addAgentActionRequest(ctx, item)
+      const step = await addAgentPlanStep(ctx, {
         sequence,
         title: item.title,
         description: item.summary,
@@ -1242,7 +1161,7 @@ async function planResponse(ctx: PlannerContext) {
     }
 
     if (item.navigation) navigationEvents.push(item.navigation)
-    const step = await addPlanStep(ctx, {
+    const step = await addAgentPlanStep(ctx, {
       sequence,
       title: item.title,
       description: item.message,
@@ -1576,76 +1495,6 @@ function startAgentRunQueueWorker(db: Kysely<Database>, settings: Settings) {
   }
 }
 
-async function executeAction(db: Kysely<Database>, settings: Settings, user: CurrentUser, action: Row<'agent_action_requests'>) {
-  const workspace = await getWorkspaceForUser(db, user)
-  await assertActionExecutionAllowed(db, workspace, user, action)
-  const payload = parseJson<any>(action.payload_json, {})
-  let result: unknown = null
-
-  if (action.kind === 'ledger.create_entry') {
-    result = await createActualEntry(db, { workspace, actor: user, ...payload })
-  } else if (action.kind === 'ledger.update_entry') {
-    result = await updateActualEntry(db, { workspace, actor: user, entryId: payload.entryId, ...payload })
-  } else if (action.kind === 'ledger.void_entry') {
-    await voidEntry(db, workspace, payload.entryId, user.id)
-    result = { ok: true }
-  } else if (action.kind === 'ledger.restore_entry') {
-    await restoreEntry(db, workspace, payload.entryId, user.id)
-    result = { ok: true }
-  } else if (action.kind === 'workspace.update_draft') {
-    result = await saveDraft(db, { workspace, actor: user, revision: payload.revision, workspaceName: payload.workspaceName, config: hydrateModelConfig(payload.config) })
-  } else if (action.kind === 'workspace.save_snapshot') {
-    result = await publishVersion(db, { workspace, actor: user, kind: 'snapshot' })
-  } else if (action.kind === 'workspace.publish_release') {
-    const version = await publishVersion(db, { workspace, actor: user, kind: 'release' })
-    result = { version }
-    if (payload.createShare) {
-      result = { version, share: await createVersionShare(db, { workspace: { ...workspace, active_version_id: version.id }, actor: user, versionId: version.id }) }
-    }
-  } else if (action.kind === 'workspace.rollback_version') {
-    result = await rollbackToVersion(db, { workspace, actor: user, versionId: payload.versionId })
-  } else if (action.kind === 'workspace.delete_version') {
-    await deleteVersion(db, workspace, payload.versionId)
-    result = { ok: true }
-  } else if (action.kind === 'workspace.reset_draft') {
-    const draft = await getWorkspaceDraft(db, workspace)
-    result = await saveDraft(db, { workspace, actor: user, revision: draft.revision, workspaceName: '默认工作区', config: createProductDefaultModel() })
-  } else if (action.kind === 'workspace.import_bundle') {
-    result = await importWorkspaceBundle(db, { workspace, actor: user, bundle: payload.bundle })
-  } else if (action.kind === 'ledger.lock_period') {
-    result = await setPeriodStatus(db, workspace, payload.periodId, user.id, 'locked')
-  } else if (action.kind === 'ledger.unlock_period') {
-    result = await setPeriodStatus(db, workspace, payload.periodId, user.id, 'open')
-  } else if (action.kind === 'share.create') {
-    result = await createVersionShare(db, { workspace, actor: user, versionId: payload.versionId })
-  } else if (action.kind === 'share.revoke') {
-    await revokeVersionShare(db, { workspace, actor: user, versionId: payload.versionId })
-    result = { ok: true }
-  } else {
-    throw unprocessable(`Unsupported agent action: ${action.kind}`)
-  }
-
-  await db
-    .updateTable('agent_action_requests')
-    .set({ status: 'executed', executed_at: utcNow(), error_message: null })
-    .where('id', '=', action.id)
-    .execute()
-  await db
-    .updateTable('agent_plan_steps')
-    .set({ status: 'executed', updated_at: utcNow() })
-    .where('action_request_id', '=', action.id)
-    .execute()
-  await recordAudit(db, {
-    workspaceId: workspace.id,
-    actorId: user.id,
-    action: 'agent.action_executed',
-    entityType: 'agent_action_request',
-    entityId: action.id,
-    meta: { kind: action.kind, provider: settings.llmProvider },
-  })
-  return result
-}
-
 function writeSseEvent(response: ServerResponse, event: string, data: unknown) {
   if (response.destroyed || response.writableEnded) return
   response.write(`event: ${event}\n`)
@@ -1896,45 +1745,14 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
     try {
       const user = await requireCurrentUser(db, settings, request)
       const { actionRequestId } = request.params as { actionRequestId: string }
-      const action = await db.selectFrom('agent_action_requests').selectAll().where('id', '=', actionRequestId).executeTakeFirst()
-      if (!action) throw notFound('Agent action request not found')
-      let result: unknown
-      try {
-        result = await executeAction(db, settings, user, action)
-      } catch (executionError) {
-        const message = safeRunErrorMessage(executionError)
-        await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', action.thread_id).execute().catch(() => undefined)
-        await addRunEvent(db, {
-          threadId: action.thread_id,
-          runId: action.run_id,
-          type: 'action_execution_failed',
-          title: '确认卡执行失败',
-          message: `${action.title}：${message}`,
-          status: 'failed',
-          data: { actionKind: action.kind },
-        }).catch(() => undefined)
-        throw executionError
-      }
-      const updated = await db.selectFrom('agent_action_requests').selectAll().where('id', '=', action.id).executeTakeFirstOrThrow()
-      const planSteps = await db.selectFrom('agent_plan_steps').selectAll().where('run_id', '=', action.run_id).orderBy('sequence_no', 'asc').execute()
-      const assistant = await addMessage(db, action.thread_id, 'assistant', `已执行：${action.title}`)
-      await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', action.thread_id).execute()
-      await addRunEvent(db, {
-        threadId: action.thread_id,
-        runId: action.run_id,
-        type: 'action_executed',
-        title: '确认卡已执行',
-        message: `已执行：${action.title}`,
-        status: 'completed',
-        data: { actionKind: action.kind },
-      })
-      agentThreadEvents.publish(action.thread_id, 'action_executed')
+      const result = await confirmAgentActionRequest(db, settings, user, actionRequestId)
+      agentThreadEvents.publish(result.threadId, 'action_executed')
       return {
-        actionRequest: serializeAction(updated),
-        result,
-        messages: [serializeMessage(assistant)],
-        runEvents: await listSerializedRunEvents(db, action.run_id),
-        planSteps: planSteps.map(serializePlanStep),
+        actionRequest: serializeAction(result.actionRequest),
+        result: result.result,
+        messages: result.messages.map(serializeMessage),
+        runEvents: result.runEvents,
+        planSteps: result.planSteps.map(serializePlanStep),
       }
     } catch (error) {
       const { sendError } = await import('../core/http.js')
@@ -1945,32 +1763,15 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
   app.post('/api/v1/agent/action-requests/:actionRequestId/cancel', async (request, reply) => {
     try {
       const user = await requireCurrentUser(db, settings, request)
+      const workspace = await getWorkspaceForUser(db, user)
       const { actionRequestId } = request.params as { actionRequestId: string }
-      const action = await db.selectFrom('agent_action_requests').selectAll().where('id', '=', actionRequestId).executeTakeFirst()
-      if (!action) throw notFound('Agent action request not found')
-      if (action.user_id !== user.id) throw forbidden()
-      if (action.status !== 'pending') throw conflict('Agent action is not pending')
-      await db.updateTable('agent_action_requests').set({ status: 'cancelled' }).where('id', '=', action.id).execute()
-      await db.updateTable('agent_plan_steps').set({ status: 'cancelled', updated_at: utcNow() }).where('action_request_id', '=', action.id).execute()
-      const updated = await db.selectFrom('agent_action_requests').selectAll().where('id', '=', action.id).executeTakeFirstOrThrow()
-      const planSteps = await db.selectFrom('agent_plan_steps').selectAll().where('run_id', '=', action.run_id).orderBy('sequence_no', 'asc').execute()
-      const assistant = await addMessage(db, action.thread_id, 'assistant', `已取消：${action.title}`)
-      await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', action.thread_id).execute()
-      await addRunEvent(db, {
-        threadId: action.thread_id,
-        runId: action.run_id,
-        type: 'action_cancelled',
-        title: '确认卡已取消',
-        message: `已取消：${action.title}`,
-        status: 'cancelled',
-        data: { actionKind: action.kind },
-      })
-      agentThreadEvents.publish(action.thread_id, 'action_cancelled')
+      const result = await cancelAgentActionRequest(db, workspace, user, actionRequestId)
+      agentThreadEvents.publish(result.threadId, 'action_cancelled')
       return {
-        actionRequest: serializeAction(updated),
-        messages: [serializeMessage(assistant)],
-        runEvents: await listSerializedRunEvents(db, action.run_id),
-        planSteps: planSteps.map(serializePlanStep),
+        actionRequest: serializeAction(result.actionRequest),
+        messages: result.messages.map(serializeMessage),
+        runEvents: result.runEvents,
+        planSteps: result.planSteps.map(serializePlanStep),
       }
     } catch (error) {
       const { sendError } = await import('../core/http.js')
@@ -1981,53 +1782,14 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
   app.patch('/api/v1/agent/action-requests/:actionRequestId', async (request, reply) => {
     try {
       const user = await requireCurrentUser(db, settings, request)
+      const workspace = await getWorkspaceForUser(db, user)
       const { actionRequestId } = request.params as { actionRequestId: string }
-      const action = await db.selectFrom('agent_action_requests').selectAll().where('id', '=', actionRequestId).executeTakeFirst()
-      if (!action) throw notFound('Agent action request not found')
-      if (action.user_id !== user.id) throw forbidden()
-      if (action.status !== 'pending') throw conflict('Agent action is not pending')
-      const body = request.body as AgentActionUpdatePayload
-      const update: Partial<Row<'agent_action_requests'>> = {}
-      if (typeof body.title === 'string') update.title = body.title.slice(0, 180)
-      if (typeof body.summary === 'string') update.summary = body.summary
-      if (typeof body.targetLabel === 'string') update.target_label = body.targetLabel.slice(0, 180)
-      if (body.riskLevel && ['low', 'medium', 'high'].includes(body.riskLevel)) update.risk_level = body.riskLevel
-      if (Array.isArray(body.details)) update.details_json = jsonString(body.details)
-      if (body.navigation) update.navigation_json = jsonString(body.navigation)
-      if ('payload' in body) update.payload_json = jsonString(body.payload)
-      if (Object.keys(update).length === 0) throw unprocessable('No editable fields provided')
-      assertActionUpdateAllowed(coerceAgentActionKind(action.kind), {
-        ...(update.risk_level ? { riskLevel: update.risk_level as never } : {}),
-        ...(body.navigation ? { navigation: body.navigation } : {}),
-      })
-      await db.updateTable('agent_action_requests').set(update).where('id', '=', action.id).execute()
-      const updated = await db.selectFrom('agent_action_requests').selectAll().where('id', '=', action.id).executeTakeFirstOrThrow()
-      await db
-        .updateTable('agent_plan_steps')
-        .set({
-          title: updated.title,
-          description: updated.summary,
-          navigation_json: updated.navigation_json,
-          updated_at: utcNow(),
-        })
-        .where('action_request_id', '=', action.id)
-        .execute()
-      await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', action.thread_id).execute()
-      const planSteps = await db.selectFrom('agent_plan_steps').selectAll().where('run_id', '=', action.run_id).orderBy('sequence_no', 'asc').execute()
-      await addRunEvent(db, {
-        threadId: action.thread_id,
-        runId: action.run_id,
-        type: 'action_updated',
-        title: '确认卡已编辑',
-        message: `确认卡已编辑：${updated.title}`,
-        status: 'info',
-        data: { actionKind: action.kind },
-      })
-      agentThreadEvents.publish(action.thread_id, 'action_updated')
+      const result = await updateAgentActionRequest(db, workspace, user, actionRequestId, request.body as AgentActionUpdatePayload)
+      agentThreadEvents.publish(result.threadId, 'action_updated')
       return {
-        actionRequest: serializeAction(updated),
-        runEvents: await listSerializedRunEvents(db, action.run_id),
-        planSteps: planSteps.map(serializePlanStep),
+        actionRequest: serializeAction(result.actionRequest),
+        runEvents: result.runEvents,
+        planSteps: result.planSteps.map(serializePlanStep),
       }
     } catch (error) {
       const { sendError } = await import('../core/http.js')

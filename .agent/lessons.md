@@ -55,6 +55,7 @@
 - When reducing the Agent route module, peel off backend-owned lifecycle services first. Moving run event persistence into a dedicated service preserves behavior while creating a clean boundary for later kernel, tool, confirmation, and route extraction.
 - Agent thread recovery deserves its own store boundary. Keep thread ownership checks, message writes, ThreadState hydration, and DTO serialization out of route files so refresh recovery, SSE, history, and future kernel code all read the same server-owned state.
 - Real-provider tool reliability depends on explicit tool semantics, not backend guessing. When a DeepSeek/OpenAI-compatible smoke misses a tool call, improve the tool description and planner prompt with verb-to-tool and parameter mapping, then re-run real smoke with planner source locked to provider-native `tool_calls`.
+- Confirmation cards need a lifecycle service, not route-local SQL. Keep creation, editing, confirmation, cancellation, execution status, assistant messages, run events, and audit writes together so refresh recovery and SSE read one consistent backend-owned state.
 
 ## Testing
 

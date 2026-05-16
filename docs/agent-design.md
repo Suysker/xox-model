@@ -80,7 +80,10 @@ modules/agent.ts
           -> OpenAI-compatible Chat Completions tools/tool_calls
       -> runtime/runtime-adapter.ts
           -> provider-neutral plan result
-  -> normalize runtime steps into action requests / read steps
+  -> normalize runtime steps into read steps / action request drafts
+  -> action-requests.ts
+      -> persist confirmation cards and plan steps
+      -> edit / confirm / cancel lifecycle
 ```
 
 边界约束：
@@ -89,8 +92,9 @@ modules/agent.ts
 - runtime adapter 不读取数据库、不写数据库、不创建确认卡、不执行业务工具。
 - OpenAI Agents SDK adapter 使用 SDK 的 `Agent / Runner / tool / OpenAIChatCompletionsModel` 做 orchestration；SDK tool 的 `execute` 只把工具参数收集为内部 `AgentToolCallStep`，返回 model-visible preview receipt，不执行领域服务。
 - `LLM_PROVIDER=openai` 只选择 OpenAI Agents SDK adapter；`LLM_PROVIDER=openai-compatible / deepseek / doubao / qwen` 继续走通用 Chat Completions adapter。两条路径都输出同一个 `RuntimePlanResult`。
-- `modules/agent.ts` 暂时继续负责业务预览、确认卡和执行，以保证本轮切分后 API 语义不变。
-- 后续再把业务预览和确认卡下沉到 `agent/kernel` 与 `agent/tools`。
+- `modules/agent.ts` 暂时继续负责业务预览和 planner orchestration，以保证 API 语义不变。
+- 确认卡创建、编辑、确认、取消、执行状态更新、assistant message、run event 和审计已下沉到 `apps/api/src/agent/action-requests.ts`；route 只负责认证、HTTP DTO 序列化和 thread publish。
+- 后续再把业务预览下沉到 `agent/kernel` 与 `agent/tools`。
 
 ### `apps/api/src/agent/kernel`
 
@@ -136,6 +140,17 @@ agent routes / confirmation flow
 ```
 
 Tool Policy 只做权限、状态和可见导航校验，不执行业务写入，不生成确认卡，不调用 provider。
+
+### `apps/api/src/agent/action-requests.ts`
+
+当前落地的 confirmation service 边界。它统一处理：
+
+- `addAgentActionRequest` / `addAgentPlanStep`：模型 tool call 被归一为写入动作草稿后，先持久化确认卡和 action graph step。
+- `confirmAgentActionRequest`：确认时重新执行 tool policy，调用 workspace / ledger / share 等同一套领域服务，更新 action/plan 状态，写 assistant message、run event 和 audit log。
+- `cancelAgentActionRequest`：取消 pending 确认卡并同步取消关联 plan step。
+- `updateAgentActionRequest`：用户编辑确认卡后，重新校验风险等级和显式导航要求，并把 plan step 的标题/描述/导航同步到服务端状态。
+
+route module 不再直接拼确认卡状态，避免确认、编辑、取消、执行、恢复和 SSE 看到不同版本的状态。
 
 ### `apps/api/src/agent/prompts`
 
