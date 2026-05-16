@@ -1,5 +1,7 @@
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { randomUUID } from 'node:crypto'
+import { hostname } from 'node:os'
 
 export type Settings = {
   databaseUrl: string
@@ -14,15 +16,25 @@ export type Settings = {
   openaiCompatibleBaseUrl: string
   openaiCompatibleModel: string
   openaiCompatibleApiKey: string | null
+  agentWorkerId: string
+  agentRunLeaseTtlMs: number
 }
+
+const generatedAgentWorkerId = `api-${hostname()}-${process.pid}-${randomUUID().slice(0, 8)}`
 
 function defaultDatabaseUrl() {
   const apiRoot = dirname(dirname(fileURLToPath(import.meta.url)))
   return `sqlite:///${resolve(apiRoot, '..', 'data', 'xox.db').replaceAll('\\', '/')}`
 }
 
+function numberEnv(value: string | undefined, fallback: number) {
+  const parsed = Number(value ?? fallback)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
 export function getSettings(): Settings {
   const llmProvider = process.env.LLM_PROVIDER ?? process.env.OPENAI_COMPATIBLE_PROVIDER ?? 'deepseek'
+  const agentRunLeaseTtlMs = Math.max(1000, numberEnv(process.env.AGENT_RUN_LEASE_TTL_MS, 45_000))
   return {
     databaseUrl: process.env.XOX_DATABASE_URL ?? defaultDatabaseUrl(),
     sessionCookieName: process.env.XOX_SESSION_COOKIE_NAME ?? 'xox_session',
@@ -36,6 +48,8 @@ export function getSettings(): Settings {
     openaiCompatibleBaseUrl: process.env.OPENAI_COMPATIBLE_BASE_URL ?? process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com',
     openaiCompatibleModel: process.env.OPENAI_COMPATIBLE_MODEL ?? process.env.DEEPSEEK_MODEL ?? 'deepseek-v4-pro',
     openaiCompatibleApiKey: process.env.OPENAI_COMPATIBLE_API_KEY ?? process.env.DEEPSEEK_API_KEY ?? null,
+    agentWorkerId: process.env.AGENT_WORKER_ID ?? generatedAgentWorkerId,
+    agentRunLeaseTtlMs,
   }
 }
 

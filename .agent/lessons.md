@@ -1,0 +1,172 @@
+# Lessons
+
+## Tooling
+
+- On Windows PowerShell, prefer `npm.cmd` instead of `npm` because execution policies can block `npm.ps1`.
+- In this repo, pass Vite `--host/--port` flags from `apps/web` or after `--`. Forwarding them through the root workspace script without `--` makes `npm` eat the flags and Vite falls back to localhost/IPv6-only binding.
+- After migrating the API to a Node workspace, keep root scripts as npm workspace commands (`dev:api`, `build:api`, `test:api`) and remove Python install/test paths from docs and deploy scripts in the same change.
+
+## Deployment
+
+- If the user wants a one-click deploy script that does not touch an existing web server, keep deployment isolated to an app-level `systemd` service. Do not install, rewrite, restart, or delete `nginx` sites as part of that script.
+
+## TypeScript
+
+- When `exactOptionalPropertyTypes` is enabled, props that may explicitly receive `undefined` need `| undefined` in their types or conditional prop spreading.
+- With `exactOptionalPropertyTypes`, do not pass `body: undefined`, `headers: undefined`, or optional payload fields set to `undefined` into `fetch`/API helpers. Build request objects conditionally instead.
+- FastAPI validation errors often return `detail` as an array of objects, not a string. Frontend API helpers must normalize that structure before surfacing it, or users will see `[object Object]`.
+- Shared workspace packages consumed by both Vite and NodeNext must use `.js` extensions in their relative TypeScript imports, or API `tsc --noEmit` fails when it follows the package export source.
+- If a shared domain package may run in Node, do not reference `window` directly. Access browser-only globals through `globalThis` guards so the API build stays DOM-free.
+
+## Agent OS
+
+- Agent write tools must produce a stored confirmation request before calling domain services. Direct model-to-database execution bypasses navigation, audit, and user review.
+- Agent commands that mutate business state should first emit a UI navigation event to the relevant page or panel. Silent background writes make the product feel uninspectable and are harder to audit.
+- Keep account-impacting actions outside the Agent tool surface. Login, logout, account deletion, and password changes should remain manual even if the Agent can explain where to do them.
+- When a model planner is introduced, keep a deterministic fallback and expose planner source in API responses. This makes real-provider smoke tests meaningful without making CI depend on network keys.
+- Treat read-only forecasting language such as `如果 / 预测 / 试算 / 会怎样` as a backend guardrail, not only a prompt instruction. Real models may still choose a write intent unless the domain layer overrides it.
+- Pending Agent actions must be editable before execution, but edits still need to flow through the same domain services. Editable payloads are product flexibility, not permission to bypass validation.
+- Multi-action user messages should be segmented before model planning. If the whole sentence is sent as one prompt, the model can collapse several requested actions into a single tool plan.
+- Agent confirmation-card editors should submit the live textarea values, not only React state. Browser automation, IME composition, or fast edits can make the DOM value newer than state, and saving the stale state breaks user trust in editable actions.
+- For SaaS agents, do not treat JSON-mode planner output as tool calling. Keep prompts, tool catalog, tenant-scoped memory, and context compaction in explicit modules, and prefer provider-native `tool_calls` before any JSON fallback.
+- Agent memory must be scoped at least by user and workspace, with list/delete management paths. Thread-only or global memory leaks tenant context and is not acceptable for a SaaS product.
+- Before extending an Agent scaffold, make an explicit runtime adoption decision. For this repo, OpenAI Agents SDK is the target runtime architecture, DeepSeek is only an OpenAI-compatible provider adapter for real model testing, Claude Agent SDK should not be introduced, and OpenClaw is an architecture reference for control plane / execution plane / approvals rather than a drop-in SaaS backend.
+- In Chinese Agent intent rules, distinguish action verbs from noun phrases. `发布当前版本` means publish, but `发布版 2` names an existing release; regex guards need negative cases so share/revoke/rollback instructions are not misclassified as new publish actions.
+- Real-provider Agent smoke tests must fail closed when the provider key is absent. Falling back to rules during a smoke command proves only the fallback path and recreates the fake-demo problem the smoke is meant to prevent.
+- When a real Agent provider is selected, never let regex/rule planning silently replace missing model tool calls. Provider mode should either normalize provider-native tool calls into confirmation cards or return a visible failed planning step; otherwise the UI is still a fake assistant.
+- Data-agent answers should be read-only typed tools, not free SQL and not backend regex guesses. Let the model choose a structured query tool, then let server-side domain services compute tenant-scoped answers and navigation context.
+- Keep provider defaults aligned with current official API docs. For DeepSeek Tool Calls, default to `deepseek-v4-pro`; older compatibility aliases such as `deepseek-chat` should be explicit overrides, not baked-in defaults.
+- Full real-provider Agent matrix smoke is intentionally slow because it proves model/tool/API behavior across many directions. Keep it out of default CI, but preserve it as a named command with structured coverage output.
+- For Agent import tools, parse large user-provided JSON artifacts on the server and pass only a summary to the model. Requiring the model to copy a full bundle into tool-call arguments causes unstable provider behavior and weakens validation.
+- Do not bake one OpenAI-compatible vendor into Agent runtime contracts. Keep planner sources and settings provider-neutral, use `OPENAI_COMPATIBLE_*` for configurable vendors, and treat DeepSeek as one smoke provider rather than the architecture.
+- Agent memory redaction needs two gates: reject secret-like content from long-term memory and redact secret-like text before provider prompt/context summary injection.
+- Editable Agent confirmation cards need policy checks at creation, edit, and execution time. Navigation, risk level, tenant ownership, locked periods, and derived ledger targets must be revalidated after every user edit.
+- Frontend Agent run graphs should render from backend-owned `planSteps`, `actionRequests`, and `navigationEvents`. Duplicating action state in React makes confirmation cards drift from server truth after edits, cancellation, or execution.
+- When wiring OpenAI Agents SDK into a provider-neutral runtime, use the SDK provider/model abstractions (`OpenAIProvider`, `Agent`, `Runner`, `tool`) inside the adapter and return only internal plan results. Do not leak OpenAI SDK or OpenAI client types into contracts/domain, and do not let SDK tools execute business writes directly.
+- For Agent OS recovery, keep conversations, runs, plan steps, and confirmation cards server-owned. Frontend storage should hold only a recoverable current thread pointer; otherwise refreshes and network interruptions turn the Agent console into a fake one-shot UI.
+- Background Agent runs need a persisted `running` record before model work starts. Return the `threadId/runId` immediately, let the frontend poll server-owned thread state, and keep durable queues/SSE/cancellation as explicit maturity gaps instead of pretending one HTTP response is a background conversation.
+- Restart recovery needs both the original input message and an idempotency boundary. Safe running runs can be replayed only before plan steps or confirmation cards exist; once partial output exists, fail closed and cancel pending cards rather than duplicating write previews.
+- A flexible Agent needs a first-class clarification tool. When required fields are missing and memory cannot safely fill them, the model should call a read-only clarification tool instead of local code guessing parameters or generating an invalid confirmation card.
+- Run cancellation must be backend-owned. Mark the run cancelled, abort active provider calls where possible, and re-check run status before writing assistant messages or confirmation cards so late model results cannot resurrect cancelled work.
+- Background Agent runs in a SaaS deployment need database-backed worker leases. A process-local controller is not enough; every assistant message, plan step, and confirmation card write must be guarded by the current `worker_id` lease so another worker can recover expired runs without duplicate late writes.
+
+## Testing
+
+- `get_settings()` is cached in the Python API. Tests that swap `XOX_DATABASE_URL` between app instances must clear that cache before calling `create_app()`, or supposedly isolated tests will silently share one database.
+
+## State and Versioning
+
+- In an autosaved workspace, `snapshot` and `publish` must flush pending dirty draft state before creating an immutable version. Otherwise the backend can publish stale data even though the UI shows newer edits.
+- Session restore endpoints must be idempotent under concurrent browser calls. Rotating the session token on every `/auth/me` request makes one of two parallel refresh checks fail with a stale cookie and can kick users out during page reload.
+- If export/import includes historical versions, version-list APIs must return the real stored version payload for each version. Reusing the current draft config for every listed version silently corrupts rollback and bundle semantics.
+- Public sharing must point to immutable `release` versions only. Never share mutable drafts or working snapshots, or external links will drift as users keep editing.
+- Public share pages should read the stored released result payload, not recompute from the latest frontend model code. Recalculation can silently change historical shared numbers after unrelated model updates.
+
+## Product Modeling
+
+- For business models, raw financial fields are not enough; inputs should map to user mental models such as members, employees, shareholders, scenarios, and month-level decisions.
+- For operating models, “configurable” is not the same as “many fields”. The UI must reflect the real revenue engine and cost engine of the business.
+- Split the product shell early. `App.tsx` should orchestrate workspace state and routing, while dashboards and input workbenches live in dedicated components.
+- Version management is a workspace action, not automatically a full page. Snapshot, publish, import, and export usually belong in the top-right workspace control.
+- If users think in “default month plus exceptions”, store an explicit monthly template. Do not fake that workflow by copying from a real month.
+- When screen density matters, put editable defaults in the first row of the working table. Do not spend a separate card or capsule row on “default values” if the user still has to scan the table right below it.
+- If users think in “scrubbing through months”, use a true rail or slider instead of a wall of month pills.
+- `No horizontal scrollbar` is a product requirement, not a styling preference. Prefer responsive charts, compact controls, and alternative layouts before allowing horizontal scroll.
+- For month-by-month operating inputs, fields like event cadence and sales factor should be edited as visual trajectories first and raw numbers second.
+- When two monthly drivers are edited together in user thinking, merge them into one linked chart instead of stacking separate charts.
+- For dense operational tables, shrinking `min-width` is not enough. Use fixed column widths, center headers, remove redundant per-cell units, and size the inputs to the real editing need.
+- In side-by-side dashboard layouts, do not let one pane create fake empty space in the other. If users care about alignment, the cards need a shared visual rhythm.
+- Height balance in analytics pages should come from real analytical density, not filler paragraphs.
+- UI localization is not just component copy. When switching the product back to Chinese, audit frontend page strings, formatting helpers like payback/date fallbacks, and backend seed/default names (workspace/version names) together, then verify in a real browser so leftover English labels like page titles and sidebar headings do not slip through.
+- Localization acceptance has to walk every major tab and second-level tab in the browser, not just the landing view. This round still had `Inputs` hiding inside the input workbenches after the main pages looked Chinese.
+- When a member analytics page combines a trend chart and a donut chart, keep them inside one shared analysis block and compress the donut legend. A tall one-column legend will create obvious dead space beside the line chart.
+- Once per-member cards exceed one screen and repeat the same financial fields, switch to a compact table. Dense operating analysis should default to table rhythm, not stacked cards.
+- If one control only affects the selected-month views, place it next to the selected-month table instead of at the top of the whole page. Do not let a month slider visually imply that it drives the long-horizon trend chart.
+- In member finance tables, `member` and `employment type` are separate comparison axes. Do not nest type badges inside the member name cell if users need to scan by type.
+- If a trend chart is visually the primary month navigator, make the months on the chart clickable and let the selected-month panels follow it. Do not force the user to move their cursor away to a second control for the same selection.
+- If a section title already encodes the selected month, remove duplicate month badges from the same panel. Repeating the same value in the top-right wastes space and weakens hierarchy.
+- For time-series charts where users compare relative changes between close values, do not anchor the Y axis at zero by default. Use an adaptive range with padding so the variation remains legible.
+- In a finance breakdown panel, do not repeat the same cost story in both a detailed list and a second “cost structure” block. Once the breakdown rows already explain the stack, the extra block usually wastes height and creates visual clutter.
+- In one dashboard, the primary trend chart should follow the same visual language as the rest of the analysis cards unless there is a strong semantic reason not to. A lone black chart block inside an otherwise light analytics surface usually feels disconnected.
+- If the breakdown title already includes the selected month, remove repeated current-month badges from the panel header and month rail. Keep only the progression index if it still adds orientation.
+- Remove dead narrative inputs when they stop serving the decision workflow. Deleting `notes` is better than hiding it behind another tab.
+- In Chinese finance breakdown rows, avoid uppercase/tracking-heavy label styling and give the breakdown pane enough width before accepting label wraps. These rows are scanning aids; they should read as single-line ledger items whenever possible.
+- In split analytics dashboards, reclaim width by reducing inter-panel gutters before shrinking the main chart. Users usually perceive narrow charts sooner than they perceive slightly tighter spacing.
+- When a chart metric toggle only changes the chart lens, style it as a lightweight secondary control close to the chart. Do not let `cash / profit / revenue / cost` read like a top-level page navigation bar.
+- A cost system is not configurable if `monthly fixed / per-event / per-unit` are stored as three scalars. Model baseline costs as editable item lists per cost driver so users can add, rename, and remove items without code changes.
+- Do not label baseline business costs as `default values` in the main cost-structure editor. If the user is editing the long-term cost ledger itself, each row is a real cost item; reserve `template/default` language for month-level exception tables only.
+- In dense finance editors, do not let the top summary block become a second editor. If users need the top area to understand the effect of lower edits, make it a read-only overview and move all editing controls into a separate lower work area.
+- In cost dashboards with uneven information density, avoid left/right equal-height summary blocks. Stack `baseline` and `current-month impact` vertically so the overview stays compact and does not create dead space.
+
+## Financial Domain Modeling
+
+- In entertainment operating models, do not mix performer economics with backstage staffing. A `per-show subsidy` for staff must be modeled as employee cost, not as a performer field.
+- When investment comes from multiple people, never collapse startup capital into one scalar if the user is reasoning about ownership. Model shareholders explicitly with both `investmentAmount` and `dividendRate`.
+- Separate input modules by business axis, not by implementation convenience. Shareholder capital, revenue engine, and cost structure are different editing jobs.
+- Project-level framing assumptions such as `start month` and `horizon` belong with the capital/setup model if the user sees them as the premise of the whole investment, not as part of monthly revenue editing.
+- Revenue assumptions and monthly revenue rhythm belong in one `revenue engine` workflow when both are part of the same income judgment in the user’s head.
+- Extra online / e-cut income must be a first-class monthly revenue field. Do not hide it in notes or force it into offline sales assumptions.
+- If online and offline sales have different pricing, do not model online income as a raw monthly amount. Tie it back to the same offline sales engine with an explicit `online sales factor` and `online unit price`, otherwise price changes and sales-strength changes will not propagate together.
+- In monthly idol-group models, member travel may be configured on a member row, but its financial driver is still `per-show cost`. Bucket costs by economic driver, not by which form owns the field.
+- In financial dashboards, never label a subtotal as `totalCost`. If commissions are part of the cost stack, displayed total cost and charts must include commissions too.
+- A stage-cost system is still rigid if `VJ / 推流 / 聚餐` only exist as hardcoded columns in a monthly table. Model stage costs as editable item definitions plus per-month value/count rows so the user can add new items like `团建/场` without code changes.
+- For per-show optional costs, storing only `amount` is insufficient. The model also needs an explicit monthly `count` so users can express cases like “3月聚餐只算 3 场” or “3月化妆不计入”.
+- Migration code should merge legacy scalar fields into new structured arrays even when transitional bundles already contain empty placeholder arrays. Otherwise old values get silently zeroed during schema upgrades.
+- Do not hardcode coarse numeric `step` values on editable cost amounts. Real operating costs like `150` or `300` are valid business inputs; the UI must not mark them invalid just because the spinner was tuned to `100`.
+- In month-difference cost tables, consumables should be edited as a per-unit numeric driver (`/张`), not as a boolean include switch. Users reason about `0` or `6/张`, not about abstract on/off flags.
+- If a cost mode is `monthly`, do not render a fake second column like `计入`. Count-like fields should only exist for modes that genuinely repeat, such as `perEvent`.
+- If a stage-cost table already has a mode selector, keep item names mode-agnostic. Labels like `VJ / 化妆 / 耗材` should stay plain; `/月 /场 /张` belongs in the type dropdown, not in the name itself.
+- When migrating from a transitional cost model, only move legacy per-unit material fields into stage-cost rows if the old bundle actually used month-level material toggles or per-month material amounts. Otherwise preserve baseline `perUnitCosts` as baseline costs instead of silently reclassifying them.
+- For per-unit stage costs like `耗材`, the template row should hold the baseline unit amount and month rows should edit a `0-1` inclusion factor. Users often think in “this month counts or not” rather than retyping the raw unit price every month.
+- In dense monthly cost tables, `单价` and `场次` for per-event items should share one composite cell before adding more columns. Reducing column count is more valuable than giving each tiny numeric field its own header cell.
+- If `按张` costs are modeled as a baseline amount plus a month coefficient, render them as the same kind of composite cell users see for `按场`: show `单价 / 系数` together instead of hiding the baseline amount in one row and the coefficient in another shape.
+- Inside a dense composite cell, the secondary repeater input like `场次` should be visibly narrower than the amount input, and month-reset actions should default to icon-only buttons. Dense cost tables need horizontal space for data, not repeated chrome.
+- In mixed stage-cost tables, automatically sort columns by economic driver priority (`按张 -> 按场 -> 按月`) before rendering. Users compare high-frequency variable costs first; leaving columns in creation order weakens scanability.
+- In compact financial grids, native browser number spinners are layout bugs. Remove them and use tabular figures so narrow numeric inputs show the full value cleanly.
+- If the top cost block only exists to show the effect of lower edits, make it a single visual summary such as a cumulative monthly chart. Do not turn the summary area into a second editing surface.
+- If users already finish the real cost configuration inside month-difference tables, delete the extra baseline editor instead of inventing a parallel `long-term baseline` workflow.
+- For monthly cost overviews, do not default to cumulative bars if the user needs to compare one month against another. Use independent stacked bars by cost type, and keep total labels visible above each month.
+- If the user reasons about costs in leaf items like `化妆 / 推流 / 聚餐 / 耗材`, do not re-aggregate them into broad buckets in the chart. Show the leaf items directly, narrow the bars, and provide a real hover tooltip for the breakdown.
+- In monthly stacked cost charts, keep the total label hugging the top of each bar and anchor the tooltip to the hovered bar instead of floating it in the middle. The tooltip should also show each item’s share of that month’s total so the stack reads as structure, not just raw amounts.
+- If chart labels live outside the bars, reserve explicit vertical headroom for them in the plot area. Do not rely on overflow luck; otherwise the highest-month labels will get clipped against the chart frame.
+- In dense editors with multiple tables, table-level actions like `同步默认` should live next to the table they affect, not in a shared section header. Global placement blurs ownership and wastes scan effort.
+- In bar-chart dashboards, the tooltip should orbit the hovered bar from the left or right. Do not center it over the active bar; covering the user’s hover target breaks the comparison.
+- If a section already has a clear parent title like `成本编辑`, do not add another wrapper heading such as `月度差异` plus extra explanatory copy. Put the tabs in the main header and let the active table be the content.
+- In dense editors, if tabs are the primary mode switch, place them immediately beside the section title and move tab-specific actions into the same top row. Do not bury the action buttons inside the card body and force the user to scan downward before acting.
+- Do not keep generic training-side fields like `额外每场 / 额外固定` once the same adjustments can be expressed in a dynamic stage-cost table. One editable source of truth is better than parallel knobs.
+- In paired financial price inputs such as `线上单价 / 线下单价`, give both fields the same label/help height and equal-width columns. If the two prices sit in one business block, any vertical drift makes the form look broken even when the data model is correct.
+- For coefficient-style finance inputs like `salesMultiplier` and `onlineSalesFactor`, round values at the state and migration layer before they hit the input. If you only rely on display formatting, users will still run into float-noise values like `1.320000052`.
+- If a dashboard already has a shared `selected month` state, every month-oriented chart in that panel should publish clicks into the same state instead of keeping month selection isolated to sliders. A chart that looks selectable but does not drive the other month detail panels feels broken.
+- In chart-plus-table input sections, do not repeat the workflow with extra subheadings and helper copy once the chart, table, and controls already make the interaction obvious. Redundant copy burns vertical space and weakens scanability.
+- In dense numeric tables, factor columns such as `onlineSalesFactor` must use the same horizontal centering as neighboring numeric fields in both the template row and month rows. One off-axis factor column makes the whole table look broken.
+- In roster-driven performance models, team members are not static across the whole horizon. If the business expects people to leave mid-cycle, model an explicit departure month and stop counting that person’s revenue, base pay, and travel after the selected month.
+- For lifecycle controls like a member leaving the group, bind the field to the current planning horizon rather than a raw calendar month number. In a `3月 -> 次年2月` cycle, `做到6月` should map to the 4th operating month, not a hardcoded numeric month value.
+- Never trust mojibake copied from terminal output when patching Chinese UI. If one new label renders as gibberish, replace the source string with a clean product-facing term instead of reusing the broken bytes.
+- If a cycle-linked UI control renders garbled month text, inspect the upstream month-label generator and default model strings first. Fixing the local component alone will not help if its options are derived from corrupted labels.
+- When default assumptions change, update both scenario tests and storage-migration tests in the same change. Old assertions around horizon length, shareholder count, and baseline revenue will otherwise produce false failures.
+
+- Never reuse the login form as a loading placeholder during session restore or workspace bootstrap. Auth loading and workspace loading need dedicated, neutral loading states.
+- Account/session actions, workspace/version actions, and page navigation belong in the persistent product shell. A full-width account strip above the app breaks hierarchy and makes the product feel stitched together.
+- On Windows, piping Chinese source through ad-hoc shell scripts can turn UTF-8 copy into question marks. After scripted text edits, verify the real browser rendering before considering the change done.
+- In bookkeeping workflows, do not ask for member or employee attribution before the user has chosen the budget subject. Pick the subject first, then reveal only the relevant people and auto-fill the planned amount from that context.
+- In bookkeeping, avoid splitting status facts and the real posting action into separate left/right regions. The selected subject, attribution, amount input, and post action should live in one compact workbench so the user can finish one entry without scanning the page.
+- For revenue models where every sale belongs to a member, actual-income bookkeeping should default to a member-first ledger grid, not a subject-first generic form. If the user already thinks in `谁卖了几张`, forcing them through `先选科目再挂人` only adds ceremony.
+- If users can already type or paste actuals in Excel, the product must beat Excel on speed and connected value at the same time: grid editing, bulk paste, auto-calculation, baseline linkage, variance roll-up, and audit traceability. Without that, a custom ledger UI is just slower Excel.
+- In desktop shells for dense finance products, the sidebar is infrastructure, not content. If the shell starts to feel like a second dashboard, shrink it until navigation reads as steps and the business surface remains dominant.
+- Version management drawers should behave like narrow operational panels, not mini pages. Prefer one-column action groups, chip-style status summaries, and wrapped share controls before accepting any horizontal overflow.
+- A public share page for a planning product must reuse the same analytical surfaces as the private app. If sharing only shows headline totals, users will experience the model, analysis, and inputs as artificially split products.
+- On mobile, a desktop-style product shell cannot simply stack above the page. Compress workspace, navigation, secondary tabs, and account actions into one shallow toolbar so the main content still appears in the first viewport.
+- On mobile, if four primary product stages still consume most of the first screen, switch from a vertical list to a compact grid. The first viewport should introduce the working surface, not only the shell.
+- In user-facing finance products, remove engineering verbs like `流转 / 回滚 / 升级` from primary UI where a product action like `版本管理 / 恢复草稿 / 发布正式版本` is clearer.
+- Product navigation should name the user action, not the implementation module. `看测算 / 调模型 / 记实际 / 看偏差` is easier to reason about than mixed nouns like `经营分析 / 模型输入 / 预实分析`.
+- In bookkeeping, subject cards should expose `计划 / 已记 / 待补` directly. If users have to click into a subject or do mental subtraction before knowing what remains, the workflow is not production-ready.
+- When bookkeeping uses a native date input, do not rely only on React state at submit time. Read the live input value as the source of truth and then sync state, or a fast date-change-plus-submit interaction can silently post the wrong business date.
+- In finance ledgers, `业务发生日` and `记账时间` are different business facts. The UI, API, and history list all need both fields so late posting and backdated actuals remain auditable.
+- In dense desktop ledgers, spend width before height: keep member identity and plan context on one line, collapse time metadata into one row, and shrink action chrome before accepting tall table rows.
+- If all actual income is fundamentally member-owned, do not create a second `线上 / 渠道回款` workflow beside the member ledger. Keep one income path and let the system absorb channel complexity internally.
+- In an income entry grid, `待补收入` is usually analysis context, not core input context. Remove it from the main desktop table before shrinking the real input columns.
+- If member income needs channel split, keep the ledger member-first and add `线下张数 / 线上张数` inside the same row. Do not fork the workflow into a separate online ledger; split the allocations internally and let commission derive from the combined revenue.
+- Once a member ledger splits revenue into `线下张数 / 线上张数`, make the financial roll-up labels explicit: use `计划总收入 / 已记总收入` for money columns and keep plan-unit context in the same member row. Otherwise users will question whether online revenue is still included in plan and posted totals.
+- In dense bookkeeping tables, editable count inputs should center within the cell while money columns stay right-aligned with tabular figures. Mixed alignment inside one grid makes the table feel broken even when the math is correct.
+- Ledger history is operational tooling, not decoration. Once actuals accumulate, it must support at least direction, status, and keyword filters, or users cannot trace a posted entry back to its subject/member/counterparty quickly enough.
+- If an expense workbench sits inside the main accounting surface, do not use a heavy black slab by default. Finance users need a light, legible work surface that keeps attention on inputs and budget context, not on the chrome itself.

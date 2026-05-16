@@ -206,6 +206,9 @@ export type AgentRunTable = {
   input_message_id: string | null
   input_message: string | null
   planner_source: string | null
+  worker_id: string | null
+  lease_expires_at: string | null
+  heartbeat_at: string | null
   created_at: Timestamp
   completed_at: string | null
 }

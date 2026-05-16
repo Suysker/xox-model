@@ -55,6 +55,14 @@ import {
 } from '../agent/memory.js'
 import { planWithRuntimeAdapter } from '../agent/runtime/adapter-router.js'
 import type { RuntimePlanResult } from '../agent/runtime/runtime-adapter.js'
+import {
+  AgentRunLeaseLostError,
+  assertAgentRunLease,
+  claimAgentRunLease,
+  claimRecoverableAgentRuns,
+  refreshAgentRunLease,
+  startAgentRunLeaseHeartbeat,
+} from '../agent/run-lease.js'
 import { buildAgentWritableConfigContext } from '../agent/tool-coverage.js'
 import { extractWorkspaceBundleArtifact, type ParsedWorkspaceBundleArtifact } from '../agent/workspace-bundle-artifact.js'
 import { assertActionDraftAllowed, assertActionExecutionAllowed, assertActionUpdateAllowed, coerceAgentActionKind } from '../agent/tool-policy.js'
@@ -1391,8 +1399,10 @@ async function planResponse(ctx: PlannerContext) {
   const planRows: Row<'agent_plan_steps'>[] = []
   const messages: string[] = []
 
+  await assertAgentRunLease(ctx.db, ctx.settings, ctx.runId)
   for (const [index, item] of items.entries()) {
     const sequence = index + 1
+    await assertAgentRunLease(ctx.db, ctx.settings, ctx.runId)
     if (isActionDraft(item)) {
       const action = await addActionRequest(ctx, item)
       const step = await addPlanStep(ctx, {
@@ -1475,7 +1485,7 @@ async function failAgentRun(
 ) {
   const message = safeRunErrorMessage(error)
   await addMessage(db, thread.id, 'assistant', `运行失败：${message}`).catch(() => undefined)
-  await db.updateTable('agent_runs').set({ status: 'failed', completed_at: utcNow() }).where('id', '=', runId).execute().catch(() => undefined)
+  await db.updateTable('agent_runs').set({ status: 'failed', completed_at: utcNow(), lease_expires_at: null }).where('id', '=', runId).execute().catch(() => undefined)
   await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', thread.id).execute().catch(() => undefined)
 }
 
@@ -1523,7 +1533,7 @@ async function cancelRunArtifacts(
     .execute()
   await db
     .updateTable('agent_runs')
-    .set({ status: 'cancelled', completed_at: now })
+    .set({ status: 'cancelled', completed_at: now, lease_expires_at: null })
     .where('id', '=', runId)
     .where('status', '=', 'running')
     .execute()
@@ -1531,30 +1541,23 @@ async function cancelRunArtifacts(
   await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', thread.id).execute()
 }
 
-async function runIsStillRunning(db: Kysely<Database>, runId: string) {
-  const row = await db.selectFrom('agent_runs').select('status').where('id', '=', runId).executeTakeFirst()
-  return row?.status === 'running'
-}
-
 async function completeAgentRun(ctx: PlannerContext & { thread: Row<'agent_threads'> }): Promise<CompletedAgentRun | null> {
+  let stopHeartbeat: (() => void) | null = null
   try {
-    if (!(await runIsStillRunning(ctx.db, ctx.runId))) return null
+    const claimed = await claimAgentRunLease(ctx.db, ctx.settings, ctx.runId)
+    if (!claimed) return null
+    stopHeartbeat = startAgentRunLeaseHeartbeat(ctx.db, ctx.settings, ctx.runId)
     const planned = await planResponse(ctx)
-    if (!(await runIsStillRunning(ctx.db, ctx.runId))) {
-      await cancelRunArtifacts(ctx.db, ctx.thread, ctx.runId, 'Agent run 已取消，系统已清理未执行确认卡。', false)
-      return null
-    }
+    if (!(await refreshAgentRunLease(ctx.db, ctx.settings, ctx.runId))) return null
     const assistantMessage = await addMessage(ctx.db, ctx.thread.id, 'assistant', planned.assistant)
     await compactThreadContextIfNeeded({ db: ctx.db, workspace: ctx.workspace, user: ctx.user, threadId: ctx.thread.id })
-    if (!(await runIsStillRunning(ctx.db, ctx.runId))) {
-      await cancelRunArtifacts(ctx.db, ctx.thread, ctx.runId, 'Agent run 已取消，系统已清理未执行确认卡。', false)
-      return null
-    }
+    if (!(await refreshAgentRunLease(ctx.db, ctx.settings, ctx.runId))) return null
     await ctx.db
       .updateTable('agent_runs')
-      .set({ status: 'completed', planner_source: planned.plannerSource, completed_at: utcNow() })
+      .set({ status: 'completed', planner_source: planned.plannerSource, completed_at: utcNow(), lease_expires_at: null })
       .where('id', '=', ctx.runId)
       .where('status', '=', 'running')
+      .where('worker_id', '=', ctx.settings.agentWorkerId)
       .execute()
     await touchThreadAfterRun(ctx.db, ctx.thread, ctx.message)
     return {
@@ -1565,13 +1568,14 @@ async function completeAgentRun(ctx: PlannerContext & { thread: Row<'agent_threa
       planRows: planned.planRows,
     }
   } catch (error) {
-    if (!(await runIsStillRunning(ctx.db, ctx.runId).catch(() => false))) {
-      await cancelRunArtifacts(ctx.db, ctx.thread, ctx.runId, 'Agent run 已取消，系统已清理未执行确认卡。', false).catch(() => undefined)
+    if (error instanceof AgentRunLeaseLostError) return null
+    if (!(await refreshAgentRunLease(ctx.db, ctx.settings, ctx.runId).catch(() => false))) {
       return null
     }
     await failAgentRun(ctx.db, ctx.thread, ctx.runId, error)
     throw error
   } finally {
+    stopHeartbeat?.()
     activeRunControllers.delete(ctx.runId)
   }
 }
@@ -1610,17 +1614,12 @@ async function recoverRunMessage(db: Kysely<Database>, run: Row<'agent_runs'>) {
 }
 
 export async function recoverRunningAgentRuns(db: Kysely<Database>, settings: Settings) {
-  const runs = await db
-    .selectFrom('agent_runs')
-    .selectAll()
-    .where('status', '=', 'running')
-    .orderBy('created_at', 'asc')
-    .execute()
+  const runs = await claimRecoverableAgentRuns(db, settings)
 
   for (const run of runs) {
     const thread = await db.selectFrom('agent_threads').selectAll().where('id', '=', run.thread_id).executeTakeFirst()
     if (!thread) {
-      await db.updateTable('agent_runs').set({ status: 'failed', completed_at: utcNow() }).where('id', '=', run.id).execute()
+      await db.updateTable('agent_runs').set({ status: 'failed', completed_at: utcNow(), lease_expires_at: null }).where('id', '=', run.id).execute()
       continue
     }
     const [workspace, user, planStepCount, actionCount] = await Promise.all([
@@ -1783,6 +1782,9 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
           input_message_id: null,
           input_message: message,
           planner_source: null,
+          worker_id: null,
+          lease_expires_at: null,
+          heartbeat_at: null,
           created_at: now,
           completed_at: null,
         })
@@ -1790,6 +1792,8 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
       const userMessage = await addMessage(db, thread.id, 'user', message)
       await db.updateTable('agent_runs').set({ input_message_id: userMessage.id }).where('id', '=', runId).execute()
       await rememberFromUserMessage({ db, workspace, user, threadId: thread.id, messageId: userMessage.id, message })
+      const claimed = await claimAgentRunLease(db, settings, runId)
+      if (!claimed) throw conflict('Agent run could not be claimed by this worker')
 
       if (body.background === true) {
         await touchThreadAfterRun(db, thread, message)
@@ -1824,7 +1828,7 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
       }
     } catch (error) {
       if (runId && activeThread) {
-        await db.updateTable('agent_runs').set({ status: 'failed', completed_at: utcNow() }).where('id', '=', runId).execute().catch(() => undefined)
+        await db.updateTable('agent_runs').set({ status: 'failed', completed_at: utcNow(), lease_expires_at: null }).where('id', '=', runId).execute().catch(() => undefined)
         await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', activeThread.id).execute().catch(() => undefined)
       }
       return reply.send(error)

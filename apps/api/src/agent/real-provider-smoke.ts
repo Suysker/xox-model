@@ -86,6 +86,11 @@ function parseDotenvValue(raw: string) {
   return trimmed
 }
 
+function numberEnv(value: string | undefined, fallback: number) {
+  const parsed = Number(value ?? fallback)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
 function loadDotenvFile(path: string) {
   if (!existsSync(path)) return
   const lines = readFileSync(path, 'utf8').split(/\r?\n/)
@@ -220,6 +225,8 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     openaiCompatibleBaseUrl: process.env.OPENAI_COMPATIBLE_BASE_URL ?? process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com',
     openaiCompatibleModel: process.env.OPENAI_COMPATIBLE_MODEL ?? process.env.DEEPSEEK_MODEL ?? 'deepseek-v4-pro',
     openaiCompatibleApiKey: apiKey,
+    agentWorkerId: process.env.AGENT_WORKER_ID ?? `smoke-${process.pid}`,
+    agentRunLeaseTtlMs: Math.max(1000, numberEnv(process.env.AGENT_RUN_LEASE_TTL_MS, 45_000)),
   }
 
   const db = createDatabase(settings)

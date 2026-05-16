@@ -32,6 +32,8 @@ function testSettings(databasePath: string): Settings {
     openaiCompatibleBaseUrl: 'https://api.deepseek.com',
     openaiCompatibleModel: 'deepseek-v4-pro',
     openaiCompatibleApiKey: null,
+    agentWorkerId: `test-worker-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    agentRunLeaseTtlMs: 10_000,
   }
 }
 
@@ -176,7 +178,14 @@ function fakeOpenAIChatToolResponse(name: string, args: Record<string, unknown> 
 async function insertRunningAgentRun(
   db: Kysely<Database>,
   userId: string,
-  input: { message: string; partialOutput?: boolean; suffix: string },
+  input: {
+    message: string
+    partialOutput?: boolean
+    suffix: string
+    workerId?: string | null
+    leaseExpiresAt?: string | null
+    heartbeatAt?: string | null
+  },
 ) {
   const workspace = await db.selectFrom('workspaces').selectAll().where('owner_id', '=', userId).executeTakeFirstOrThrow()
   const now = new Date().toISOString()
@@ -206,6 +215,9 @@ async function insertRunningAgentRun(
     input_message_id: messageId,
     input_message: input.message,
     planner_source: null,
+    worker_id: input.workerId ?? null,
+    lease_expires_at: input.leaseExpiresAt ?? null,
+    heartbeat_at: input.heartbeatAt ?? null,
     created_at: now,
     completed_at: null,
   }).execute()
@@ -1066,6 +1078,163 @@ describe('xox TypeScript API', () => {
       const threads = await client.get('/api/v1/agent/threads')
       expect(threads.json.threads[0].latestRunStatus).toBe('cancelled')
       expect(threads.json.threads[0].pendingActionCount).toBe(0)
+      await closeHarness(harness)
+    })
+  })
+
+  it('does not recover running agent runs leased by another active worker', async () => {
+    let providerCalls = 0
+    await withFakeOpenAICompatibleProvider(() => {
+      providerCalls += 1
+      return fakeToolResponse('data_query_workspace', {
+        question: '3 月计划收入是多少',
+        scope: 'period_summary',
+        monthLabel: '3月',
+        metrics: ['plannedRevenue'],
+      })
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-recover-active-lease', {
+        llmProvider: 'openai-compatible',
+        openaiCompatibleProvider: 'test-compatible',
+        openaiCompatibleBaseUrl: baseUrl,
+        openaiCompatibleApiKey: 'test-key',
+        agentWorkerId: 'current-worker',
+      })
+      const client = new Client(harness.app)
+      const user = await registerUser(client, 'agent-recover-active-lease@example.com')
+      const futureLease = new Date(Date.now() + 60_000).toISOString()
+      const run = await insertRunningAgentRun(harness.db, user.id, {
+        suffix: 'active-lease',
+        message: '3 月计划收入是多少？',
+        workerId: 'other-worker',
+        leaseExpiresAt: futureLease,
+        heartbeatAt: new Date().toISOString(),
+      })
+
+      await recoverRunningAgentRuns(harness.db, harness.settings)
+      await sleep(50)
+
+      expect(providerCalls).toBe(0)
+      const state = await client.get(`/api/v1/agent/threads/${run.threadId}`)
+      expect(state.statusCode).toBe(200)
+      expect(state.json.runs[0].status).toBe('running')
+      expect(state.json.messages.map((message: any) => message.role)).toEqual(['user'])
+      expect(state.json.planSteps).toHaveLength(0)
+      const row = await harness.db.selectFrom('agent_runs').select(['worker_id', 'lease_expires_at']).where('id', '=', run.runId).executeTakeFirstOrThrow()
+      expect(row.worker_id).toBe('other-worker')
+      expect(row.lease_expires_at).toBe(futureLease)
+      await closeHarness(harness)
+    })
+  })
+
+  it('claims expired leased running agent runs before recovery', async () => {
+    let releaseProvider!: () => void
+    const providerGate = new Promise<void>((resolve) => {
+      releaseProvider = resolve
+    })
+
+    await withFakeOpenAICompatibleProvider(async () => {
+      await providerGate
+      return fakeToolResponse('data_query_workspace', {
+        question: '3 月计划收入和计划成本是多少',
+        scope: 'period_summary',
+        monthLabel: '3月',
+        metrics: ['plannedRevenue', 'plannedCost'],
+      })
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-recover-expired-lease', {
+        llmProvider: 'openai-compatible',
+        openaiCompatibleProvider: 'test-compatible',
+        openaiCompatibleBaseUrl: baseUrl,
+        openaiCompatibleApiKey: 'test-key',
+        agentWorkerId: 'recover-worker',
+      })
+      const client = new Client(harness.app)
+      const user = await registerUser(client, 'agent-recover-expired-lease@example.com')
+      const run = await insertRunningAgentRun(harness.db, user.id, {
+        suffix: 'expired-lease',
+        message: '3 月计划收入和计划成本是多少？',
+        workerId: 'dead-worker',
+        leaseExpiresAt: new Date(Date.now() - 1_000).toISOString(),
+        heartbeatAt: new Date(Date.now() - 60_000).toISOString(),
+      })
+
+      await recoverRunningAgentRuns(harness.db, harness.settings)
+      const claimed = await harness.db.selectFrom('agent_runs').select(['worker_id', 'lease_expires_at']).where('id', '=', run.runId).executeTakeFirstOrThrow()
+      expect(claimed.worker_id).toBe('recover-worker')
+      expect(new Date(claimed.lease_expires_at ?? 0).getTime()).toBeGreaterThan(Date.now())
+
+      releaseProvider()
+      let completedState = await client.get(`/api/v1/agent/threads/${run.threadId}`)
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        await sleep(25)
+        const nextState = await client.get(`/api/v1/agent/threads/${run.threadId}`)
+        completedState = nextState
+        if (completedState.json.runs[0].status === 'completed') break
+      }
+
+      expect(completedState.json.runs[0].status).toBe('completed')
+      expect(completedState.json.messages.map((message: any) => message.role)).toEqual(['user', 'assistant'])
+      expect(completedState.json.actionRequests).toHaveLength(0)
+      await closeHarness(harness)
+    })
+  })
+
+  it('ignores late provider results after a background worker loses its run lease', async () => {
+    let releaseProvider!: () => void
+    const providerGate = new Promise<void>((resolve) => {
+      releaseProvider = resolve
+    })
+
+    await withFakeOpenAICompatibleProvider(async () => {
+      await providerGate
+      return fakeToolResponse('ledger_create_member_income', {
+        monthLabel: '3月',
+        memberName: '成员 A',
+        offlineUnits: 1,
+        onlineUnits: 0,
+      })
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-background-lost-lease', {
+        llmProvider: 'openai-compatible',
+        openaiCompatibleProvider: 'test-compatible',
+        openaiCompatibleBaseUrl: baseUrl,
+        openaiCompatibleApiKey: 'test-key',
+        agentWorkerId: 'worker-a',
+      })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-background-lost-lease@example.com')
+
+      const started = await client.post('/api/v1/agent/messages', {
+        message: '把 3 月成员 A 线下 1 张入账',
+        background: true,
+      })
+      expect(started.statusCode).toBe(200)
+      expect(started.json.status).toBe('running')
+
+      const stolenLeaseExpiresAt = new Date(Date.now() + 60_000).toISOString()
+      await harness.db
+        .updateTable('agent_runs')
+        .set({
+          worker_id: 'worker-b',
+          lease_expires_at: stolenLeaseExpiresAt,
+          heartbeat_at: new Date().toISOString(),
+        })
+        .where('id', '=', started.json.runId)
+        .execute()
+
+      releaseProvider()
+      await sleep(100)
+
+      const finalState = await client.get(`/api/v1/agent/threads/${started.json.threadId}`)
+      expect(finalState.statusCode).toBe(200)
+      expect(finalState.json.runs[0].status).toBe('running')
+      expect(finalState.json.messages.map((message: any) => message.role)).toEqual(['user'])
+      expect(finalState.json.planSteps).toHaveLength(0)
+      expect(finalState.json.actionRequests).toHaveLength(0)
+      const run = await harness.db.selectFrom('agent_runs').select(['worker_id', 'lease_expires_at']).where('id', '=', started.json.runId).executeTakeFirstOrThrow()
+      expect(run.worker_id).toBe('worker-b')
+      expect(run.lease_expires_at).toBe(stolenLeaseExpiresAt)
       await closeHarness(harness)
     })
   })

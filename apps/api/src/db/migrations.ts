@@ -260,6 +260,9 @@ export async function runMigrations(db: Kysely<Database>) {
       input_message_id VARCHAR(36),
       input_message TEXT,
       planner_source VARCHAR(64),
+      worker_id VARCHAR(96),
+      lease_expires_at DATETIME,
+      heartbeat_at DATETIME,
       created_at DATETIME NOT NULL,
       completed_at DATETIME
     )`,
@@ -267,6 +270,9 @@ export async function runMigrations(db: Kysely<Database>) {
   await addColumnIfMissing(db, 'agent_runs', 'input_message_id', 'VARCHAR(36)')
   await addColumnIfMissing(db, 'agent_runs', 'input_message', 'TEXT')
   await addColumnIfMissing(db, 'agent_runs', 'planner_source', 'VARCHAR(64)')
+  await addColumnIfMissing(db, 'agent_runs', 'worker_id', 'VARCHAR(96)')
+  await addColumnIfMissing(db, 'agent_runs', 'lease_expires_at', 'DATETIME')
+  await addColumnIfMissing(db, 'agent_runs', 'heartbeat_at', 'DATETIME')
   await exec(
     db,
     `CREATE TABLE IF NOT EXISTS agent_action_requests (

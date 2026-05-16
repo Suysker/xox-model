@@ -103,7 +103,8 @@
   - 同步模式返回新增对话消息、`status=completed`、`planner`、显式页面导航事件、`planSteps`、待确认动作卡
   - 产品前端默认传 `background=true`：接口先创建 `agent_runs` 和用户消息并立即返回 `status=running / planner=null`，模型规划、确认卡生成和 assistant 回复在服务端后台继续落库
   - 前端应保存返回的 `threadId`，并轮询 `GET /api/v1/agent/threads/{threadId}` 恢复 running/completed/failed run、消息、计划步骤、导航事件和待确认动作
-  - `agent_runs` 保存输入消息；API 启动时会恢复尚未产生运行产物的 `running` run。若 run 已经有部分计划步骤或确认卡，则标记 failed 并取消未执行确认卡，避免重复创建或执行半成品动作
+  - `agent_runs` 保存输入消息、worker lease 和 heartbeat；API 启动时只会认领未租约、同 worker 或租约已过期且尚未产生运行产物的 `running` run。若 run 已经有部分计划步骤或确认卡，则标记 failed 并取消未执行确认卡，避免重复创建或执行半成品动作
+  - 后台执行在回写 assistant message、计划步骤和确认卡前会刷新 worker lease；如果租约已经被其他 worker 认领，迟到的模型结果会被丢弃，不能写入 pending 动作
   - `planner` 为 `openai_agents`、`openai_compatible_tool_calls`、`rules` 或运行中时的 `null`
   - 一条消息可拆成多个 `planSteps`，写入步骤会关联一个待确认动作卡
   - 当 `LLM_PROVIDER` 不是 `rules` 时，只有模型返回 provider-native tool call 才会生成业务确认卡；模型未返回 tool call 时只返回失败型只读步骤，不用本地规则猜测业务动作

@@ -437,7 +437,62 @@ POST /agent/messages
 - API 启动后会扫描 `status=running` 的 run：如果该 run 还没有 `planSteps/actionRequests` 产物，则重新调用同一套 planner/tool/confirmation 流程并落库为 completed/failed；如果已有部分产物，则 fail-closed 标记为 failed 并写 assistant 提示，避免重复创建确认卡或让用户确认半成品动作。
 - 用户可取消当前 running run：`POST /api/v1/agent/runs/:runId/cancel` 会把 run 标记为 `cancelled`、取消该 run 下尚未执行的确认卡和计划步骤、写入 assistant 提示，并中止当前进程里的 provider 请求（OpenAI-compatible adapter 通过 `AbortSignal`）。
 - 取消是服务端状态，不是前端假按钮；即使模型响应晚于取消请求，后台任务在回写前会重新检查 run 状态，不能把 cancelled run 改回 completed，也不能留下 pending 确认卡。
-- 该恢复/取消机制覆盖单实例 API 进程重启和临时崩溃后的安全续跑；多实例并发抢占和 SSE/WebSocket progress 仍是下一阶段 maturity gate。
+- 该恢复/取消机制覆盖单实例 API 进程重启和临时崩溃后的安全续跑；多实例并发抢占通过 run lease gate 管理，SSE/WebSocket progress 仍是下一阶段 maturity gate。
+
+### 多实例后台 Run 租约
+
+用户可刷新、断网或切换历史对话，但 SaaS 后端也可能多实例部署。后台 run 因此不能只靠内存里的 `AbortController` 判断归属，必须在数据库里记录 worker 所有权。
+
+模块划分：
+
+```text
+apps/api/src/agent/run-lease.ts
+  -> claimAgentRunLease / refreshAgentRunLease / startAgentRunLeaseHeartbeat
+  -> 只依赖 Settings、Kysely Database、UTC 时间
+
+apps/api/src/modules/agent.ts
+  -> 创建 run 后先 claim lease
+  -> background/sync/recovery 都通过 completeAgentRun 的 lease guard 回写
+  -> 取消仍由路由按用户 + workspace 校验后写最终状态
+
+apps/api/src/db/schema.ts + migrations.ts
+  -> agent_runs.worker_id
+  -> agent_runs.lease_expires_at
+  -> agent_runs.heartbeat_at
+```
+
+依赖图：
+
+```text
+POST /agent/messages
+  -> insert agent_runs(status=running)
+  -> claimAgentRunLease(settings.agentWorkerId)
+  -> completeAgentRun
+      -> startAgentRunLeaseHeartbeat
+      -> runtime planner
+      -> refresh lease before confirmation/message/status writes
+      -> final status guarded by worker_id
+
+API startup / recovery
+  -> scan running runs
+  -> claim only unleased, same-worker, or expired leases
+  -> replay safe run or fail-closed partial output
+```
+
+命名和复用规则：
+
+- `worker_id` 表示当前拥有执行权的 API worker；默认来自 `AGENT_WORKER_ID`，未配置时由进程生成，不进入前端 contract。
+- `lease_expires_at` 是抢占边界；其他实例只能认领未租约、同 worker 或过期租约的 `running` run。
+- `heartbeat_at` 是诊断字段；长模型调用期间由 heartbeat 刷新，避免 DeepSeek/OpenAI-compatible 慢响应期间租约自然过期。
+- 所有模型 provider 共用同一 lease 层；DeepSeek、Doubao、Qwen 等 OpenAI-compatible provider 不允许各自特调 run 状态逻辑。
+- `modules/agent.ts` 只判断“是否仍拥有 lease”，不直接拼接 worker id 规则，避免多个回写点出现重复判断。
+
+验收：
+
+- stale/unleased run 可以被当前 worker 认领并恢复。
+- 未来未过期、属于其他 worker 的 run 不会被当前 worker 恢复。
+- provider 响应晚于租约丢失时，旧 worker 不能写入 assistant message、plan step 或 pending confirmation card。
+- 取消路径仍能终结当前用户自己的 running run，并中止本进程里的 provider 请求。
 
 ### SaaS 隔离规则
 
