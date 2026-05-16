@@ -19,7 +19,7 @@
 xox-model/
 ├─ apps/
 │  ├─ web/              # React + Vite 前端
-│  └─ api/              # FastAPI + SQLAlchemy 后端
+│  └─ api/              # TypeScript + Fastify + Kysely 后端
 ├─ docs/                # 架构、规划、验收、接口、运维文档
 ├─ infra/
 │  └─ scripts/          # 部署与辅助脚本
@@ -31,8 +31,8 @@ xox-model/
 建议的长期扩展方向：
 
 - `apps/web/src/features/*`：按业务域拆分前端模块
-- `apps/api/app/services/*` 或 `apps/api/app/modules/*`：按领域拆分后端
-- `apps/api/alembic/`：正式数据库迁移体系
+- `apps/api/src/modules/*`：按领域拆分后端
+- `apps/api/src/db/migrations.ts`：当前可重复迁移入口，后续可升级为正式 Kysely migration 目录
 - `tests/e2e/`：如果后续把浏览器自动化固化到仓库中
 
 ## 3. 运行时架构
@@ -49,7 +49,7 @@ xox-model/
 
 ### 后端
 
-- 技术栈：`FastAPI + SQLAlchemy 2.0 + Pydantic`
+- 技术栈：`TypeScript + Fastify + Kysely + Zod`
 - 当前本地环境：`SQLite`
 - 生产目标：`PostgreSQL`
 - 负责：
@@ -58,7 +58,8 @@ xox-model/
   - 版本发布与回滚
   - 预测事实表固化
   - 期间与分录管理
-  - 预实聚合接口
+- 预实聚合接口
+- Agent 对话、确认卡和工具执行
 
 ### 部署边界
 
@@ -229,7 +230,7 @@ xox-model/
 ### 第一阶段：基础能力
 
 - 仓库拆分为 `apps / docs / infra`
-- Python 后端初始化完成
+- TypeScript 后端初始化完成
 - 认证与会话打通
 - 注册时自动创建默认工作区和草稿
 
@@ -265,6 +266,13 @@ xox-model/
 - 累计预实对账
 - 浏览器验收覆盖完整主链路
 
+### 第七阶段：Agent OS
+
+- 底部对话台和确认卡
+- Agent 显式驱动页面导航
+- 记账、试算、草稿修改、发布、恢复、分享和锁账工具化
+- 写入动作确认、执行和审计闭环
+
 ## 9. 验收原则
 
 ### 草稿与自动保存
@@ -291,5 +299,5 @@ xox-model/
 - 核心接口必须写审计日志
 - 迁移入口必须可重复执行
 - 前端单测 / 构建通过
-- 后端 API 集成测试通过
+- TypeScript 后端 API/Agent 集成测试通过
 - 浏览器验收通过

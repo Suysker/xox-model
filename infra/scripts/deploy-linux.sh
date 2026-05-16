@@ -9,7 +9,6 @@ API_SERVICE_NAME="${API_SERVICE_NAME:-${SERVICE_PREFIX}-api}"
 APP_ROOT="${APP_ROOT:-/opt/$APP_NAME}"
 SRC_ROOT="${SRC_ROOT:-$APP_ROOT/src}"
 WEB_ROOT="${WEB_ROOT:-$APP_ROOT/web}"
-VENV_ROOT="${VENV_ROOT:-$APP_ROOT/venv}"
 DATA_ROOT="${DATA_ROOT:-$APP_ROOT/data}"
 WEB_PORT="${WEB_PORT:-${APP_PORT:-4173}}"
 WEB_HOST="${WEB_HOST:-${APP_HOST:-0.0.0.0}}"
@@ -22,8 +21,6 @@ PUBLIC_ORIGIN="${PUBLIC_ORIGIN:-http://127.0.0.1:${WEB_PORT}}"
 RUN_TESTS="${RUN_TESTS:-0}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE_DIR=""
-PYTHON_BIN="${PYTHON_BIN:-}"
-PYTHON_MIN_VERSION=""
 
 if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
   exec sudo \
@@ -34,7 +31,6 @@ if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
     APP_ROOT="$APP_ROOT" \
     SRC_ROOT="$SRC_ROOT" \
     WEB_ROOT="$WEB_ROOT" \
-    VENV_ROOT="$VENV_ROOT" \
     DATA_ROOT="$DATA_ROOT" \
     WEB_PORT="$WEB_PORT" \
     WEB_HOST="$WEB_HOST" \
@@ -45,7 +41,6 @@ if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
     REPO_REF="$REPO_REF" \
     PUBLIC_ORIGIN="$PUBLIC_ORIGIN" \
     RUN_TESTS="$RUN_TESTS" \
-    PYTHON_BIN="$PYTHON_BIN" \
     bash "$0" "$@"
 fi
 
@@ -108,7 +103,7 @@ validate_ports() {
 install_base_packages() {
   log "Installing system packages"
   apt-get update
-  apt-get install -y git rsync curl ca-certificates gnupg python3 python3-venv python3-pip
+  apt-get install -y git rsync curl ca-certificates gnupg
 }
 
 ensure_node() {
@@ -125,80 +120,9 @@ ensure_node() {
   apt-get install -y nodejs
 }
 
-load_python_requirement() {
-  local pyproject="$SOURCE_DIR/apps/api/pyproject.toml"
-  local spec=""
-
-  [[ -f "$pyproject" ]] || fail "Missing API pyproject.toml: $pyproject"
-
-  spec="$(sed -nE 's/^requires-python[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$pyproject" | head -n 1)"
-  [[ -n "$spec" ]] || fail "Unable to read requires-python from $pyproject"
-
-  if [[ "$spec" =~ \>\=([0-9]+)\.([0-9]+) ]]; then
-    PYTHON_MIN_VERSION="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
-    log "API requires Python $spec"
-    return
-  fi
-
-  fail "Unsupported requires-python spec in $pyproject: $spec"
-}
-
-python_version_ge() {
-  local candidate="$1"
-  local required="$2"
-  "$candidate" - "$required" <<'PY'
-import sys
-
-required = tuple(int(part) for part in sys.argv[1].split("."))
-current = sys.version_info[: len(required)]
-raise SystemExit(0 if current >= required else 1)
-PY
-}
-
-ensure_python() {
-  [[ -n "$PYTHON_MIN_VERSION" ]] || fail "PYTHON_MIN_VERSION is not set. Call load_python_requirement first."
-
-  local python_cmd="python${PYTHON_MIN_VERSION}"
-  local python_venv_package="${python_cmd}-venv"
-
-  if [[ -n "$PYTHON_BIN" ]]; then
-    if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
-      fail "PYTHON_BIN points to a missing executable: $PYTHON_BIN"
-    fi
-
-    if python_version_ge "$PYTHON_BIN" "$PYTHON_MIN_VERSION"; then
-      return
-    fi
-
-    fail "PYTHON_BIN must point to Python $PYTHON_MIN_VERSION or newer."
-  fi
-
-  if command -v "$python_cmd" >/dev/null 2>&1 && python_version_ge "$python_cmd" "$PYTHON_MIN_VERSION"; then
-    PYTHON_BIN="$python_cmd"
-    return
-  fi
-
-  if command -v python3 >/dev/null 2>&1 && python_version_ge python3 "$PYTHON_MIN_VERSION"; then
-    PYTHON_BIN="python3"
-    return
-  fi
-
-  if apt-cache show "$python_cmd" >/dev/null 2>&1; then
-    log "Installing Python $PYTHON_MIN_VERSION"
-    apt-get install -y "$python_cmd" "$python_venv_package"
-  fi
-
-  if command -v "$python_cmd" >/dev/null 2>&1 && python_version_ge "$python_cmd" "$PYTHON_MIN_VERSION"; then
-    PYTHON_BIN="$python_cmd"
-    return
-  fi
-
-  fail "Python $PYTHON_MIN_VERSION or newer is required. Current distro packages did not provide $python_cmd."
-}
-
 is_repo_root() {
   local candidate="$1"
-  [[ -f "$candidate/package.json" && -f "$candidate/apps/api/pyproject.toml" && -f "$candidate/apps/web/package.json" ]]
+  [[ -f "$candidate/package.json" && -f "$candidate/apps/api/package.json" && -f "$candidate/apps/web/package.json" ]]
 }
 
 clone_or_update_repo() {
@@ -264,25 +188,10 @@ validate_source_dir() {
 }
 
 run_web_build() {
-  log "Installing Node dependencies and building the web app"
+  log "Installing Node dependencies and building the web/API apps"
   cd "$SOURCE_DIR"
   npm ci
-  npm run build:web
-}
-
-ensure_virtualenv() {
-  if [[ ! -x "$VENV_ROOT/bin/python" ]]; then
-    log "Creating Python virtual environment"
-    "$PYTHON_BIN" -m venv "$VENV_ROOT"
-  fi
-}
-
-install_api() {
-  ensure_virtualenv
-
-  log "Installing API dependencies"
-  "$VENV_ROOT/bin/python" -m pip install --upgrade pip setuptools wheel
-  "$VENV_ROOT/bin/python" -m pip install --upgrade "$SOURCE_DIR/apps/api"
+  npm run build
 }
 
 run_optional_tests() {
@@ -290,14 +199,8 @@ run_optional_tests() {
     return
   fi
 
-  log "Running web tests"
-  (cd "$SOURCE_DIR" && npm run test:web)
-
-  log "Installing API test dependencies"
-  "$VENV_ROOT/bin/python" -m pip install --upgrade "$SOURCE_DIR/apps/api[dev]"
-
-  log "Running API tests"
-  "$VENV_ROOT/bin/python" -m pytest "$SOURCE_DIR/apps/api/tests"
+  log "Running tests"
+  (cd "$SOURCE_DIR" && npm run test)
 }
 
 ensure_app_user() {
@@ -325,6 +228,10 @@ publish_runtime_files() {
 }
 
 write_api_service() {
+  local node_bin
+  node_bin="$(command -v node)"
+  [[ -n "$node_bin" ]] || fail "node executable not found after installation."
+
   log "Writing systemd unit $API_SERVICE_NAME"
   cat >"/etc/systemd/system/$API_SERVICE_NAME.service" <<EOF
 [Unit]
@@ -335,11 +242,13 @@ After=network.target
 Type=simple
 User=$APP_USER
 Group=$APP_USER
-WorkingDirectory=$APP_ROOT
-Environment=PATH=$VENV_ROOT/bin:/usr/bin:/bin
+WorkingDirectory=$SOURCE_DIR
 Environment=XOX_DATABASE_URL=sqlite:///$DATA_ROOT/xox.db
 Environment=XOX_CORS_ORIGIN=$PUBLIC_ORIGIN
-ExecStart=$VENV_ROOT/bin/python -m uvicorn app.main:app --host $API_HOST --port $API_PORT
+Environment=XOX_API_HOST=$API_HOST
+Environment=XOX_API_PORT=$API_PORT
+Environment=NODE_ENV=production
+ExecStart=$node_bin --import tsx apps/api/src/main.ts
 Restart=always
 RestartSec=3
 
@@ -451,11 +360,8 @@ validate_ports
 install_base_packages
 resolve_source_dir
 validate_source_dir
-load_python_requirement
 ensure_node
-ensure_python
 run_web_build
-install_api
 run_optional_tests
 ensure_app_user
 publish_runtime_files

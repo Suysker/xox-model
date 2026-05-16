@@ -1,4 +1,12 @@
 import type { ModelConfig, ModelResult } from '../types'
+import type {
+  AgentActionRequest,
+  AgentActionUpdatePayload,
+  AgentMessage,
+  AgentNavigationEvent,
+  AgentPlanStep,
+  AgentSendResponse,
+} from '@xox/contracts'
 
 type ApiMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE'
 
@@ -135,6 +143,8 @@ export type PublicShareResponse = {
   config: ModelConfig
   result: ModelResult
 }
+
+export type { AgentActionRequest, AgentActionUpdatePayload, AgentMessage, AgentNavigationEvent, AgentPlanStep, AgentSendResponse }
 
 type ApiValidationError = {
   loc?: Array<string | number>
@@ -342,4 +352,22 @@ export const api = {
     apiRequest<VarianceResponse>('GET', `/api/v1/variance/periods/${periodId}`),
   getSharedVersion: (shareToken: string) =>
     apiRequest<PublicShareResponse>('GET', `/api/v1/public/shares/${encodeURIComponent(shareToken)}`),
+  sendAgentMessage: (payload: { threadId?: string | null; message: string }) =>
+    apiRequest<AgentSendResponse>('POST', '/api/v1/agent/messages', payload),
+  confirmAgentAction: (actionRequestId: string) =>
+    apiRequest<{ actionRequest: AgentActionRequest; result: unknown; messages: AgentMessage[]; planSteps: AgentPlanStep[] }>(
+      'POST',
+      `/api/v1/agent/action-requests/${actionRequestId}/confirm`,
+    ),
+  cancelAgentAction: (actionRequestId: string) =>
+    apiRequest<{ actionRequest: AgentActionRequest; messages: AgentMessage[]; planSteps: AgentPlanStep[] }>(
+      'POST',
+      `/api/v1/agent/action-requests/${actionRequestId}/cancel`,
+    ),
+  updateAgentAction: (actionRequestId: string, payload: AgentActionUpdatePayload) =>
+    apiRequest<{ actionRequest: AgentActionRequest; planSteps: AgentPlanStep[] }>(
+      'PATCH',
+      `/api/v1/agent/action-requests/${actionRequestId}`,
+      payload,
+    ),
 }

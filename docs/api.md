@@ -78,6 +78,26 @@
     - 累计差异额 / 差异率
     - 科目级差异明细
 
+## Agent OS
+
+- `POST /api/v1/agent/messages`
+  - 入参：`threadId?`、`message`
+  - 返回新增对话消息、`planner`、显式页面导航事件、`planSteps`、待确认动作卡
+  - `planner` 为 `deepseek` 或 `rules`；配置模型密钥时优先使用 DeepSeek JSON 规划，失败时回退本地规则
+  - 一条消息可拆成多个 `planSteps`，写入步骤会关联一个待确认动作卡
+  - 读取和试算类请求不会生成写入动作
+  - 账号登录、退出、注销、删除账号和密码类请求会被拒绝自动执行
+- `PATCH /api/v1/agent/action-requests/{id}`
+  - 仅允许编辑当前用户 / 工作区下的 `pending` 动作
+  - 可编辑确认卡摘要、明细、导航事件和执行载荷；保存后同步更新计划步骤描述
+- `POST /api/v1/agent/action-requests/{id}/confirm`
+  - 仅允许确认当前用户 / 工作区下的 `pending` 动作
+  - 执行成功后会写入业务审计和 `agent.action_executed`
+- `POST /api/v1/agent/action-requests/{id}/cancel`
+  - 取消待确认动作，不写业务数据
+
+Agent 写入动作统一遵循 `preview -> confirm -> execute -> audit -> refresh`。当前支持记账、草稿修改、发布版本、恢复版本、删除版本、重置草稿、创建 / 撤销分享、锁账 / 解锁；所有写入都先生成确认卡。
+
 ## 错误语义
 
 - `401`：未登录或会话已失效

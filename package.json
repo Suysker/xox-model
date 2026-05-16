@@ -3,18 +3,20 @@
   "private": true,
   "version": "0.2.0",
   "workspaces": [
-    "apps/web"
+    "apps/web",
+    "apps/api",
+    "packages/*"
   ],
   "scripts": {
     "dev:web": "npm run dev --workspace @xox/web",
     "build:web": "npm run build --workspace @xox/web",
     "preview:web": "npm run preview --workspace @xox/web",
     "test:web": "npm run test --workspace @xox/web",
-    "install:api": "python -m pip install -e ./apps/api",
-    "dev:api": "python -m uvicorn app.main:app --app-dir apps/api --reload",
-    "test:api": "python -m pytest apps/api/tests",
+    "dev:api": "npm run dev --workspace @xox/api",
+    "build:api": "npm run build --workspace @xox/api",
+    "test:api": "npm run test --workspace @xox/api",
     "dev": "npm run dev:web",
-    "build": "npm run build:web",
+    "build": "npm run build:web && npm run build:api",
     "test": "npm run test:web && npm run test:api"
   }
 }

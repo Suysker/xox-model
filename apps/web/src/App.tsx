@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { BarChart3, LayoutDashboard, LineChart, ReceiptText, Settings2, type LucideIcon } from 'lucide-react'
 import { MemberContributionList } from './components/analysis/MemberContributionList'
+import { AgentShell } from './components/agent/AgentShell'
 import { AuthScreen } from './components/auth/AuthScreen'
 import { type ChartMetricKey } from './components/analysis/MetricBandChart'
 import { MonthlyResultsTable } from './components/analysis/MonthlyResultsTable'
@@ -23,7 +24,7 @@ import { SharedVersionScreen } from './components/share/SharedVersionScreen'
 import { VariancePanel } from './components/variance/VariancePanel'
 import { WorkspacePanel } from './components/workspace/WorkspacePanel'
 import { useWorkspace } from './hooks/useWorkspace'
-import { api, type AuthUser, type EntryResponse, type PeriodResponse, type SubjectResponse, type VarianceResponse } from './lib/api'
+import { api, type AgentActionRequest, type AgentNavigationEvent, type AuthUser, type EntryResponse, type PeriodResponse, type SubjectResponse, type VarianceResponse } from './lib/api'
 import { findMonthIdForPeriod, findPeriodIdForDateValue, findPeriodIdForSelectedMonth, getTodayInputDate } from './lib/bookkeeping'
 import {
   createCostItem,
@@ -252,6 +253,7 @@ export default function App() {
     revokeShareLink,
     importBundle,
     resetWorkspace,
+    reloadWorkspace,
   } = useWorkspace(authState === 'authenticated' && !sharedToken)
 
   const [mainTab, setMainTab] = useState<MainTab>('dashboard')
@@ -665,6 +667,55 @@ export default function App() {
   const selectedScenarioLabel = getScenarioLabel(selectedScenarioResult.key, selectedScenarioResult.label)
   if (!selectedMonthResult || !selectedMonthPlan) {
     return null
+  }
+
+  function handleAgentNavigate(event: AgentNavigationEvent) {
+    const route = event.route
+    setMainTab(route.mainTab)
+
+    if (route.mainTab === 'dashboard') {
+      setDashboardTab(route.secondaryTab ?? 'overview')
+    } else if (route.mainTab === 'inputs') {
+      setInputsTab(route.secondaryTab ?? 'revenue')
+    } else if (route.mainTab === 'bookkeeping') {
+      setBookkeepingTab(route.secondaryTab ?? 'entries')
+    } else if (route.mainTab === 'variance') {
+      setVarianceTab(route.secondaryTab ?? 'analysis')
+    }
+
+    if (route.selectedPeriodId) {
+      handleSelectPeriod(route.selectedPeriodId)
+    }
+
+    if (event.panel === 'workspace') {
+      setWorkspaceOpen(true)
+    }
+  }
+
+  async function handleAgentActionExecuted(action: AgentActionRequest) {
+    try {
+      await reloadWorkspace()
+      const nextPeriods = await api.listPeriods()
+      setPeriods(nextPeriods)
+      const actionPeriodId = action.navigation.route.selectedPeriodId ?? null
+      const nextPeriodId =
+        actionPeriodId && nextPeriods.some((period) => period.id === actionPeriodId)
+          ? actionPeriodId
+          : selectedPeriodId && nextPeriods.some((period) => period.id === selectedPeriodId)
+          ? selectedPeriodId
+          : nextPeriods[0]?.id ?? ''
+      setSelectedPeriodId(nextPeriodId)
+      const nextMonthId = findMonthIdForPeriod(nextPeriods, config.months, nextPeriodId)
+      if (nextMonthId) {
+        setSelectedMonthId(nextMonthId)
+      }
+      if (nextPeriodId) {
+        await refreshSelectedPeriodData(nextPeriodId)
+      }
+      setBanner({ tone: 'success', message: 'Agent 已执行确认动作，工作台数据已刷新。' })
+    } catch (refreshError) {
+      setBanner({ tone: 'error', message: getErrorMessage(refreshError) })
+    }
   }
 
   const secondaryTitle = mainTab === 'dashboard' ? '怎么看' : '调什么'
@@ -1181,6 +1232,7 @@ export default function App() {
   }
 
   return (
+    <AgentShell onNavigate={handleAgentNavigate} onActionExecuted={handleAgentActionExecuted}>
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(245,158,11,0.12),_transparent_28%),linear-gradient(180deg,_#fbf8f1_0%,_#f3ede3_100%)] px-4 py-5 text-stone-900 md:px-6 lg:px-8">
       <div className="mx-auto max-w-[1520px]">
         {banner ? (
@@ -1533,5 +1585,6 @@ export default function App() {
         onChange={handleImportFile}
       />
     </div>
+    </AgentShell>
   )
 }

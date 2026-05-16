@@ -15,11 +15,23 @@
 ## 仓库结构
 
 - `apps/web`：React 前端应用
-- `apps/api`：Python FastAPI 服务
+- `apps/api`：TypeScript Fastify API 与 Agent 服务
+- `packages/domain`：前后端共享的测算模型、默认值、事实表和导入归一化逻辑
+- `packages/contracts`：REST DTO、Agent 协议、确认卡与共享错误语义
 - `docs`：架构、接口、验收、运维与规划文档
 - `infra/scripts`：部署与辅助脚本
 
 当前本地开发默认使用 SQLite。生产环境应切换到 PostgreSQL，服务边界保持不变。
+
+## 运行时依赖
+
+```text
+apps/web -> packages/contracts -> packages/domain
+apps/api/routes -> apps/api/modules -> packages/domain -> apps/api/db
+apps/api/agent -> packages/contracts -> apps/api/modules -> apps/api/db
+```
+
+Agent 只能通过领域服务执行动作，不能直接写数据库。所有会改变草稿、版本、分享、账务或锁账状态的 Agent 工具必须先生成确认卡，用户确认后才执行并写入审计日志。账号影响类动作不开放给 Agent。
 
 ## 数据架构
 
@@ -37,6 +49,11 @@
 - `actual_entries`
 - `actual_entry_allocations`
 - `audit_logs`
+- `agent_threads`
+- `agent_messages`
+- `agent_runs`
+- `agent_action_requests`
+- `agent_plan_steps`
 
 ### 计划层
 
@@ -58,15 +75,20 @@
 - 一笔实际分录可以分摊到一个或多个预测科目
 - 锁定期间后禁止记账和作废
 - 预实分析同时提供当期差异与累计差异
+- Agent 调用业务能力时必须显式切到对应页面或面板，不允许静默后台写入
+- 写入型 Agent 工具遵循 `preview -> confirm -> execute -> audit -> refresh`
+- Agent 规划先尝试 DeepSeek OpenAI-compatible Chat Completions 输出 JSON 步骤，后端再转换为受控工具；模型失败时回退本地规则规划
+- 多步骤计划持久化到 `agent_plan_steps`，待确认动作可在 `pending` 状态编辑确认卡和执行载荷
 
 ## 交付阶段
 
-1. 仓库重构与 Python 后端骨架
+1. 仓库重构与 TypeScript 后端骨架
 2. 认证与草稿持久化
 3. 版本发布、版本回滚与事实表固化
 4. 发布版公开分享与撤销
 5. 期间记账、多分摊分录、锁定 / 解锁流程
 6. 预实分析、累计对账与浏览器验收
+7. TypeScript 后端等价迁移、共享领域层与 Agent OS 化
 
 ## 验收摘要
 

@@ -61,6 +61,19 @@ export function useWorkspace(enabled = true) {
     applyVersions(versions)
   }
 
+  async function reloadWorkspace() {
+    const [draft, versions] = await Promise.all([api.getDraft(), api.listVersions()])
+    setWorkspaceNameState(draft.workspaceName)
+    setConfigState(cloneConfig(hydrateModelConfig(draft.config)))
+    setLastSavedAt(draft.lastAutosavedAt)
+    setRevision(draft.revision)
+    applyVersions(versions)
+    setError(null)
+    loadedRef.current = true
+    dirtyRef.current = false
+    return draft
+  }
+
   useEffect(() => {
     if (!enabled) {
       setLoading(false)
@@ -244,5 +257,6 @@ export function useWorkspace(enabled = true) {
     },
     importBundle,
     resetWorkspace,
+    reloadWorkspace,
   }
 }

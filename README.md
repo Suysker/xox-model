@@ -5,7 +5,9 @@
 ## 仓库结构
 
 - `apps/web`：React + Vite 前端
-- `apps/api`：FastAPI + SQLAlchemy 后端
+- `apps/api`：TypeScript + Fastify + Kysely 后端与 Agent 服务
+- `packages/domain`：前后端共享的测算模型、默认值、事实表与导入归一化逻辑
+- `packages/contracts`：REST DTO、Agent 协议、确认卡和共享事件类型
 - `docs`：架构、项目规划、接口说明、验收清单、运维说明
 - `infra/scripts`：部署与辅助脚本
 
@@ -18,6 +20,7 @@
 - 记账：基于当前草稿的预测科目录入实际收入与成本分录，无需先发布正式版
 - 预实分析：按期间与科目对比当前草稿计划和实际结果
 - 分享：为不可变发布版生成只读公开链接，并支持撤销
+- Agent OS：底部对话台可驱动页面切换、试算、记账、草稿修改、发布、恢复、分享和锁账；支持多步骤计划、执行前编辑确认卡，写入动作必须先确认
 
 ## 本地开发
 
@@ -31,18 +34,17 @@ npm.cmd run dev:web
 ### 后端
 
 ```bash
-python -m pip install -e ./apps/api
-python -m uvicorn app.main:app --app-dir apps/api --reload
+npm.cmd run dev:api
 ```
 
 ## Linux 部署
 
 在 Linux 服务器上可以直接使用 `infra/scripts/deploy-linux.sh` 完成前后端部署。这个脚本不会修改 nginx 配置，而是：
 
-- 安装 Node.js 20 和 Python 3.11+
-- 构建前端并安装后端依赖
+- 安装 Node.js 20
+- 构建前端和 TypeScript API，并安装 Node workspace 依赖
 - 创建 `xox-model-web` 和 `xox-model-api` 两个 systemd 服务
-- 让前端静态服务在同源下代理 `/api/*` 到本机 FastAPI
+- 让前端静态服务在同源下代理 `/api/*` 到本机 TypeScript API
 
 在仓库工作树里执行：
 
@@ -68,7 +70,8 @@ sudo RUN_TESTS=1 bash infra/scripts/deploy-linux.sh
 ```bash
 npm.cmd run test:web
 npm.cmd run build:web
-python -m pytest apps/api/tests
+npm.cmd run build:api
+npm.cmd run test:api
 npm.cmd run test
 ```
 
@@ -83,7 +86,8 @@ npm.cmd run test
 ## 说明
 
 - 前端放在 `apps/web` 下，避免仓库随着功能增长而把所有文件堆在根目录。
-- 后端围绕“可变草稿、不可变发布版、按期间记账、按当前草稿做预实分析”这条主线设计。
+- 后端围绕“可变草稿、不可变发布版、按期间记账、按当前草稿做预实分析、Agent 确认式执行”这条主线设计。
+- Agent 只能调用同一套领域服务，不直接写数据库；账号登录、退出、注销、删除账号和密码类动作不开放给 Agent。配置 DeepSeek key 后会优先用真实模型做 JSON 规划，失败时回退本地规则。
 - 公开分享只允许针对发布版，确保外部链接不会被后续草稿修改污染。
 - 审计日志覆盖认证、工作区、分享和账务关键动作。
 - 发布时会同时固化月度事实表和行项目事实表，便于后续对账与分析。
@@ -135,4 +139,5 @@ npm.cmd run test
 - 预实分析默认聚焦有差异的科目，并补了收入达成、成本执行、净经营偏差和首要原因四个复盘入口。
 - 公开分享页现在包含经营分析、月度结果、成员表现和模型输入四个只读视图。
 - 回滚、删除、重置、撤销分享、注销账号等高风险动作都会先确认，再执行；账本分录的作废改为直接执行，历史里支持取消作废。
+- 登录后的主工作台缩放为 85%，底部常驻 Agent OS 对话台；Agent 调用业务能力时会先显式切到对应页面或版本面板，再展示确认卡。
 
