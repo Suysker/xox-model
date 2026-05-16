@@ -58,6 +58,7 @@ import {
   type AgentActionDraft,
 } from '../agent/action-requests.js'
 import { answerWorkspaceDataQuestion } from '../agent/data-agent.js'
+import { cloneModelConfig, getConfigPath, setConfigPath } from '../agent/config-patch.js'
 import {
   addMessage,
   buildThreadState,
@@ -185,41 +186,6 @@ function memberFromMessage(config: ModelConfig, message: string) {
 
 function isActionDraft(item: PlannedItem): item is AgentActionDraft {
   return Boolean((item as AgentActionDraft).kind)
-}
-
-function cloneConfig(config: ModelConfig) {
-  return hydrateModelConfig(JSON.parse(JSON.stringify(config)) as unknown)
-}
-
-function pathSegments(path: string) {
-  return path
-    .replace(/^config\./, '')
-    .replace(/\[(\d+)\]/g, '.$1')
-    .split('.')
-    .map((segment) => segment.trim())
-    .filter(Boolean)
-}
-
-function getConfigPath(root: unknown, path: string) {
-  let current = root as any
-  for (const segment of pathSegments(path)) {
-    if (current == null) return undefined
-    current = current[segment]
-  }
-  return current
-}
-
-function setConfigPath(root: unknown, path: string, value: unknown) {
-  const segments = pathSegments(path)
-  if (segments.length === 0) throw unprocessable('Patch path is required')
-  let current = root as any
-  for (const segment of segments.slice(0, -1)) {
-    if (current == null || !(segment in current)) throw unprocessable(`Patch path not found: ${path}`)
-    current = current[segment]
-  }
-  const last = segments.at(-1)!
-  if (current == null || !(last in current)) throw unprocessable(`Patch path not found: ${path}`)
-  current[last] = value
 }
 
 function splitRequestedSteps(message: string) {
@@ -442,7 +408,7 @@ async function planWorkspacePatch(
 ) {
   if (patches.length === 0) return null
   const { draft, config } = await currentDraftConfig(ctx)
-  const nextConfig = cloneConfig(config)
+  const nextConfig = cloneModelConfig(config)
   const details = []
 
   for (const patch of patches) {

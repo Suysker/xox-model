@@ -58,6 +58,7 @@
 - Confirmation cards need a lifecycle service, not route-local SQL. Keep creation, editing, confirmation, cancellation, execution status, assistant messages, run events, and audit writes together so refresh recovery and SSE read one consistent backend-owned state.
 - Agent server tool execution should sit behind a tool executor boundary. Confirmation services should validate and manage lifecycle, then delegate confirmed action payloads to a dedicated executor that calls existing domain modules instead of duplicating business branches in routes or provider adapters.
 - Data Agent answer generation should be a read-only service. Keep structured data questions in a module that reads tenant-scoped projections and ledger summaries, returns answer text plus navigation, and never creates confirmation cards or mixes with route-level planning code.
+- Generic draft patch support should use a shared config-path service. Agent coverage for manual UI fields depends on reliable dot/array path parsing, old/new preview values, and model hydration after edits; do not duplicate that traversal inside planner routes.
 
 ## Testing
 
