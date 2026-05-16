@@ -11,6 +11,7 @@ import type { Database } from '../src/db/schema.js'
 import type { Settings } from '../src/core/settings.js'
 import { AGENT_MANUAL_CAPABILITY_COVERAGE, agentWritableConfigPatterns, buildAgentWritableConfigCatalog } from '../src/agent/tool-coverage.js'
 import { createProductDefaultModel } from '@xox/domain'
+import { recoverRunningAgentRuns } from '../src/modules/agent.js'
 
 type JsonResponse = {
   statusCode: number
@@ -39,7 +40,7 @@ async function buildHarness(name: string, overrides: Partial<Settings> = {}) {
   const settings = { ...testSettings(join(dir, 'test.db')), ...overrides }
   const db = createDatabase(settings)
   const app = await createApp({ settings, db })
-  return { app, db }
+  return { app, db, settings }
 }
 
 async function readRequestBody(request: IncomingMessage) {
@@ -170,6 +171,86 @@ function fakeOpenAIChatToolResponse(name: string, args: Record<string, unknown> 
     }],
     usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
   }
+}
+
+async function insertRunningAgentRun(
+  db: Kysely<Database>,
+  userId: string,
+  input: { message: string; partialOutput?: boolean; suffix: string },
+) {
+  const workspace = await db.selectFrom('workspaces').selectAll().where('owner_id', '=', userId).executeTakeFirstOrThrow()
+  const now = new Date().toISOString()
+  const threadId = `thread-${input.suffix}`
+  const runId = `run-${input.suffix}`
+  const messageId = `message-${input.suffix}`
+  await db.insertInto('agent_threads').values({
+    id: threadId,
+    workspace_id: workspace.id,
+    user_id: userId,
+    title: 'Agent 对话',
+    created_at: now,
+    updated_at: now,
+  }).execute()
+  await db.insertInto('agent_messages').values({
+    id: messageId,
+    thread_id: threadId,
+    role: 'user',
+    content: input.message,
+    created_at: now,
+  }).execute()
+  await db.insertInto('agent_runs').values({
+    id: runId,
+    thread_id: threadId,
+    user_id: userId,
+    status: 'running',
+    input_message_id: messageId,
+    input_message: input.message,
+    planner_source: null,
+    created_at: now,
+    completed_at: null,
+  }).execute()
+
+  if (input.partialOutput) {
+    const actionId = `action-${input.suffix}`
+    await db.insertInto('agent_action_requests').values({
+      id: actionId,
+      thread_id: threadId,
+      run_id: runId,
+      workspace_id: workspace.id,
+      user_id: userId,
+      kind: 'workspace.update_draft',
+      status: 'pending',
+      title: '半成品确认卡',
+      summary: '这个动作应该在恢复时被取消。',
+      target_label: workspace.name,
+      risk_level: 'medium',
+      details_json: JSON.stringify([]),
+      navigation_json: JSON.stringify({
+        type: 'navigation',
+        route: { mainTab: 'inputs', secondaryTab: 'revenue' },
+        reason: '半成品导航。',
+      }),
+      payload_json: JSON.stringify({ revision: 1, workspaceName: workspace.name, config: createProductDefaultModel() }),
+      created_at: now,
+      executed_at: null,
+      error_message: null,
+    }).execute()
+    await db.insertInto('agent_plan_steps').values({
+      id: `step-${input.suffix}`,
+      thread_id: threadId,
+      run_id: runId,
+      action_request_id: actionId,
+      sequence_no: 1,
+      title: '半成品步骤',
+      description: '这个步骤应该在恢复时失败。',
+      status: 'ready',
+      navigation_json: null,
+      created_at: now,
+      updated_at: now,
+    }).execute()
+  }
+
+  return { workspace, threadId, runId, messageId }
 }
 
 function sleep(ms: number) {
@@ -837,6 +918,38 @@ describe('xox TypeScript API', () => {
     })
   })
 
+  it('asks for clarification through a model-selected tool when required business details are missing', async () => {
+    await withFakeOpenAICompatibleProvider((body) => {
+      expect(body.tools.some((tool: any) => tool.function.name === 'ask_user_clarification')).toBe(true)
+      return fakeToolResponse('ask_user_clarification', {
+        question: '请补充要记账的月份、成员以及线下/线上张数。',
+        missingFields: ['monthLabel', 'memberName', 'offlineUnits', 'onlineUnits'],
+        suggestions: ['例如：3 月成员 A 线下 1 张、线上 0 张'],
+      })
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-clarification-tool', {
+        llmProvider: 'openai-compatible',
+        openaiCompatibleProvider: 'test-compatible',
+        openaiCompatibleBaseUrl: baseUrl,
+        openaiCompatibleApiKey: 'test-key',
+      })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-clarification-tool@example.com')
+
+      const response = await client.post('/api/v1/agent/messages', {
+        message: '帮我记一笔收入',
+      })
+      expect(response.statusCode).toBe(200)
+      expect(response.json.planner).toBe('openai_compatible_tool_calls')
+      expect(response.json.actionRequests).toHaveLength(0)
+      expect(response.json.planSteps[0].title).toBe('需要补充信息')
+      expect(response.json.planSteps[0].status).toBe('info')
+      expect(response.json.messages.at(-1).content).toContain('请补充要记账的月份')
+      expect(response.json.messages.at(-1).content).toContain('monthLabel')
+      await closeHarness(harness)
+    })
+  })
+
   it('starts background agent runs immediately and recovers completed model results from thread state', async () => {
     let releaseProvider!: () => void
     const providerGate = new Promise<void>((resolve) => {
@@ -899,6 +1012,84 @@ describe('xox TypeScript API', () => {
       expect(threads.json.threads[0].planner).toBe('openai_compatible_tool_calls')
       await closeHarness(harness)
     })
+  })
+
+  it('recovers safe running agent runs after an API process restart', async () => {
+    let releaseProvider!: () => void
+    const providerGate = new Promise<void>((resolve) => {
+      releaseProvider = resolve
+    })
+
+    await withFakeOpenAICompatibleProvider(async () => {
+      await providerGate
+      return fakeToolResponse('data_query_workspace', {
+        question: '3 月计划收入和计划成本是多少',
+        scope: 'period_summary',
+        monthLabel: '3月',
+        metrics: ['plannedRevenue', 'plannedCost'],
+      })
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-recover-running-run', {
+        llmProvider: 'openai-compatible',
+        openaiCompatibleProvider: 'test-compatible',
+        openaiCompatibleBaseUrl: baseUrl,
+        openaiCompatibleApiKey: 'test-key',
+      })
+      const client = new Client(harness.app)
+      const user = await registerUser(client, 'agent-recover-running-run@example.com')
+      const run = await insertRunningAgentRun(harness.db, user.id, {
+        suffix: 'recover-running',
+        message: '3 月计划收入和计划成本是多少？',
+      })
+
+      await recoverRunningAgentRuns(harness.db, harness.settings)
+      const runningState = await client.get(`/api/v1/agent/threads/${run.threadId}`)
+      expect(runningState.statusCode).toBe(200)
+      expect(runningState.json.runs[0].status).toBe('running')
+      expect(runningState.json.messages.map((message: any) => message.role)).toEqual(['user'])
+
+      releaseProvider()
+      let completedState = runningState.json
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        await sleep(25)
+        const nextState = await client.get(`/api/v1/agent/threads/${run.threadId}`)
+        completedState = nextState.json
+        if (completedState.runs[0].status === 'completed') break
+      }
+
+      expect(completedState.runs[0].status).toBe('completed')
+      expect(completedState.runs[0].planner).toBe('openai_compatible_tool_calls')
+      expect(completedState.messages.map((message: any) => message.role)).toEqual(['user', 'assistant'])
+      expect(completedState.messages.at(-1).content).toContain('3月计划收入')
+      expect(completedState.planSteps[0].status).toBe('executed')
+      expect(completedState.actionRequests).toHaveLength(0)
+      await closeHarness(harness)
+    })
+  })
+
+  it('fails closed when recovering an interrupted running agent run with partial output', async () => {
+    const harness = await buildHarness('agent-recover-partial-run')
+    const client = new Client(harness.app)
+    const user = await registerUser(client, 'agent-recover-partial-run@example.com')
+    const run = await insertRunningAgentRun(harness.db, user.id, {
+      suffix: 'recover-partial',
+      message: '把 4 月线上系数改成 0.3 并保存',
+      partialOutput: true,
+    })
+
+    await recoverRunningAgentRuns(harness.db, harness.settings)
+    const state = await client.get(`/api/v1/agent/threads/${run.threadId}`)
+    expect(state.statusCode).toBe(200)
+    expect(state.json.runs[0].status).toBe('failed')
+    expect(state.json.actionRequests[0].status).toBe('cancelled')
+    expect(state.json.actionRequests[0].errorMessage).toContain('部分运行产物')
+    expect(state.json.planSteps[0].status).toBe('failed')
+    expect(state.json.messages.map((message: any) => message.role)).toEqual(['user', 'assistant'])
+    expect(state.json.messages.at(-1).content).toContain('请重新发送这条指令')
+    const threads = await client.get('/api/v1/agent/threads')
+    expect(threads.json.threads[0].latestRunStatus).toBe('failed')
+    expect(threads.json.threads[0].pendingActionCount).toBe(0)
+    await closeHarness(harness)
   })
 
   it('uses OpenAI Agents SDK adapter for OpenAI provider planning', async () => {

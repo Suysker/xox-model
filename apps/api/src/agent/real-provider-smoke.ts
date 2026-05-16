@@ -272,6 +272,23 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     rememberCoverage(coveredDirections, 'data_agent_period_question')
     rememberCoverage(coveredDirections, 'background_run_recovery')
 
+    const clarification = await sendAgentMessage(client, plannerSources, {
+      label: 'clarification for missing ledger fields',
+      threadId: forecast.json.threadId,
+      message: '我想记一笔收入，但我还没告诉你月份、成员、线下张数和线上张数，请先问我需要补充什么',
+    })
+    assertSmoke(Array.isArray(clarification.json.actionRequests) && clarification.json.actionRequests.length === 0, 'clarification unexpectedly created a write confirmation')
+    assertSmoke(
+      String(clarification.json.messages.at(-1)?.content ?? '').includes('补充') ||
+        String(clarification.json.messages.at(-1)?.content ?? '').includes('请'),
+      `clarification did not ask the user for missing details: ${String(clarification.json.messages.at(-1)?.content ?? '')}`,
+    )
+    assertSmoke(
+      clarification.json.planSteps.some((step: any) => String(step.title).includes('补充') || String(step.description).includes('月份')),
+      `clarification step missing: ${JSON.stringify(clarification.json.planSteps)}`,
+    )
+    rememberCoverage(coveredDirections, 'clarification_request')
+
     const memoryWrite = await client.post('/api/v1/agent/messages', {
       threadId: forecast.json.threadId,
       message: '记住：默认记账成员是 成员 A',

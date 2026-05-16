@@ -433,7 +433,9 @@ POST /agent/messages
 - 前端发送消息使用 background run：`POST /api/v1/agent/messages` 传 `background=true` 后立即返回 `threadId/runId/status=running` 和用户消息，服务端在同一 API 进程内继续执行模型规划并持久化结果。
 - 前端拿到 `threadId` 后立即写入本地指针，并轮询 `GET /api/v1/agent/threads/:threadId`；刷新、网络断开或请求响应丢失后，只要浏览器已拿到启动响应，就能恢复 running/completed/failed run、消息、运行图和待确认动作。
 - 普通同步模式仍保留给 API 集成测试和后端调用；产品 UI 默认使用 background 模式。
-- 当前 background run 是 in-process queue，可覆盖浏览器刷新和网络异常；跨 Node 进程重启的 durable queue、run cancellation、SSE/WebSocket progress 是下一阶段 maturity gate。
+- `agent_runs` 持久化 `input_message_id` 和 `input_message`，使 running run 在 API 进程重启后仍有足够输入上下文恢复模型规划。
+- API 启动后会扫描 `status=running` 的 run：如果该 run 还没有 `planSteps/actionRequests` 产物，则重新调用同一套 planner/tool/confirmation 流程并落库为 completed/failed；如果已有部分产物，则 fail-closed 标记为 failed 并写 assistant 提示，避免重复创建确认卡或让用户确认半成品动作。
+- 该恢复机制覆盖单实例 API 进程重启和临时崩溃后的安全续跑；多实例并发抢占、显式 cancellation、SSE/WebSocket progress 仍是下一阶段 maturity gate。
 
 ### SaaS 隔离规则
 

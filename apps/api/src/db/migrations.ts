@@ -257,11 +257,15 @@ export async function runMigrations(db: Kysely<Database>) {
       thread_id VARCHAR(36) NOT NULL REFERENCES agent_threads(id) ON DELETE CASCADE,
       user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       status VARCHAR(32) NOT NULL,
+      input_message_id VARCHAR(36),
+      input_message TEXT,
       planner_source VARCHAR(64),
       created_at DATETIME NOT NULL,
       completed_at DATETIME
     )`,
   )
+  await addColumnIfMissing(db, 'agent_runs', 'input_message_id', 'VARCHAR(36)')
+  await addColumnIfMissing(db, 'agent_runs', 'input_message', 'TEXT')
   await addColumnIfMissing(db, 'agent_runs', 'planner_source', 'VARCHAR(64)')
   await exec(
     db,

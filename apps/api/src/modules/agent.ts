@@ -1161,6 +1161,26 @@ async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePlanResul
 }
 
 async function plannedItemFromRuntimeStep(ctx: PlannerContext, step: RuntimePlannerStep): Promise<PlannedItem | null> {
+  if (step.intent === 'agent.ask_clarification') {
+    const question = typeof step.question === 'string' && step.question.trim()
+      ? step.question.trim()
+      : '我还缺少必要信息，能补充一下吗？'
+    const missingFields = Array.isArray(step.missingFields)
+      ? step.missingFields.filter((field): field is string => typeof field === 'string' && field.trim().length > 0)
+      : []
+    const suggestions = Array.isArray(step.suggestions)
+      ? step.suggestions.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+      : []
+    const suffix = [
+      missingFields.length > 0 ? `缺少：${missingFields.join('、')}` : null,
+      suggestions.length > 0 ? `可选参考：${suggestions.join('、')}` : null,
+    ].filter(Boolean).join('。')
+    return {
+      title: '需要补充信息',
+      message: `${question}${suffix ? `（${suffix}）` : ''}`,
+      status: 'info',
+    } satisfies ReadDraft
+  }
   if (step.intent === 'account.forbidden') {
     return accountForbiddenRead()
   }
@@ -1455,6 +1475,28 @@ async function failAgentRun(
   await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', thread.id).execute().catch(() => undefined)
 }
 
+async function failInterruptedAgentRun(
+  db: Kysely<Database>,
+  thread: Row<'agent_threads'>,
+  runId: string,
+  message: string,
+) {
+  const now = utcNow()
+  await db
+    .updateTable('agent_action_requests')
+    .set({ status: 'cancelled', error_message: message })
+    .where('run_id', '=', runId)
+    .where('status', '=', 'pending')
+    .execute()
+  await db
+    .updateTable('agent_plan_steps')
+    .set({ status: 'failed', updated_at: now })
+    .where('run_id', '=', runId)
+    .where('status', '!=', 'executed')
+    .execute()
+  await failAgentRun(db, thread, runId, new Error(message))
+}
+
 async function completeAgentRun(ctx: PlannerContext & { thread: Row<'agent_threads'> }): Promise<CompletedAgentRun> {
   try {
     const planned = await planResponse(ctx)
@@ -1476,6 +1518,85 @@ async function completeAgentRun(ctx: PlannerContext & { thread: Row<'agent_threa
   } catch (error) {
     await failAgentRun(ctx.db, ctx.thread, ctx.runId, error)
     throw error
+  }
+}
+
+async function countRunRows(db: Kysely<Database>, table: 'agent_plan_steps' | 'agent_action_requests', runId: string) {
+  const row = await db
+    .selectFrom(table)
+    .select(({ fn }) => fn.countAll<number>().as('count'))
+    .where('run_id', '=', runId)
+    .executeTakeFirstOrThrow()
+  return Number(row.count)
+}
+
+async function recoverRunMessage(db: Kysely<Database>, run: Row<'agent_runs'>) {
+  const stored = run.input_message?.trim()
+  if (stored) return stored
+  if (run.input_message_id) {
+    const message = await db
+      .selectFrom('agent_messages')
+      .select('content')
+      .where('id', '=', run.input_message_id)
+      .where('role', '=', 'user')
+      .executeTakeFirst()
+    if (message?.content.trim()) return message.content.trim()
+  }
+  const fallback = await db
+    .selectFrom('agent_messages')
+    .select('content')
+    .where('thread_id', '=', run.thread_id)
+    .where('role', '=', 'user')
+    .where('created_at', '<=', run.created_at)
+    .orderBy('created_at', 'desc')
+    .limit(1)
+    .executeTakeFirst()
+  return fallback?.content.trim() ?? null
+}
+
+export async function recoverRunningAgentRuns(db: Kysely<Database>, settings: Settings) {
+  const runs = await db
+    .selectFrom('agent_runs')
+    .selectAll()
+    .where('status', '=', 'running')
+    .orderBy('created_at', 'asc')
+    .execute()
+
+  for (const run of runs) {
+    const thread = await db.selectFrom('agent_threads').selectAll().where('id', '=', run.thread_id).executeTakeFirst()
+    if (!thread) {
+      await db.updateTable('agent_runs').set({ status: 'failed', completed_at: utcNow() }).where('id', '=', run.id).execute()
+      continue
+    }
+    const [workspace, user, planStepCount, actionCount] = await Promise.all([
+      db.selectFrom('workspaces').selectAll().where('id', '=', thread.workspace_id).executeTakeFirst(),
+      db.selectFrom('users').selectAll().where('id', '=', run.user_id).executeTakeFirst(),
+      countRunRows(db, 'agent_plan_steps', run.id),
+      countRunRows(db, 'agent_action_requests', run.id),
+    ])
+    if (!workspace || !user || thread.user_id !== run.user_id) {
+      await failInterruptedAgentRun(db, thread, run.id, 'Agent run 无法恢复：用户或工作区已不存在。')
+      continue
+    }
+    if (planStepCount > 0 || actionCount > 0) {
+      await failInterruptedAgentRun(db, thread, run.id, 'Agent run 在服务重启时已有部分运行产物，系统已取消未执行确认卡以避免重复执行。请重新发送这条指令。')
+      continue
+    }
+    const message = await recoverRunMessage(db, run)
+    if (!message) {
+      await failInterruptedAgentRun(db, thread, run.id, 'Agent run 无法恢复：缺少原始用户指令。请重新发送这条指令。')
+      continue
+    }
+    void completeAgentRun({
+      db,
+      settings,
+      user,
+      workspace,
+      thread,
+      threadId: thread.id,
+      runId: run.id,
+      message,
+    }).catch(() => undefined)
   }
 }
 
@@ -1596,9 +1717,20 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
       const now = utcNow()
       await db
         .insertInto('agent_runs')
-        .values({ id: runId, thread_id: thread.id, user_id: user.id, status: 'running', planner_source: null, created_at: now, completed_at: null })
+        .values({
+          id: runId,
+          thread_id: thread.id,
+          user_id: user.id,
+          status: 'running',
+          input_message_id: null,
+          input_message: message,
+          planner_source: null,
+          created_at: now,
+          completed_at: null,
+        })
         .execute()
       const userMessage = await addMessage(db, thread.id, 'user', message)
+      await db.updateTable('agent_runs').set({ input_message_id: userMessage.id }).where('id', '=', runId).execute()
       await rememberFromUserMessage({ db, workspace, user, threadId: thread.id, messageId: userMessage.id, message })
 
       if (body.background === true) {
@@ -1742,4 +1874,6 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
       return sendError(reply, error)
     }
   })
+
+  void recoverRunningAgentRuns(db, settings).catch(() => undefined)
 }

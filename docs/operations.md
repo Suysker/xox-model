@@ -76,7 +76,7 @@ sudo systemctl status xox-model-web
 - `apps/api/src/agent/runtime/openai-agents-adapter.ts` 使用 OpenAI Agents SDK 的 `Agent / Runner / tool / OpenAIProvider`，SDK tool 只收集内部 plan step，不执行领域写入；`apps/api/src/agent/runtime/openai-compatible-chat-adapter.ts` 只接受通用 Chat Completions `tools / tool_choice / tool_calls`。当 `LLM_PROVIDER` 不是 `rules` 时，常规 Agent 请求不会回退到规则/正则生成业务动作；模型未返回 tool call 会返回失败型只读步骤。真实 smoke 命令不允许无 key 运行。
 - Agent memory 会拒绝保存 secret-like 内容；context summary 和 provider prompt 注入的 recent messages 会做 secret redaction，避免 key/token 被带入后续模型上下文。
 - `agent_memories` 和 `agent_context_snapshots` 是租户数据，备份、导出和删除策略必须按用户 / 工作区权限处理。
-- Agent 历史对话以服务端 `agent_threads / agent_messages / agent_runs / agent_plan_steps / agent_action_requests` 为事实源。前端 `localStorage` 只保存当前 threadId 指针；发送消息时默认启动 background run，拿到 `threadId/runId/status=running` 后轮询 `/api/v1/agent/threads/:threadId` 恢复 running/completed/failed 状态、messages、运行图和待确认动作；新建对话不会删除历史。当前后台执行是 API 进程内队列，能覆盖浏览器刷新和网络异常，但 Node 进程重启后的 durable queue / cancellation / SSE 仍属后续成熟化工作。
+- Agent 历史对话以服务端 `agent_threads / agent_messages / agent_runs / agent_plan_steps / agent_action_requests` 为事实源。前端 `localStorage` 只保存当前 threadId 指针；发送消息时默认启动 background run，拿到 `threadId/runId/status=running` 后轮询 `/api/v1/agent/threads/:threadId` 恢复 running/completed/failed 状态、messages、运行图和待确认动作；新建对话不会删除历史。`agent_runs` 会持久化输入消息，API 启动时会恢复尚未产生运行产物的 `running` run；如果 run 在重启前已经生成部分步骤或确认卡，则 fail-closed 并取消未执行确认卡，要求用户重发。当前剩余成熟化工作是多实例队列抢占、cancellation 和 SSE/WebSocket progress。
 - 浏览器刷新会并发触发会话恢复和业务数据加载。`/api/v1/auth/me` 必须保持幂等，只延长当前 token 有效期，不在每次恢复时旋转 token，否则并发请求会因为旧 cookie 竞态导致误登出。
 - Agent 数据问答通过 `data_query_workspace` 只读工具完成。模型只负责选择查询 scope 和指标，服务端用当前工作区的测算、账本和预实汇总计算答案；不要暴露自由 SQL，也不要在 provider 模式下用本地正则替模型选择工具。
 - Agent 可写模型字段矩阵维护在 `apps/api/src/agent/tool-coverage.ts`。新增前端手动输入字段时，必须同步补该矩阵和 API 覆盖测试，否则模型可能不知道对应 patch path。真实 provider prompt 只注入 patterns 和少量样例字段，完整矩阵留在代码和测试里，避免每次请求携带所有月份/成本项导致延迟过高。
@@ -89,6 +89,7 @@ sudo systemctl status xox-model-web
 
 - OpenAI-compatible Chat Completions `tool_calls`，planner 必须返回 `openai_compatible_tool_calls`
 - 只读线上系数试算不写入确认卡
+- 缺少记账必要信息时通过模型 tool_call 询问用户补充，不生成确认卡
 - 新对话注入同用户 / 同工作区 memory
 - 多步骤消息拆出记账确认卡和账号动作拒绝
 - 待确认动作载荷可编辑，确认后执行编辑后的载荷
@@ -103,7 +104,7 @@ sudo systemctl status xox-model-web
 - background run 启动后可从 thread state 恢复真实模型返回的 data agent 结果
 - `agent.action_executed` 审计记录
 
-如果没有 `OPENAI_COMPATIBLE_API_KEY` 或 `DEEPSEEK_API_KEY`，该命令必须失败，不能回退到规则规划。输出只包含结构化验收摘要，不打印 key。该命令会连续调用真实模型覆盖 24 个方向，耗时明显长于单元测试，不适合放入默认 CI。
+如果没有 `OPENAI_COMPATIBLE_API_KEY` 或 `DEEPSEEK_API_KEY`，该命令必须失败，不能回退到规则规划。输出只包含结构化验收摘要，不打印 key。该命令会连续调用真实模型覆盖 25 个方向，耗时明显长于单元测试，不适合放入默认 CI。
 
 ## 验证命令
 

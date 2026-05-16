@@ -20,7 +20,7 @@
 - 记账：基于当前草稿的预测科目录入实际收入与成本分录，无需先发布正式版
 - 预实分析：按期间与科目对比当前草稿计划和实际结果
 - 分享：为不可变发布版生成只读公开链接，并支持撤销
-- Agent OS：底部对话台可驱动页面切换、只读数据问答、试算、记账、草稿修改、工作区 bundle 导入/导出、发布、恢复、分享和锁账；支持后台 run、多步骤计划、历史对话恢复、新建对话、工作区记忆查看/删除、执行前编辑确认卡，写入动作必须先确认
+- Agent OS：底部对话台可驱动页面切换、只读数据问答、试算、记账、草稿修改、工作区 bundle 导入/导出、发布、恢复、分享和锁账；支持后台 run、多步骤计划、缺信息时澄清提问、历史对话恢复、新建对话、工作区记忆查看/删除、执行前编辑确认卡，写入动作必须先确认
 
 ## 本地开发
 
@@ -81,7 +81,7 @@ npm.cmd run test
 npm.cmd run smoke:agent
 ```
 
-该命令会连续调用真实 OpenAI-compatible provider 覆盖 24 个 Agent 方向，并包含 background run 恢复验收；默认用 DeepSeek，也可通过 `OPENAI_COMPATIBLE_PROVIDER / BASE_URL / MODEL / API_KEY` 切到豆包、Qwen 等兼容服务，耗时会明显长于单元测试。
+该命令会连续调用真实 OpenAI-compatible provider 覆盖 25 个 Agent 方向，并包含 background run 恢复验收；默认用 DeepSeek，也可通过 `OPENAI_COMPATIBLE_PROVIDER / BASE_URL / MODEL / API_KEY` 切到豆包、Qwen 等兼容服务，耗时会明显长于单元测试。
 
 ## 文档索引
 
@@ -98,7 +98,7 @@ npm.cmd run smoke:agent
 - 前端放在 `apps/web` 下，避免仓库随着功能增长而把所有文件堆在根目录。
 - 后端围绕“可变草稿、不可变发布版、按期间记账、按当前草稿做预实分析、Agent 确认式执行”这条主线设计。
 - Agent 只能调用同一套领域服务，不直接写数据库；账号登录、退出、注销、删除账号和密码类动作不开放给 Agent。`LLM_PROVIDER=openai` 已通过 OpenAI Agents SDK adapter 接入，DeepSeek 只是默认真实模型测试通道，豆包、Qwen 等兼容服务继续通过通用 OpenAI-compatible adapter 和 env 切换；不引入 Claude Agent SDK。
-- Agent prompts 位于 `apps/api/src/agent/prompts`，工具目录位于 `apps/api/src/agent/tool-catalog.ts`，租户内 memory 与上下文压缩位于 `apps/api/src/agent/memory.ts`；历史对话、run graph、后台 run 状态和待确认动作以服务端 `agent_*` 表为事实源，前端只保存当前 threadId 指针并轮询恢复运行中的对话。
+- Agent prompts 位于 `apps/api/src/agent/prompts`，工具目录位于 `apps/api/src/agent/tool-catalog.ts`，租户内 memory 与上下文压缩位于 `apps/api/src/agent/memory.ts`；历史对话、run graph、后台 run 状态和待确认动作以服务端 `agent_*` 表为事实源，前端只保存当前 threadId 指针并轮询恢复运行中的对话。`agent_runs` 保存输入消息，API 重启后会恢复安全可重跑的 running run；半写入 run 会 fail-closed，避免重复确认卡。
 - 公开分享只允许针对发布版，确保外部链接不会被后续草稿修改污染。
 - 审计日志覆盖认证、工作区、分享和账务关键动作。
 - 发布时会同时固化月度事实表和行项目事实表，便于后续对账与分析。

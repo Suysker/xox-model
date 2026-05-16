@@ -13,6 +13,8 @@ export type AgentToolCallStep = {
   mainTab?: 'dashboard' | 'inputs' | 'bookkeeping' | 'variance'
   secondaryTab?: string
   question?: string
+  missingFields?: string[]
+  suggestions?: string[]
   scope?: 'workspace_summary' | 'period_summary' | 'member_summary' | 'top_months'
   metrics?: string[]
   order?: 'asc' | 'desc'
@@ -68,7 +70,7 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
       description: '为某个月的某个成员规划一笔线下/线上销售收入入账确认卡。',
       parameters: objectSchema({
         monthLabel,
-        memberName: { type: 'string', description: '成员名称或成员 id。' },
+        memberName: { type: 'string', description: '成员名称或成员 id；当用户说默认成员/默认记账成员时，从 tenantScopedMemory 中解析具体成员名后填写。' },
         offlineUnits: { type: 'number', description: '线下销售张数。' },
         onlineUnits: { type: 'number', description: '线上销售张数。' },
       }, ['monthLabel', 'memberName']),
@@ -243,6 +245,26 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
   {
     type: 'function',
     function: {
+      name: 'ask_user_clarification',
+      description: '当用户目标可执行但缺少必要业务信息时，向用户提出一个简短澄清问题。只读，不生成确认卡，不修改业务数据。',
+      parameters: objectSchema({
+        question: { type: 'string', description: '要问用户的简短问题，用中文，一次只问最关键缺口。' },
+        missingFields: {
+          type: 'array',
+          items: { type: 'string' },
+          description: '缺失的业务字段，例如 monthLabel、memberName、offlineUnits、onlineUnits、versionNo。',
+        },
+        suggestions: {
+          type: 'array',
+          items: { type: 'string' },
+          description: '可选的简短候选项，来自上下文或记忆；没有把握时留空。',
+        },
+      }, ['question']),
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'account_forbidden',
       description: '用户请求账号登录、退出、注册、注销、删除账号、改密码等禁止 Agent 自动执行的动作。',
       parameters: objectSchema({}),
@@ -284,6 +306,8 @@ export function toolCallToPlannerStep(toolName: string, args: Record<string, unk
       return { intent: 'ui.navigate', ...args }
     case 'data_query_workspace':
       return { intent: 'data.query_workspace', ...args }
+    case 'ask_user_clarification':
+      return { intent: 'agent.ask_clarification', ...args }
     case 'account_forbidden':
       return { intent: 'account.forbidden' }
     default:

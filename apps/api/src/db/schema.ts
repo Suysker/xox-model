@@ -203,6 +203,8 @@ export type AgentRunTable = {
   thread_id: string
   user_id: string
   status: string
+  input_message_id: string | null
+  input_message: string | null
   planner_source: string | null
   created_at: Timestamp
   completed_at: string | null
