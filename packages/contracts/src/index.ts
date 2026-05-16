@@ -258,7 +258,8 @@ export type AgentMemoryRecord = {
 export type AgentSendResponse = {
   threadId: string
   runId: string
-  planner: AgentPlannerSource
+  status: AgentRunRecord['status']
+  planner: AgentPlannerSource | null
   messages: AgentMessage[]
   navigationEvents: AgentNavigationEvent[]
   planSteps: AgentPlanStep[]

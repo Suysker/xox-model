@@ -367,7 +367,7 @@ export const api = {
     apiRequest<VarianceResponse>('GET', `/api/v1/variance/periods/${periodId}`),
   getSharedVersion: (shareToken: string) =>
     apiRequest<PublicShareResponse>('GET', `/api/v1/public/shares/${encodeURIComponent(shareToken)}`),
-  sendAgentMessage: (payload: { threadId?: string | null; message: string }) =>
+  sendAgentMessage: (payload: { threadId?: string | null; message: string; background?: boolean }) =>
     apiRequest<AgentSendResponse>('POST', '/api/v1/agent/messages', payload),
   listAgentThreads: () =>
     apiRequest<{ threads: AgentThreadSummary[] }>('GET', '/api/v1/agent/threads'),

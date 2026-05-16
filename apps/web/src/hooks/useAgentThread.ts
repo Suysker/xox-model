@@ -47,15 +47,18 @@ export function useAgentThread(props: {
   const [memories, setMemories] = useState<AgentMemoryRecord[]>([])
   const [threadSummaries, setThreadSummaries] = useState<AgentThreadSummary[]>([])
   const [busy, setBusy] = useState(false)
+  const [runningRunId, setRunningRunId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   function applyThreadState(state: AgentThreadState, replayNavigation: boolean) {
+    const latestRun = state.runs[0] ?? null
     setThreadId(state.thread.id)
     setMessages(state.messages)
     setActionRequests(state.actionRequests)
     setPlanSteps(state.planSteps)
     setNavigationEvents(state.navigationEvents)
     setPlanner(state.planner)
+    setRunningRunId(latestRun?.status === 'running' ? latestRun.id : null)
     writeCurrentThreadId(state.thread.id)
     if (replayNavigation) {
       const latestNavigation = state.navigationEvents.at(-1)
@@ -107,6 +110,34 @@ export function useAgentThread(props: {
     void bootstrapAgentState()
   }, [])
 
+  useEffect(() => {
+    if (!threadId || !runningRunId) return
+
+    let active = true
+
+    async function pollThreadState() {
+      try {
+        const state = await api.getAgentThread(threadId!)
+        if (!active) return
+        const latestRun = state.runs[0] ?? null
+        applyThreadState(state, latestRun?.status !== 'running')
+        if (latestRun?.status !== 'running') {
+          void refreshMemories()
+          void refreshThreads()
+        }
+      } catch (pollError) {
+        if (active) setError(pollError instanceof Error ? pollError.message : String(pollError))
+      }
+    }
+
+    void pollThreadState()
+    const timer = globalThis.setInterval(() => void pollThreadState(), 1500)
+    return () => {
+      active = false
+      globalThis.clearInterval(timer)
+    }
+  }, [threadId, runningRunId])
+
   function mergeActions(nextActions: AgentActionRequest[]) {
     setActionRequests((current) => {
       const byId = new Map(current.map((action) => [action.id, action]))
@@ -131,14 +162,15 @@ export function useAgentThread(props: {
     }
     setMessages((current) => [...current, optimisticMessage])
     try {
-      const response = await api.sendAgentMessage({ threadId, message })
+      const response = await api.sendAgentMessage({ threadId, message, background: true })
       setThreadId(response.threadId)
       writeCurrentThreadId(response.threadId)
       setPlanner(response.planner)
       setMessages((current) => [...current.filter((item) => item.id !== optimisticId), ...response.messages])
-      mergeActions(response.actionRequests)
+      setActionRequests(response.actionRequests)
       setPlanSteps(response.planSteps)
       setNavigationEvents(response.navigationEvents)
+      setRunningRunId(response.status === 'running' ? response.runId : null)
       response.navigationEvents.forEach(props.onNavigate)
       void refreshMemories()
       void refreshThreads()
@@ -207,6 +239,7 @@ export function useAgentThread(props: {
     setPlanSteps([])
     setNavigationEvents([])
     setPlanner(null)
+    setRunningRunId(null)
     setError(null)
     void refreshMemories()
     void refreshThreads()
@@ -234,7 +267,7 @@ export function useAgentThread(props: {
     planner,
     memories,
     threadSummaries,
-    busy,
+    busy: busy || Boolean(runningRunId),
     error,
     sendMessage,
     confirmAction,

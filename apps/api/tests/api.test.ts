@@ -48,11 +48,12 @@ async function readRequestBody(request: IncomingMessage) {
   return Buffer.concat(chunks).toString('utf8')
 }
 
-async function withFakeOpenAICompatibleProvider(handler: (body: any) => unknown, run: (baseUrl: string) => Promise<void>) {
+async function withFakeOpenAICompatibleProvider(handler: (body: any) => unknown | Promise<unknown>, run: (baseUrl: string) => Promise<void>) {
   const server = createServer(async (request: IncomingMessage, response: ServerResponse) => {
     const body = JSON.parse(await readRequestBody(request))
+    const payload = await handler(body)
     response.writeHead(200, { 'Content-Type': 'application/json' })
-    response.end(JSON.stringify(handler(body)))
+    response.end(JSON.stringify(payload))
   })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   const address = server.address() as AddressInfo
@@ -169,6 +170,10 @@ function fakeOpenAIChatToolResponse(name: string, args: Record<string, unknown> 
     }],
     usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
   }
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 describe('xox TypeScript API', () => {
@@ -828,6 +833,70 @@ describe('xox TypeScript API', () => {
       expect(response.json.navigationEvents[0].route.mainTab).toBe('dashboard')
       expect(response.json.messages.at(-1).content).toContain('3月计划收入')
       expect(response.json.messages.at(-1).content).toContain('计划成本')
+      await closeHarness(harness)
+    })
+  })
+
+  it('starts background agent runs immediately and recovers completed model results from thread state', async () => {
+    let releaseProvider!: () => void
+    const providerGate = new Promise<void>((resolve) => {
+      releaseProvider = resolve
+    })
+
+    await withFakeOpenAICompatibleProvider(async (body) => {
+      expect(body.tools.some((tool: any) => tool.function.name === 'data_query_workspace')).toBe(true)
+      await providerGate
+      return fakeToolResponse('data_query_workspace', {
+        question: '3 月计划收入和计划成本是多少',
+        scope: 'period_summary',
+        monthLabel: '3月',
+        metrics: ['plannedRevenue', 'plannedCost'],
+      })
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-background-run', {
+        llmProvider: 'openai-compatible',
+        openaiCompatibleProvider: 'test-compatible',
+        openaiCompatibleBaseUrl: baseUrl,
+        openaiCompatibleApiKey: 'test-key',
+      })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-background-run@example.com')
+
+      const started = await client.post('/api/v1/agent/messages', {
+        message: '3 月计划收入和计划成本是多少？',
+        background: true,
+      })
+      expect(started.statusCode).toBe(200)
+      expect(started.json.status).toBe('running')
+      expect(started.json.planner).toBeNull()
+      expect(started.json.messages.map((message: any) => message.role)).toEqual(['user'])
+      expect(started.json.actionRequests).toHaveLength(0)
+
+      const runningState = await client.get(`/api/v1/agent/threads/${started.json.threadId}`)
+      expect(runningState.statusCode).toBe(200)
+      expect(runningState.json.runs[0].status).toBe('running')
+      expect(runningState.json.messages.map((message: any) => message.role)).toEqual(['user'])
+
+      releaseProvider()
+      let completedState = runningState.json
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        await sleep(25)
+        const nextState = await client.get(`/api/v1/agent/threads/${started.json.threadId}`)
+        completedState = nextState.json
+        if (completedState.runs[0].status === 'completed') break
+      }
+
+      expect(completedState.runs[0].status).toBe('completed')
+      expect(completedState.runs[0].planner).toBe('openai_compatible_tool_calls')
+      expect(completedState.messages.map((message: any) => message.role)).toEqual(['user', 'assistant'])
+      expect(completedState.messages.at(-1).content).toContain('3月计划收入')
+      expect(completedState.planSteps[0].status).toBe('executed')
+      expect(completedState.navigationEvents[0].route.mainTab).toBe('dashboard')
+      expect(completedState.actionRequests).toHaveLength(0)
+
+      const threads = await client.get('/api/v1/agent/threads')
+      expect(threads.json.threads[0].latestRunStatus).toBe('completed')
+      expect(threads.json.threads[0].planner).toBe('openai_compatible_tool_calls')
       await closeHarness(harness)
     })
   })

@@ -1415,6 +1415,70 @@ async function planResponse(ctx: PlannerContext) {
   }
 }
 
+type CompletedAgentRun = {
+  plannerSource: AgentPlannerSource
+  assistantMessage: Row<'agent_messages'>
+  navigationEvents: AgentNavigationEvent[]
+  actionRows: Row<'agent_action_requests'>[]
+  planRows: Row<'agent_plan_steps'>[]
+}
+
+function safeRunErrorMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error)
+  return redactSecretLikeContent(message).slice(0, 500) || 'Agent run failed'
+}
+
+async function touchThreadAfterRun(
+  db: Kysely<Database>,
+  thread: Row<'agent_threads'>,
+  message: string,
+) {
+  await db
+    .updateTable('agent_threads')
+    .set({
+      title: thread.title === 'Agent 对话' ? threadTitleFromMessage(message) : thread.title,
+      updated_at: utcNow(),
+    })
+    .where('id', '=', thread.id)
+    .execute()
+}
+
+async function failAgentRun(
+  db: Kysely<Database>,
+  thread: Row<'agent_threads'>,
+  runId: string,
+  error: unknown,
+) {
+  const message = safeRunErrorMessage(error)
+  await addMessage(db, thread.id, 'assistant', `运行失败：${message}`).catch(() => undefined)
+  await db.updateTable('agent_runs').set({ status: 'failed', completed_at: utcNow() }).where('id', '=', runId).execute().catch(() => undefined)
+  await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', thread.id).execute().catch(() => undefined)
+}
+
+async function completeAgentRun(ctx: PlannerContext & { thread: Row<'agent_threads'> }): Promise<CompletedAgentRun> {
+  try {
+    const planned = await planResponse(ctx)
+    const assistantMessage = await addMessage(ctx.db, ctx.thread.id, 'assistant', planned.assistant)
+    await compactThreadContextIfNeeded({ db: ctx.db, workspace: ctx.workspace, user: ctx.user, threadId: ctx.thread.id })
+    await ctx.db
+      .updateTable('agent_runs')
+      .set({ status: 'completed', planner_source: planned.plannerSource, completed_at: utcNow() })
+      .where('id', '=', ctx.runId)
+      .execute()
+    await touchThreadAfterRun(ctx.db, ctx.thread, ctx.message)
+    return {
+      plannerSource: planned.plannerSource,
+      assistantMessage,
+      navigationEvents: planned.navigationEvents,
+      actionRows: planned.actionRows,
+      planRows: planned.planRows,
+    }
+  } catch (error) {
+    await failAgentRun(ctx.db, ctx.thread, ctx.runId, error)
+    throw error
+  }
+}
+
 async function executeAction(db: Kysely<Database>, settings: Settings, user: CurrentUser, action: Row<'agent_action_requests'>) {
   const workspace = await getWorkspaceForUser(db, user)
   await assertActionExecutionAllowed(db, workspace, user, action)
@@ -1521,7 +1585,7 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
     let runId: string | null = null
     let activeThread: Row<'agent_threads'> | null = null
     try {
-      const body = request.body as { threadId?: string | null; message?: string }
+      const body = request.body as { threadId?: string | null; message?: string; background?: boolean }
       const message = body.message?.trim()
       if (!message) throw unprocessable('Message is required')
       const user = await requireCurrentUser(db, settings, request)
@@ -1536,26 +1600,32 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
         .execute()
       const userMessage = await addMessage(db, thread.id, 'user', message)
       await rememberFromUserMessage({ db, workspace, user, threadId: thread.id, messageId: userMessage.id, message })
-      const planned = await planResponse({ db, settings, user, workspace, threadId: thread.id, runId, message })
-      const assistantMessage = await addMessage(db, thread.id, 'assistant', planned.assistant)
-      await compactThreadContextIfNeeded({ db, workspace, user, threadId: thread.id })
-      await db.updateTable('agent_runs').set({ status: 'completed', planner_source: planned.plannerSource, completed_at: utcNow() }).where('id', '=', runId).execute()
-      await db
-        .updateTable('agent_threads')
-        .set({
-          title: thread.title === 'Agent 对话' ? threadTitleFromMessage(message) : thread.title,
-          updated_at: utcNow(),
-        })
-        .where('id', '=', thread.id)
-        .execute()
+
+      if (body.background === true) {
+        await touchThreadAfterRun(db, thread, message)
+        void completeAgentRun({ db, settings, user, workspace, thread, threadId: thread.id, runId, message }).catch(() => undefined)
+        return {
+          threadId: thread.id,
+          runId,
+          status: 'running' as const,
+          planner: null,
+          messages: [serializeMessage(userMessage)],
+          navigationEvents: [] as AgentNavigationEvent[],
+          planSteps: [] as AgentPlanStep[],
+          actionRequests: [] as AgentActionRequest[],
+        }
+      }
+
+      const completed = await completeAgentRun({ db, settings, user, workspace, thread, threadId: thread.id, runId, message })
       return {
         threadId: thread.id,
         runId,
-        planner: planned.plannerSource,
-        messages: [serializeMessage(userMessage), serializeMessage(assistantMessage)],
-        navigationEvents: planned.navigationEvents,
-        planSteps: planned.planRows.map(serializePlanStep),
-        actionRequests: planned.actionRows.map(serializeAction),
+        status: 'completed' as const,
+        planner: completed.plannerSource,
+        messages: [serializeMessage(userMessage), serializeMessage(completed.assistantMessage)],
+        navigationEvents: completed.navigationEvents,
+        planSteps: completed.planRows.map(serializePlanStep),
+        actionRequests: completed.actionRows.map(serializeAction),
       }
     } catch (error) {
       if (runId && activeThread) {

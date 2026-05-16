@@ -430,7 +430,10 @@ POST /agent/messages
 - 前端启动时先加载历史列表，再尝试读取 `localStorage` 中的当前 `threadId` 并调用 state API 恢复；如果线程不存在或越权，清掉本地指针。
 - 新建对话只清前端指针和当前视图，不删除服务端历史。
 - 确认、取消、编辑确认卡后更新线程 `updated_at`，历史列表能反映最后活动。
-- 当前实现仍是请求完成后刷新式恢复；真正后台异步运行需要后续把 long run queue、SSE/WebSocket progress 和 run cancellation 补齐。
+- 前端发送消息使用 background run：`POST /api/v1/agent/messages` 传 `background=true` 后立即返回 `threadId/runId/status=running` 和用户消息，服务端在同一 API 进程内继续执行模型规划并持久化结果。
+- 前端拿到 `threadId` 后立即写入本地指针，并轮询 `GET /api/v1/agent/threads/:threadId`；刷新、网络断开或请求响应丢失后，只要浏览器已拿到启动响应，就能恢复 running/completed/failed run、消息、运行图和待确认动作。
+- 普通同步模式仍保留给 API 集成测试和后端调用；产品 UI 默认使用 background 模式。
+- 当前 background run 是 in-process queue，可覆盖浏览器刷新和网络异常；跨 Node 进程重启的 durable queue、run cancellation、SSE/WebSocket progress 是下一阶段 maturity gate。
 
 ### SaaS 隔离规则
 

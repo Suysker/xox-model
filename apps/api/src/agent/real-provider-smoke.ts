@@ -139,9 +139,13 @@ function assertOk(response: JsonResponse, label: string) {
   assertSmoke(response.statusCode === 200, `${label} failed: ${redactedResponse(response)}`)
 }
 
+function assertPlannerSource(value: unknown, label: string, planners: Set<string>) {
+  assertSmoke(value === 'openai_compatible_tool_calls', `${label} did not use real tool calls: ${String(value)}`)
+  planners.add(value)
+}
+
 function assertPlanner(response: JsonResponse, label: string, planners: Set<string>) {
-  assertSmoke(response.json.planner === 'openai_compatible_tool_calls', `${label} did not use real tool calls: ${response.json.planner}`)
-  planners.add(response.json.planner)
+  assertPlannerSource(response.json.planner, label, planners)
 }
 
 function findAction(response: JsonResponse, kind: string, label: string) {
@@ -169,6 +173,21 @@ async function sendAgentMessage(
   assertOk(response, input.label)
   assertPlanner(response, input.label, planners)
   return response
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function waitForThreadRun(client: SmokeClient, threadId: string, label: string) {
+  for (let attempt = 0; attempt < 90; attempt += 1) {
+    const state = await client.get(`/api/v1/agent/threads/${encodeURIComponent(threadId)}`)
+    assertOk(state, label)
+    const latestRun = state.json.runs?.[0]
+    if (latestRun?.status !== 'running') return state
+    await sleep(1000)
+  }
+  fail(`${label} did not finish within timeout`)
 }
 
 async function confirmAction(client: SmokeClient, action: any, label: string, actionKinds: Set<string>) {
@@ -233,11 +252,17 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     )
     rememberCoverage(coveredDirections, 'read_only_forecast')
 
-    const dataQuestion = await sendAgentMessage(client, plannerSources, {
-      label: 'data agent period question',
+    const dataQuestionStarted = await client.post('/api/v1/agent/messages', {
       threadId: forecast.json.threadId,
       message: '3 月计划收入和计划成本分别是多少？只回答当前工作区数据，不要修改任何内容',
+      background: true,
     })
+    assertOk(dataQuestionStarted, 'data agent background start')
+    assertSmoke(dataQuestionStarted.json.status === 'running', `background data question did not start running: ${redactedResponse(dataQuestionStarted)}`)
+    assertSmoke(dataQuestionStarted.json.planner === null, 'background start should not claim a planner before the model finishes')
+    const dataQuestion = await waitForThreadRun(client, dataQuestionStarted.json.threadId, 'data agent background completion')
+    assertSmoke(dataQuestion.json.runs[0].status === 'completed', `background data question failed: ${redactedResponse(dataQuestion)}`)
+    assertPlannerSource(dataQuestion.json.runs[0].planner, 'data agent background completion', plannerSources)
     assertSmoke(Array.isArray(dataQuestion.json.actionRequests) && dataQuestion.json.actionRequests.length === 0, 'data question created a write confirmation')
     assertSmoke(
       String(dataQuestion.json.messages.at(-1)?.content ?? '').includes('3月计划收入') &&
@@ -245,6 +270,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
       `data question did not answer with period metrics: ${String(dataQuestion.json.messages.at(-1)?.content ?? '')}`,
     )
     rememberCoverage(coveredDirections, 'data_agent_period_question')
+    rememberCoverage(coveredDirections, 'background_run_recovery')
 
     const memoryWrite = await client.post('/api/v1/agent/messages', {
       threadId: forecast.json.threadId,
