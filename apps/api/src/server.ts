@@ -22,6 +22,8 @@ import {
   getWorkspaceDraft,
   getWorkspaceForUser,
   listVersions,
+  exportWorkspaceBundle,
+  importWorkspaceBundle,
   publishVersion,
   rollbackToVersion,
   saveDraft,
@@ -63,6 +65,21 @@ const publishSchema = z.object({
   name: z.string().nullable().optional(),
   note: z.string().nullable().optional(),
   kind: z.enum(['snapshot', 'release']).default('release'),
+})
+
+const bundleImportSchema = z.object({
+  bundle: z.object({
+    schemaVersion: z.number().int(),
+    workspaceName: z.string().min(1),
+    currentConfig: z.object({
+      teamMembers: z.array(z.unknown()),
+      months: z.array(z.unknown()),
+      operating: z.object({}).passthrough(),
+      planning: z.object({}).passthrough(),
+    }).passthrough(),
+    snapshots: z.array(z.unknown()).default([]),
+    lastSavedAt: z.string().nullable().optional(),
+  }),
 })
 
 const allocationSchema = z.object({
@@ -195,6 +212,25 @@ export async function createApp(options?: { settings?: Settings; db?: Kysely<Dat
         workspaceName: payload.workspaceName,
         config: hydrateModelConfig(payload.config),
       })
+    } catch (error) {
+      return sendError(reply, error)
+    }
+  })
+
+  app.get('/api/v1/workspace/bundle', async (request, reply) => {
+    try {
+      const { workspace } = await routeContext(db, settings, request)
+      return await exportWorkspaceBundle(db, workspace)
+    } catch (error) {
+      return sendError(reply, error)
+    }
+  })
+
+  app.post('/api/v1/workspace/bundle/import', async (request, reply) => {
+    try {
+      const payload = parseBody(bundleImportSchema, request.body)
+      const { user, workspace } = await routeContext(db, settings, request)
+      return await importWorkspaceBundle(db, { workspace, actor: user, bundle: payload.bundle })
     } catch (error) {
       return sendError(reply, error)
     }

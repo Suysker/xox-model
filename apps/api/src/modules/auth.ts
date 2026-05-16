@@ -212,14 +212,14 @@ export async function refreshCurrentSession(
     throw unauthorized()
   }
 
-  const issued = issueSessionToken(settings.sessionTtlDays)
+  const expiresAt = new Date(Date.now() + settings.sessionTtlDays * 24 * 60 * 60 * 1000).toISOString()
   const now = utcNow()
   await db
     .updateTable('user_sessions')
-    .set({ expires_at: issued.expiresAt, token_hash: issued.tokenHash, updated_at: now })
+    .set({ expires_at: expiresAt, updated_at: now })
     .where('token_hash', '=', sha256(token))
     .execute()
-  setSessionCookie(reply, settings, issued.token, issued.expiresAt)
+  setSessionCookie(reply, settings, token, expiresAt)
   await recordAudit(db, { actorId: user.id, action: 'auth.session_refreshed', entityType: 'user', entityId: user.id })
   return serializeUser(user)
 }

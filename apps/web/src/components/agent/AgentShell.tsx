@@ -26,15 +26,25 @@ export function AgentShell(props: {
         {props.children}
       </div>
       <AgentConsole
+        threadId={agent.threadId}
+        planner={agent.planner}
         messages={agent.messages}
         planSteps={agent.planSteps}
         actionRequests={agent.actionRequests}
+        navigationEvents={agent.navigationEvents}
+        memories={agent.memories}
+        threadSummaries={agent.threadSummaries}
         busy={agent.busy}
         error={agent.error}
         onSend={(message) => void agent.sendMessage(message)}
         onConfirm={(id) => void agent.confirmAction(id)}
         onCancel={(id) => void agent.cancelAction(id)}
         onUpdate={(id, payload) => void agent.updateAction(id, payload)}
+        onSelectThread={(id) => void agent.loadThread(id)}
+        onNewThread={agent.startNewThread}
+        onRefreshThreads={() => void agent.refreshThreads()}
+        onRefreshMemories={() => void agent.refreshMemories()}
+        onDeleteMemory={(id) => void agent.deleteMemory(id)}
       />
     </div>
   )

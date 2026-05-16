@@ -55,15 +55,62 @@
 - [x] TypeScript 后端 API 集成测试通过
 - [x] 浏览器验收覆盖自动保存、发布、分享、记账、预实分析、回滚、撤销分享
 
-## Agent OS
+## Agent OS 当前能力
 
 - [x] 底部 Agent 台常驻，主工作台缩放为 85%
 - [x] Agent 可通过导航事件显式切换到测算、调模型、记账、偏差和版本管理面板
 - [x] Agent 可把一条复合指令拆成多步骤计划，并像任务清单一样展示步骤状态
 - [x] 待确认动作可在执行前编辑摘要、明细和执行载荷
-- [x] 配置 DeepSeek key 后，Agent 使用 DeepSeek Chat Completions 进行 JSON 规划；无 key 或失败时回退规则规划
+- [x] Agent 台支持新建对话，且新对话不会清空当前用户 / 当前工作区记忆
+- [x] Agent 台展示当前 planner 来源、对话 id、工作区记忆列表，并支持刷新和删除记忆
+- [x] API 集成测试覆盖通用 OpenAI-compatible Chat Completions `tool_calls` 协议；假 provider 分别以 `qwen`、`doubao`、`openai-compatible` 配置接入，证明业务工具不特调 DeepSeek；当 provider 已配置或被选择时，模型未返回 tool call 不会回退规则规划
+- [x] Agent prompts、tool catalog、memory/context 模块有独立代码边界，不把系统提示词散在路由代码里
+- [x] Agent memory 按用户和工作区隔离，支持查询和删除；长对话会生成同租户上下文摘要
+- [x] 新建对话后，真实 provider 请求会注入同用户 / 同工作区 memory
 - [x] 记账类命令会生成确认卡，确认后过账并刷新工作台
 - [x] 线上系数试算类命令只读执行，不修改草稿
 - [x] 草稿修改、发布、恢复、分享、锁账等写入动作采用确认卡协议
 - [x] 账号登录、退出、注销、删除账号和密码类动作不允许 Agent 自动执行
 - [x] Agent 写入动作会记录 `agent_action_requests` 和 `audit_logs`
+- [x] `npm.cmd run smoke:agent` 提供受控真实 OpenAI-compatible provider smoke：默认使用 DeepSeek，但通过 `OPENAI_COMPATIBLE_*` 可切换豆包、Qwen 等兼容服务；不允许无 key 回退，覆盖 22 个真实模型方向：只读预测、memory 写入、新对话记忆注入、多步骤、账号动作拒绝、记账确认卡、确认卡载荷编辑、作废分录、草稿专用字段保存、通用草稿 patch、工作区 bundle 导出、工作区 bundle 导入、锁账、解锁、保存快照、发布、创建分享、撤销分享、恢复版本、删除版本、重置草稿和审计
+- [x] 后端接口级 Agent capability matrix 覆盖超过 10 个不同方向的复杂任务，并全部通过：
+  - 记忆写入
+  - 新对话记忆注入
+  - 默认成员记账
+  - 只读预测试算
+  - 草稿参数保存
+  - 通用模型 patch
+  - 确认卡编辑后执行
+  - 锁账 / 解锁
+  - 工作区 bundle 导出 / 导入
+  - 保存快照
+  - 发布并创建分享链接
+  - 撤销分享链接
+  - 恢复版本
+  - 删除快照
+  - 重置草稿
+  - 账号动作拒绝
+  - Data agent 单月数据问答
+  - Agent 审计日志
+
+## Agent Runtime 成熟化
+
+- [ ] `docs/adr/0001-agent-runtime-architecture.md` 中的 runtime 采用策略完成代码落地
+- [ ] `apps/api/src/modules/agent.ts` 拆分为 routes、kernel、runtime adapters、tools、memory/context、confirmation service
+- [x] OpenAI-compatible Chat Completions provider 调用已从 `modules/agent.ts` 抽到 `apps/api/src/agent/runtime/openai-compatible-chat-adapter.ts`，通过 `adapter-router.ts` 输出统一 runtime plan result
+- [x] `packages/contracts` 的 planner source 已改为 `openai_agents / openai_compatible_tool_calls / rules`，不再把 DeepSeek planner source 作为唯一主语义，也不再接受 assistant JSON 文本冒充 tool call
+- [x] 常规 Agent 请求在 `LLM_PROVIDER != rules` 时不会用本地正则/规则替模型生成业务动作；API 测试覆盖“provider 有 key 但未返回 tool_calls”和“provider 被选择但无 key”两种情况，均不生成确认卡
+- [x] Data agent 只读问答必须由模型调用 `data_query_workspace`，API 测试和真实 smoke 覆盖“3 月计划收入和计划成本是多少”这类问题；该路径不生成确认卡、不写业务数据，并打开对应分析页面
+- [x] `LLM_PROVIDER=openai` 时可通过 OpenAI Agents SDK adapter 跑通只读 tool call 和确认卡写入预览；API 测试用本地 fake OpenAI Chat Completions server 验证 SDK `Agent / Runner / tool / OpenAIProvider` 路径
+- [x] `LLM_PROVIDER=deepseek` 或 `LLM_PROVIDER=openai-compatible` 时可用 OpenAI-compatible Chat Completions `tool_calls` 跑通真实模型 10+ 方向 smoke test，并已沉淀为 `npm.cmd run smoke:agent`
+- [x] 代码和文档不引入 Claude Agent SDK adapter；Claude Code 只作为交互模式参考
+- [x] Agent 可写模型字段矩阵已注册在 `apps/api/src/agent/tool-coverage.ts`，覆盖资本规划、收入引擎、团队成员、成本结构、运营员工、月份模板、工作区 bundle 导入导出等主要手动输入路径；账号动作列为明确手动项
+- [x] Tool policy / permission hooks 覆盖账号动作拒绝、写入确认、确认卡编辑后的必需导航、跨租户 payload 禁止、锁账禁止、派生提成禁止直接编辑
+- [x] 多步骤消息中如果同时包含合法业务动作和账号禁用动作，合法业务动作仍会生成确认卡，账号动作只作为该步骤的只读拒绝项展示
+- [x] Memory list/delete/context injection 有测试证明不会跨用户或跨工作区，并且不会保存 secrets；当前 secret-like 消息会在 provider prompt 中 redaction，后续新线程不再注入
+- [x] Context compaction 有测试证明 summary 只来自同一 thread / user / workspace，并且 summary 不包含 API key/token 原文
+- [x] React Agent OS 展示 action graph、导航事件、确认卡状态、确认卡编辑、取消、失败和执行后刷新；当前为后端状态刷新式 timeline
+- [x] Agent 历史对话和当前线程恢复已由 `/api/v1/agent/threads` 与 `/api/v1/agent/threads/{threadId}` 提供；API 测试覆盖 messages、runs、planSteps、actionRequests、navigationEvents、跨用户隔离和确认后状态恢复，React hook 会用本地 threadId 指针恢复服务端状态
+- [x] 浏览器刷新时 `/api/v1/auth/me` 并发恢复保持幂等，不会因 token 旋转竞态把用户踢回登录页，从而保证 Agent thread 恢复能发生
+- [ ] React Agent OS 支持真正的流式 token / tool progress 事件，而不是仅在请求完成后刷新 run graph
+- [ ] 页面可手动修改的业务能力全部映射到 tool registry，或在工具矩阵中列出明确禁止原因；当前剩余缺口是 Agent 模块拆分、真正后台异步 run queue 和流式事件通道

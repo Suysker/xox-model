@@ -203,6 +203,7 @@ export type AgentRunTable = {
   thread_id: string
   user_id: string
   status: string
+  planner_source: string | null
   created_at: Timestamp
   completed_at: string | null
 }
@@ -241,6 +242,31 @@ export type AgentPlanStepTable = {
   updated_at: Timestamp
 }
 
+export type AgentMemoryTable = {
+  id: Generated<string>
+  workspace_id: string
+  user_id: string
+  thread_id: string | null
+  kind: string
+  key: string
+  value: string
+  confidence: number
+  source_message_id: string | null
+  created_at: Timestamp
+  updated_at: Timestamp
+  archived_at: string | null
+}
+
+export type AgentContextSnapshotTable = {
+  id: Generated<string>
+  workspace_id: string
+  user_id: string
+  thread_id: string
+  summary: string
+  message_count: number
+  created_at: Timestamp
+}
+
 export type Database = {
   users: UserTable
   user_credentials: UserCredentialTable
@@ -262,6 +288,8 @@ export type Database = {
   agent_runs: AgentRunTable
   agent_action_requests: AgentActionRequestTable
   agent_plan_steps: AgentPlanStepTable
+  agent_memories: AgentMemoryTable
+  agent_context_snapshots: AgentContextSnapshotTable
 }
 
 export type Row<T extends keyof Database> = Selectable<Database[T]>

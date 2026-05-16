@@ -161,6 +161,7 @@ export type AgentActionKind =
   | 'workspace.rollback_version'
   | 'workspace.delete_version'
   | 'workspace.reset_draft'
+  | 'workspace.import_bundle'
   | 'share.create'
   | 'share.revoke'
 
@@ -208,10 +209,56 @@ export type AgentMessage = {
   createdAt: string
 }
 
+export type AgentPlannerSource = 'openai_agents' | 'openai_compatible_tool_calls' | 'rules'
+
+export type AgentRunRecord = {
+  id: string
+  threadId: string
+  status: 'running' | 'completed' | 'failed'
+  planner: AgentPlannerSource | null
+  createdAt: string
+  completedAt: string | null
+}
+
+export type AgentThreadSummary = {
+  id: string
+  title: string
+  createdAt: string
+  updatedAt: string
+  lastMessage: string | null
+  lastMessageAt: string | null
+  latestRunStatus: AgentRunRecord['status'] | null
+  planner: AgentPlannerSource | null
+  pendingActionCount: number
+}
+
+export type AgentThreadState = {
+  thread: AgentThreadSummary
+  messages: AgentMessage[]
+  runs: AgentRunRecord[]
+  planner: AgentPlannerSource | null
+  navigationEvents: AgentNavigationEvent[]
+  planSteps: AgentPlanStep[]
+  actionRequests: AgentActionRequest[]
+}
+
+export type AgentMemoryRecord = {
+  id: string
+  workspaceId: string
+  userId: string
+  threadId: string | null
+  kind: string
+  key: string
+  value: string
+  confidence: number
+  createdAt: string
+  updatedAt: string
+}
+
 export type AgentSendResponse = {
   threadId: string
   runId: string
-  planner: 'deepseek' | 'rules'
+  planner: AgentPlannerSource
   messages: AgentMessage[]
   navigationEvents: AgentNavigationEvent[]
   planSteps: AgentPlanStep[]

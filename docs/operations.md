@@ -60,6 +60,50 @@ sudo systemctl status xox-model-web
 - 当前建表 / 迁移入口：API 启动时自动运行 `apps/api/src/db/migrations.ts`
 - 当前迁移策略基于 `CREATE TABLE IF NOT EXISTS` 和缺列补丁，可重复执行
 
+## Agent Provider
+
+- Agent runtime 采用 provider adapter 模式。`LLM_PROVIDER=openai` 已接入 OpenAI Agents SDK adapter；DeepSeek 只是默认真实 smoke provider，豆包、Qwen 等兼容 `tools / tool_choice / tool_calls` 的服务通过通用 OpenAI-compatible adapter 接入，不改业务工具代码；不引入 Claude Agent SDK。
+- 通用配置优先使用：
+  - `LLM_PROVIDER=openai | openai-compatible | deepseek | doubao | qwen | rules`
+  - `OPENAI_BASE_URL=https://api.openai.com/v1`
+  - `OPENAI_MODEL=gpt-5.4-mini`
+  - `OPENAI_API_KEY=<openai-key>`
+  - `OPENAI_COMPATIBLE_PROVIDER=<display-name>`
+  - `OPENAI_COMPATIBLE_BASE_URL=<provider-base-url>`
+  - `OPENAI_COMPATIBLE_MODEL=<model-name>`
+  - `OPENAI_COMPATIBLE_API_KEY=<provider-key>`
+- DeepSeek 兼容变量仍可用作默认 smoke 配置：`DEEPSEEK_BASE_URL / DEEPSEEK_MODEL / DEEPSEEK_API_KEY`。密钥只放本地 `.env` 或部署环境变量，不写入仓库。
+- `apps/api/src/agent/runtime/openai-agents-adapter.ts` 使用 OpenAI Agents SDK 的 `Agent / Runner / tool / OpenAIProvider`，SDK tool 只收集内部 plan step，不执行领域写入；`apps/api/src/agent/runtime/openai-compatible-chat-adapter.ts` 只接受通用 Chat Completions `tools / tool_choice / tool_calls`。当 `LLM_PROVIDER` 不是 `rules` 时，常规 Agent 请求不会回退到规则/正则生成业务动作；模型未返回 tool call 会返回失败型只读步骤。真实 smoke 命令不允许无 key 运行。
+- Agent memory 会拒绝保存 secret-like 内容；context summary 和 provider prompt 注入的 recent messages 会做 secret redaction，避免 key/token 被带入后续模型上下文。
+- `agent_memories` 和 `agent_context_snapshots` 是租户数据，备份、导出和删除策略必须按用户 / 工作区权限处理。
+- Agent 历史对话以服务端 `agent_threads / agent_messages / agent_runs / agent_plan_steps / agent_action_requests` 为事实源。前端 `localStorage` 只保存当前 threadId 指针，刷新后通过 `/api/v1/agent/threads/:threadId` 恢复 messages、运行图和待确认动作；新建对话不会删除历史。
+- 浏览器刷新会并发触发会话恢复和业务数据加载。`/api/v1/auth/me` 必须保持幂等，只延长当前 token 有效期，不在每次恢复时旋转 token，否则并发请求会因为旧 cookie 竞态导致误登出。
+- Agent 数据问答通过 `data_query_workspace` 只读工具完成。模型只负责选择查询 scope 和指标，服务端用当前工作区的测算、账本和预实汇总计算答案；不要暴露自由 SQL，也不要在 provider 模式下用本地正则替模型选择工具。
+- Agent 可写模型字段矩阵维护在 `apps/api/src/agent/tool-coverage.ts`。新增前端手动输入字段时，必须同步补该矩阵和 API 覆盖测试，否则模型可能不知道对应 patch path。真实 provider prompt 只注入 patterns 和少量样例字段，完整矩阵留在代码和测试里，避免每次请求携带所有月份/成本项导致延迟过高。
+- 工作区 JSON 导入 / 导出已经走 server-side bundle：`GET /api/v1/workspace/bundle` 只读导出，`POST /api/v1/workspace/bundle/import` 覆盖当前草稿。Agent 工具为 `workspace_export_bundle` / `workspace_import_bundle`；导入时用户粘贴的大块 JSON 会先由服务端 artifact parser 解析，模型只选择工具，不负责原样复制 bundle。
+- Agent 写入安全策略集中在 `apps/api/src/agent/tool-policy.ts`。确认卡创建、确认卡编辑和确认执行都会校验 action kind、风险等级、必需导航、payload 所属工作区、账期锁定和派生分录限制；用户可以编辑未执行动作，但不能通过编辑确认卡绕过这些策略。
+
+### 真实模型 Smoke
+
+`npm.cmd run smoke:agent` 是外网真实 provider 验收命令，不包含在默认 `npm.cmd run test` 中。它会读取本地 `.env` 或当前 shell 中的 `OPENAI_COMPATIBLE_API_KEY` / `DEEPSEEK_API_KEY`，创建临时 SQLite 数据库，注册临时用户，然后通过真实 HTTP API 验证：
+
+- OpenAI-compatible Chat Completions `tool_calls`，planner 必须返回 `openai_compatible_tool_calls`
+- 只读线上系数试算不写入确认卡
+- 新对话注入同用户 / 同工作区 memory
+- 多步骤消息拆出记账确认卡和账号动作拒绝
+- 待确认动作载荷可编辑，确认后执行编辑后的载荷
+- 账本分录作废
+- 草稿专用字段保存和通用模型 patch
+- 工作区 bundle 导出和导入确认卡
+- 锁账 / 解锁
+- 保存快照
+- 发布当前版本并创建分享链接
+- 撤销分享链接
+- 恢复版本、删除快照 / 版本、重置草稿
+- `agent.action_executed` 审计记录
+
+如果没有 `OPENAI_COMPATIBLE_API_KEY` 或 `DEEPSEEK_API_KEY`，该命令必须失败，不能回退到规则规划。输出只包含结构化验收摘要，不打印 key。该命令会连续调用真实模型覆盖 22 个方向，耗时明显长于单元测试，不适合放入默认 CI。
+
 ## 验证命令
 
 ```bash
@@ -68,6 +112,8 @@ npm.cmd run build:web
 npm.cmd run build:api
 npm.cmd run test:api
 npm.cmd run test
+# 可选，需要真实 OpenAI-compatible provider key；默认可用 DeepSeek key
+npm.cmd run smoke:agent
 ```
 
 预期结果：

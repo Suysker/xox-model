@@ -8,6 +8,7 @@
   - 创建新的会话 Cookie
 - `GET /api/v1/auth/me`
   - 返回当前用户并刷新会话有效期
+  - 刷新只延长当前 token，不旋转 token；并发恢复请求必须保持幂等，避免页面刷新时一个请求成功、另一个请求把前端踢回登录页
 - `POST /api/v1/auth/logout`
   - 只撤销当前会话
 - `DELETE /api/v1/auth/me`
@@ -20,6 +21,13 @@
 - `PATCH /api/v1/workspace/draft`
   - 必须传 `revision`
   - 草稿版本过旧时返回 `409`
+- `GET /api/v1/workspace/bundle`
+  - 返回当前工作区 bundle：`schemaVersion / workspaceName / currentConfig / snapshots / lastSavedAt`
+  - 只读导出，不修改草稿或版本
+- `POST /api/v1/workspace/bundle/import`
+  - 入参：`{ bundle }`
+  - 用 `bundle.currentConfig` 和 `bundle.workspaceName` 覆盖当前草稿
+  - 当前与前端导入语义保持一致：不把 `snapshots` 恢复进后端版本表
 - `GET /api/v1/workspace/versions`
   - 返回不可变版本列表及当前分享信息
 - `POST /api/v1/workspace/versions`
@@ -80,13 +88,26 @@
 
 ## Agent OS
 
+- `GET /api/v1/agent/threads`
+  - 返回当前登录用户 / 当前工作区内最近 30 个 Agent 对话摘要
+  - 摘要包含标题、最近消息、最新 run 状态、planner source 和待确认动作数量
+- `GET /api/v1/agent/threads/{threadId}`
+  - 返回可恢复的线程状态：messages、runs、最新 run 的 `planSteps`、`actionRequests`、`navigationEvents` 和 planner source
+  - 只能读取当前用户 / 当前工作区下的 thread；跨用户或跨工作区返回 `403`
 - `POST /api/v1/agent/messages`
   - 入参：`threadId?`、`message`
   - 返回新增对话消息、`planner`、显式页面导航事件、`planSteps`、待确认动作卡
-  - `planner` 为 `deepseek` 或 `rules`；配置模型密钥时优先使用 DeepSeek JSON 规划，失败时回退本地规则
+  - `planner` 为 `openai_agents`、`openai_compatible_tool_calls` 或 `rules`
   - 一条消息可拆成多个 `planSteps`，写入步骤会关联一个待确认动作卡
+  - 当 `LLM_PROVIDER` 不是 `rules` 时，只有模型返回 provider-native tool call 才会生成业务确认卡；模型未返回 tool call 时只返回失败型只读步骤，不用本地规则猜测业务动作
   - 读取和试算类请求不会生成写入动作
   - 账号登录、退出、注销、删除账号和密码类请求会被拒绝自动执行
+- `GET /api/v1/agent/memories`
+  - 返回当前登录用户在当前工作区内可用的 Agent 记忆
+  - 不返回其他用户、其他工作区或已删除记忆
+- `DELETE /api/v1/agent/memories/{id}`
+  - 软删除当前登录用户 / 当前工作区下的一条记忆
+  - 删除其他用户或其他工作区的记忆返回 `403`
 - `PATCH /api/v1/agent/action-requests/{id}`
   - 仅允许编辑当前用户 / 工作区下的 `pending` 动作
   - 可编辑确认卡摘要、明细、导航事件和执行载荷；保存后同步更新计划步骤描述
@@ -96,7 +117,9 @@
 - `POST /api/v1/agent/action-requests/{id}/cancel`
   - 取消待确认动作，不写业务数据
 
-Agent 写入动作统一遵循 `preview -> confirm -> execute -> audit -> refresh`。当前支持记账、草稿修改、发布版本、恢复版本、删除版本、重置草稿、创建 / 撤销分享、锁账 / 解锁；所有写入都先生成确认卡。
+Agent 写入动作统一遵循 `preview -> confirm -> execute -> audit -> refresh`。当前支持记账、草稿修改、发布版本、恢复版本、删除版本、重置草稿、工作区 bundle 导入、创建 / 撤销分享、锁账 / 解锁；所有写入都先生成确认卡。工作区 bundle 导出为只读工具，Agent 会打开版本管理面板并提示通过 `/api/v1/workspace/bundle` 获取完整 JSON。
+
+Agent 只读数据问答通过模型选择 `data_query_workspace` 工具完成，支持整体工作区、单月汇总、成员汇总和月份排行。该工具只返回 `planSteps / messages / navigationEvents`，不生成 `actionRequests`，不修改业务数据。
 
 ## 错误语义
 

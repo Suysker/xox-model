@@ -1,8 +1,19 @@
-import { Agent } from '@openai/agents'
 import type { FastifyInstance } from 'fastify'
 import type { Kysely } from 'kysely'
 import { createProductDefaultModel, hydrateModelConfig, projectModel, type ModelConfig } from '@xox/domain'
-import type { AgentActionKind, AgentActionUpdatePayload, AgentNavigationEvent, AgentPlanStepStatus } from '@xox/contracts'
+import type {
+  AgentActionKind,
+  AgentActionRequest,
+  AgentActionUpdatePayload,
+  AgentMessage,
+  AgentNavigationEvent,
+  AgentPlannerSource,
+  AgentPlanStep,
+  AgentPlanStepStatus,
+  AgentRunRecord,
+  AgentThreadState,
+  AgentThreadSummary,
+} from '@xox/contracts'
 import type { Database, Row } from '../db/schema.js'
 import { jsonString, parseJson } from '../db/database.js'
 import { conflict, forbidden, notFound, unprocessable } from '../core/http.js'
@@ -13,8 +24,10 @@ import { recordAudit } from './audit.js'
 import { requireCurrentUser, type CurrentUser } from './auth.js'
 import {
   deleteVersion,
+  exportWorkspaceBundle,
   getWorkspaceDraft,
   getWorkspaceForUser,
+  importWorkspaceBundle,
   listVersions,
   rollbackToVersion,
   saveDraft,
@@ -31,12 +44,20 @@ import {
   voidEntry,
 } from './ledger.js'
 import { createVersionShare, revokeVersionShare } from './share.js'
-
-const operatorAgent = new Agent({
-  name: 'xox-operator',
-  instructions:
-    'You are the xox-model operating agent. Use tools to navigate visibly, preview write actions, and wait for user confirmation before mutating state.',
-})
+import {
+  archiveAgentMemory,
+  compactThreadContextIfNeeded,
+  loadAgentRuntimeContext,
+  listAgentMemories,
+  rememberFromUserMessage,
+  redactSecretLikeContent,
+  serializeMemory,
+} from '../agent/memory.js'
+import { planWithRuntimeAdapter } from '../agent/runtime/adapter-router.js'
+import type { RuntimePlanResult } from '../agent/runtime/runtime-adapter.js'
+import { buildAgentWritableConfigContext } from '../agent/tool-coverage.js'
+import { extractWorkspaceBundleArtifact, type ParsedWorkspaceBundleArtifact } from '../agent/workspace-bundle-artifact.js'
+import { assertActionDraftAllowed, assertActionExecutionAllowed, assertActionUpdateAllowed, coerceAgentActionKind } from '../agent/tool-policy.js'
 
 type PlannerContext = {
   db: Kysely<Database>
@@ -46,6 +67,7 @@ type PlannerContext = {
   threadId: string
   runId: string
   message: string
+  providedWorkspaceBundle?: ParsedWorkspaceBundleArtifact
 }
 
 type ActionDraft = {
@@ -68,34 +90,19 @@ type ReadDraft = {
 
 type PlannedItem = ActionDraft | ReadDraft
 
-type DeepSeekPlannerStep = {
-  intent?: string
-  monthLabel?: string
-  memberName?: string
-  offlineUnits?: number
-  onlineUnits?: number
-  onlineSalesFactor?: number
-  mode?: 'forecast' | 'write'
-  versionNo?: number
-  versionName?: string
-  createShare?: boolean
-  locked?: boolean
-  mainTab?: 'dashboard' | 'inputs' | 'bookkeeping' | 'variance'
-  secondaryTab?: string
-  patches?: Array<{ path: string; value: unknown; label?: string }>
-}
+type RuntimePlannerStep = RuntimePlanResult['steps'][number]
 
-function serializeAction(row: Row<'agent_action_requests'>) {
+function serializeAction(row: Row<'agent_action_requests'>): AgentActionRequest {
   return {
     id: row.id,
     threadId: row.thread_id,
     runId: row.run_id,
-    kind: row.kind,
-    status: row.status,
+    kind: coerceAgentActionKind(row.kind),
+    status: row.status as AgentActionRequest['status'],
     title: row.title,
     summary: row.summary,
     targetLabel: row.target_label,
-    riskLevel: row.risk_level,
+    riskLevel: row.risk_level as AgentActionRequest['riskLevel'],
     details: parseJson<Array<{ label: string; value: string }>>(row.details_json, []),
     navigation: parseJson<AgentNavigationEvent>(row.navigation_json, {
       type: 'navigation',
@@ -109,7 +116,7 @@ function serializeAction(row: Row<'agent_action_requests'>) {
   }
 }
 
-function serializePlanStep(row: Row<'agent_plan_steps'>) {
+function serializePlanStep(row: Row<'agent_plan_steps'>): AgentPlanStep {
   return {
     id: row.id,
     threadId: row.thread_id,
@@ -118,21 +125,51 @@ function serializePlanStep(row: Row<'agent_plan_steps'>) {
     sequence: row.sequence_no,
     title: row.title,
     description: row.description,
-    status: row.status,
+    status: row.status as AgentPlanStepStatus,
     navigation: row.navigation_json ? parseJson<AgentNavigationEvent | null>(row.navigation_json, null) : null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
 }
 
-function serializeMessage(row: Row<'agent_messages'>) {
+function messageRole(value: string): AgentMessage['role'] {
+  return value === 'assistant' || value === 'system' ? value : 'user'
+}
+
+function serializeMessage(row: Row<'agent_messages'>): AgentMessage {
   return {
     id: row.id,
     threadId: row.thread_id,
-    role: row.role,
+    role: messageRole(row.role),
     content: row.content,
     createdAt: row.created_at,
   }
+}
+
+function plannerSource(value: string | null): AgentPlannerSource | null {
+  return value === 'openai_agents' || value === 'openai_compatible_tool_calls' || value === 'rules'
+    ? value
+    : null
+}
+
+function runStatus(value: string): AgentRunRecord['status'] {
+  return value === 'completed' || value === 'failed' ? value : 'running'
+}
+
+function serializeRun(row: Row<'agent_runs'>): AgentRunRecord {
+  return {
+    id: row.id,
+    threadId: row.thread_id,
+    status: runStatus(row.status),
+    planner: plannerSource(row.planner_source),
+    createdAt: row.created_at,
+    completedAt: row.completed_at,
+  }
+}
+
+function threadTitleFromMessage(message: string) {
+  const normalized = message.replace(/\s+/g, ' ').trim()
+  return normalized.length > 40 ? `${normalized.slice(0, 40)}...` : normalized || 'Agent 对话'
 }
 
 async function getOrCreateThread(db: Kysely<Database>, workspace: Row<'workspaces'>, user: CurrentUser, threadId?: string | null) {
@@ -159,6 +196,13 @@ async function getOrCreateThread(db: Kysely<Database>, workspace: Row<'workspace
   return db.selectFrom('agent_threads').selectAll().where('id', '=', id).executeTakeFirstOrThrow()
 }
 
+async function getThreadForUser(db: Kysely<Database>, workspace: Row<'workspaces'>, user: CurrentUser, threadId: string) {
+  const thread = await db.selectFrom('agent_threads').selectAll().where('id', '=', threadId).executeTakeFirst()
+  if (!thread) throw notFound('Agent thread not found')
+  if (thread.workspace_id !== workspace.id || thread.user_id !== user.id) throw forbidden()
+  return thread
+}
+
 async function addMessage(db: Kysely<Database>, threadId: string, role: 'user' | 'assistant' | 'system', content: string) {
   const id = newId()
   await db
@@ -174,7 +218,88 @@ async function addMessage(db: Kysely<Database>, threadId: string, role: 'user' |
   return db.selectFrom('agent_messages').selectAll().where('id', '=', id).executeTakeFirstOrThrow()
 }
 
+async function buildThreadSummary(db: Kysely<Database>, thread: Row<'agent_threads'>): Promise<AgentThreadSummary> {
+  const [lastMessage, latestRun, pendingActions] = await Promise.all([
+    db
+      .selectFrom('agent_messages')
+      .selectAll()
+      .where('thread_id', '=', thread.id)
+      .orderBy('created_at', 'desc')
+      .limit(1)
+      .executeTakeFirst(),
+    db
+      .selectFrom('agent_runs')
+      .selectAll()
+      .where('thread_id', '=', thread.id)
+      .orderBy('created_at', 'desc')
+      .limit(1)
+      .executeTakeFirst(),
+    db
+      .selectFrom('agent_action_requests')
+      .select('id')
+      .where('thread_id', '=', thread.id)
+      .where('status', '=', 'pending')
+      .execute(),
+  ])
+  return {
+    id: thread.id,
+    title: thread.title,
+    createdAt: thread.created_at,
+    updatedAt: thread.updated_at,
+    lastMessage: lastMessage?.content ?? null,
+    lastMessageAt: lastMessage?.created_at ?? null,
+    latestRunStatus: latestRun ? runStatus(latestRun.status) : null,
+    planner: latestRun ? plannerSource(latestRun.planner_source) : null,
+    pendingActionCount: pendingActions.length,
+  }
+}
+
+async function buildThreadState(
+  db: Kysely<Database>,
+  workspace: Row<'workspaces'>,
+  user: CurrentUser,
+  threadId: string,
+): Promise<AgentThreadState> {
+  const thread = await getThreadForUser(db, workspace, user, threadId)
+  const [messages, runs, actions] = await Promise.all([
+    db.selectFrom('agent_messages').selectAll().where('thread_id', '=', thread.id).orderBy('created_at', 'asc').execute(),
+    db
+      .selectFrom('agent_runs')
+      .selectAll()
+      .where('thread_id', '=', thread.id)
+      .where('user_id', '=', user.id)
+      .orderBy('created_at', 'desc')
+      .execute(),
+    db
+      .selectFrom('agent_action_requests')
+      .selectAll()
+      .where('thread_id', '=', thread.id)
+      .where('workspace_id', '=', workspace.id)
+      .where('user_id', '=', user.id)
+      .orderBy('created_at', 'asc')
+      .execute(),
+  ])
+  const latestRun = runs[0] ?? null
+  const planSteps = latestRun
+    ? await db.selectFrom('agent_plan_steps').selectAll().where('run_id', '=', latestRun.id).orderBy('sequence_no', 'asc').execute()
+    : []
+  const navigationEvents = planSteps
+    .map((step) => (step.navigation_json ? parseJson<AgentNavigationEvent | null>(step.navigation_json, null) : null))
+    .filter((event): event is AgentNavigationEvent => Boolean(event))
+
+  return {
+    thread: await buildThreadSummary(db, thread),
+    messages: messages.map(serializeMessage),
+    runs: runs.map(serializeRun),
+    planner: latestRun ? plannerSource(latestRun.planner_source) : null,
+    navigationEvents,
+    planSteps: planSteps.map(serializePlanStep),
+    actionRequests: actions.map(serializeAction),
+  }
+}
+
 async function addActionRequest(ctx: PlannerContext, draft: ActionDraft) {
+  assertActionDraftAllowed(draft)
   const id = newId()
   const now = utcNow()
   await ctx.db
@@ -236,6 +361,27 @@ async function addPlanStep(
 
 function accountActionRequested(message: string) {
   return /(注销|删除账号|退出登录|登录|注册|改密码|密码)/.test(message)
+}
+
+function accountForbiddenRead(): ReadDraft {
+  return {
+    title: '账号动作需要手动完成',
+    message: '账号登录、退出、注销、删除账号和密码类动作不能由 Agent 自动执行，请在账号入口手动操作。',
+    status: 'info',
+  }
+}
+
+function modelToolCallRequiredRead(): ReadDraft {
+  return {
+    title: '模型未返回工具调用',
+    message: '已配置真实模型规划，但本轮没有返回可执行 tool_call。为避免用本地规则或正则冒充模型调用，我没有生成写入动作；请补充指令或重试。',
+    status: 'failed',
+  }
+}
+
+function configuredModelPlannerSource(settings: Settings): Extract<AgentPlannerSource, 'openai_agents' | 'openai_compatible_tool_calls'> | null {
+  if (settings.llmProvider === 'rules') return null
+  return settings.llmProvider === 'openai' ? 'openai_agents' : 'openai_compatible_tool_calls'
 }
 
 function monthLabelFromMessage(message: string) {
@@ -323,11 +469,65 @@ function setConfigPath(root: unknown, path: string, value: unknown) {
   current[last] = value
 }
 
+function money(value: number) {
+  return `¥${Math.round(value).toLocaleString('zh-CN')}`
+}
+
+function pct(value: number) {
+  return `${(value * 100).toFixed(1)}%`
+}
+
+function normalizeDataMetrics(raw: unknown): string[] {
+  return Array.isArray(raw) ? raw.filter((item): item is string => typeof item === 'string') : []
+}
+
 function splitRequestedSteps(message: string) {
-  const parts = message
-    .split(/(?:\s*(?:然后|接着|随后|再)\s*|[；;\n]+)/)
-    .map((part) => part.trim())
-    .filter(Boolean)
+  const parts: string[] = []
+  let current = ''
+  let depth = 0
+  let inString = false
+  let escaped = false
+
+  for (let index = 0; index < message.length; index += 1) {
+    const char = message[index] ?? ''
+    if (inString) {
+      current += char
+      if (escaped) {
+        escaped = false
+      } else if (char === '\\') {
+        escaped = true
+      } else if (char === '"') {
+        inString = false
+      }
+      continue
+    }
+
+    if (char === '"') {
+      inString = true
+      current += char
+      continue
+    }
+    if (char === '{' || char === '[') {
+      depth += 1
+      current += char
+      continue
+    }
+    if ((char === '}' || char === ']') && depth > 0) {
+      depth -= 1
+      current += char
+      continue
+    }
+    if (depth === 0 && /[；;\n]/.test(char)) {
+      const part = current.trim()
+      if (part) parts.push(part)
+      current = ''
+      continue
+    }
+    current += char
+  }
+
+  const finalPart = current.trim()
+  if (finalPart) parts.push(finalPart)
   return parts.length > 0 ? parts : [message]
 }
 
@@ -473,7 +673,7 @@ async function planOnlineFactorFromFields(
 }
 
 async function planPublish(ctx: PlannerContext) {
-  if (!/发布|正式版本/.test(ctx.message)) return null
+  if (!/发布(?!版)|正式版本/.test(ctx.message)) return null
   const createShare = /分享|链接/.test(ctx.message)
   return {
     kind: 'workspace.publish_release',
@@ -642,7 +842,7 @@ async function planShare(ctx: PlannerContext, input?: { versionNo?: number; vers
   const wantsShare = /分享|链接/.test(ctx.message)
   const revoke = input?.revoke ?? /撤销|取消|关闭|移除/.test(ctx.message)
   if (!wantsShare && !input) return null
-  if (/发布|正式版本/.test(ctx.message)) return null
+  if (/发布(?!版)|正式版本/.test(ctx.message)) return null
   const version = await versionFromMessage(ctx, ctx.message, input?.versionNo, input?.versionName)
   if (!version) return null
   return {
@@ -754,83 +954,215 @@ function planNavigationOnly(message: string): { message: string; navigation: Age
   return null
 }
 
-async function callDeepSeekPlanner(ctx: PlannerContext): Promise<DeepSeekPlannerStep[] | null> {
-  if (!ctx.settings.deepseekApiKey) return null
+async function planExportBundleRead(ctx: PlannerContext) {
+  const bundle = await exportWorkspaceBundle(ctx.db, ctx.workspace)
+  return {
+    title: '导出工作区 Bundle',
+    message: `已生成当前工作区 bundle：${bundle.workspaceName}，包含 ${bundle.snapshots.length} 个历史版本。完整 JSON 可通过 /api/v1/workspace/bundle 获取；本次 Agent 未修改业务数据。`,
+    navigation: {
+      type: 'navigation',
+      route: { mainTab: 'dashboard', secondaryTab: 'overview' },
+      panel: 'workspace',
+      reason: '导出工作区属于版本管理动作，需要打开版本管理面板。',
+    },
+    status: 'executed',
+  } satisfies ReadDraft
+}
 
+async function planExportBundle(ctx: PlannerContext) {
+  if (!/导出/.test(ctx.message) || !/(工作区|bundle|Bundle|JSON)/.test(ctx.message)) return null
+  return planExportBundleRead(ctx)
+}
+
+async function planDataQueryRead(ctx: PlannerContext, step: RuntimePlannerStep) {
+  const { config } = await currentDraftConfig(ctx)
+  const projection = projectModel(config)
+  const baseScenario = projection.scenarios.find((scenario) => scenario.key === 'base') ?? projection.scenarios[0] ?? null
+  if (!baseScenario) return null
+
+  const scope = step.scope === 'workspace_summary' || step.scope === 'period_summary' || step.scope === 'member_summary' || step.scope === 'top_months'
+    ? step.scope
+    : 'workspace_summary'
+  const metrics = normalizeDataMetrics(step.metrics)
+
+  if (scope === 'period_summary') {
+    const period = step.monthLabel ? await periodForMonth(ctx, step.monthLabel) : null
+    if (!period) return null
+    const periods = await listPeriods(ctx.db, ctx.workspace)
+    const summary = periods.find((item) => item.id === period.id) ?? periods.find((item) => item.monthLabel === period.monthLabel) ?? null
+    const month = baseScenario.months.find((item) => item.monthIndex === period.monthIndex) ?? null
+    const plannedRevenue = summary?.plannedRevenue ?? month?.grossSales ?? 0
+    const plannedCost = summary?.plannedCost ?? month?.totalCost ?? 0
+    const actualRevenue = summary?.actualRevenue ?? 0
+    const actualCost = summary?.actualCost ?? 0
+    const plannedProfit = plannedRevenue - plannedCost
+    const actualProfit = actualRevenue - actualCost
+    const includeActual = metrics.length === 0 || metrics.some((metric) => metric.startsWith('actual'))
+    const parts = [
+      `${period.monthLabel}计划收入 ${money(plannedRevenue)}`,
+      `计划成本 ${money(plannedCost)}`,
+      `计划利润 ${money(plannedProfit)}`,
+      ...(includeActual ? [`实际收入 ${money(actualRevenue)}`, `实际成本 ${money(actualCost)}`, `实际利润 ${money(actualProfit)}`] : []),
+    ]
+    const route: AgentNavigationEvent['route'] = includeActual
+      ? { mainTab: 'variance', secondaryTab: 'analysis', selectedPeriodId: period.id }
+      : { mainTab: 'dashboard', secondaryTab: 'months', selectedPeriodId: period.id }
+    return {
+      title: '回答单月数据问题',
+      message: `${parts.join('，')}。本次只读取当前工作区数据，未修改业务数据。`,
+      navigation: {
+        type: 'navigation',
+        route,
+        reason: '数据问答需要打开对应月份的分析页面，便于核对口径。',
+      },
+      status: 'executed',
+    } satisfies ReadDraft
+  }
+
+  if (scope === 'member_summary') {
+    const memberName = typeof step.memberName === 'string' ? step.memberName : null
+    const member = memberName ? config.teamMembers.find((item) => item.name === memberName || item.id === memberName) ?? null : null
+    if (!member) return null
+    const targetMonths = step.monthLabel
+      ? baseScenario.months.filter((month) => month.label === step.monthLabel)
+      : baseScenario.months
+    const totals = targetMonths.reduce(
+      (sum, month) => {
+        const item = month.members.find((candidate) => candidate.memberId === member.id)
+        if (!item) return sum
+        return {
+          revenue: sum.revenue + item.grossSales,
+          commission: sum.commission + item.commissionCost,
+          contribution: sum.contribution + item.companyNetContribution,
+        }
+      },
+      { revenue: 0, commission: 0, contribution: 0 },
+    )
+    const label = step.monthLabel ? `${step.monthLabel}${member.name}` : `${member.name}全周期`
+    return {
+      title: '回答成员数据问题',
+      message: `${label}计划收入 ${money(totals.revenue)}，计划提成 ${money(totals.commission)}，公司净贡献 ${money(totals.contribution)}。本次只读取当前工作区数据，未修改业务数据。`,
+      navigation: {
+        type: 'navigation',
+        route: { mainTab: 'dashboard', secondaryTab: 'members' },
+        reason: '成员数据问答需要打开成员分析页面，便于核对口径。',
+      },
+      status: 'executed',
+    } satisfies ReadDraft
+  }
+
+  if (scope === 'top_months') {
+    const metric = metrics[0] ?? 'plannedProfit'
+    const metricValue = (month: (typeof baseScenario.months)[number]) => {
+      if (metric === 'plannedRevenue') return month.grossSales
+      if (metric === 'plannedCost') return month.totalCost
+      if (metric === 'cash') return month.cumulativeCash
+      return month.monthlyProfit
+    }
+    const order = step.order === 'asc' ? 'asc' : 'desc'
+    const limit = Math.min(6, Math.max(1, Math.round(typeof step.limit === 'number' ? step.limit : 3)))
+    const ranked = baseScenario.months
+      .map((month) => ({ month, value: metricValue(month) }))
+      .sort((a, b) => (order === 'asc' ? a.value - b.value : b.value - a.value))
+      .slice(0, limit)
+    return {
+      title: '回答月份排行问题',
+      message: `按${metric === 'plannedRevenue' ? '计划收入' : metric === 'plannedCost' ? '计划成本' : metric === 'cash' ? '累计现金' : '计划利润'}${order === 'asc' ? '升序' : '降序'}，前 ${limit} 个月份是：${ranked.map((item) => `${item.month.label} ${money(item.value)}`).join('；')}。本次只读取当前工作区数据，未修改业务数据。`,
+      navigation: {
+        type: 'navigation',
+        route: { mainTab: 'dashboard', secondaryTab: 'months' },
+        reason: '月份排行问答需要打开按月分析页面，便于核对口径。',
+      },
+      status: 'executed',
+    } satisfies ReadDraft
+  }
+
+  return {
+    title: '回答工作区数据问题',
+    message: `基准场景总收入 ${money(baseScenario.grossSales)}，总成本 ${money(baseScenario.totalCost)}，总利润 ${money(baseScenario.totalProfit)}，期末现金 ${money(baseScenario.netCashAfterInvestment)}，投资回报率 ${pct(baseScenario.roi)}，回本周期 ${baseScenario.paybackMonthLabel ?? '未回本'}。本次只读取当前工作区数据，未修改业务数据。`,
+    navigation: {
+      type: 'navigation',
+      route: { mainTab: 'dashboard', secondaryTab: 'overview' },
+      reason: '工作区数据问答需要打开经营总览页面，便于核对口径。',
+    },
+    status: 'executed',
+  } satisfies ReadDraft
+}
+
+function planImportBundleFromValue(ctx: PlannerContext, rawBundle: unknown) {
+  if (!rawBundle || typeof rawBundle !== 'object') return null
+  const bundle = rawBundle as { workspaceName?: unknown; currentConfig?: unknown; snapshots?: unknown[] }
+  if (typeof bundle.workspaceName !== 'string' || !bundle.currentConfig) return null
+  return {
+    kind: 'workspace.import_bundle',
+    title: '确认导入工作区 Bundle',
+    summary: `用导入 bundle “${bundle.workspaceName}” 的当前模型覆盖当前草稿。历史版本不会导入。`,
+    targetLabel: bundle.workspaceName,
+    riskLevel: 'high',
+    details: [
+      { label: '导入工作区', value: bundle.workspaceName },
+      { label: '历史版本', value: `${Array.isArray(bundle.snapshots) ? bundle.snapshots.length : 0} 个（本次不导入）` },
+    ],
+    navigation: {
+      type: 'navigation',
+      route: { mainTab: 'dashboard', secondaryTab: 'overview' },
+      panel: 'workspace',
+      reason: '导入 bundle 会覆盖当前草稿，需要打开版本管理面板。',
+    },
+    payload: { bundle },
+  } satisfies ActionDraft
+}
+
+async function planImportBundle(ctx: PlannerContext) {
+  if (!/导入/.test(ctx.message) || !/(工作区|bundle|Bundle|JSON)/.test(ctx.message)) return null
+  return planImportBundleFromValue(ctx, ctx.providedWorkspaceBundle?.bundle)
+}
+
+async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePlanResult | null> {
   const { config } = await currentDraftConfig(ctx)
   const periods = await listPeriods(ctx.db, ctx.workspace)
   const versions = await listVersions(ctx.db, ctx.workspace)
+  const runtimeContext = await loadAgentRuntimeContext({
+    db: ctx.db,
+    workspace: ctx.workspace,
+    user: ctx.user,
+    threadId: ctx.threadId,
+  })
   const context = {
     months: config.months.map((month, index) => ({ label: month.label, index, id: month.id })),
     teamMembers: config.teamMembers.map((member) => ({ id: member.id, name: member.name })),
     versions: versions.map((version) => ({ versionNo: version.version_no, name: version.name, kind: version.kind })),
     periods: periods.map((period) => ({ id: period.id, monthLabel: period.monthLabel })),
-    writableConfigExamples: [
-      'operating.offlineUnitPrice',
-      'operating.onlineUnitPrice',
-      'operating.polaroidLossRate',
-      'planning.startMonth',
-      'planning.horizonMonths',
-      'timelineTemplate.events',
-      'timelineTemplate.salesMultiplier',
-      'timelineTemplate.onlineSalesFactor',
-      'months[0].events',
-      'months[0].salesMultiplier',
-      'months[0].onlineSalesFactor',
-      'teamMembers[0].commissionRate',
-      'teamMembers[0].monthlyBasePay',
-      'teamMembers[0].perEventTravelCost',
-      'shareholders[0].investmentAmount',
-      'shareholders[0].dividendRate',
-    ],
+    tenantScopedMemory: runtimeContext.memories.map((memory) => ({
+      kind: memory.kind,
+      key: memory.key,
+      value: memory.value,
+    })),
+    contextSummary: runtimeContext.contextSummary,
+    recentMessages: runtimeContext.recentMessages.map((message) => ({
+      role: message.role,
+      content: message.content.slice(0, 500),
+    })),
+    writableConfig: buildAgentWritableConfigContext(config),
+    ...(ctx.providedWorkspaceBundle
+      ? {
+          providedArtifacts: {
+            workspaceBundle: ctx.providedWorkspaceBundle.summary,
+          },
+        }
+      : {}),
   }
-  const system = [
-    '你是 xox-model 的 Agent OS 规划器，只输出 JSON，不要输出解释。',
-    '把用户中文指令拆成 steps 数组。一个用户消息可能包含多个动作，按顺序输出。',
-    '账号登录、退出、注销、删除账号、改密码一律输出 intent=account.forbidden。',
-    '写入动作只做计划，不执行。读取/预测可以输出 forecast 或 ui.navigate。',
-    '可用 intent：ledger.create_member_income, ledger.void_entry, workspace.update_online_factor, workspace.patch_config, workspace.save_snapshot, workspace.publish_release, workspace.rollback_version, workspace.delete_version, workspace.reset_draft, share.create, share.revoke, ledger.set_period_lock, ui.navigate, account.forbidden。',
-    'workspace.patch_config 使用 dot path 或 months[0].field 路径。只有当专用 intent 不适合时才用 patch_config。',
-    '输出格式：{"steps":[{"intent":"...","monthLabel":"3月","memberName":"成员 A","offlineUnits":10,"onlineUnits":2,"mode":"write","onlineSalesFactor":0.3,"createShare":true,"versionNo":1,"locked":true,"patches":[{"path":"planning.horizonMonths","value":18,"label":"规划月份"}]}]}',
-  ].join('\n')
 
-  try {
-    const response = await fetch(`${ctx.settings.deepseekBaseUrl.replace(/\/$/, '')}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${ctx.settings.deepseekApiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: ctx.settings.deepseekModel,
-        messages: [
-          { role: 'system', content: system },
-          { role: 'user', content: `上下文：${JSON.stringify(context)}\n用户指令：${ctx.message}` },
-        ],
-        response_format: { type: 'json_object' },
-        temperature: 0,
-        max_tokens: 1600,
-      }),
-    })
-
-    if (!response.ok) return null
-    const body = (await response.json()) as any
-    const content = body?.choices?.[0]?.message?.content
-    if (typeof content !== 'string') return null
-    const parsed = JSON.parse(content) as { steps?: DeepSeekPlannerStep[] }
-    return Array.isArray(parsed.steps) ? parsed.steps : null
-  } catch {
-    return null
-  }
+  return planWithRuntimeAdapter({
+    settings: ctx.settings,
+    message: redactSecretLikeContent(ctx.message),
+    context,
+  })
 }
 
-async function plannedItemFromDeepSeekStep(ctx: PlannerContext, step: DeepSeekPlannerStep): Promise<PlannedItem | null> {
+async function plannedItemFromRuntimeStep(ctx: PlannerContext, step: RuntimePlannerStep): Promise<PlannedItem | null> {
   if (step.intent === 'account.forbidden') {
-    return {
-      title: '账号动作需要手动完成',
-      message: '账号登录、退出、注销、删除账号和密码类动作不能由 Agent 自动执行，请在账号入口手动操作。',
-      status: 'info',
-    }
+    return accountForbiddenRead()
   }
   if (step.intent === 'ledger.create_member_income' && step.monthLabel && step.memberName) {
     return planLedgerCreateFromFields(ctx, {
@@ -894,6 +1226,17 @@ async function plannedItemFromDeepSeekStep(ctx: PlannerContext, step: DeepSeekPl
   }
   if (step.intent === 'workspace.delete_version') return planDeleteVersion(ctx)
   if (step.intent === 'workspace.reset_draft') return planResetDraft(ctx)
+  if (step.intent === 'workspace.export_bundle') {
+    return planExportBundleRead(ctx)
+  }
+  if (step.intent === 'workspace.import_bundle') {
+    const rawBundle = step.bundle && typeof step.bundle === 'object'
+      ? step.bundle
+      : step.useProvidedBundle
+        ? ctx.providedWorkspaceBundle?.bundle
+        : ctx.providedWorkspaceBundle?.bundle
+    return planImportBundleFromValue(ctx, rawBundle)
+  }
   if (step.intent === 'share.create') {
     return planShare(ctx, {
       ...(step.versionNo !== undefined ? { versionNo: step.versionNo } : {}),
@@ -928,6 +1271,7 @@ async function plannedItemFromDeepSeekStep(ctx: PlannerContext, step: DeepSeekPl
     } satisfies ActionDraft
   }
   if (step.intent === 'ledger.void_entry') return planLedgerVoid(ctx)
+  if (step.intent === 'data.query_workspace') return planDataQueryRead(ctx, step)
   if (step.intent === 'ui.navigate' && step.mainTab) {
     return {
       title: '打开页面',
@@ -944,20 +1288,20 @@ async function plannedItemFromDeepSeekStep(ctx: PlannerContext, step: DeepSeekPl
 }
 
 async function localPlannedItems(ctx: PlannerContext): Promise<PlannedItem[]> {
-  if (accountActionRequested(ctx.message)) {
-    return [{
-      title: '账号动作需要手动完成',
-      message: '账号登录、退出、注销、删除账号和密码类动作不能由 Agent 自动执行，请在账号入口手动操作。',
-      status: 'info',
-    }]
-  }
-
   const items: PlannedItem[] = []
   for (const part of splitRequestedSteps(ctx.message)) {
-    const scopedCtx = { ...ctx, message: part }
+    if (accountActionRequested(part)) {
+      items.push(accountForbiddenRead())
+      continue
+    }
+    const artifact = extractWorkspaceBundleArtifact(part)
+    const baseCtx: PlannerContext = { ...ctx, message: part }
+    const scopedCtx: PlannerContext = artifact ? { ...baseCtx, providedWorkspaceBundle: artifact } : baseCtx
     const plannedItems = [
       await planLedgerCreate(scopedCtx),
       await planOnlineFactor(scopedCtx),
+      await planImportBundle(scopedCtx),
+      await planExportBundle(scopedCtx),
       await planSnapshot(scopedCtx),
       await planPublish(scopedCtx),
       await planRollback(scopedCtx),
@@ -978,32 +1322,46 @@ async function localPlannedItems(ctx: PlannerContext): Promise<PlannedItem[]> {
     : []
 }
 
-async function modelPlannedItems(ctx: PlannerContext): Promise<PlannedItem[] | null> {
+async function modelPlannedItems(ctx: PlannerContext): Promise<{ source: AgentPlannerSource; items: PlannedItem[] } | null> {
+  const requiredSource = configuredModelPlannerSource(ctx.settings)
   const items: PlannedItem[] = []
+  let source: AgentPlannerSource | null = null
   for (const part of splitRequestedSteps(ctx.message)) {
-    const scopedCtx = { ...ctx, message: part }
-    const steps = await callDeepSeekPlanner(scopedCtx)
-    if (!steps || steps.length === 0) return null
+    const artifact = extractWorkspaceBundleArtifact(part)
+    const baseCtx: PlannerContext = { ...ctx, message: part }
+    const planningCtx: PlannerContext = artifact ? { ...baseCtx, providedWorkspaceBundle: artifact } : baseCtx
+    const runtimeCtx: PlannerContext = artifact ? { ...planningCtx, message: artifact.messageForModel } : planningCtx
+    const result = await callRuntimePlanner(runtimeCtx)
+    if (!result || result.steps.length === 0) {
+      if (!requiredSource) return null
+      source = source ?? requiredSource
+      items.push(modelToolCallRequiredRead())
+      continue
+    }
+    source =
+      result.source === 'openai_agents' || source === 'openai_agents'
+        ? 'openai_agents'
+        : 'openai_compatible_tool_calls'
     const partItems: PlannedItem[] = []
-    for (const step of steps) {
-      const item = await plannedItemFromDeepSeekStep(scopedCtx, step)
+    for (const step of result.steps) {
+      const item = await plannedItemFromRuntimeStep(planningCtx, step)
       if (item) partItems.push(item)
     }
     if (partItems.length > 0) {
       items.push(...partItems)
+    } else if (requiredSource) {
+      items.push(modelToolCallRequiredRead())
     } else {
-      items.push(...(await localPlannedItems(scopedCtx)))
+      items.push(...(await localPlannedItems(planningCtx)))
     }
   }
-  return items.length > 0 ? items : null
+  return items.length > 0 ? { source: source ?? requiredSource ?? 'openai_compatible_tool_calls', items } : null
 }
 
 async function planResponse(ctx: PlannerContext) {
-  void operatorAgent
-
-  const modelItems = await modelPlannedItems(ctx)
-  const items = modelItems ?? (await localPlannedItems(ctx))
-  const plannerSource = modelItems ? 'deepseek' : 'rules'
+  const modelPlan = await modelPlannedItems(ctx)
+  const items = modelPlan?.items ?? (await localPlannedItems(ctx))
+  const plannerSource: AgentPlannerSource = modelPlan?.source ?? 'rules'
   const navigationEvents: AgentNavigationEvent[] = []
   const actionRows: Row<'agent_action_requests'>[] = []
   const planRows: Row<'agent_plan_steps'>[] = []
@@ -1059,8 +1417,7 @@ async function planResponse(ctx: PlannerContext) {
 
 async function executeAction(db: Kysely<Database>, settings: Settings, user: CurrentUser, action: Row<'agent_action_requests'>) {
   const workspace = await getWorkspaceForUser(db, user)
-  if (workspace.id !== action.workspace_id || action.user_id !== user.id) throw forbidden()
-  if (action.status !== 'pending') throw conflict('Agent action is not pending')
+  await assertActionExecutionAllowed(db, workspace, user, action)
   const payload = parseJson<any>(action.payload_json, {})
   let result: unknown = null
 
@@ -1092,6 +1449,8 @@ async function executeAction(db: Kysely<Database>, settings: Settings, user: Cur
   } else if (action.kind === 'workspace.reset_draft') {
     const draft = await getWorkspaceDraft(db, workspace)
     result = await saveDraft(db, { workspace, actor: user, revision: draft.revision, workspaceName: '默认工作区', config: createProductDefaultModel() })
+  } else if (action.kind === 'workspace.import_bundle') {
+    result = await importWorkspaceBundle(db, { workspace, actor: user, bundle: payload.bundle })
   } else if (action.kind === 'ledger.lock_period') {
     result = await setPeriodStatus(db, workspace, payload.periodId, user.id, 'locked')
   } else if (action.kind === 'ledger.unlock_period') {
@@ -1127,7 +1486,40 @@ async function executeAction(db: Kysely<Database>, settings: Settings, user: Cur
 }
 
 export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, settings: Settings) {
+  app.get('/api/v1/agent/threads', async (request, reply) => {
+    try {
+      const user = await requireCurrentUser(db, settings, request)
+      const workspace = await getWorkspaceForUser(db, user)
+      const threads = await db
+        .selectFrom('agent_threads')
+        .selectAll()
+        .where('workspace_id', '=', workspace.id)
+        .where('user_id', '=', user.id)
+        .orderBy('updated_at', 'desc')
+        .limit(30)
+        .execute()
+      return { threads: await Promise.all(threads.map((thread) => buildThreadSummary(db, thread))) }
+    } catch (error) {
+      const { sendError } = await import('../core/http.js')
+      return sendError(reply, error)
+    }
+  })
+
+  app.get('/api/v1/agent/threads/:threadId', async (request, reply) => {
+    try {
+      const user = await requireCurrentUser(db, settings, request)
+      const workspace = await getWorkspaceForUser(db, user)
+      const { threadId } = request.params as { threadId: string }
+      return buildThreadState(db, workspace, user, threadId)
+    } catch (error) {
+      const { sendError } = await import('../core/http.js')
+      return sendError(reply, error)
+    }
+  })
+
   app.post('/api/v1/agent/messages', async (request, reply) => {
+    let runId: string | null = null
+    let activeThread: Row<'agent_threads'> | null = null
     try {
       const body = request.body as { threadId?: string | null; message?: string }
       const message = body.message?.trim()
@@ -1135,14 +1527,27 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
       const user = await requireCurrentUser(db, settings, request)
       const workspace = await getWorkspaceForUser(db, user)
       const thread = await getOrCreateThread(db, workspace, user, body.threadId)
-      const runId = newId()
+      activeThread = thread
+      runId = newId()
       const now = utcNow()
-      await db.insertInto('agent_runs').values({ id: runId, thread_id: thread.id, user_id: user.id, status: 'running', created_at: now, completed_at: null }).execute()
+      await db
+        .insertInto('agent_runs')
+        .values({ id: runId, thread_id: thread.id, user_id: user.id, status: 'running', planner_source: null, created_at: now, completed_at: null })
+        .execute()
       const userMessage = await addMessage(db, thread.id, 'user', message)
+      await rememberFromUserMessage({ db, workspace, user, threadId: thread.id, messageId: userMessage.id, message })
       const planned = await planResponse({ db, settings, user, workspace, threadId: thread.id, runId, message })
       const assistantMessage = await addMessage(db, thread.id, 'assistant', planned.assistant)
-      await db.updateTable('agent_runs').set({ status: 'completed', completed_at: utcNow() }).where('id', '=', runId).execute()
-      await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', thread.id).execute()
+      await compactThreadContextIfNeeded({ db, workspace, user, threadId: thread.id })
+      await db.updateTable('agent_runs').set({ status: 'completed', planner_source: planned.plannerSource, completed_at: utcNow() }).where('id', '=', runId).execute()
+      await db
+        .updateTable('agent_threads')
+        .set({
+          title: thread.title === 'Agent 对话' ? threadTitleFromMessage(message) : thread.title,
+          updated_at: utcNow(),
+        })
+        .where('id', '=', thread.id)
+        .execute()
       return {
         threadId: thread.id,
         runId,
@@ -1153,7 +1558,36 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
         actionRequests: planned.actionRows.map(serializeAction),
       }
     } catch (error) {
+      if (runId && activeThread) {
+        await db.updateTable('agent_runs').set({ status: 'failed', completed_at: utcNow() }).where('id', '=', runId).execute().catch(() => undefined)
+        await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', activeThread.id).execute().catch(() => undefined)
+      }
       return reply.send(error)
+    }
+  })
+
+  app.get('/api/v1/agent/memories', async (request, reply) => {
+    try {
+      const user = await requireCurrentUser(db, settings, request)
+      const workspace = await getWorkspaceForUser(db, user)
+      const memories = await listAgentMemories(db, workspace, user)
+      return { memories: memories.map(serializeMemory) }
+    } catch (error) {
+      const { sendError } = await import('../core/http.js')
+      return sendError(reply, error)
+    }
+  })
+
+  app.delete('/api/v1/agent/memories/:memoryId', async (request, reply) => {
+    try {
+      const user = await requireCurrentUser(db, settings, request)
+      const workspace = await getWorkspaceForUser(db, user)
+      const { memoryId } = request.params as { memoryId: string }
+      await archiveAgentMemory(db, workspace, user, memoryId)
+      return { ok: true }
+    } catch (error) {
+      const { sendError } = await import('../core/http.js')
+      return sendError(reply, error)
     }
   })
 
@@ -1167,6 +1601,7 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
       const updated = await db.selectFrom('agent_action_requests').selectAll().where('id', '=', action.id).executeTakeFirstOrThrow()
       const planSteps = await db.selectFrom('agent_plan_steps').selectAll().where('run_id', '=', action.run_id).orderBy('sequence_no', 'asc').execute()
       const assistant = await addMessage(db, action.thread_id, 'assistant', `已执行：${action.title}`)
+      await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', action.thread_id).execute()
       return { actionRequest: serializeAction(updated), result, messages: [serializeMessage(assistant)], planSteps: planSteps.map(serializePlanStep) }
     } catch (error) {
       const { sendError } = await import('../core/http.js')
@@ -1187,6 +1622,7 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
       const updated = await db.selectFrom('agent_action_requests').selectAll().where('id', '=', action.id).executeTakeFirstOrThrow()
       const planSteps = await db.selectFrom('agent_plan_steps').selectAll().where('run_id', '=', action.run_id).orderBy('sequence_no', 'asc').execute()
       const assistant = await addMessage(db, action.thread_id, 'assistant', `已取消：${action.title}`)
+      await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', action.thread_id).execute()
       return { actionRequest: serializeAction(updated), messages: [serializeMessage(assistant)], planSteps: planSteps.map(serializePlanStep) }
     } catch (error) {
       const { sendError } = await import('../core/http.js')
@@ -1212,6 +1648,10 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
       if (body.navigation) update.navigation_json = jsonString(body.navigation)
       if ('payload' in body) update.payload_json = jsonString(body.payload)
       if (Object.keys(update).length === 0) throw unprocessable('No editable fields provided')
+      assertActionUpdateAllowed(coerceAgentActionKind(action.kind), {
+        ...(update.risk_level ? { riskLevel: update.risk_level as never } : {}),
+        ...(body.navigation ? { navigation: body.navigation } : {}),
+      })
       await db.updateTable('agent_action_requests').set(update).where('id', '=', action.id).execute()
       const updated = await db.selectFrom('agent_action_requests').selectAll().where('id', '=', action.id).executeTakeFirstOrThrow()
       await db
@@ -1224,6 +1664,7 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
         })
         .where('action_request_id', '=', action.id)
         .execute()
+      await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', action.thread_id).execute()
       const planSteps = await db.selectFrom('agent_plan_steps').selectAll().where('run_id', '=', action.run_id).orderBy('sequence_no', 'asc').execute()
       return { actionRequest: serializeAction(updated), planSteps: planSteps.map(serializePlanStep) }
     } catch (error) {

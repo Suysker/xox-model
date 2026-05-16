@@ -5,10 +5,11 @@ import {
   projectModel,
   type ModelConfig,
   type ModelResult,
+  type WorkspaceBundle,
 } from '@xox/domain'
 import type { Database, Row } from '../db/schema.js'
 import { jsonString, parseJson } from '../db/database.js'
-import { conflict, forbidden, notFound } from '../core/http.js'
+import { conflict, forbidden, notFound, unprocessable } from '../core/http.js'
 import { newId } from '../core/security.js'
 import { utcNow } from '../core/time.js'
 import { recordAudit } from './audit.js'
@@ -173,6 +174,60 @@ export function serializeShare(share: Row<'workspace_version_shares'>) {
     createdAt: share.created_at,
     updatedAt: share.updated_at,
   }
+}
+
+const WORKSPACE_BUNDLE_SCHEMA_VERSION = 10
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+function ensureImportableConfig(value: unknown) {
+  if (!isRecord(value) || !Array.isArray(value.teamMembers) || !Array.isArray(value.months) || !isRecord(value.operating) || !isRecord(value.planning)) {
+    throw unprocessable('Invalid workspace bundle currentConfig')
+  }
+  return hydrateModelConfig(value)
+}
+
+export async function exportWorkspaceBundle(db: Kysely<Database>, workspace: Row<'workspaces'>): Promise<WorkspaceBundle> {
+  const draft = await getWorkspaceDraft(db, workspace)
+  const { config } = draftContext(draft)
+  const versions = await listVersions(db, workspace)
+  return {
+    schemaVersion: WORKSPACE_BUNDLE_SCHEMA_VERSION,
+    workspaceName: workspace.name,
+    currentConfig: config,
+    snapshots: versions
+      .slice()
+      .reverse()
+      .map((version) => ({
+        id: version.id,
+        name: version.name,
+        createdAt: version.created_at,
+        kind: version.kind as 'snapshot' | 'release',
+        config: hydrateModelConfig(parseJson<unknown>(version.payload_json, null)),
+      })),
+    lastSavedAt: draft.last_autosaved_at,
+  }
+}
+
+export async function importWorkspaceBundle(
+  db: Kysely<Database>,
+  input: {
+    workspace: Row<'workspaces'>
+    actor: CurrentUser
+    bundle: { workspaceName: string; currentConfig: unknown }
+  },
+) {
+  const draft = await getWorkspaceDraft(db, input.workspace)
+  const config = ensureImportableConfig(input.bundle.currentConfig)
+  return saveDraft(db, {
+    workspace: input.workspace,
+    actor: input.actor,
+    revision: draft.revision,
+    workspaceName: input.bundle.workspaceName,
+    config,
+  })
 }
 
 export async function publishVersion(

@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "tsx watch src/main.ts",
     "build": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "smoke:agent": "tsx src/agent/real-provider-smoke.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",

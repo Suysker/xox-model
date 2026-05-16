@@ -257,10 +257,12 @@ export async function runMigrations(db: Kysely<Database>) {
       thread_id VARCHAR(36) NOT NULL REFERENCES agent_threads(id) ON DELETE CASCADE,
       user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       status VARCHAR(32) NOT NULL,
+      planner_source VARCHAR(64),
       created_at DATETIME NOT NULL,
       completed_at DATETIME
     )`,
   )
+  await addColumnIfMissing(db, 'agent_runs', 'planner_source', 'VARCHAR(64)')
   await exec(
     db,
     `CREATE TABLE IF NOT EXISTS agent_action_requests (
@@ -297,6 +299,35 @@ export async function runMigrations(db: Kysely<Database>) {
       navigation_json JSON,
       created_at DATETIME NOT NULL,
       updated_at DATETIME NOT NULL
+    )`,
+  )
+  await exec(
+    db,
+    `CREATE TABLE IF NOT EXISTS agent_memories (
+      id VARCHAR(36) PRIMARY KEY,
+      workspace_id VARCHAR(36) NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      thread_id VARCHAR(36) REFERENCES agent_threads(id) ON DELETE SET NULL,
+      kind VARCHAR(64) NOT NULL,
+      key VARCHAR(128) NOT NULL,
+      value TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      source_message_id VARCHAR(36),
+      created_at DATETIME NOT NULL,
+      updated_at DATETIME NOT NULL,
+      archived_at DATETIME
+    )`,
+  )
+  await exec(
+    db,
+    `CREATE TABLE IF NOT EXISTS agent_context_snapshots (
+      id VARCHAR(36) PRIMARY KEY,
+      workspace_id VARCHAR(36) NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      thread_id VARCHAR(36) NOT NULL REFERENCES agent_threads(id) ON DELETE CASCADE,
+      summary TEXT NOT NULL,
+      message_count INTEGER NOT NULL,
+      created_at DATETIME NOT NULL
     )`,
   )
 

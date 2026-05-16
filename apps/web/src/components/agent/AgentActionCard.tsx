@@ -1,6 +1,13 @@
 import { Check, Pencil, Save, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { AgentActionRequest, AgentActionUpdatePayload } from '../../lib/api'
+import { formatAgentNavigationTarget } from './AgentPlanTimeline'
+
+const riskLabels: Record<AgentActionRequest['riskLevel'], string> = {
+  low: '低风险',
+  medium: '中风险',
+  high: '高风险',
+}
 
 export function AgentActionCard(props: {
   action: AgentActionRequest
@@ -18,6 +25,7 @@ export function AgentActionCard(props: {
   const summaryRef = useRef<HTMLTextAreaElement | null>(null)
   const detailsRef = useRef<HTMLTextAreaElement | null>(null)
   const payloadRef = useRef<HTMLTextAreaElement | null>(null)
+  const navigationLabel = formatAgentNavigationTarget(props.action.navigation)
 
   useEffect(() => {
     setSummary(props.action.summary)
@@ -51,10 +59,20 @@ export function AgentActionCard(props: {
           <p className="text-xs font-semibold text-stone-500">{props.action.targetLabel}</p>
           <h3 className="mt-1 text-sm font-semibold text-stone-950">{props.action.title}</h3>
         </div>
-        <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-700">
-          {props.action.status === 'pending' ? '待确认' : props.action.status}
-        </span>
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-700">
+            {props.action.status === 'pending' ? '待确认' : props.action.status}
+          </span>
+          <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-semibold text-red-600">
+            {riskLabels[props.action.riskLevel]}
+          </span>
+        </div>
       </div>
+      {navigationLabel ? (
+        <p className="mt-2 truncate rounded-md bg-stone-100 px-2 py-1 text-[11px] font-medium text-stone-600">
+          打开：{navigationLabel}
+        </p>
+      ) : null}
       {editing ? (
         <div className="mt-2 grid gap-2">
           <label className="grid gap-1 text-[11px] font-medium text-stone-500">

@@ -2,10 +2,14 @@ import type { ModelConfig, ModelResult } from '../types'
 import type {
   AgentActionRequest,
   AgentActionUpdatePayload,
+  AgentMemoryRecord,
   AgentMessage,
   AgentNavigationEvent,
   AgentPlanStep,
+  AgentPlanStepStatus,
   AgentSendResponse,
+  AgentThreadState,
+  AgentThreadSummary,
 } from '@xox/contracts'
 
 type ApiMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE'
@@ -144,7 +148,18 @@ export type PublicShareResponse = {
   result: ModelResult
 }
 
-export type { AgentActionRequest, AgentActionUpdatePayload, AgentMessage, AgentNavigationEvent, AgentPlanStep, AgentSendResponse }
+export type {
+  AgentActionRequest,
+  AgentActionUpdatePayload,
+  AgentMemoryRecord,
+  AgentMessage,
+  AgentNavigationEvent,
+  AgentPlanStep,
+  AgentPlanStepStatus,
+  AgentSendResponse,
+  AgentThreadState,
+  AgentThreadSummary,
+}
 
 type ApiValidationError = {
   loc?: Array<string | number>
@@ -354,6 +369,14 @@ export const api = {
     apiRequest<PublicShareResponse>('GET', `/api/v1/public/shares/${encodeURIComponent(shareToken)}`),
   sendAgentMessage: (payload: { threadId?: string | null; message: string }) =>
     apiRequest<AgentSendResponse>('POST', '/api/v1/agent/messages', payload),
+  listAgentThreads: () =>
+    apiRequest<{ threads: AgentThreadSummary[] }>('GET', '/api/v1/agent/threads'),
+  getAgentThread: (threadId: string) =>
+    apiRequest<AgentThreadState>('GET', `/api/v1/agent/threads/${encodeURIComponent(threadId)}`),
+  listAgentMemories: () =>
+    apiRequest<{ memories: AgentMemoryRecord[] }>('GET', '/api/v1/agent/memories'),
+  deleteAgentMemory: (memoryId: string) =>
+    apiRequest<{ ok: boolean }>('DELETE', `/api/v1/agent/memories/${memoryId}`),
   confirmAgentAction: (actionRequestId: string) =>
     apiRequest<{ actionRequest: AgentActionRequest; result: unknown; messages: AgentMessage[]; planSteps: AgentPlanStep[] }>(
       'POST',

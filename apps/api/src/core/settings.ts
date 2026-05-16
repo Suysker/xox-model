@@ -7,9 +7,13 @@ export type Settings = {
   sessionTtlDays: number
   corsOrigin: string
   llmProvider: string
-  deepseekBaseUrl: string
-  deepseekModel: string
-  deepseekApiKey: string | null
+  openaiBaseUrl: string
+  openaiModel: string
+  openaiApiKey: string | null
+  openaiCompatibleProvider: string
+  openaiCompatibleBaseUrl: string
+  openaiCompatibleModel: string
+  openaiCompatibleApiKey: string | null
 }
 
 function defaultDatabaseUrl() {
@@ -18,15 +22,20 @@ function defaultDatabaseUrl() {
 }
 
 export function getSettings(): Settings {
+  const llmProvider = process.env.LLM_PROVIDER ?? process.env.OPENAI_COMPATIBLE_PROVIDER ?? 'deepseek'
   return {
     databaseUrl: process.env.XOX_DATABASE_URL ?? defaultDatabaseUrl(),
     sessionCookieName: process.env.XOX_SESSION_COOKIE_NAME ?? 'xox_session',
     sessionTtlDays: Number(process.env.XOX_SESSION_TTL_DAYS ?? 14),
     corsOrigin: process.env.XOX_CORS_ORIGIN ?? 'http://127.0.0.1:5173',
-    llmProvider: process.env.LLM_PROVIDER ?? 'deepseek',
-    deepseekBaseUrl: process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com',
-    deepseekModel: process.env.DEEPSEEK_MODEL ?? 'deepseek-chat',
-    deepseekApiKey: process.env.DEEPSEEK_API_KEY ?? null,
+    llmProvider,
+    openaiBaseUrl: process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1',
+    openaiModel: process.env.OPENAI_MODEL ?? 'gpt-5.4-mini',
+    openaiApiKey: process.env.OPENAI_API_KEY ?? null,
+    openaiCompatibleProvider: process.env.OPENAI_COMPATIBLE_PROVIDER ?? llmProvider,
+    openaiCompatibleBaseUrl: process.env.OPENAI_COMPATIBLE_BASE_URL ?? process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com',
+    openaiCompatibleModel: process.env.OPENAI_COMPATIBLE_MODEL ?? process.env.DEEPSEEK_MODEL ?? 'deepseek-v4-pro',
+    openaiCompatibleApiKey: process.env.OPENAI_COMPATIBLE_API_KEY ?? process.env.DEEPSEEK_API_KEY ?? null,
   }
 }
 

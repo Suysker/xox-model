@@ -1,12 +1,38 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   api,
   type AgentActionRequest,
   type AgentActionUpdatePayload,
+  type AgentMemoryRecord,
   type AgentMessage,
   type AgentNavigationEvent,
   type AgentPlanStep,
+  type AgentSendResponse,
+  type AgentThreadState,
+  type AgentThreadSummary,
 } from '../lib/api'
+
+const CURRENT_THREAD_STORAGE_KEY = 'xox.agent.currentThreadId'
+
+function readCurrentThreadId() {
+  try {
+    return globalThis.localStorage?.getItem(CURRENT_THREAD_STORAGE_KEY) ?? null
+  } catch {
+    return null
+  }
+}
+
+function writeCurrentThreadId(threadId: string | null) {
+  try {
+    if (threadId) {
+      globalThis.localStorage?.setItem(CURRENT_THREAD_STORAGE_KEY, threadId)
+    } else {
+      globalThis.localStorage?.removeItem(CURRENT_THREAD_STORAGE_KEY)
+    }
+  } catch {
+    // localStorage is only a recoverable pointer; server state remains authoritative.
+  }
+}
 
 export function useAgentThread(props: {
   onNavigate: (event: AgentNavigationEvent) => void
@@ -16,8 +42,70 @@ export function useAgentThread(props: {
   const [messages, setMessages] = useState<AgentMessage[]>([])
   const [actionRequests, setActionRequests] = useState<AgentActionRequest[]>([])
   const [planSteps, setPlanSteps] = useState<AgentPlanStep[]>([])
+  const [navigationEvents, setNavigationEvents] = useState<AgentNavigationEvent[]>([])
+  const [planner, setPlanner] = useState<AgentSendResponse['planner'] | null>(null)
+  const [memories, setMemories] = useState<AgentMemoryRecord[]>([])
+  const [threadSummaries, setThreadSummaries] = useState<AgentThreadSummary[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  function applyThreadState(state: AgentThreadState, replayNavigation: boolean) {
+    setThreadId(state.thread.id)
+    setMessages(state.messages)
+    setActionRequests(state.actionRequests)
+    setPlanSteps(state.planSteps)
+    setNavigationEvents(state.navigationEvents)
+    setPlanner(state.planner)
+    writeCurrentThreadId(state.thread.id)
+    if (replayNavigation) {
+      const latestNavigation = state.navigationEvents.at(-1)
+      if (latestNavigation) props.onNavigate(latestNavigation)
+    }
+  }
+
+  async function refreshMemories() {
+    try {
+      const response = await api.listAgentMemories()
+      setMemories(response.memories)
+    } catch (memoryError) {
+      setError(memoryError instanceof Error ? memoryError.message : String(memoryError))
+    }
+  }
+
+  async function refreshThreads() {
+    try {
+      const response = await api.listAgentThreads()
+      setThreadSummaries(response.threads)
+    } catch (threadsError) {
+      setError(threadsError instanceof Error ? threadsError.message : String(threadsError))
+    }
+  }
+
+  async function loadThread(nextThreadId: string, replayNavigation = true) {
+    setBusy(true)
+    setError(null)
+    try {
+      const state = await api.getAgentThread(nextThreadId)
+      applyThreadState(state, replayNavigation)
+      void refreshThreads()
+    } catch (loadError) {
+      if (nextThreadId === readCurrentThreadId()) writeCurrentThreadId(null)
+      setError(loadError instanceof Error ? loadError.message : String(loadError))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  useEffect(() => {
+    async function bootstrapAgentState() {
+      await Promise.all([refreshMemories(), refreshThreads()])
+      const storedThreadId = readCurrentThreadId()
+      if (storedThreadId) {
+        await loadThread(storedThreadId, true)
+      }
+    }
+    void bootstrapAgentState()
+  }, [])
 
   function mergeActions(nextActions: AgentActionRequest[]) {
     setActionRequests((current) => {
@@ -33,14 +121,29 @@ export function useAgentThread(props: {
 
     setBusy(true)
     setError(null)
+    const optimisticId = `local-${Date.now()}`
+    const optimisticMessage: AgentMessage = {
+      id: optimisticId,
+      threadId: threadId ?? 'pending',
+      role: 'user',
+      content: message,
+      createdAt: new Date().toISOString(),
+    }
+    setMessages((current) => [...current, optimisticMessage])
     try {
       const response = await api.sendAgentMessage({ threadId, message })
       setThreadId(response.threadId)
-      setMessages((current) => [...current, ...response.messages])
+      writeCurrentThreadId(response.threadId)
+      setPlanner(response.planner)
+      setMessages((current) => [...current.filter((item) => item.id !== optimisticId), ...response.messages])
       mergeActions(response.actionRequests)
       setPlanSteps(response.planSteps)
+      setNavigationEvents(response.navigationEvents)
       response.navigationEvents.forEach(props.onNavigate)
+      void refreshMemories()
+      void refreshThreads()
     } catch (sendError) {
+      setMessages((current) => current.filter((item) => item.id !== optimisticId))
       setError(sendError instanceof Error ? sendError.message : String(sendError))
     } finally {
       setBusy(false)
@@ -56,6 +159,8 @@ export function useAgentThread(props: {
       setPlanSteps(response.planSteps)
       setMessages((current) => [...current, ...response.messages])
       await props.onActionExecuted(response.actionRequest)
+      void refreshMemories()
+      void refreshThreads()
     } catch (confirmError) {
       setError(confirmError instanceof Error ? confirmError.message : String(confirmError))
     } finally {
@@ -71,6 +176,7 @@ export function useAgentThread(props: {
       mergeActions([response.actionRequest])
       setPlanSteps(response.planSteps)
       setMessages((current) => [...current, ...response.messages])
+      void refreshThreads()
     } catch (cancelError) {
       setError(cancelError instanceof Error ? cancelError.message : String(cancelError))
     } finally {
@@ -85,6 +191,7 @@ export function useAgentThread(props: {
       const response = await api.updateAgentAction(actionId, payload)
       mergeActions([response.actionRequest])
       setPlanSteps(response.planSteps)
+      void refreshThreads()
     } catch (updateError) {
       setError(updateError instanceof Error ? updateError.message : String(updateError))
     } finally {
@@ -92,15 +199,51 @@ export function useAgentThread(props: {
     }
   }
 
+  function startNewThread() {
+    writeCurrentThreadId(null)
+    setThreadId(null)
+    setMessages([])
+    setActionRequests([])
+    setPlanSteps([])
+    setNavigationEvents([])
+    setPlanner(null)
+    setError(null)
+    void refreshMemories()
+    void refreshThreads()
+  }
+
+  async function deleteMemory(memoryId: string) {
+    setBusy(true)
+    setError(null)
+    try {
+      await api.deleteAgentMemory(memoryId)
+      await refreshMemories()
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : String(deleteError))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return {
+    threadId,
     messages,
     actionRequests,
     planSteps,
+    navigationEvents,
+    planner,
+    memories,
+    threadSummaries,
     busy,
     error,
     sendMessage,
     confirmAction,
     cancelAction,
     updateAction,
+    loadThread,
+    startNewThread,
+    refreshMemories,
+    refreshThreads,
+    deleteMemory,
   }
 }
