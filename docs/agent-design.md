@@ -99,6 +99,7 @@ Agent OS 内核，和具体 provider 解耦：
 - `agent-kernel.ts`：创建 run，协调 runtime、memory、tool policy、action graph 和事件输出。
 - `action-graph.ts`：多步骤计划、依赖关系、状态转移。
 - `confirmation-service.ts`：创建、编辑、确认、取消 action request。
+- `run-events.ts`：持久化 run 级 trace，并发布 thread state 刷新信号。
 - `tool-policy.ts`：风险等级、权限、账号动作拒绝、写入确认规则。
 - `memory-manager.ts`：租户内记忆的 list/delete/注入。
 - `context-compactor.ts`：长对话压缩。
@@ -480,8 +481,10 @@ packages/contracts
 apps/api/src/db/schema.ts + migrations.ts
   -> agent_run_events
 
-apps/api/src/modules/agent.ts
+apps/api/src/agent/run-events.ts
   -> addRunEvent / serializeRunEvent
+
+apps/api/src/modules/agent.ts
   -> buildThreadState loads latest run events
   -> queue / claim / model planning / tool result / confirmation / completion / failure publish events
 
