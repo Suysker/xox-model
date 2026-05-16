@@ -72,7 +72,7 @@
 - [x] 草稿修改、发布、恢复、分享、锁账等写入动作采用确认卡协议
 - [x] 账号登录、退出、注销、删除账号和密码类动作不允许 Agent 自动执行
 - [x] Agent 写入动作会记录 `agent_action_requests` 和 `audit_logs`
-- [x] `npm.cmd run smoke:agent` 提供受控真实 OpenAI-compatible provider smoke：默认使用 DeepSeek，但通过 `OPENAI_COMPATIBLE_*` 可切换豆包、Qwen 等兼容服务；不允许无 key 回退，覆盖 25 个真实模型方向：只读预测、background run 恢复、缺信息澄清提问、memory 写入、新对话记忆注入、多步骤、账号动作拒绝、记账确认卡、确认卡载荷编辑、作废分录、草稿专用字段保存、通用草稿 patch、工作区 bundle 导出、工作区 bundle 导入、锁账、解锁、保存快照、发布、创建分享、撤销分享、恢复版本、删除版本、重置草稿和审计
+- [x] `npm.cmd run smoke:agent` 提供受控真实 OpenAI-compatible provider smoke：默认使用 DeepSeek，但通过 `OPENAI_COMPATIBLE_*` 可切换豆包、Qwen 等兼容服务；不允许无 key 回退，覆盖 26 个真实模型方向：只读预测、Data agent、background run 恢复、持久运行轨迹、缺信息澄清提问、memory 写入、新对话记忆注入、多步骤、账号动作拒绝、记账确认卡、确认卡载荷编辑、作废分录、草稿专用字段保存、通用草稿 patch、工作区 bundle 导出、工作区 bundle 导入、锁账、解锁、保存快照、发布、创建分享、撤销分享、恢复版本、删除版本、重置草稿和审计
 - [x] 后端接口级 Agent capability matrix 覆盖超过 10 个不同方向的复杂任务，并全部通过：
   - 记忆写入
   - 新对话记忆注入
@@ -116,8 +116,9 @@
 - [x] `agent_runs` 持久化输入消息，API 启动时会恢复可安全重跑的 `running` run；如果重启前已经产生部分 `planSteps/actionRequests`，系统 fail-closed 标记 run failed 并取消未执行确认卡，防止重复确认或重复执行
 - [x] 后台 run 支持 worker lease：API 测试覆盖未租约/过期租约可恢复、其他 worker 的未过期租约不会被抢占、旧 worker 在失去租约后收到迟到模型结果也不能写 assistant message、plan step 或 pending confirmation card
 - [x] 后台 run 支持周期 worker sweep：background 请求只入队，API 测试覆盖未显式调用 recovery 时，worker 也会按队列扫描认领 unleased running run 并完成真实 provider-compatible tool call 规划
+- [x] 后台 run 有持久化 `agent_run_events` 运行轨迹：API、SSE、React 运行图和真实 provider smoke 均覆盖 run 入队、worker 认领、模型规划、工具计划、确认卡生成、确认卡编辑、执行、取消和失败等用户可见步骤
 - [x] 用户可取消 running run；取消后 run 进入 `cancelled`，当前 provider 请求会被中止，迟到的模型结果不能把 run 改回 completed，也不能留下 pending 确认卡
 - [x] 缺少必要业务信息时，模型可通过 `ask_user_clarification` tool_call 生成只读澄清步骤；API 测试和真实 smoke 覆盖“不知道月份/成员/张数时先问用户”，不生成确认卡、不用规则猜参数
 - [x] 浏览器刷新时 `/api/v1/auth/me` 并发恢复保持幂等，不会因 token 旋转竞态把用户踢回登录页，从而保证 Agent thread 恢复能发生
 - [ ] React Agent OS 支持 provider token 级流式输出；当前已经支持服务端 thread state SSE，但 provider streaming chunk 还未接入
-- [ ] 页面可手动修改的业务能力全部映射到 tool registry，或在工具矩阵中列出明确禁止原因；当前剩余缺口是 Agent 模块拆分、独立队列进程/跨实例 pubsub 和 provider streaming/tracing 事件通道
+- [ ] 页面可手动修改的业务能力全部映射到 tool registry，或在工具矩阵中列出明确禁止原因；当前剩余缺口是 Agent 模块拆分、独立队列进程/跨实例 pubsub 和 provider token 级流式输出

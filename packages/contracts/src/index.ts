@@ -220,6 +220,21 @@ export type AgentRunRecord = {
   completedAt: string | null
 }
 
+export type AgentRunEventStatus = 'queued' | 'running' | 'info' | 'blocked' | 'completed' | 'failed' | 'cancelled'
+
+export type AgentRunEvent = {
+  id: string
+  threadId: string
+  runId: string
+  sequence: number
+  type: string
+  title: string
+  message: string
+  status: AgentRunEventStatus
+  data: Record<string, unknown> | null
+  createdAt: string
+}
+
 export type AgentThreadSummary = {
   id: string
   title: string
@@ -238,6 +253,7 @@ export type AgentThreadState = {
   runs: AgentRunRecord[]
   planner: AgentPlannerSource | null
   navigationEvents: AgentNavigationEvent[]
+  runEvents: AgentRunEvent[]
   planSteps: AgentPlanStep[]
   actionRequests: AgentActionRequest[]
 }
@@ -270,6 +286,7 @@ export type AgentSendResponse = {
   planner: AgentPlannerSource | null
   messages: AgentMessage[]
   navigationEvents: AgentNavigationEvent[]
+  runEvents: AgentRunEvent[]
   planSteps: AgentPlanStep[]
   actionRequests: AgentActionRequest[]
 }

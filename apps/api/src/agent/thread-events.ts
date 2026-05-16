@@ -4,6 +4,7 @@ export type AgentThreadEventReason =
   | 'run_completed'
   | 'run_failed'
   | 'run_cancelled'
+  | 'run_trace'
   | 'action_executed'
   | 'action_cancelled'
   | 'action_updated'

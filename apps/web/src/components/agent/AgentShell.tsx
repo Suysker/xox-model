@@ -30,6 +30,7 @@ export function AgentShell(props: {
         planner={agent.planner}
         messages={agent.messages}
         planSteps={agent.planSteps}
+        runEvents={agent.runEvents}
         actionRequests={agent.actionRequests}
         navigationEvents={agent.navigationEvents}
         memories={agent.memories}

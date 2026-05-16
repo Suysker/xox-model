@@ -1,7 +1,7 @@
 import { AlertTriangle, CheckCircle2, CircleDashed, Clock3, Navigation, XCircle } from 'lucide-react'
-import type { AgentActionRequest, AgentNavigationEvent, AgentPlanStep, AgentPlanStepStatus } from '../../lib/api'
+import type { AgentActionRequest, AgentNavigationEvent, AgentPlanStep, AgentPlanStepStatus, AgentRunEvent } from '../../lib/api'
 
-type TimelineStatus = AgentPlanStepStatus | AgentActionRequest['status']
+type TimelineStatus = AgentPlanStepStatus | AgentActionRequest['status'] | AgentRunEvent['status']
 
 const mainTabLabels: Record<AgentNavigationEvent['route']['mainTab'], string> = {
   dashboard: '看测算',
@@ -66,6 +66,16 @@ const actionStatusLabels: Record<AgentActionRequest['status'], string> = {
   failed: '失败',
 }
 
+const runEventStatusLabels: Record<AgentRunEvent['status'], string> = {
+  queued: '已入队',
+  running: '运行中',
+  info: '信息',
+  blocked: '待确认',
+  completed: '完成',
+  failed: '失败',
+  cancelled: '已取消',
+}
+
 export type AgentTimelineRow = {
   id: string
   sequence: number
@@ -86,6 +96,15 @@ export type AgentTimelineSummary = {
   cancelled: number
   failed: number
   pendingActions: number
+}
+
+export type AgentRunTraceRow = {
+  id: string
+  sequence: number
+  title: string
+  message: string
+  status: AgentRunEvent['status']
+  createdAt: string
 }
 
 export function formatAgentNavigationTarget(event: AgentNavigationEvent | null | undefined) {
@@ -120,6 +139,20 @@ export function buildAgentTimelineRows(planSteps: AgentPlanStep[], actionRequest
     })
 }
 
+export function buildAgentRunTraceRows(runEvents: AgentRunEvent[]): AgentRunTraceRow[] {
+  return runEvents
+    .slice()
+    .sort((a, b) => a.sequence - b.sequence)
+    .map((event) => ({
+      id: event.id,
+      sequence: event.sequence,
+      title: event.title,
+      message: event.message,
+      status: event.status,
+      createdAt: event.createdAt,
+    }))
+}
+
 export function summarizeAgentTimeline(rows: AgentTimelineRow[], actionRequests: AgentActionRequest[]): AgentTimelineSummary {
   return {
     total: rows.length,
@@ -135,32 +168,38 @@ export function formatAgentTimelineStatus(row: Pick<AgentTimelineRow, 'status' |
   return row.actionStatus ? actionStatusLabels[row.actionStatus] : stepStatusLabels[row.status]
 }
 
+export function formatAgentRunEventStatus(event: Pick<AgentRunTraceRow, 'status'>) {
+  return runEventStatusLabels[event.status]
+}
+
 function statusClass(status: TimelineStatus) {
-  if (status === 'executed' || status === 'confirmed') return 'border-emerald-200 bg-emerald-50 text-emerald-700'
-  if (status === 'ready' || status === 'pending') return 'border-amber-200 bg-amber-50 text-amber-700'
+  if (status === 'executed' || status === 'confirmed' || status === 'completed') return 'border-emerald-200 bg-emerald-50 text-emerald-700'
+  if (status === 'ready' || status === 'pending' || status === 'queued' || status === 'blocked') return 'border-amber-200 bg-amber-50 text-amber-700'
   if (status === 'failed') return 'border-red-200 bg-red-50 text-red-700'
   if (status === 'cancelled') return 'border-stone-200 bg-stone-100 text-stone-500'
   return 'border-sky-200 bg-sky-50 text-sky-700'
 }
 
 function StatusIcon(props: { status: TimelineStatus }) {
-  if (props.status === 'executed' || props.status === 'confirmed') return <CheckCircle2 className="h-3.5 w-3.5" />
+  if (props.status === 'executed' || props.status === 'confirmed' || props.status === 'completed') return <CheckCircle2 className="h-3.5 w-3.5" />
   if (props.status === 'failed') return <AlertTriangle className="h-3.5 w-3.5" />
   if (props.status === 'cancelled') return <XCircle className="h-3.5 w-3.5" />
-  if (props.status === 'ready') return <Clock3 className="h-3.5 w-3.5" />
+  if (props.status === 'ready' || props.status === 'queued' || props.status === 'blocked' || props.status === 'running') return <Clock3 className="h-3.5 w-3.5" />
   return <CircleDashed className="h-3.5 w-3.5" />
 }
 
 export function AgentPlanTimeline(props: {
   planSteps: AgentPlanStep[]
+  runEvents: AgentRunEvent[]
   actionRequests: AgentActionRequest[]
   navigationEvents: AgentNavigationEvent[]
 }) {
+  const runRows = buildAgentRunTraceRows(props.runEvents)
   const rows = buildAgentTimelineRows(props.planSteps, props.actionRequests)
   const summary = summarizeAgentTimeline(rows, props.actionRequests)
   const recentNavigation = props.navigationEvents.slice(-3)
 
-  if (rows.length === 0 && recentNavigation.length === 0) {
+  if (runRows.length === 0 && rows.length === 0 && recentNavigation.length === 0) {
     return (
       <div className="mt-2 rounded-md border border-stone-900/10 bg-white px-3 py-2 text-xs text-stone-500">
         暂无运行步骤
@@ -176,6 +215,11 @@ export function AgentPlanTimeline(props: {
           <span className="rounded-full bg-stone-100 px-2 py-0.5 text-[10px] font-semibold text-stone-500">
             {summary.total} 步
           </span>
+          {runRows.length > 0 ? (
+            <span className="rounded-full bg-stone-100 px-2 py-0.5 text-[10px] font-semibold text-stone-500">
+              {runRows.length} 事件
+            </span>
+          ) : null}
         </div>
         <div className="flex flex-wrap gap-1 text-[10px] font-semibold">
           {summary.pendingActions > 0 ? <span className="rounded-full bg-amber-50 px-2 py-0.5 text-amber-700">{summary.pendingActions} 个待确认</span> : null}
@@ -184,6 +228,28 @@ export function AgentPlanTimeline(props: {
           {summary.failed > 0 ? <span className="rounded-full bg-red-50 px-2 py-0.5 text-red-700">{summary.failed} 失败</span> : null}
         </div>
       </div>
+
+      {runRows.length > 0 ? (
+        <div className="mt-2 grid max-h-28 gap-1 overflow-y-auto border-b border-stone-100 pb-2 pr-1">
+          {runRows.map((row) => (
+            <div key={row.id} className="grid min-w-0 grid-cols-[24px_minmax(0,1fr)_auto] items-start gap-2 rounded-md px-1 py-1.5 hover:bg-stone-50">
+              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-stone-100 text-[10px] font-semibold text-stone-600">
+                {row.sequence}
+              </span>
+              <div className="min-w-0">
+                <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                  <span className="min-w-0 truncate text-xs font-semibold text-stone-900">{row.title}</span>
+                </div>
+                <p className="truncate text-[11px] text-stone-500">{row.message}</p>
+              </div>
+              <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${statusClass(row.status)}`}>
+                <StatusIcon status={row.status} />
+                {formatAgentRunEventStatus(row)}
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       {rows.length > 0 ? (
         <div className="mt-2 grid max-h-36 gap-1 overflow-y-auto pr-1">

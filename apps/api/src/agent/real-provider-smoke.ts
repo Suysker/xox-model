@@ -273,12 +273,19 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     assertPlannerSource(dataQuestion.json.runs[0].planner, 'data agent background completion', plannerSources)
     assertSmoke(Array.isArray(dataQuestion.json.actionRequests) && dataQuestion.json.actionRequests.length === 0, 'data question created a write confirmation')
     assertSmoke(
+      Array.isArray(dataQuestion.json.runEvents) &&
+        dataQuestion.json.runEvents.some((event: any) => event.type === 'model_planning') &&
+        dataQuestion.json.runEvents.some((event: any) => event.type === 'run_completed'),
+      `background data question did not persist run trace: ${redactedResponse(dataQuestion)}`,
+    )
+    assertSmoke(
       String(dataQuestion.json.messages.at(-1)?.content ?? '').includes('3月计划收入') &&
         String(dataQuestion.json.messages.at(-1)?.content ?? '').includes('计划成本'),
       `data question did not answer with period metrics: ${String(dataQuestion.json.messages.at(-1)?.content ?? '')}`,
     )
     rememberCoverage(coveredDirections, 'data_agent_period_question')
     rememberCoverage(coveredDirections, 'background_run_recovery')
+    rememberCoverage(coveredDirections, 'agent_run_trace')
 
     const clarification = await sendAgentMessage(client, plannerSources, {
       label: 'clarification for missing ledger fields',

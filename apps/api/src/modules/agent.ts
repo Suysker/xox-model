@@ -11,6 +11,8 @@ import type {
   AgentPlannerSource,
   AgentPlanStep,
   AgentPlanStepStatus,
+  AgentRunEvent,
+  AgentRunEventStatus,
   AgentRunRecord,
   AgentThreadEvent,
   AgentThreadState,
@@ -199,6 +201,36 @@ function serializeRun(row: Row<'agent_runs'>): AgentRunRecord {
   }
 }
 
+function runEventStatus(value: string): AgentRunEventStatus {
+  if (
+    value === 'queued' ||
+    value === 'running' ||
+    value === 'info' ||
+    value === 'blocked' ||
+    value === 'completed' ||
+    value === 'failed' ||
+    value === 'cancelled'
+  ) {
+    return value
+  }
+  return 'info'
+}
+
+function serializeRunEvent(row: Row<'agent_run_events'>): AgentRunEvent {
+  return {
+    id: row.id,
+    threadId: row.thread_id,
+    runId: row.run_id,
+    sequence: row.sequence_no,
+    type: row.event_type,
+    title: row.title,
+    message: row.message,
+    status: runEventStatus(row.status),
+    data: row.data_json ? parseJson<Record<string, unknown> | null>(row.data_json, null) : null,
+    createdAt: row.created_at,
+  }
+}
+
 function threadTitleFromMessage(message: string) {
   const normalized = message.replace(/\s+/g, ' ').trim()
   return normalized.length > 40 ? `${normalized.slice(0, 40)}...` : normalized || 'Agent 对话'
@@ -315,6 +347,9 @@ async function buildThreadState(
   const planSteps = latestRun
     ? await db.selectFrom('agent_plan_steps').selectAll().where('run_id', '=', latestRun.id).orderBy('sequence_no', 'asc').execute()
     : []
+  const runEvents = latestRun
+    ? await db.selectFrom('agent_run_events').selectAll().where('run_id', '=', latestRun.id).orderBy('sequence_no', 'asc').execute()
+    : []
   const navigationEvents = planSteps
     .map((step) => (step.navigation_json ? parseJson<AgentNavigationEvent | null>(step.navigation_json, null) : null))
     .filter((event): event is AgentNavigationEvent => Boolean(event))
@@ -325,6 +360,7 @@ async function buildThreadState(
     runs: runs.map(serializeRun),
     planner: latestRun ? plannerSource(latestRun.planner_source) : null,
     navigationEvents,
+    runEvents: runEvents.map(serializeRunEvent),
     planSteps: planSteps.map(serializePlanStep),
     actionRequests: actions.map(serializeAction),
   }
@@ -389,6 +425,49 @@ async function addPlanStep(
     })
     .execute()
   return ctx.db.selectFrom('agent_plan_steps').selectAll().where('id', '=', id).executeTakeFirstOrThrow()
+}
+
+async function addRunEvent(
+  db: Kysely<Database>,
+  input: {
+    threadId: string
+    runId: string
+    type: string
+    title: string
+    message: string
+    status: AgentRunEventStatus
+    data?: Record<string, unknown> | null
+  },
+) {
+  const existing = await db
+    .selectFrom('agent_run_events')
+    .select(({ fn }) => fn.max<number>('sequence_no').as('maxSequence'))
+    .where('run_id', '=', input.runId)
+    .executeTakeFirst()
+  const sequence = Number(existing?.maxSequence ?? 0) + 1
+  const id = newId()
+  await db
+    .insertInto('agent_run_events')
+    .values({
+      id,
+      thread_id: input.threadId,
+      run_id: input.runId,
+      sequence_no: sequence,
+      event_type: input.type,
+      title: input.title.slice(0, 180),
+      message: input.message,
+      status: input.status,
+      data_json: input.data ? jsonString(input.data) : null,
+      created_at: utcNow(),
+    })
+    .execute()
+  agentThreadEvents.publish(input.threadId, 'run_trace')
+  return db.selectFrom('agent_run_events').selectAll().where('id', '=', id).executeTakeFirstOrThrow()
+}
+
+async function listSerializedRunEvents(db: Kysely<Database>, runId: string): Promise<AgentRunEvent[]> {
+  const rows = await db.selectFrom('agent_run_events').selectAll().where('run_id', '=', runId).orderBy('sequence_no', 'asc').execute()
+  return rows.map(serializeRunEvent)
 }
 
 function accountActionRequested(message: string) {
@@ -1452,9 +1531,33 @@ async function planResponse(ctx: PlannerContext) {
     messages.push(item.message)
   }
 
+  const failedCount = planRows.filter((row) => row.status === 'failed').length
+  const actionCount = actionRows.length
+  await addRunEvent(ctx.db, {
+    threadId: ctx.threadId,
+    runId: ctx.runId,
+    type: 'tool_plan_ready',
+    title: failedCount > 0 ? '模型规划需要处理' : '模型工具调用已解析',
+    message:
+      items.length > 0
+        ? `模型规划生成 ${items.length} 个步骤，其中 ${actionCount} 个写入动作需要确认。`
+        : '模型没有生成可执行步骤。',
+    status: failedCount > 0 ? 'failed' : actionCount > 0 ? 'blocked' : 'info',
+    data: { plannerSource, stepCount: items.length, actionCount, failedCount },
+  })
+  if (actionCount > 0) {
+    await addRunEvent(ctx.db, {
+      threadId: ctx.threadId,
+      runId: ctx.runId,
+      type: 'confirmation_ready',
+      title: '确认卡已生成',
+      message: `已生成 ${actionCount} 张待确认动作卡，用户可编辑后执行。`,
+      status: 'blocked',
+      data: { actionCount },
+    })
+  }
   agentThreadEvents.publish(ctx.threadId, 'plan_ready')
   if (items.length > 0) {
-    const actionCount = actionRows.length
     const assistant =
       actionCount > 0
         ? `我已拆成 ${items.length} 个步骤，其中 ${actionCount} 个写入动作需要你确认。你可以先编辑确认卡，再逐项执行。${messages.length > 0 ? ` ${messages.join(' ')}` : ''}`
@@ -1509,6 +1612,14 @@ async function failAgentRun(
   await addMessage(db, thread.id, 'assistant', `运行失败：${message}`).catch(() => undefined)
   await db.updateTable('agent_runs').set({ status: 'failed', completed_at: utcNow(), lease_expires_at: null }).where('id', '=', runId).execute().catch(() => undefined)
   await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', thread.id).execute().catch(() => undefined)
+  await addRunEvent(db, {
+    threadId: thread.id,
+    runId,
+    type: 'run_failed',
+    title: '运行失败',
+    message,
+    status: 'failed',
+  }).catch(() => undefined)
   agentThreadEvents.publish(thread.id, 'run_failed')
 }
 
@@ -1562,6 +1673,14 @@ async function cancelRunArtifacts(
     .execute()
   if (addAssistantMessage) await addMessage(db, thread.id, 'assistant', message)
   await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', thread.id).execute()
+  await addRunEvent(db, {
+    threadId: thread.id,
+    runId,
+    type: 'run_cancelled',
+    title: '运行已取消',
+    message,
+    status: 'cancelled',
+  }).catch(() => undefined)
   agentThreadEvents.publish(thread.id, 'run_cancelled')
 }
 
@@ -1570,7 +1689,24 @@ async function completeAgentRun(ctx: PlannerContext & { thread: Row<'agent_threa
   try {
     const claimed = await claimAgentRunLease(ctx.db, ctx.settings, ctx.runId)
     if (!claimed) return null
+    await addRunEvent(ctx.db, {
+      threadId: ctx.thread.id,
+      runId: ctx.runId,
+      type: 'worker_claimed',
+      title: 'Worker 已认领',
+      message: '后台 worker 已取得 run lease，开始执行。同步调用也会经过同一套 lease guard。',
+      status: 'running',
+    })
     stopHeartbeat = startAgentRunLeaseHeartbeat(ctx.db, ctx.settings, ctx.runId)
+    await addRunEvent(ctx.db, {
+      threadId: ctx.thread.id,
+      runId: ctx.runId,
+      type: 'model_planning',
+      title: '模型规划中',
+      message: '正在调用配置的模型，并等待 provider-native tool calls。',
+      status: 'running',
+      data: { provider: ctx.settings.llmProvider },
+    })
     const planned = await planResponse(ctx)
     if (!(await refreshAgentRunLease(ctx.db, ctx.settings, ctx.runId))) return null
     const assistantMessage = await addMessage(ctx.db, ctx.thread.id, 'assistant', planned.assistant)
@@ -1584,6 +1720,15 @@ async function completeAgentRun(ctx: PlannerContext & { thread: Row<'agent_threa
       .where('worker_id', '=', ctx.settings.agentWorkerId)
       .execute()
     await touchThreadAfterRun(ctx.db, ctx.thread, ctx.message)
+    await addRunEvent(ctx.db, {
+      threadId: ctx.thread.id,
+      runId: ctx.runId,
+      type: 'run_completed',
+      title: '运行完成',
+      message: planned.actionRows.length > 0 ? '模型规划已完成，等待用户处理确认卡。' : '模型规划和只读回答已完成。',
+      status: 'completed',
+      data: { actionCount: planned.actionRows.length, planStepCount: planned.planRows.length },
+    })
     agentThreadEvents.publish(ctx.thread.id, 'run_completed')
     return {
       plannerSource: planned.plannerSource,
@@ -1932,6 +2077,15 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
         .execute()
       const userMessage = await addMessage(db, thread.id, 'user', message)
       await db.updateTable('agent_runs').set({ input_message_id: userMessage.id }).where('id', '=', runId).execute()
+      const queuedEvent = await addRunEvent(db, {
+        threadId: thread.id,
+        runId,
+        type: 'run_queued',
+        title: 'Run 已入队',
+        message: body.background === true ? '用户指令已持久化，等待 Agent worker 认领执行。' : '用户指令已持久化，将在当前请求中同步执行。',
+        status: 'queued',
+        data: { background: body.background === true },
+      })
       await rememberFromUserMessage({ db, workspace, user, threadId: thread.id, messageId: userMessage.id, message })
 
       if (body.background === true) {
@@ -1945,6 +2099,7 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
           planner: null,
           messages: [serializeMessage(userMessage)],
           navigationEvents: [] as AgentNavigationEvent[],
+          runEvents: [serializeRunEvent(queuedEvent)],
           planSteps: [] as AgentPlanStep[],
           actionRequests: [] as AgentActionRequest[],
         }
@@ -1963,6 +2118,7 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
         planner: completed.plannerSource,
         messages: [serializeMessage(userMessage), serializeMessage(completed.assistantMessage)],
         navigationEvents: completed.navigationEvents,
+        runEvents: await listSerializedRunEvents(db, runId),
         planSteps: completed.planRows.map(serializePlanStep),
         actionRequests: completed.actionRows.map(serializeAction),
       }
@@ -2035,13 +2191,44 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
       const { actionRequestId } = request.params as { actionRequestId: string }
       const action = await db.selectFrom('agent_action_requests').selectAll().where('id', '=', actionRequestId).executeTakeFirst()
       if (!action) throw notFound('Agent action request not found')
-      const result = await executeAction(db, settings, user, action)
+      let result: unknown
+      try {
+        result = await executeAction(db, settings, user, action)
+      } catch (executionError) {
+        const message = safeRunErrorMessage(executionError)
+        await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', action.thread_id).execute().catch(() => undefined)
+        await addRunEvent(db, {
+          threadId: action.thread_id,
+          runId: action.run_id,
+          type: 'action_execution_failed',
+          title: '确认卡执行失败',
+          message: `${action.title}：${message}`,
+          status: 'failed',
+          data: { actionKind: action.kind },
+        }).catch(() => undefined)
+        throw executionError
+      }
       const updated = await db.selectFrom('agent_action_requests').selectAll().where('id', '=', action.id).executeTakeFirstOrThrow()
       const planSteps = await db.selectFrom('agent_plan_steps').selectAll().where('run_id', '=', action.run_id).orderBy('sequence_no', 'asc').execute()
       const assistant = await addMessage(db, action.thread_id, 'assistant', `已执行：${action.title}`)
       await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', action.thread_id).execute()
+      await addRunEvent(db, {
+        threadId: action.thread_id,
+        runId: action.run_id,
+        type: 'action_executed',
+        title: '确认卡已执行',
+        message: `已执行：${action.title}`,
+        status: 'completed',
+        data: { actionKind: action.kind },
+      })
       agentThreadEvents.publish(action.thread_id, 'action_executed')
-      return { actionRequest: serializeAction(updated), result, messages: [serializeMessage(assistant)], planSteps: planSteps.map(serializePlanStep) }
+      return {
+        actionRequest: serializeAction(updated),
+        result,
+        messages: [serializeMessage(assistant)],
+        runEvents: await listSerializedRunEvents(db, action.run_id),
+        planSteps: planSteps.map(serializePlanStep),
+      }
     } catch (error) {
       const { sendError } = await import('../core/http.js')
       return sendError(reply, error)
@@ -2062,8 +2249,22 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
       const planSteps = await db.selectFrom('agent_plan_steps').selectAll().where('run_id', '=', action.run_id).orderBy('sequence_no', 'asc').execute()
       const assistant = await addMessage(db, action.thread_id, 'assistant', `已取消：${action.title}`)
       await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', action.thread_id).execute()
+      await addRunEvent(db, {
+        threadId: action.thread_id,
+        runId: action.run_id,
+        type: 'action_cancelled',
+        title: '确认卡已取消',
+        message: `已取消：${action.title}`,
+        status: 'cancelled',
+        data: { actionKind: action.kind },
+      })
       agentThreadEvents.publish(action.thread_id, 'action_cancelled')
-      return { actionRequest: serializeAction(updated), messages: [serializeMessage(assistant)], planSteps: planSteps.map(serializePlanStep) }
+      return {
+        actionRequest: serializeAction(updated),
+        messages: [serializeMessage(assistant)],
+        runEvents: await listSerializedRunEvents(db, action.run_id),
+        planSteps: planSteps.map(serializePlanStep),
+      }
     } catch (error) {
       const { sendError } = await import('../core/http.js')
       return sendError(reply, error)
@@ -2106,8 +2307,21 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
         .execute()
       await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', action.thread_id).execute()
       const planSteps = await db.selectFrom('agent_plan_steps').selectAll().where('run_id', '=', action.run_id).orderBy('sequence_no', 'asc').execute()
+      await addRunEvent(db, {
+        threadId: action.thread_id,
+        runId: action.run_id,
+        type: 'action_updated',
+        title: '确认卡已编辑',
+        message: `确认卡已编辑：${updated.title}`,
+        status: 'info',
+        data: { actionKind: action.kind },
+      })
       agentThreadEvents.publish(action.thread_id, 'action_updated')
-      return { actionRequest: serializeAction(updated), planSteps: planSteps.map(serializePlanStep) }
+      return {
+        actionRequest: serializeAction(updated),
+        runEvents: await listSerializedRunEvents(db, action.run_id),
+        planSteps: planSteps.map(serializePlanStep),
+      }
     } catch (error) {
       const { sendError } = await import('../core/http.js')
       return sendError(reply, error)

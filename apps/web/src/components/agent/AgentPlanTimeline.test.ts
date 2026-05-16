@@ -1,5 +1,5 @@
-import type { AgentActionRequest, AgentNavigationEvent, AgentPlanStep } from '../../lib/api'
-import { buildAgentTimelineRows, formatAgentNavigationTarget, formatAgentTimelineStatus, summarizeAgentTimeline } from './AgentPlanTimeline'
+import type { AgentActionRequest, AgentNavigationEvent, AgentPlanStep, AgentRunEvent } from '../../lib/api'
+import { buildAgentRunTraceRows, buildAgentTimelineRows, formatAgentNavigationTarget, formatAgentRunEventStatus, formatAgentTimelineStatus, summarizeAgentTimeline } from './AgentPlanTimeline'
 
 function buildNavigation(overrides: Partial<AgentNavigationEvent> = {}): AgentNavigationEvent {
   return {
@@ -46,6 +46,22 @@ function buildStep(overrides: Partial<AgentPlanStep> = {}): AgentPlanStep {
     navigation: null,
     createdAt: '2026-05-17T00:00:00.000Z',
     updatedAt: '2026-05-17T00:00:00.000Z',
+    ...overrides,
+  }
+}
+
+function buildRunEvent(overrides: Partial<AgentRunEvent> = {}): AgentRunEvent {
+  return {
+    id: 'run-event-1',
+    threadId: 'thread-1',
+    runId: 'run-1',
+    sequence: 1,
+    type: 'model_planning',
+    title: '模型规划中',
+    message: '正在调用配置的模型，并等待 provider-native tool calls。',
+    status: 'running',
+    data: null,
+    createdAt: '2026-05-17T00:00:00.000Z',
     ...overrides,
   }
 }
@@ -125,5 +141,16 @@ describe('AgentPlanTimeline presentation helpers', () => {
     expect(row).toBeDefined()
     expect(formatAgentTimelineStatus(row!)).toBe('待确认')
     expect(formatAgentTimelineStatus({ status: 'pending', actionStatus: null })).toBe('规划中')
+  })
+
+  it('sorts durable run events and labels their backend-owned status', () => {
+    const rows = buildAgentRunTraceRows([
+      buildRunEvent({ id: 'run-event-2', sequence: 2, title: '确认卡已生成', status: 'blocked' }),
+      buildRunEvent({ id: 'run-event-1', sequence: 1, title: 'Run 已入队', status: 'queued' }),
+    ])
+
+    expect(rows.map((row) => row.title)).toEqual(['Run 已入队', '确认卡已生成'])
+    expect(formatAgentRunEventStatus(rows[0]!)).toBe('已入队')
+    expect(formatAgentRunEventStatus(rows[1]!)).toBe('待确认')
   })
 })

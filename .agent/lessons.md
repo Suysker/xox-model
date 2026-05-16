@@ -51,6 +51,7 @@
 - Background Agent runs in a SaaS deployment need database-backed worker leases. A process-local controller is not enough; every assistant message, plan step, and confirmation card write must be guarded by the current `worker_id` lease so another worker can recover expired runs without duplicate late writes.
 - Agent realtime UI should stream server-owned thread state, not frontend-inferred progress. SSE/WebSocket events should carry the same `AgentThreadState` shape returned by REST so disconnects can fall back to polling without state drift.
 - Background Agent requests should enqueue durable run records and let a worker drain the queue. Starting provider work directly from the request handler recreates one-shot behavior; the request path should persist input, publish state, and schedule/let a worker claim the run by lease.
+- Agent run progress should be a persisted backend trace, not transient UI text. Store user-visible run events for queueing, lease claim, model planning, tool plan, confirmation card edits, execution, cancellation, and failures, and return them through the same ThreadState/SSE contract without raw prompts, provider responses, or secrets.
 
 ## Testing
 

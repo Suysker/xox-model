@@ -8,6 +8,7 @@ import type {
   AgentNavigationEvent,
   AgentPlanStep,
   AgentPlanStepStatus,
+  AgentRunEvent,
   AgentSendResponse,
   AgentThreadState,
   AgentThreadSummary,
@@ -157,6 +158,7 @@ export type {
   AgentNavigationEvent,
   AgentPlanStep,
   AgentPlanStepStatus,
+  AgentRunEvent,
   AgentSendResponse,
   AgentThreadState,
   AgentThreadSummary,
@@ -383,17 +385,17 @@ export const api = {
   deleteAgentMemory: (memoryId: string) =>
     apiRequest<{ ok: boolean }>('DELETE', `/api/v1/agent/memories/${memoryId}`),
   confirmAgentAction: (actionRequestId: string) =>
-    apiRequest<{ actionRequest: AgentActionRequest; result: unknown; messages: AgentMessage[]; planSteps: AgentPlanStep[] }>(
+    apiRequest<{ actionRequest: AgentActionRequest; result: unknown; messages: AgentMessage[]; runEvents: AgentRunEvent[]; planSteps: AgentPlanStep[] }>(
       'POST',
       `/api/v1/agent/action-requests/${actionRequestId}/confirm`,
     ),
   cancelAgentAction: (actionRequestId: string) =>
-    apiRequest<{ actionRequest: AgentActionRequest; messages: AgentMessage[]; planSteps: AgentPlanStep[] }>(
+    apiRequest<{ actionRequest: AgentActionRequest; messages: AgentMessage[]; runEvents: AgentRunEvent[]; planSteps: AgentPlanStep[] }>(
       'POST',
       `/api/v1/agent/action-requests/${actionRequestId}/cancel`,
     ),
   updateAgentAction: (actionRequestId: string, payload: AgentActionUpdatePayload) =>
-    apiRequest<{ actionRequest: AgentActionRequest; planSteps: AgentPlanStep[] }>(
+    apiRequest<{ actionRequest: AgentActionRequest; runEvents: AgentRunEvent[]; planSteps: AgentPlanStep[] }>(
       'PATCH',
       `/api/v1/agent/action-requests/${actionRequestId}`,
       payload,

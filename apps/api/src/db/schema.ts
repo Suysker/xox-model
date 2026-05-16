@@ -213,6 +213,19 @@ export type AgentRunTable = {
   completed_at: string | null
 }
 
+export type AgentRunEventTable = {
+  id: Generated<string>
+  thread_id: string
+  run_id: string
+  sequence_no: number
+  event_type: string
+  title: string
+  message: string
+  status: string
+  data_json: JsonText | null
+  created_at: Timestamp
+}
+
 export type AgentActionRequestTable = {
   id: Generated<string>
   thread_id: string
@@ -291,6 +304,7 @@ export type Database = {
   agent_threads: AgentThreadTable
   agent_messages: AgentMessageTable
   agent_runs: AgentRunTable
+  agent_run_events: AgentRunEventTable
   agent_action_requests: AgentActionRequestTable
   agent_plan_steps: AgentPlanStepTable
   agent_memories: AgentMemoryTable

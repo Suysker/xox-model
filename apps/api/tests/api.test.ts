@@ -688,6 +688,9 @@ describe('xox TypeScript API', () => {
     expect(planned.json.planSteps[0].status).toBe('ready')
     expect(planned.json.actionRequests[0].kind).toBe('ledger.create_entry')
     expect(planned.json.actionRequests[0].status).toBe('pending')
+    expect(planned.json.runEvents.map((event: any) => event.type)).toEqual(
+      expect.arrayContaining(['run_queued', 'worker_claimed', 'model_planning', 'tool_plan_ready', 'confirmation_ready', 'run_completed']),
+    )
     expect(planned.json.actionRequests[0].details).toEqual(
       expect.arrayContaining([expect.objectContaining({ label: '发生日', value: expect.stringMatching(/-03-01$/) })]),
     )
@@ -696,6 +699,7 @@ describe('xox TypeScript API', () => {
     expect(confirmed.statusCode).toBe(200)
     expect(confirmed.json.actionRequest.status).toBe('executed')
     expect(confirmed.json.result.amount).toBe(1056)
+    expect(confirmed.json.runEvents.some((event: any) => event.type === 'action_executed')).toBe(true)
 
     const periodId = planned.json.navigationEvents[0].route.selectedPeriodId
     const entries = (await client.get(`/api/v1/ledger/entries?periodId=${periodId}`)).json
@@ -748,11 +752,13 @@ describe('xox TypeScript API', () => {
     expect(edited.statusCode).toBe(200)
     expect(edited.json.actionRequest.summary).toContain('264')
     expect(edited.json.planSteps[0].description).toContain('264')
+    expect(edited.json.runEvents.some((event: any) => event.type === 'action_updated')).toBe(true)
 
     const confirmedLedger = await client.post(`/api/v1/agent/action-requests/${ledgerAction.id}/confirm`)
     expect(confirmedLedger.statusCode).toBe(200)
     expect(confirmedLedger.json.result.amount).toBe(264)
     expect(confirmedLedger.json.planSteps[0].status).toBe('executed')
+    expect(confirmedLedger.json.runEvents.some((event: any) => event.type === 'action_executed')).toBe(true)
 
     const draftAction = planned.json.actionRequests[1]
     const confirmedDraft = await client.post(`/api/v1/agent/action-requests/${draftAction.id}/confirm`)
@@ -1053,11 +1059,13 @@ describe('xox TypeScript API', () => {
       expect(started.json.planner).toBeNull()
       expect(started.json.messages.map((message: any) => message.role)).toEqual(['user'])
       expect(started.json.actionRequests).toHaveLength(0)
+      expect(started.json.runEvents.map((event: any) => event.type)).toEqual(['run_queued'])
 
       const runningState = await client.get(`/api/v1/agent/threads/${started.json.threadId}`)
       expect(runningState.statusCode).toBe(200)
       expect(runningState.json.runs[0].status).toBe('running')
       expect(runningState.json.messages.map((message: any) => message.role)).toEqual(['user'])
+      expect(runningState.json.runEvents.some((event: any) => event.type === 'run_queued')).toBe(true)
 
       releaseProvider()
       let completedState = runningState.json
@@ -1075,6 +1083,9 @@ describe('xox TypeScript API', () => {
       expect(completedState.planSteps[0].status).toBe('executed')
       expect(completedState.navigationEvents[0].route.mainTab).toBe('dashboard')
       expect(completedState.actionRequests).toHaveLength(0)
+      expect(completedState.runEvents.map((event: any) => event.type)).toEqual(
+        expect.arrayContaining(['run_queued', 'worker_claimed', 'model_planning', 'tool_plan_ready', 'run_completed']),
+      )
 
       const threads = await client.get('/api/v1/agent/threads')
       expect(threads.json.threads[0].latestRunStatus).toBe('completed')
@@ -1119,6 +1130,7 @@ describe('xox TypeScript API', () => {
       expect(cancelled.json.runs[0].status).toBe('cancelled')
       expect(cancelled.json.messages.at(-1).content).toContain('已取消当前 Agent 运行')
       expect(cancelled.json.actionRequests.filter((action: any) => action.status === 'pending')).toHaveLength(0)
+      expect(cancelled.json.runEvents.some((event: any) => event.type === 'run_cancelled')).toBe(true)
 
       releaseProvider()
       let finalState = cancelled.json
@@ -1507,6 +1519,9 @@ describe('xox TypeScript API', () => {
     expect(restored.json.planSteps[0].actionRequestId).toBe(planned.json.actionRequests[0].id)
     expect(restored.json.actionRequests[0].status).toBe('pending')
     expect(restored.json.navigationEvents[0].route.mainTab).toBe('bookkeeping')
+    expect(restored.json.runEvents.map((event: any) => event.type)).toEqual(
+      expect.arrayContaining(['run_queued', 'model_planning', 'tool_plan_ready', 'confirmation_ready', 'run_completed']),
+    )
 
     const secondThreads = await secondClient.get('/api/v1/agent/threads')
     expect(secondThreads.statusCode).toBe(200)
@@ -1520,6 +1535,7 @@ describe('xox TypeScript API', () => {
     expect(restoredAfterConfirm.statusCode).toBe(200)
     expect(restoredAfterConfirm.json.actionRequests[0].status).toBe('executed')
     expect(restoredAfterConfirm.json.planSteps[0].status).toBe('executed')
+    expect(restoredAfterConfirm.json.runEvents.some((event: any) => event.type === 'action_executed')).toBe(true)
     expect(restoredAfterConfirm.json.messages.at(-1).content).toContain('已执行')
     const threadsAfterConfirm = await firstClient.get('/api/v1/agent/threads')
     expect(threadsAfterConfirm.json.threads[0].pendingActionCount).toBe(0)
@@ -1543,7 +1559,7 @@ describe('xox TypeScript API', () => {
       const events = await collectSseEvents(
         `${baseUrl}/api/v1/agent/threads/${initial.json.threadId}/events`,
         client.cookieHeader(),
-        2,
+        5,
         async () => {
           const next = await client.post('/api/v1/agent/messages', {
             threadId: initial.json.threadId,
@@ -1553,15 +1569,16 @@ describe('xox TypeScript API', () => {
         },
       )
 
-      expect(events).toHaveLength(2)
+      expect(events.length).toBeGreaterThanOrEqual(2)
       const initialEvent = events[0]!
-      const updateEvent = events[1]!
+      const updateEvent = events.find((event) => event.data.state.actionRequests.some((action: any) => action.kind === 'ledger.create_entry')) ?? events.at(-1)!
       expect(initialEvent.event).toBe('thread_state')
       expect(initialEvent.data.threadId).toBe(initial.json.threadId)
       expect(initialEvent.data.state.thread.id).toBe(initial.json.threadId)
       expect(updateEvent.event).toBe('thread_state')
       expect(updateEvent.data.threadId).toBe(initial.json.threadId)
       expect(updateEvent.data.state.actionRequests.some((action: any) => action.kind === 'ledger.create_entry')).toBe(true)
+      expect(updateEvent.data.state.runEvents.some((event: any) => event.type === 'tool_plan_ready')).toBe(true)
 
       const outsider = new Client(harness.app)
       await registerUser(outsider, 'agent-thread-events-outsider@example.com')

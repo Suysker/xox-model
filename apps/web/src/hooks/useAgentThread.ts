@@ -7,6 +7,7 @@ import {
   type AgentMessage,
   type AgentNavigationEvent,
   type AgentPlanStep,
+  type AgentRunEvent,
   type AgentSendResponse,
   type AgentThreadEvent,
   type AgentThreadState,
@@ -43,6 +44,7 @@ export function useAgentThread(props: {
   const [messages, setMessages] = useState<AgentMessage[]>([])
   const [actionRequests, setActionRequests] = useState<AgentActionRequest[]>([])
   const [planSteps, setPlanSteps] = useState<AgentPlanStep[]>([])
+  const [runEvents, setRunEvents] = useState<AgentRunEvent[]>([])
   const [navigationEvents, setNavigationEvents] = useState<AgentNavigationEvent[]>([])
   const [planner, setPlanner] = useState<AgentSendResponse['planner'] | null>(null)
   const [memories, setMemories] = useState<AgentMemoryRecord[]>([])
@@ -59,6 +61,7 @@ export function useAgentThread(props: {
     setMessages(state.messages)
     setActionRequests(state.actionRequests)
     setPlanSteps(state.planSteps)
+    setRunEvents(state.runEvents)
     setNavigationEvents(state.navigationEvents)
     setPlanner(state.planner)
     setRunningRunId(latestRun?.status === 'running' ? latestRun.id : null)
@@ -225,6 +228,7 @@ export function useAgentThread(props: {
       setMessages((current) => [...current.filter((item) => item.id !== optimisticId), ...response.messages])
       setActionRequests(response.actionRequests)
       setPlanSteps(response.planSteps)
+      setRunEvents(response.runEvents)
       setNavigationEvents(response.navigationEvents)
       setRunningRunId(response.status === 'running' ? response.runId : null)
       response.navigationEvents.forEach(props.onNavigate)
@@ -245,6 +249,7 @@ export function useAgentThread(props: {
       const response = await api.confirmAgentAction(actionId)
       mergeActions([response.actionRequest])
       setPlanSteps(response.planSteps)
+      setRunEvents(response.runEvents)
       setMessages((current) => [...current, ...response.messages])
       await props.onActionExecuted(response.actionRequest)
       void refreshMemories()
@@ -263,6 +268,7 @@ export function useAgentThread(props: {
       const response = await api.cancelAgentAction(actionId)
       mergeActions([response.actionRequest])
       setPlanSteps(response.planSteps)
+      setRunEvents(response.runEvents)
       setMessages((current) => [...current, ...response.messages])
       void refreshThreads()
     } catch (cancelError) {
@@ -294,6 +300,7 @@ export function useAgentThread(props: {
       const response = await api.updateAgentAction(actionId, payload)
       mergeActions([response.actionRequest])
       setPlanSteps(response.planSteps)
+      setRunEvents(response.runEvents)
       void refreshThreads()
     } catch (updateError) {
       setError(updateError instanceof Error ? updateError.message : String(updateError))
@@ -309,6 +316,7 @@ export function useAgentThread(props: {
     setMessages([])
     setActionRequests([])
     setPlanSteps([])
+    setRunEvents([])
     setNavigationEvents([])
     setPlanner(null)
     setRunningRunId(null)
@@ -335,6 +343,7 @@ export function useAgentThread(props: {
     messages,
     actionRequests,
     planSteps,
+    runEvents,
     navigationEvents,
     planner,
     memories,

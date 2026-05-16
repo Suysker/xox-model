@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { Bot, Database, History, Plus, RefreshCw, SendHorizontal, Trash2, XCircle } from 'lucide-react'
-import type { AgentActionRequest, AgentActionUpdatePayload, AgentMemoryRecord, AgentMessage, AgentNavigationEvent, AgentPlanStep, AgentSendResponse, AgentThreadSummary } from '../../lib/api'
+import type { AgentActionRequest, AgentActionUpdatePayload, AgentMemoryRecord, AgentMessage, AgentNavigationEvent, AgentPlanStep, AgentRunEvent, AgentSendResponse, AgentThreadSummary } from '../../lib/api'
 import { AgentActionCard } from './AgentActionCard'
 import { AgentPlanTimeline } from './AgentPlanTimeline'
 
@@ -16,6 +16,7 @@ export function AgentConsole(props: {
   planner: AgentSendResponse['planner'] | null
   messages: AgentMessage[]
   planSteps: AgentPlanStep[]
+  runEvents: AgentRunEvent[]
   actionRequests: AgentActionRequest[]
   navigationEvents: AgentNavigationEvent[]
   memories: AgentMemoryRecord[]
@@ -223,6 +224,7 @@ export function AgentConsole(props: {
 
           <AgentPlanTimeline
             planSteps={props.planSteps}
+            runEvents={props.runEvents}
             actionRequests={props.actionRequests}
             navigationEvents={props.navigationEvents}
           />

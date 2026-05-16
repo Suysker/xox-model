@@ -466,10 +466,51 @@ domain/tool execution
 - 每个 SSE 连接必须先通过 `getThreadForUser` 校验 `workspace_id + user_id`；越权不能建立事件流。
 - 写入动作确认、取消、编辑、run 完成、run 失败、run 取消、启动后台 run 都要 publish，保证确认卡、timeline 和消息区不会等到下一轮轮询。
 
+### 持久化 Run Trace
+
+SSE 只能保证连接期间低延迟；用户刷新或重新打开历史对话后，仍需要看到 Agent 像 Codex 一样的执行轨迹。因此 run 级事件要持久化到数据库，而不是只写日志或前端临时状态。
+
+模块划分：
+
+```text
+packages/contracts
+  -> AgentRunEvent
+  -> AgentThreadState.runEvents
+
+apps/api/src/db/schema.ts + migrations.ts
+  -> agent_run_events
+
+apps/api/src/modules/agent.ts
+  -> addRunEvent / serializeRunEvent
+  -> buildThreadState loads latest run events
+  -> queue / claim / model planning / tool result / confirmation / completion / failure publish events
+
+apps/web/src/components/agent/AgentPlanTimeline.tsx
+  -> render runEvents above planSteps
+  -> no local inference of progress
+```
+
+依赖图：
+
+```text
+Agent worker lifecycle
+  -> agent_run_events(status/title/message)
+  -> agentThreadEvents.publish(threadId)
+  -> GET thread state / SSE thread_state
+  -> React timeline trace
+```
+
+约束：
+
+- `agent_run_events` 只记录 provider-neutral 事件类型、标题、摘要和小型 `data_json`，不保存原始 provider response、prompt 全文、API key、token 或含敏感值的 tool arguments。
+- Run event 是诊断和 UI 轨迹，不是权限来源；写入权限仍以 `agent_action_requests` 和领域服务校验为准。
+- 前端只展示 `AgentThreadState.runEvents`，不根据 loading spinner 自行补“模型正在思考”等状态，避免刷新后状态不一致。
+- 同步 run、background worker、restart recovery 和取消路径都必须写 trace，历史对话恢复时能看到完整轨迹。
+
 ### 恢复语义
 
 - `GET /api/v1/agent/threads` 返回当前登录用户、当前工作区内的线程摘要，包含最近消息、最新 run 状态、planner source 和待确认动作数量。
-- `GET /api/v1/agent/threads/:threadId` 返回完整可恢复状态：messages、runs、最新 run 的 planSteps、该线程 actionRequests、navigationEvents 和 planner source。
+- `GET /api/v1/agent/threads/:threadId` 返回完整可恢复状态：messages、runs、最新 run 的 runEvents、planSteps、该线程 actionRequests、navigationEvents 和 planner source。
 - `GET /api/v1/agent/threads/:threadId/events` 建立 SSE 事件流，初始发送一次 `thread_state`，后续每次服务端状态变化推送新的 `thread_state`。连接失败不影响 REST 恢复语义。
 - 前端启动时先加载历史列表，再尝试读取 `localStorage` 中的当前 `threadId` 并调用 state API 恢复；如果线程不存在或越权，清掉本地指针。
 - 新建对话只清前端指针和当前视图，不删除服务端历史。

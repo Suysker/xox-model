@@ -275,6 +275,22 @@ export async function runMigrations(db: Kysely<Database>) {
   await addColumnIfMissing(db, 'agent_runs', 'heartbeat_at', 'DATETIME')
   await exec(
     db,
+    `CREATE TABLE IF NOT EXISTS agent_run_events (
+      id VARCHAR(36) PRIMARY KEY,
+      thread_id VARCHAR(36) NOT NULL REFERENCES agent_threads(id) ON DELETE CASCADE,
+      run_id VARCHAR(36) NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+      sequence_no INTEGER NOT NULL,
+      event_type VARCHAR(64) NOT NULL,
+      title VARCHAR(180) NOT NULL,
+      message TEXT NOT NULL,
+      status VARCHAR(32) NOT NULL,
+      data_json JSON,
+      created_at DATETIME NOT NULL,
+      UNIQUE(run_id, sequence_no)
+    )`,
+  )
+  await exec(
+    db,
     `CREATE TABLE IF NOT EXISTS agent_action_requests (
       id VARCHAR(36) PRIMARY KEY,
       thread_id VARCHAR(36) NOT NULL REFERENCES agent_threads(id) ON DELETE CASCADE,

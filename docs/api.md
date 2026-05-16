@@ -92,7 +92,8 @@
   - 返回当前登录用户 / 当前工作区内最近 30 个 Agent 对话摘要
   - 摘要包含标题、最近消息、最新 run 状态、planner source 和待确认动作数量
 - `GET /api/v1/agent/threads/{threadId}`
-  - 返回可恢复的线程状态：messages、runs、最新 run 的 `planSteps`、`actionRequests`、`navigationEvents` 和 planner source
+  - 返回可恢复的线程状态：messages、runs、最新 run 的 `runEvents`、`planSteps`、`actionRequests`、`navigationEvents` 和 planner source
+  - `runEvents` 是服务端持久化的运行轨迹，覆盖 run 入队、worker 认领、模型规划、工具计划、确认卡生成、确认卡编辑、执行、取消和失败；不包含 provider 原始响应、提示词全文或密钥
   - 只能读取当前用户 / 当前工作区下的 thread；跨用户或跨工作区返回 `403`
 - `GET /api/v1/agent/threads/{threadId}/events`
   - 建立 `text/event-stream` 事件流，事件名为 `thread_state`
@@ -105,7 +106,7 @@
   - 已经 `completed / failed / cancelled` 的 run 以幂等方式返回 thread state，不会重复写入取消消息
 - `POST /api/v1/agent/messages`
   - 入参：`threadId?`、`message`、`background?`
-  - 同步模式返回新增对话消息、`status=completed`、`planner`、显式页面导航事件、`planSteps`、待确认动作卡
+  - 同步模式返回新增对话消息、`status=completed`、`planner`、显式页面导航事件、`runEvents`、`planSteps`、待确认动作卡
   - 产品前端默认传 `background=true`：接口先创建 `agent_runs` 和用户消息并立即返回 `status=running / planner=null`，模型规划、确认卡生成和 assistant 回复由 Agent run worker 认领 lease 后继续落库
   - 前端应保存返回的 `threadId`，优先订阅 `GET /api/v1/agent/threads/{threadId}/events`，连接失败时轮询 `GET /api/v1/agent/threads/{threadId}`，以恢复 running/completed/failed run、消息、计划步骤、导航事件和待确认动作
   - `agent_runs` 保存输入消息、worker lease 和 heartbeat；每个 API worker 会按 `AGENT_RUN_WORKER_POLL_MS` 扫描未租约、同 worker 或租约已过期且尚未产生运行产物的 `running` run。若 run 已经有部分计划步骤或确认卡，则标记 failed 并取消未执行确认卡，避免重复创建或执行半成品动作
@@ -125,11 +126,14 @@
 - `PATCH /api/v1/agent/action-requests/{id}`
   - 仅允许编辑当前用户 / 工作区下的 `pending` 动作
   - 可编辑确认卡摘要、明细、导航事件和执行载荷；保存后同步更新计划步骤描述
+  - 返回更新后的确认卡、最新 `runEvents` 和该 run 的 `planSteps`
 - `POST /api/v1/agent/action-requests/{id}/confirm`
   - 仅允许确认当前用户 / 工作区下的 `pending` 动作
   - 执行成功后会写入业务审计和 `agent.action_executed`
+  - 返回执行结果、assistant message、最新 `runEvents` 和该 run 的 `planSteps`
 - `POST /api/v1/agent/action-requests/{id}/cancel`
   - 取消待确认动作，不写业务数据
+  - 返回取消后的确认卡、assistant message、最新 `runEvents` 和该 run 的 `planSteps`
 
 Agent 写入动作统一遵循 `preview -> confirm -> execute -> audit -> refresh`。当前支持记账、草稿修改、发布版本、恢复版本、删除版本、重置草稿、工作区 bundle 导入、创建 / 撤销分享、锁账 / 解锁；所有写入都先生成确认卡。工作区 bundle 导出为只读工具，Agent 会打开版本管理面板并提示通过 `/api/v1/workspace/bundle` 获取完整 JSON。
 
