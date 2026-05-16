@@ -6,6 +6,7 @@ import { newId } from '../core/security.js'
 import { utcNow } from '../core/time.js'
 import type { Database, Row } from '../db/schema.js'
 import type { CurrentUser } from '../modules/auth.js'
+import { decryptProviderApiKey, encryptProviderApiKey, isEncryptedProviderApiKey } from './provider-key-codec.js'
 
 export type AgentProviderSettingInput = {
   provider: string
@@ -81,6 +82,7 @@ export async function getAgentProviderSetting(
 
 export async function upsertAgentProviderSetting(
   db: Kysely<Database>,
+  settings: Settings,
   workspace: Row<'workspaces'>,
   user: CurrentUser,
   input: AgentProviderSettingInput,
@@ -90,8 +92,12 @@ export async function upsertAgentProviderSetting(
   const model = normalizeModel(input.model)
   const explicitApiKey = normalizeApiKey(input.apiKey)
   const existing = await getAgentProviderSetting(db, workspace, user)
-  const apiKey = explicitApiKey ?? existing?.api_key
-  if (!apiKey) {
+  const storedApiKey = explicitApiKey
+    ? encryptProviderApiKey(settings, explicitApiKey)
+    : existing?.api_key && settings.agentProviderKeyEncryptionSecret && !isEncryptedProviderApiKey(existing.api_key)
+      ? encryptProviderApiKey(settings, existing.api_key)
+      : existing?.api_key
+  if (!storedApiKey) {
     throw unprocessable('Provider API key is required')
   }
 
@@ -103,7 +109,7 @@ export async function upsertAgentProviderSetting(
         provider,
         base_url: baseUrl,
         model,
-        api_key: apiKey,
+        api_key: storedApiKey,
         updated_at: now,
       })
       .where('id', '=', existing.id)
@@ -118,7 +124,7 @@ export async function upsertAgentProviderSetting(
         provider,
         base_url: baseUrl,
         model,
-        api_key: apiKey,
+        api_key: storedApiKey,
         created_at: now,
         updated_at: now,
       })
@@ -157,6 +163,6 @@ export async function resolveAgentRuntimeSettings(
     openaiCompatibleProvider: setting.provider,
     openaiCompatibleBaseUrl: setting.base_url,
     openaiCompatibleModel: setting.model,
-    openaiCompatibleApiKey: setting.api_key,
+    openaiCompatibleApiKey: decryptProviderApiKey(baseSettings, setting.api_key),
   }
 }

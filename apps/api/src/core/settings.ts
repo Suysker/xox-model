@@ -16,6 +16,7 @@ export type Settings = {
   openaiCompatibleBaseUrl: string
   openaiCompatibleModel: string
   openaiCompatibleApiKey: string | null
+  agentProviderKeyEncryptionSecret: string | null
   agentWorkerId: string
   agentRunLeaseTtlMs: number
   agentRunWorkerPollMs: number
@@ -50,6 +51,7 @@ export function getSettings(): Settings {
     openaiCompatibleBaseUrl: process.env.OPENAI_COMPATIBLE_BASE_URL ?? process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com',
     openaiCompatibleModel: process.env.OPENAI_COMPATIBLE_MODEL ?? process.env.DEEPSEEK_MODEL ?? 'deepseek-v4-pro',
     openaiCompatibleApiKey: process.env.OPENAI_COMPATIBLE_API_KEY ?? process.env.DEEPSEEK_API_KEY ?? null,
+    agentProviderKeyEncryptionSecret: process.env.AGENT_PROVIDER_KEY_ENCRYPTION_SECRET ?? null,
     agentWorkerId: process.env.AGENT_WORKER_ID ?? generatedAgentWorkerId,
     agentRunLeaseTtlMs,
     agentRunWorkerPollMs,

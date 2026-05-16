@@ -1484,7 +1484,7 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
       const user = await requireCurrentUser(db, settings, request)
       const workspace = await getWorkspaceForUser(db, user)
       const body = parseAgentBody(providerSettingSchema, request.body)
-      const setting = await upsertAgentProviderSetting(db, workspace, user, body)
+      const setting = await upsertAgentProviderSetting(db, settings, workspace, user, body)
       return { setting: serializeAgentProviderSetting(setting) }
     } catch (error) {
       const { sendError } = await import('../core/http.js')

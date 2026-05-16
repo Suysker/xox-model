@@ -65,6 +65,7 @@
 - [x] Agent 台展示当前 planner 来源、对话 id、工作区记忆列表和当前用户 / 工作区 provider 设置，并支持刷新、保存、删除记忆或模型配置
 - [x] API 集成测试覆盖通用 OpenAI-compatible Chat Completions `tool_calls` 协议；假 provider 分别以 `qwen`、`doubao`、`openai-compatible` 配置接入，证明业务工具不特调 DeepSeek；当 provider 已配置或被选择时，模型未返回 tool call 不会回退规则规划
 - [x] 当前用户 / 当前工作区可保存 OpenAI-compatible provider 设置，运行时优先使用该设置；API 测试覆盖用户隔离、key 不回传、无 key fail-closed 和删除后回到环境变量兜底
+- [x] 配置 `AGENT_PROVIDER_KEY_ENCRYPTION_SECRET` 后，用户 provider key 以 `enc:v1` ciphertext 入库；API 测试覆盖密文存储、运行时解密调用 provider、旧明文记录升级后仍可读取
 - [x] Agent prompts、tool catalog、memory/context 模块有独立代码边界，不把系统提示词散在路由代码里
 - [x] Agent memory 按用户和工作区隔离，支持查询和删除；长对话会生成同租户上下文摘要
 - [x] 新建对话后，真实 provider 请求会注入同用户 / 同工作区 memory

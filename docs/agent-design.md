@@ -308,6 +308,7 @@ OPENAI_COMPATIBLE_PROVIDER=deepseek
 OPENAI_COMPATIBLE_BASE_URL=https://api.deepseek.com
 OPENAI_COMPATIBLE_MODEL=deepseek-v4-pro
 OPENAI_COMPATIBLE_API_KEY=<local-only>
+AGENT_PROVIDER_KEY_ENCRYPTION_SECRET=<deployment-secret>
 ```
 
 REST 管理接口：
@@ -316,7 +317,7 @@ REST 管理接口：
 - `PUT /api/v1/agent/provider-settings`：保存或更新当前用户 / 工作区设置；首次保存必须带 `apiKey`，后续可省略 key 以保留旧 key。
 - `DELETE /api/v1/agent/provider-settings`：删除当前用户 / 工作区设置，运行时回到环境变量兜底。
 
-DeepSeek 的 `DEEPSEEK_BASE_URL / DEEPSEEK_MODEL / DEEPSEEK_API_KEY` 仍作为默认 smoke 兼容变量。豆包、Qwen 等服务只要兼容 OpenAI Chat Completions `tools / tool_choice / tool_calls`，就通过用户配置或 `OPENAI_COMPATIBLE_*` 接入，不改业务工具代码。密钥只允许放在用户提交的 server-side provider 设置、本地 `.env` 或部署环境变量中，不写入仓库、文档、测试夹具或日志。当前实现不把 provider key 加密入库；生产 SaaS 上线前应接 KMS/secret vault 或数据库字段加密。
+DeepSeek 的 `DEEPSEEK_BASE_URL / DEEPSEEK_MODEL / DEEPSEEK_API_KEY` 仍作为默认 smoke 兼容变量。豆包、Qwen 等服务只要兼容 OpenAI Chat Completions `tools / tool_choice / tool_calls`，就通过用户配置或 `OPENAI_COMPATIBLE_*` 接入，不改业务工具代码。密钥只允许放在用户提交的 server-side provider 设置、本地 `.env` 或部署环境变量中，不写入仓库、文档、测试夹具或日志。配置 `AGENT_PROVIDER_KEY_ENCRYPTION_SECRET` 后，`agent_provider_settings.api_key` 使用 AES-256-GCM 存储为 `enc:v1` ciphertext；旧明文记录仍可读，便于升级。生产 SaaS 应把该 secret 放在 KMS/secret vault 或部署平台 secret 中，并建立轮换策略。
 
 ## 真实 Provider Smoke Harness
 

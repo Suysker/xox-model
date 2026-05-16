@@ -32,6 +32,7 @@ function testSettings(databasePath: string): Settings {
     openaiCompatibleBaseUrl: 'https://api.deepseek.com',
     openaiCompatibleModel: 'deepseek-v4-pro',
     openaiCompatibleApiKey: null,
+    agentProviderKeyEncryptionSecret: null,
     agentWorkerId: `test-worker-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     agentRunLeaseTtlMs: 10_000,
     agentRunWorkerPollMs: 10_000,
@@ -1051,6 +1052,109 @@ describe('xox TypeScript API', () => {
       expect(callCount).toBe(1)
       expect(afterDelete.json.actionRequests).toHaveLength(0)
       expect(afterDelete.json.planSteps[0].status).toBe('failed')
+      await closeHarness(harness)
+    })
+  })
+
+  it('encrypts tenant provider API keys at rest while preserving runtime tool calls', async () => {
+    let lastAuthorization = ''
+    await withFakeOpenAICompatibleProvider((body, request) => {
+      lastAuthorization = String(request.headers.authorization ?? '')
+      expect(body.model).toBe('encrypted-user-model')
+      return fakeToolResponse('ledger_create_member_income', {
+        monthLabel: '3月',
+        memberName: '成员 A',
+        offlineUnits: 1,
+        onlineUnits: 0,
+      })
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-encrypted-provider-setting', {
+        llmProvider: 'deepseek',
+        openaiCompatibleApiKey: null,
+        agentProviderKeyEncryptionSecret: 'test-provider-key-encryption-secret',
+      })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-encrypted-provider-setting@example.com')
+
+      const saved = await client.put('/api/v1/agent/provider-settings', {
+        provider: 'doubao',
+        baseUrl,
+        model: 'encrypted-user-model',
+        apiKey: 'test-encrypted-provider-key',
+      })
+      expect(saved.statusCode).toBe(200)
+      expect(JSON.stringify(saved.json)).not.toContain('test-encrypted-provider-key')
+
+      const stored = await harness.db
+        .selectFrom('agent_provider_settings')
+        .selectAll()
+        .executeTakeFirstOrThrow()
+      expect(stored.api_key).not.toBe('test-encrypted-provider-key')
+      expect(stored.api_key.startsWith('enc:v1:')).toBe(true)
+
+      const planned = await client.post('/api/v1/agent/messages', {
+        message: '把 3 月成员 A 线下 1 张入账',
+      })
+      expect(planned.statusCode).toBe(200)
+      expect(lastAuthorization).toBe('Bearer test-encrypted-provider-key')
+      expect(planned.json.planner).toBe('openai_compatible_tool_calls')
+      expect(planned.json.actionRequests[0].kind).toBe('ledger.create_entry')
+      await closeHarness(harness)
+    })
+  })
+
+  it('keeps legacy plaintext tenant provider keys readable after encryption is enabled', async () => {
+    let lastAuthorization = ''
+    await withFakeOpenAICompatibleProvider((_body, request) => {
+      lastAuthorization = String(request.headers.authorization ?? '')
+      return fakeToolResponse('ledger_create_member_income', {
+        monthLabel: '3月',
+        memberName: '成员 A',
+        offlineUnits: 1,
+        onlineUnits: 0,
+      })
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-legacy-provider-setting', {
+        llmProvider: 'deepseek',
+        openaiCompatibleApiKey: null,
+        agentProviderKeyEncryptionSecret: 'test-provider-key-encryption-secret',
+      })
+      const client = new Client(harness.app)
+      const registered = await registerUser(client, 'agent-legacy-provider-setting@example.com')
+      const workspace = await harness.db.selectFrom('workspaces').selectAll().where('owner_id', '=', registered.id).executeTakeFirstOrThrow()
+      const now = new Date().toISOString()
+      await harness.db.insertInto('agent_provider_settings').values({
+        id: 'legacy-provider-setting',
+        workspace_id: workspace.id,
+        user_id: registered.id,
+        provider: 'qwen',
+        base_url: baseUrl,
+        model: 'legacy-user-model',
+        api_key: 'legacy-plaintext-provider-key',
+        created_at: now,
+        updated_at: now,
+      }).execute()
+
+      const planned = await client.post('/api/v1/agent/messages', {
+        message: '把 3 月成员 A 线下 1 张入账',
+      })
+      expect(planned.statusCode).toBe(200)
+      expect(lastAuthorization).toBe('Bearer legacy-plaintext-provider-key')
+      expect(planned.json.planner).toBe('openai_compatible_tool_calls')
+
+      const updated = await client.put('/api/v1/agent/provider-settings', {
+        provider: 'qwen',
+        baseUrl,
+        model: 'legacy-user-model-v2',
+      })
+      expect(updated.statusCode).toBe(200)
+      const migrated = await harness.db
+        .selectFrom('agent_provider_settings')
+        .selectAll()
+        .where('id', '=', 'legacy-provider-setting')
+        .executeTakeFirstOrThrow()
+      expect(migrated.api_key).not.toBe('legacy-plaintext-provider-key')
+      expect(migrated.api_key.startsWith('enc:v1:')).toBe(true)
       await closeHarness(harness)
     })
   })

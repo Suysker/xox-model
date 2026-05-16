@@ -231,6 +231,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     openaiCompatibleBaseUrl: compatibleBaseUrl,
     openaiCompatibleModel: compatibleModel,
     openaiCompatibleApiKey: null,
+    agentProviderKeyEncryptionSecret: process.env.AGENT_PROVIDER_KEY_ENCRYPTION_SECRET ?? `smoke-provider-secret-${process.pid}`,
     agentWorkerId: process.env.AGENT_WORKER_ID ?? `smoke-${process.pid}`,
     agentRunLeaseTtlMs: Math.max(1000, numberEnv(process.env.AGENT_RUN_LEASE_TTL_MS, 45_000)),
     agentRunWorkerPollMs: Math.max(250, numberEnv(process.env.AGENT_RUN_WORKER_POLL_MS, 2_000)),
