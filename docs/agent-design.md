@@ -296,7 +296,10 @@ SaaS memory 必须分层隔离：
 
 ## Provider 配置
 
-环境变量只决定 provider 和模型，不决定业务行为。
+Provider 配置有两层，业务行为仍然只由工具协议、权限策略和领域服务决定。
+
+1. 当前用户 / 当前工作区优先：`agent_provider_settings` 保存用户配置的 OpenAI-compatible provider、base URL、model 和 server-side API key。运行时只把 key 注入 adapter，不通过 REST、SSE、run event、prompt 日志或确认卡返回。
+2. 服务端环境变量兜底：当用户没有保存 provider 设置时，才读取部署环境中的默认 provider。
 
 ```text
 LLM_PROVIDER=openai-compatible | deepseek | doubao | qwen | rules
@@ -306,7 +309,13 @@ OPENAI_COMPATIBLE_MODEL=deepseek-v4-pro
 OPENAI_COMPATIBLE_API_KEY=<local-only>
 ```
 
-DeepSeek 的 `DEEPSEEK_BASE_URL / DEEPSEEK_MODEL / DEEPSEEK_API_KEY` 仍作为默认 smoke 兼容变量。豆包、Qwen 等服务只要兼容 OpenAI Chat Completions `tools / tool_choice / tool_calls`，就通过 `OPENAI_COMPATIBLE_*` 配置接入，不改业务工具代码。密钥只允许放在本地 `.env` 或部署环境变量中，不写入仓库、文档、测试夹具或日志。
+REST 管理接口：
+
+- `GET /api/v1/agent/provider-settings`：返回当前用户 / 工作区设置，响应只包含 `provider / baseUrl / model / hasApiKey / updatedAt`。
+- `PUT /api/v1/agent/provider-settings`：保存或更新当前用户 / 工作区设置；首次保存必须带 `apiKey`，后续可省略 key 以保留旧 key。
+- `DELETE /api/v1/agent/provider-settings`：删除当前用户 / 工作区设置，运行时回到环境变量兜底。
+
+DeepSeek 的 `DEEPSEEK_BASE_URL / DEEPSEEK_MODEL / DEEPSEEK_API_KEY` 仍作为默认 smoke 兼容变量。豆包、Qwen 等服务只要兼容 OpenAI Chat Completions `tools / tool_choice / tool_calls`，就通过用户配置或 `OPENAI_COMPATIBLE_*` 接入，不改业务工具代码。密钥只允许放在用户提交的 server-side provider 设置、本地 `.env` 或部署环境变量中，不写入仓库、文档、测试夹具或日志。当前实现不把 provider key 加密入库；生产 SaaS 上线前应接 KMS/secret vault 或数据库字段加密。
 
 ## 真实 Provider Smoke Harness
 

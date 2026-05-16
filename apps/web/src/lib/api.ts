@@ -2,19 +2,21 @@ import type { ModelConfig, ModelResult } from '../types'
 import type {
   AgentActionRequest,
   AgentActionUpdatePayload,
-  AgentThreadEvent,
   AgentMemoryRecord,
   AgentMessage,
   AgentNavigationEvent,
   AgentPlanStep,
   AgentPlanStepStatus,
+  AgentProviderSettingRecord,
+  AgentProviderSettingUpdatePayload,
   AgentRunEvent,
   AgentSendResponse,
+  AgentThreadEvent,
   AgentThreadState,
   AgentThreadSummary,
 } from '@xox/contracts'
 
-type ApiMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE'
+type ApiMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
 export type AuthUser = {
   id: string
@@ -384,6 +386,12 @@ export const api = {
     apiRequest<{ memories: AgentMemoryRecord[] }>('GET', '/api/v1/agent/memories'),
   deleteAgentMemory: (memoryId: string) =>
     apiRequest<{ ok: boolean }>('DELETE', `/api/v1/agent/memories/${memoryId}`),
+  getAgentProviderSetting: () =>
+    apiRequest<{ setting: AgentProviderSettingRecord | null }>('GET', '/api/v1/agent/provider-settings'),
+  updateAgentProviderSetting: (payload: AgentProviderSettingUpdatePayload) =>
+    apiRequest<{ setting: AgentProviderSettingRecord }>('PUT', '/api/v1/agent/provider-settings', payload),
+  deleteAgentProviderSetting: () =>
+    apiRequest<{ ok: boolean }>('DELETE', '/api/v1/agent/provider-settings'),
   confirmAgentAction: (actionRequestId: string) =>
     apiRequest<{ actionRequest: AgentActionRequest; result: unknown; messages: AgentMessage[]; runEvents: AgentRunEvent[]; planSteps: AgentPlanStep[] }>(
       'POST',
@@ -402,4 +410,4 @@ export const api = {
     ),
 }
 
-export type { AgentThreadEvent }
+export type { AgentProviderSettingRecord, AgentProviderSettingUpdatePayload, AgentThreadEvent }

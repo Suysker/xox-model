@@ -356,6 +356,21 @@ export async function runMigrations(db: Kysely<Database>) {
       created_at DATETIME NOT NULL
     )`,
   )
+  await exec(
+    db,
+    `CREATE TABLE IF NOT EXISTS agent_provider_settings (
+      id VARCHAR(36) PRIMARY KEY,
+      workspace_id VARCHAR(36) NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      provider VARCHAR(64) NOT NULL,
+      base_url TEXT NOT NULL,
+      model VARCHAR(128) NOT NULL,
+      api_key TEXT NOT NULL,
+      created_at DATETIME NOT NULL,
+      updated_at DATETIME NOT NULL,
+      UNIQUE(workspace_id, user_id)
+    )`,
+  )
 
   await addColumnIfMissing(db, 'actual_entries', 'related_entity_type', 'VARCHAR(32)')
   await addColumnIfMissing(db, 'actual_entries', 'related_entity_id', 'VARCHAR(128)')

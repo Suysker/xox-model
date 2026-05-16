@@ -272,6 +272,7 @@ xox-model/
 - Agent 显式驱动页面导航
 - 独立 prompts、tool catalog、tenant-scoped memory/context 模块
 - 通用 OpenAI-compatible Chat Completions `tool_calls` 规划；规则规划仅限显式 `LLM_PROVIDER=rules` 的本地/CI 降级路径
+- 当前用户 / 当前工作区的 provider setting 优先于环境变量，支持 DeepSeek、Qwen、Doubao 等兼容 provider 由用户配置
 - 记账、试算、草稿修改、发布、恢复、分享和锁账工具化
 - 写入动作确认、执行和审计闭环
 - 历史对话、run graph、待确认动作和当前 thread 恢复闭环
@@ -281,7 +282,7 @@ xox-model/
 - 按 `docs/adr/0001-agent-runtime-architecture.md` 固化 runtime 采用策略
 - 把当前 Agent route 实现拆分为 `runtime adapters / kernel / tools / routes`
 - OpenAI Agents SDK 作为主 runtime adapter；`LLM_PROVIDER=openai` 已有最小可验证 adapter，后续补 streaming/tracing/human-in-the-loop event 映射
-- DeepSeek 保留为默认真实模型 smoke test 通道，但 provider adapter 已是通用 OpenAI-compatible；豆包、Qwen 等兼容服务通过 `OPENAI_COMPATIBLE_*` 切换；`npm.cmd run smoke:agent` 必须使用真实 key，不能回退到规则规划
+- DeepSeek 保留为默认真实模型 smoke test 通道，但 provider adapter 已是通用 OpenAI-compatible；豆包、Qwen 等兼容服务通过用户 / 工作区 provider setting 或 `OPENAI_COMPATIBLE_*` 兜底切换；`npm.cmd run smoke:agent` 必须使用真实 key，不能回退到规则规划
 - 借鉴 OpenClaw 的 control plane / execution plane / approval / observability，但不直接 fork
 - 不引入 Claude Agent SDK；Claude Code 只作为交互与记忆模式参考
 - Skills 只作为过程知识层，核心财务业务继续走受控 server tools

@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -64,6 +64,10 @@ class SmokeClient {
 
   patch(url: string, payload?: unknown) {
     return this.request('PATCH', url, payload)
+  }
+
+  put(url: string, payload?: unknown) {
+    return this.request('PUT', url, payload)
   }
 }
 
@@ -211,20 +215,22 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
   }
 
   const provider = process.env.OPENAI_COMPATIBLE_PROVIDER ?? 'deepseek'
+  const compatibleBaseUrl = process.env.OPENAI_COMPATIBLE_BASE_URL ?? process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com'
+  const compatibleModel = process.env.OPENAI_COMPATIBLE_MODEL ?? process.env.DEEPSEEK_MODEL ?? 'deepseek-v4-pro'
   const dir = mkdtempSync(join(tmpdir(), 'xox-agent-real-provider-'))
   const settings: Settings = {
     databaseUrl: `sqlite:///${join(dir, 'smoke.db').replaceAll('\\', '/')}`,
     sessionCookieName: 'xox_session',
     sessionTtlDays: 14,
     corsOrigin: 'http://127.0.0.1:5173',
-    llmProvider: process.env.LLM_PROVIDER ?? provider,
+    llmProvider: process.env.LLM_PROVIDER ?? 'rules',
     openaiBaseUrl: process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1',
     openaiModel: process.env.OPENAI_MODEL ?? 'gpt-5.4-mini',
     openaiApiKey: process.env.OPENAI_API_KEY ?? null,
     openaiCompatibleProvider: provider,
-    openaiCompatibleBaseUrl: process.env.OPENAI_COMPATIBLE_BASE_URL ?? process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com',
-    openaiCompatibleModel: process.env.OPENAI_COMPATIBLE_MODEL ?? process.env.DEEPSEEK_MODEL ?? 'deepseek-v4-pro',
-    openaiCompatibleApiKey: apiKey,
+    openaiCompatibleBaseUrl: compatibleBaseUrl,
+    openaiCompatibleModel: compatibleModel,
+    openaiCompatibleApiKey: null,
     agentWorkerId: process.env.AGENT_WORKER_ID ?? `smoke-${process.pid}`,
     agentRunLeaseTtlMs: Math.max(1000, numberEnv(process.env.AGENT_RUN_LEASE_TTL_MS, 45_000)),
     agentRunWorkerPollMs: Math.max(250, numberEnv(process.env.AGENT_RUN_WORKER_POLL_MS, 2_000)),
@@ -248,6 +254,22 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
       displayName: 'Agent Smoke',
     })
     assertSmoke(registered.statusCode === 200, `register failed: ${redactedResponse(registered)}`)
+
+    const providerSetting = await client.put('/api/v1/agent/provider-settings', {
+      provider,
+      baseUrl: compatibleBaseUrl,
+      model: compatibleModel,
+      apiKey,
+    })
+    assertSmoke(providerSetting.statusCode === 200, `provider setting failed: ${redactedResponse(providerSetting)}`)
+    assertSmoke(providerSetting.json.setting?.provider === provider, `provider setting did not persist provider: ${redactedResponse(providerSetting)}`)
+    assertSmoke(providerSetting.json.setting?.hasApiKey === true, 'provider setting did not mark key as present')
+    assertSmoke(!JSON.stringify(providerSetting.json).includes(apiKey), 'provider setting response leaked API key')
+    const fetchedProviderSetting = await client.get('/api/v1/agent/provider-settings')
+    assertSmoke(fetchedProviderSetting.statusCode === 200, `provider setting fetch failed: ${redactedResponse(fetchedProviderSetting)}`)
+    assertSmoke(fetchedProviderSetting.json.setting?.model === compatibleModel, 'provider setting fetch returned the wrong model')
+    assertSmoke(!JSON.stringify(fetchedProviderSetting.json).includes(apiKey), 'provider setting fetch leaked API key')
+    rememberCoverage(coveredDirections, 'tenant_provider_settings')
 
     const forecast = await sendAgentMessage(client, plannerSources, {
       label: 'forecast',
@@ -510,8 +532,8 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
 
     return {
       ok: true,
-      provider: settings.openaiCompatibleProvider,
-      model: settings.openaiCompatibleModel,
+      provider,
+      model: compatibleModel,
       plannerSources: Array.from(plannerSources),
       coveredDirections: Array.from(coveredDirections),
       memoryCount: memories.json.memories.length,
@@ -526,6 +548,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
   } finally {
     await app.close()
     await db.destroy()
+    rmSync(dir, { recursive: true, force: true })
   }
 }
 

@@ -279,6 +279,21 @@ export type AgentMemoryRecord = {
   updatedAt: string
 }
 
+export type AgentProviderSettingRecord = {
+  provider: string
+  baseUrl: string
+  model: string
+  hasApiKey: boolean
+  updatedAt: string
+}
+
+export type AgentProviderSettingUpdatePayload = {
+  provider: string
+  baseUrl: string
+  model: string
+  apiKey?: string
+}
+
 export type AgentSendResponse = {
   threadId: string
   runId: string

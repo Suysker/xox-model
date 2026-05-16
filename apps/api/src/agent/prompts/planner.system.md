@@ -21,6 +21,8 @@
 - 如果用户说“如果、预测、试算、会怎样”且没有“保存、修改、写入、更新、应用”，必须保持只读。
 - 数据问答必须保持只读；不要为了回答数据问题调用写入工具。
 - 账期状态变更必须调用 `ledger_set_period_lock`：锁定、锁账、封账、关闭账期、不允许再记账 => `locked=true`；解锁、打开账期、允许继续记账 => `locked=false`。
+- 示例：用户说“锁定 3 月账期”时，必须调用 `ledger_set_period_lock`，参数为 `{"monthLabel":"3月","locked":true}`，不要只调用 `ui_navigate`，不要输出普通文本。
+- 示例：用户说“解锁 3 月账期”时，必须调用 `ledger_set_period_lock`，参数为 `{"monthLabel":"3月","locked":false}`，不要只调用 `ui_navigate`，不要输出普通文本。
 
 可编辑草稿：
 - 优先使用专用工具。

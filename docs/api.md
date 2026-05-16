@@ -88,6 +88,17 @@
 
 ## Agent OS
 
+- `GET /api/v1/agent/provider-settings`
+  - 返回当前登录用户 / 当前工作区的 OpenAI-compatible provider 设置
+  - 只返回 `provider / baseUrl / model / hasApiKey / updatedAt`，不返回 API key
+- `PUT /api/v1/agent/provider-settings`
+  - 入参：`provider`、`baseUrl`、`model`、`apiKey?`
+  - 首次保存必须提供 `apiKey`；后续只改 provider/baseUrl/model 时可省略 `apiKey` 并保留旧 key
+  - 该设置优先于服务端环境变量，只影响当前用户 / 当前工作区的 Agent runtime
+  - 支持 DeepSeek、Qwen、Doubao 等兼容 OpenAI Chat Completions `tools / tool_choice / tool_calls` 的服务；业务工具代码不按厂商特调
+- `DELETE /api/v1/agent/provider-settings`
+  - 删除当前登录用户 / 当前工作区的 provider 设置
+  - 删除后 Agent runtime 回到服务端环境变量配置；如果 provider 被选择但没有 key，仍然 fail-closed，不回退到本地规则伪造 tool call
 - `GET /api/v1/agent/threads`
   - 返回当前登录用户 / 当前工作区内最近 30 个 Agent 对话摘要
   - 摘要包含标题、最近消息、最新 run 状态、planner source 和待确认动作数量

@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import type { ServerResponse } from 'node:http'
 import type { Kysely } from 'kysely'
+import { z } from 'zod'
 import { hydrateModelConfig, projectModel, type ModelConfig } from '@xox/domain'
 import type {
   AgentActionRequest,
@@ -60,6 +61,13 @@ import {
 import { answerWorkspaceDataQuestion } from '../agent/data-agent.js'
 import { cloneModelConfig, getConfigPath, setConfigPath } from '../agent/config-patch.js'
 import {
+  deleteAgentProviderSetting,
+  getAgentProviderSetting,
+  resolveAgentRuntimeSettings,
+  serializeAgentProviderSetting,
+  upsertAgentProviderSetting,
+} from '../agent/provider-settings.js'
+import {
   addMessage,
   buildThreadState,
   buildThreadSummary,
@@ -94,6 +102,21 @@ type PlannedItem = AgentActionDraft | ReadDraft
 
 type RuntimePlannerStep = RuntimePlanResult['steps'][number]
 const activeRunControllers = new Map<string, AbortController>()
+
+const providerSettingSchema = z.object({
+  provider: z.string().min(2).max(64),
+  baseUrl: z.string().min(1).max(500),
+  model: z.string().min(1).max(128),
+  apiKey: z.string().min(1).max(4096).optional(),
+})
+
+function parseAgentBody<T>(schema: z.ZodType<T>, body: unknown) {
+  const parsed = schema.safeParse(body)
+  if (!parsed.success) {
+    throw unprocessable(parsed.error.issues.map((issue) => issue.message).join('; '))
+  }
+  return parsed.data
+}
 
 type AgentRunQueueState = {
   draining: boolean
@@ -1152,8 +1175,11 @@ async function cancelRunArtifacts(
 
 async function completeAgentRun(ctx: PlannerContext & { thread: Row<'agent_threads'> }): Promise<CompletedAgentRun | null> {
   let stopHeartbeat: (() => void) | null = null
+  let runtimeSettings = ctx.settings
   try {
-    const claimed = await claimAgentRunLease(ctx.db, ctx.settings, ctx.runId)
+    runtimeSettings = await resolveAgentRuntimeSettings(ctx.db, ctx.settings, ctx.workspace, ctx.user)
+    const runtimeCtx: PlannerContext & { thread: Row<'agent_threads'> } = { ...ctx, settings: runtimeSettings }
+    const claimed = await claimAgentRunLease(ctx.db, runtimeSettings, ctx.runId)
     if (!claimed) return null
     await addRunEvent(ctx.db, {
       threadId: ctx.thread.id,
@@ -1163,7 +1189,7 @@ async function completeAgentRun(ctx: PlannerContext & { thread: Row<'agent_threa
       message: '后台 worker 已取得 run lease，开始执行。同步调用也会经过同一套 lease guard。',
       status: 'running',
     })
-    stopHeartbeat = startAgentRunLeaseHeartbeat(ctx.db, ctx.settings, ctx.runId)
+    stopHeartbeat = startAgentRunLeaseHeartbeat(ctx.db, runtimeSettings, ctx.runId)
     await addRunEvent(ctx.db, {
       threadId: ctx.thread.id,
       runId: ctx.runId,
@@ -1171,19 +1197,19 @@ async function completeAgentRun(ctx: PlannerContext & { thread: Row<'agent_threa
       title: '模型规划中',
       message: '正在调用配置的模型，并等待 provider-native tool calls。',
       status: 'running',
-      data: { provider: ctx.settings.llmProvider },
+      data: { provider: runtimeSettings.llmProvider },
     })
-    const planned = await planResponse(ctx)
-    if (!(await refreshAgentRunLease(ctx.db, ctx.settings, ctx.runId))) return null
+    const planned = await planResponse(runtimeCtx)
+    if (!(await refreshAgentRunLease(ctx.db, runtimeSettings, ctx.runId))) return null
     const assistantMessage = await addMessage(ctx.db, ctx.thread.id, 'assistant', planned.assistant)
     await compactThreadContextIfNeeded({ db: ctx.db, workspace: ctx.workspace, user: ctx.user, threadId: ctx.thread.id })
-    if (!(await refreshAgentRunLease(ctx.db, ctx.settings, ctx.runId))) return null
+    if (!(await refreshAgentRunLease(ctx.db, runtimeSettings, ctx.runId))) return null
     await ctx.db
       .updateTable('agent_runs')
       .set({ status: 'completed', planner_source: planned.plannerSource, completed_at: utcNow(), lease_expires_at: null })
       .where('id', '=', ctx.runId)
       .where('status', '=', 'running')
-      .where('worker_id', '=', ctx.settings.agentWorkerId)
+      .where('worker_id', '=', runtimeSettings.agentWorkerId)
       .execute()
     await touchThreadAfterRun(ctx.db, ctx.thread, ctx.message)
     await addRunEvent(ctx.db, {
@@ -1205,7 +1231,7 @@ async function completeAgentRun(ctx: PlannerContext & { thread: Row<'agent_threa
     }
   } catch (error) {
     if (error instanceof AgentRunLeaseLostError) return null
-    if (!(await refreshAgentRunLease(ctx.db, ctx.settings, ctx.runId).catch(() => false))) {
+    if (!(await refreshAgentRunLease(ctx.db, runtimeSettings, ctx.runId).catch(() => false))) {
       return null
     }
     await failAgentRun(ctx.db, ctx.thread, ctx.runId, error)
@@ -1435,6 +1461,43 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
       request.raw.on('close', close)
       request.raw.on('aborted', close)
       sendState({ threadId, sequence: 0, reason: 'thread_restored' })
+    } catch (error) {
+      const { sendError } = await import('../core/http.js')
+      return sendError(reply, error)
+    }
+  })
+
+  app.get('/api/v1/agent/provider-settings', async (request, reply) => {
+    try {
+      const user = await requireCurrentUser(db, settings, request)
+      const workspace = await getWorkspaceForUser(db, user)
+      const setting = await getAgentProviderSetting(db, workspace, user)
+      return { setting: setting ? serializeAgentProviderSetting(setting) : null }
+    } catch (error) {
+      const { sendError } = await import('../core/http.js')
+      return sendError(reply, error)
+    }
+  })
+
+  app.put('/api/v1/agent/provider-settings', async (request, reply) => {
+    try {
+      const user = await requireCurrentUser(db, settings, request)
+      const workspace = await getWorkspaceForUser(db, user)
+      const body = parseAgentBody(providerSettingSchema, request.body)
+      const setting = await upsertAgentProviderSetting(db, workspace, user, body)
+      return { setting: serializeAgentProviderSetting(setting) }
+    } catch (error) {
+      const { sendError } = await import('../core/http.js')
+      return sendError(reply, error)
+    }
+  })
+
+  app.delete('/api/v1/agent/provider-settings', async (request, reply) => {
+    try {
+      const user = await requireCurrentUser(db, settings, request)
+      const workspace = await getWorkspaceForUser(db, user)
+      await deleteAgentProviderSetting(db, workspace, user)
+      return { ok: true }
     } catch (error) {
       const { sendError } = await import('../core/http.js')
       return sendError(reply, error)

@@ -63,7 +63,8 @@ sudo systemctl status xox-model-web
 ## Agent Provider
 
 - Agent runtime 采用 provider adapter 模式。`LLM_PROVIDER=openai` 已接入 OpenAI Agents SDK adapter；DeepSeek 只是默认真实 smoke provider，豆包、Qwen 等兼容 `tools / tool_choice / tool_calls` 的服务通过通用 OpenAI-compatible adapter 接入，不改业务工具代码；不引入 Claude Agent SDK。
-- 通用配置优先使用：
+- SaaS 用户配置优先级最高：`GET/PUT/DELETE /api/v1/agent/provider-settings` 管理当前用户 / 工作区的 OpenAI-compatible provider。响应只返回 `hasApiKey`，不返回 key；首次保存必须提供 key，后续可省略 key 只改 provider/base URL/model。生产部署前建议把 `agent_provider_settings.api_key` 接入 KMS/secret vault 或数据库字段加密。
+- 服务端环境变量作为没有用户配置时的兜底：
   - `LLM_PROVIDER=openai | openai-compatible | deepseek | doubao | qwen | rules`
   - `OPENAI_BASE_URL=https://api.openai.com/v1`
   - `OPENAI_MODEL=gpt-5.4-mini`
@@ -72,7 +73,7 @@ sudo systemctl status xox-model-web
   - `OPENAI_COMPATIBLE_BASE_URL=<provider-base-url>`
   - `OPENAI_COMPATIBLE_MODEL=<model-name>`
   - `OPENAI_COMPATIBLE_API_KEY=<provider-key>`
-- DeepSeek 兼容变量仍可用作默认 smoke 配置：`DEEPSEEK_BASE_URL / DEEPSEEK_MODEL / DEEPSEEK_API_KEY`。密钥只放本地 `.env` 或部署环境变量，不写入仓库。
+- DeepSeek 兼容变量仍可用作默认 smoke 配置：`DEEPSEEK_BASE_URL / DEEPSEEK_MODEL / DEEPSEEK_API_KEY`。密钥只放用户提交的 provider setting、本地 `.env` 或部署环境变量，不写入仓库。
 - `apps/api/src/agent/runtime/openai-agents-adapter.ts` 使用 OpenAI Agents SDK 的 `Agent / Runner / tool / OpenAIProvider`，SDK tool 只收集内部 plan step，不执行领域写入；`apps/api/src/agent/runtime/openai-compatible-chat-adapter.ts` 只接受通用 Chat Completions `tools / tool_choice / tool_calls`。当 `LLM_PROVIDER` 不是 `rules` 时，常规 Agent 请求不会回退到规则/正则生成业务动作；模型未返回 tool call 会返回失败型只读步骤。真实 smoke 命令不允许无 key 运行。
 - Agent memory 会拒绝保存 secret-like 内容；context summary 和 provider prompt 注入的 recent messages 会做 secret redaction，避免 key/token 被带入后续模型上下文。
 - `agent_memories` 和 `agent_context_snapshots` 是租户数据，备份、导出和删除策略必须按用户 / 工作区权限处理。
@@ -85,9 +86,10 @@ sudo systemctl status xox-model-web
 
 ### 真实模型 Smoke
 
-`npm.cmd run smoke:agent` 是外网真实 provider 验收命令，不包含在默认 `npm.cmd run test` 中。它会读取本地 `.env` 或当前 shell 中的 `OPENAI_COMPATIBLE_API_KEY` / `DEEPSEEK_API_KEY`，创建临时 SQLite 数据库，注册临时用户，然后通过真实 HTTP API 验证：
+`npm.cmd run smoke:agent` 是外网真实 provider 验收命令，不包含在默认 `npm.cmd run test` 中。它会读取本地 `.env` 或当前 shell 中的 `OPENAI_COMPATIBLE_API_KEY` / `DEEPSEEK_API_KEY`，创建临时 SQLite 数据库，注册临时用户，把真实 provider 保存到当前用户 / 工作区的 provider setting，然后通过真实 HTTP API 验证：
 
 - OpenAI-compatible Chat Completions `tool_calls`，planner 必须返回 `openai_compatible_tool_calls`
+- provider setting 不回传 API key，且真实模型调用来自当前用户 / 工作区设置
 - 只读线上系数试算不写入确认卡
 - 缺少记账必要信息时通过模型 tool_call 询问用户补充，不生成确认卡
 - 新对话注入同用户 / 同工作区 memory
@@ -105,7 +107,7 @@ sudo systemctl status xox-model-web
 - background run 的持久运行轨迹可从 thread state 恢复
 - `agent.action_executed` 审计记录
 
-如果没有 `OPENAI_COMPATIBLE_API_KEY` 或 `DEEPSEEK_API_KEY`，该命令必须失败，不能回退到规则规划。输出只包含结构化验收摘要，不打印 key。该命令会连续调用真实模型覆盖 26 个方向，耗时明显长于单元测试，不适合放入默认 CI。
+如果没有 `OPENAI_COMPATIBLE_API_KEY` 或 `DEEPSEEK_API_KEY`，该命令必须失败，不能回退到规则规划。输出只包含结构化验收摘要，不打印 key，临时 smoke 数据库会在运行结束后删除。该命令会连续调用真实模型覆盖 27 个方向，耗时明显长于单元测试，不适合放入默认 CI。
 
 ## 验证命令
 

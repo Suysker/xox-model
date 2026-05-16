@@ -285,6 +285,18 @@ export type AgentContextSnapshotTable = {
   created_at: Timestamp
 }
 
+export type AgentProviderSettingTable = {
+  id: Generated<string>
+  workspace_id: string
+  user_id: string
+  provider: string
+  base_url: string
+  model: string
+  api_key: string
+  created_at: Timestamp
+  updated_at: Timestamp
+}
+
 export type Database = {
   users: UserTable
   user_credentials: UserCredentialTable
@@ -309,6 +321,7 @@ export type Database = {
   agent_plan_steps: AgentPlanStepTable
   agent_memories: AgentMemoryTable
   agent_context_snapshots: AgentContextSnapshotTable
+  agent_provider_settings: AgentProviderSettingTable
 }
 
 export type Row<T extends keyof Database> = Selectable<Database[T]>

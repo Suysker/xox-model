@@ -52,10 +52,13 @@ async function readRequestBody(request: IncomingMessage) {
   return Buffer.concat(chunks).toString('utf8')
 }
 
-async function withFakeOpenAICompatibleProvider(handler: (body: any) => unknown | Promise<unknown>, run: (baseUrl: string) => Promise<void>) {
+async function withFakeOpenAICompatibleProvider(
+  handler: (body: any, request: IncomingMessage) => unknown | Promise<unknown>,
+  run: (baseUrl: string) => Promise<void>,
+) {
   const server = createServer(async (request: IncomingMessage, response: ServerResponse) => {
     const body = JSON.parse(await readRequestBody(request))
-    const payload = await handler(body)
+    const payload = await handler(body, request)
     response.writeHead(200, { 'Content-Type': 'application/json' })
     response.end(JSON.stringify(payload))
   })
@@ -97,6 +100,10 @@ class Client {
 
   post(url: string, payload?: unknown) {
     return this.request('POST', url, payload)
+  }
+
+  put(url: string, payload?: unknown) {
+    return this.request('PUT', url, payload)
   }
 
   patch(url: string, payload?: unknown) {
@@ -958,6 +965,94 @@ describe('xox TypeScript API', () => {
     expect(planned.json.planSteps[0].status).toBe('failed')
     expect(planned.json.messages.at(-1).content).toContain('没有返回可执行 tool_call')
     await closeHarness(harness)
+  })
+
+  it('uses tenant-scoped user provider settings without returning API keys', async () => {
+    let callCount = 0
+    let lastAuthorization = ''
+    await withFakeOpenAICompatibleProvider((body, request) => {
+      callCount += 1
+      lastAuthorization = String(request.headers.authorization ?? '')
+      expect(body.model).toBe('fake-user-model')
+      return fakeToolResponse('ledger_create_member_income', {
+        monthLabel: '3月',
+        memberName: '成员 A',
+        offlineUnits: 1,
+        onlineUnits: 0,
+      })
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-user-provider-setting', {
+        llmProvider: 'deepseek',
+        openaiCompatibleProvider: 'env-compatible',
+        openaiCompatibleBaseUrl: 'https://example.invalid',
+        openaiCompatibleApiKey: null,
+      })
+      const firstClient = new Client(harness.app)
+      const secondClient = new Client(harness.app)
+      await registerUser(firstClient, 'agent-user-provider-setting-a@example.com')
+      await registerUser(secondClient, 'agent-user-provider-setting-b@example.com')
+
+      const saved = await firstClient.put('/api/v1/agent/provider-settings', {
+        provider: 'qwen',
+        baseUrl,
+        model: 'fake-user-model',
+        apiKey: 'test-user-provider-key',
+      })
+      expect(saved.statusCode).toBe(200)
+      expect(saved.json.setting.provider).toBe('qwen')
+      expect(saved.json.setting.hasApiKey).toBe(true)
+      expect(JSON.stringify(saved.json)).not.toContain('test-user-provider-key')
+
+      const fetched = await firstClient.get('/api/v1/agent/provider-settings')
+      expect(fetched.json.setting.model).toBe('fake-user-model')
+      expect(JSON.stringify(fetched.json)).not.toContain('test-user-provider-key')
+
+      const updatedWithoutKey = await firstClient.put('/api/v1/agent/provider-settings', {
+        provider: 'qwen',
+        baseUrl,
+        model: 'fake-user-model',
+      })
+      expect(updatedWithoutKey.statusCode).toBe(200)
+      expect(updatedWithoutKey.json.setting.hasApiKey).toBe(true)
+      expect(JSON.stringify(updatedWithoutKey.json)).not.toContain('test-user-provider-key')
+
+      const secondUserSetting = await secondClient.get('/api/v1/agent/provider-settings')
+      expect(secondUserSetting.statusCode).toBe(200)
+      expect(secondUserSetting.json.setting).toBeNull()
+      expect((await secondClient.delete('/api/v1/agent/provider-settings')).statusCode).toBe(200)
+      expect((await firstClient.get('/api/v1/agent/provider-settings')).json.setting).not.toBeNull()
+
+      const planned = await firstClient.post('/api/v1/agent/messages', {
+        message: '把 3 月成员 A 线下 1 张入账',
+      })
+      expect(planned.statusCode).toBe(200)
+      expect(callCount).toBe(1)
+      expect(lastAuthorization).toBe('Bearer test-user-provider-key')
+      expect(planned.json.planner).toBe('openai_compatible_tool_calls')
+      expect(planned.json.runEvents.some((event: any) => event.type === 'model_planning' && event.data?.provider === 'qwen')).toBe(true)
+      expect(planned.json.actionRequests[0].kind).toBe('ledger.create_entry')
+
+      const secondPlanned = await secondClient.post('/api/v1/agent/messages', {
+        message: '把 3 月成员 A 线下 1 张入账',
+      })
+      expect(secondPlanned.statusCode).toBe(200)
+      expect(callCount).toBe(1)
+      expect(secondPlanned.json.planner).toBe('openai_compatible_tool_calls')
+      expect(secondPlanned.json.actionRequests).toHaveLength(0)
+      expect(secondPlanned.json.planSteps[0].status).toBe('failed')
+
+      const deleted = await firstClient.delete('/api/v1/agent/provider-settings')
+      expect(deleted.statusCode).toBe(200)
+      expect((await firstClient.get('/api/v1/agent/provider-settings')).json.setting).toBeNull()
+      const afterDelete = await firstClient.post('/api/v1/agent/messages', {
+        message: '把 3 月成员 A 线下 1 张入账',
+      })
+      expect(afterDelete.statusCode).toBe(200)
+      expect(callCount).toBe(1)
+      expect(afterDelete.json.actionRequests).toHaveLength(0)
+      expect(afterDelete.json.planSteps[0].status).toBe('failed')
+      await closeHarness(harness)
+    })
   })
 
   it('answers read-only data questions only through a model-selected data tool call', async () => {
