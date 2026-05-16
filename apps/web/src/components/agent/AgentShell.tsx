@@ -34,9 +34,11 @@ export function AgentShell(props: {
         navigationEvents={agent.navigationEvents}
         memories={agent.memories}
         threadSummaries={agent.threadSummaries}
+        runningRunId={agent.runningRunId}
         busy={agent.busy}
         error={agent.error}
         onSend={(message) => void agent.sendMessage(message)}
+        onCancelRun={() => void agent.cancelRun()}
         onConfirm={(id) => void agent.confirmAction(id)}
         onCancel={(id) => void agent.cancelAction(id)}
         onUpdate={(id, payload) => void agent.updateAction(id, payload)}

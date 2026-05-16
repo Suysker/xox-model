@@ -373,6 +373,8 @@ export const api = {
     apiRequest<{ threads: AgentThreadSummary[] }>('GET', '/api/v1/agent/threads'),
   getAgentThread: (threadId: string) =>
     apiRequest<AgentThreadState>('GET', `/api/v1/agent/threads/${encodeURIComponent(threadId)}`),
+  cancelAgentRun: (runId: string) =>
+    apiRequest<AgentThreadState>('POST', `/api/v1/agent/runs/${encodeURIComponent(runId)}/cancel`),
   listAgentMemories: () =>
     apiRequest<{ memories: AgentMemoryRecord[] }>('GET', '/api/v1/agent/memories'),
   deleteAgentMemory: (memoryId: string) =>

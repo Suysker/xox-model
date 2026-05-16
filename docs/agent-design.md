@@ -435,7 +435,9 @@ POST /agent/messages
 - 普通同步模式仍保留给 API 集成测试和后端调用；产品 UI 默认使用 background 模式。
 - `agent_runs` 持久化 `input_message_id` 和 `input_message`，使 running run 在 API 进程重启后仍有足够输入上下文恢复模型规划。
 - API 启动后会扫描 `status=running` 的 run：如果该 run 还没有 `planSteps/actionRequests` 产物，则重新调用同一套 planner/tool/confirmation 流程并落库为 completed/failed；如果已有部分产物，则 fail-closed 标记为 failed 并写 assistant 提示，避免重复创建确认卡或让用户确认半成品动作。
-- 该恢复机制覆盖单实例 API 进程重启和临时崩溃后的安全续跑；多实例并发抢占、显式 cancellation、SSE/WebSocket progress 仍是下一阶段 maturity gate。
+- 用户可取消当前 running run：`POST /api/v1/agent/runs/:runId/cancel` 会把 run 标记为 `cancelled`、取消该 run 下尚未执行的确认卡和计划步骤、写入 assistant 提示，并中止当前进程里的 provider 请求（OpenAI-compatible adapter 通过 `AbortSignal`）。
+- 取消是服务端状态，不是前端假按钮；即使模型响应晚于取消请求，后台任务在回写前会重新检查 run 状态，不能把 cancelled run 改回 completed，也不能留下 pending 确认卡。
+- 该恢复/取消机制覆盖单实例 API 进程重启和临时崩溃后的安全续跑；多实例并发抢占和 SSE/WebSocket progress 仍是下一阶段 maturity gate。
 
 ### SaaS 隔离规则
 

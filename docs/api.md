@@ -94,6 +94,10 @@
 - `GET /api/v1/agent/threads/{threadId}`
   - 返回可恢复的线程状态：messages、runs、最新 run 的 `planSteps`、`actionRequests`、`navigationEvents` 和 planner source
   - 只能读取当前用户 / 当前工作区下的 thread；跨用户或跨工作区返回 `403`
+- `POST /api/v1/agent/runs/{runId}/cancel`
+  - 取消当前用户 / 当前工作区下仍在 `running` 的 run，并返回最新 thread state
+  - 服务端会中止当前进程内 provider 请求，标记 run 为 `cancelled`，取消该 run 下未执行确认卡和未执行计划步骤
+  - 已经 `completed / failed / cancelled` 的 run 以幂等方式返回 thread state，不会重复写入取消消息
 - `POST /api/v1/agent/messages`
   - 入参：`threadId?`、`message`、`background?`
   - 同步模式返回新增对话消息、`status=completed`、`planner`、显式页面导航事件、`planSteps`、待确认动作卡

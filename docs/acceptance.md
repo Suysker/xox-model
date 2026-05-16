@@ -113,7 +113,8 @@
 - [x] Agent 历史对话和当前线程恢复已由 `/api/v1/agent/threads` 与 `/api/v1/agent/threads/{threadId}` 提供；API 测试覆盖 messages、runs、planSteps、actionRequests、navigationEvents、跨用户隔离和确认后状态恢复，React hook 会用本地 threadId 指针恢复服务端状态
 - [x] React 默认使用 background run 发送 Agent 消息；`POST /api/v1/agent/messages` 会先返回 `status=running`，服务端在同一 API 进程继续执行模型 tool calls 并落库，刷新后通过 thread state 轮询恢复 completed/failed run、assistant message、计划步骤和确认卡；API 测试和真实 provider smoke 已覆盖后台启动与恢复
 - [x] `agent_runs` 持久化输入消息，API 启动时会恢复可安全重跑的 `running` run；如果重启前已经产生部分 `planSteps/actionRequests`，系统 fail-closed 标记 run failed 并取消未执行确认卡，防止重复确认或重复执行
+- [x] 用户可取消 running run；取消后 run 进入 `cancelled`，当前 provider 请求会被中止，迟到的模型结果不能把 run 改回 completed，也不能留下 pending 确认卡
 - [x] 缺少必要业务信息时，模型可通过 `ask_user_clarification` tool_call 生成只读澄清步骤；API 测试和真实 smoke 覆盖“不知道月份/成员/张数时先问用户”，不生成确认卡、不用规则猜参数
 - [x] 浏览器刷新时 `/api/v1/auth/me` 并发恢复保持幂等，不会因 token 旋转竞态把用户踢回登录页，从而保证 Agent thread 恢复能发生
 - [ ] React Agent OS 支持真正的流式 token / tool progress 事件，而不是轮询刷新 run graph
-- [ ] 页面可手动修改的业务能力全部映射到 tool registry，或在工具矩阵中列出明确禁止原因；当前剩余缺口是 Agent 模块拆分、多实例队列抢占 / cancellation / SSE 事件通道
+- [ ] 页面可手动修改的业务能力全部映射到 tool registry，或在工具矩阵中列出明确禁止原因；当前剩余缺口是 Agent 模块拆分、多实例队列抢占 / SSE 事件通道

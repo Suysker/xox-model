@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { Bot, Database, History, Plus, RefreshCw, SendHorizontal, Trash2 } from 'lucide-react'
+import { Bot, Database, History, Plus, RefreshCw, SendHorizontal, Trash2, XCircle } from 'lucide-react'
 import type { AgentActionRequest, AgentActionUpdatePayload, AgentMemoryRecord, AgentMessage, AgentNavigationEvent, AgentPlanStep, AgentSendResponse, AgentThreadSummary } from '../../lib/api'
 import { AgentActionCard } from './AgentActionCard'
 import { AgentPlanTimeline } from './AgentPlanTimeline'
@@ -20,9 +20,11 @@ export function AgentConsole(props: {
   navigationEvents: AgentNavigationEvent[]
   memories: AgentMemoryRecord[]
   threadSummaries: AgentThreadSummary[]
+  runningRunId: string | null
   busy: boolean
   error: string | null
   onSend: (message: string) => void
+  onCancelRun: () => void
   onConfirm: (id: string) => void
   onCancel: (id: string) => void
   onUpdate: (id: string, payload: AgentActionUpdatePayload) => void
@@ -80,6 +82,17 @@ export function AgentConsole(props: {
               <Plus className="h-3.5 w-3.5" />
               新对话
             </button>
+            {props.runningRunId ? (
+              <button
+                type="button"
+                onClick={props.onCancelRun}
+                className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-red-200 bg-red-50 px-2 text-xs font-semibold text-red-700 transition hover:bg-red-100"
+                title="取消当前运行"
+              >
+                <XCircle className="h-3.5 w-3.5" />
+                取消
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => setHistoryOpen((current) => !current)}

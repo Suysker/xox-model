@@ -67,6 +67,7 @@ type PlannerContext = {
   threadId: string
   runId: string
   message: string
+  abortSignal?: AbortSignal
   providedWorkspaceBundle?: ParsedWorkspaceBundleArtifact
 }
 
@@ -91,6 +92,7 @@ type ReadDraft = {
 type PlannedItem = ActionDraft | ReadDraft
 
 type RuntimePlannerStep = RuntimePlanResult['steps'][number]
+const activeRunControllers = new Map<string, AbortController>()
 
 function serializeAction(row: Row<'agent_action_requests'>): AgentActionRequest {
   return {
@@ -153,7 +155,8 @@ function plannerSource(value: string | null): AgentPlannerSource | null {
 }
 
 function runStatus(value: string): AgentRunRecord['status'] {
-  return value === 'completed' || value === 'failed' ? value : 'running'
+  if (value === 'completed' || value === 'failed' || value === 'cancelled') return value
+  return 'running'
 }
 
 function serializeRun(row: Row<'agent_runs'>): AgentRunRecord {
@@ -1157,6 +1160,7 @@ async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePlanResul
     settings: ctx.settings,
     message: redactSecretLikeContent(ctx.message),
     context,
+    ...(ctx.abortSignal ? { abortSignal: ctx.abortSignal } : {}),
   })
 }
 
@@ -1497,15 +1501,60 @@ async function failInterruptedAgentRun(
   await failAgentRun(db, thread, runId, new Error(message))
 }
 
-async function completeAgentRun(ctx: PlannerContext & { thread: Row<'agent_threads'> }): Promise<CompletedAgentRun> {
+async function cancelRunArtifacts(
+  db: Kysely<Database>,
+  thread: Row<'agent_threads'>,
+  runId: string,
+  message: string,
+  addAssistantMessage: boolean,
+) {
+  const now = utcNow()
+  await db
+    .updateTable('agent_action_requests')
+    .set({ status: 'cancelled', error_message: message })
+    .where('run_id', '=', runId)
+    .where('status', '=', 'pending')
+    .execute()
+  await db
+    .updateTable('agent_plan_steps')
+    .set({ status: 'cancelled', updated_at: now })
+    .where('run_id', '=', runId)
+    .where('status', '!=', 'executed')
+    .execute()
+  await db
+    .updateTable('agent_runs')
+    .set({ status: 'cancelled', completed_at: now })
+    .where('id', '=', runId)
+    .where('status', '=', 'running')
+    .execute()
+  if (addAssistantMessage) await addMessage(db, thread.id, 'assistant', message)
+  await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', thread.id).execute()
+}
+
+async function runIsStillRunning(db: Kysely<Database>, runId: string) {
+  const row = await db.selectFrom('agent_runs').select('status').where('id', '=', runId).executeTakeFirst()
+  return row?.status === 'running'
+}
+
+async function completeAgentRun(ctx: PlannerContext & { thread: Row<'agent_threads'> }): Promise<CompletedAgentRun | null> {
   try {
+    if (!(await runIsStillRunning(ctx.db, ctx.runId))) return null
     const planned = await planResponse(ctx)
+    if (!(await runIsStillRunning(ctx.db, ctx.runId))) {
+      await cancelRunArtifacts(ctx.db, ctx.thread, ctx.runId, 'Agent run 已取消，系统已清理未执行确认卡。', false)
+      return null
+    }
     const assistantMessage = await addMessage(ctx.db, ctx.thread.id, 'assistant', planned.assistant)
     await compactThreadContextIfNeeded({ db: ctx.db, workspace: ctx.workspace, user: ctx.user, threadId: ctx.thread.id })
+    if (!(await runIsStillRunning(ctx.db, ctx.runId))) {
+      await cancelRunArtifacts(ctx.db, ctx.thread, ctx.runId, 'Agent run 已取消，系统已清理未执行确认卡。', false)
+      return null
+    }
     await ctx.db
       .updateTable('agent_runs')
       .set({ status: 'completed', planner_source: planned.plannerSource, completed_at: utcNow() })
       .where('id', '=', ctx.runId)
+      .where('status', '=', 'running')
       .execute()
     await touchThreadAfterRun(ctx.db, ctx.thread, ctx.message)
     return {
@@ -1516,8 +1565,14 @@ async function completeAgentRun(ctx: PlannerContext & { thread: Row<'agent_threa
       planRows: planned.planRows,
     }
   } catch (error) {
+    if (!(await runIsStillRunning(ctx.db, ctx.runId).catch(() => false))) {
+      await cancelRunArtifacts(ctx.db, ctx.thread, ctx.runId, 'Agent run 已取消，系统已清理未执行确认卡。', false).catch(() => undefined)
+      return null
+    }
     await failAgentRun(ctx.db, ctx.thread, ctx.runId, error)
     throw error
+  } finally {
+    activeRunControllers.delete(ctx.runId)
   }
 }
 
@@ -1587,6 +1642,8 @@ export async function recoverRunningAgentRuns(db: Kysely<Database>, settings: Se
       await failInterruptedAgentRun(db, thread, run.id, 'Agent run 无法恢复：缺少原始用户指令。请重新发送这条指令。')
       continue
     }
+    const controller = new AbortController()
+    activeRunControllers.set(run.id, controller)
     void completeAgentRun({
       db,
       settings,
@@ -1596,6 +1653,7 @@ export async function recoverRunningAgentRuns(db: Kysely<Database>, settings: Se
       threadId: thread.id,
       runId: run.id,
       message,
+      abortSignal: controller.signal,
     }).catch(() => undefined)
   }
 }
@@ -1735,7 +1793,9 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
 
       if (body.background === true) {
         await touchThreadAfterRun(db, thread, message)
-        void completeAgentRun({ db, settings, user, workspace, thread, threadId: thread.id, runId, message }).catch(() => undefined)
+        const controller = new AbortController()
+        activeRunControllers.set(runId, controller)
+        void completeAgentRun({ db, settings, user, workspace, thread, threadId: thread.id, runId, message, abortSignal: controller.signal }).catch(() => undefined)
         return {
           threadId: thread.id,
           runId,
@@ -1748,7 +1808,10 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
         }
       }
 
-      const completed = await completeAgentRun({ db, settings, user, workspace, thread, threadId: thread.id, runId, message })
+      const controller = new AbortController()
+      activeRunControllers.set(runId, controller)
+      const completed = await completeAgentRun({ db, settings, user, workspace, thread, threadId: thread.id, runId, message, abortSignal: controller.signal })
+      if (!completed) return buildThreadState(db, workspace, user, thread.id)
       return {
         threadId: thread.id,
         runId,
@@ -1765,6 +1828,34 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
         await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', activeThread.id).execute().catch(() => undefined)
       }
       return reply.send(error)
+    }
+  })
+
+  app.post('/api/v1/agent/runs/:runId/cancel', async (request, reply) => {
+    try {
+      const user = await requireCurrentUser(db, settings, request)
+      const workspace = await getWorkspaceForUser(db, user)
+      const { runId } = request.params as { runId: string }
+      const run = await db.selectFrom('agent_runs').selectAll().where('id', '=', runId).executeTakeFirst()
+      if (!run) throw notFound('Agent run not found')
+      if (run.user_id !== user.id) throw forbidden()
+      const thread = await getThreadForUser(db, workspace, user, run.thread_id)
+      if (run.status === 'running') {
+        activeRunControllers.get(run.id)?.abort()
+        await cancelRunArtifacts(db, thread, run.id, '已取消当前 Agent 运行。', true)
+        await recordAudit(db, {
+          workspaceId: workspace.id,
+          actorId: user.id,
+          action: 'agent.run_cancelled',
+          entityType: 'agent_run',
+          entityId: run.id,
+          meta: { provider: settings.llmProvider },
+        })
+      }
+      return buildThreadState(db, workspace, user, thread.id)
+    } catch (error) {
+      const { sendError } = await import('../core/http.js')
+      return sendError(reply, error)
     }
   })
 

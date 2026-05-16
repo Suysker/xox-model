@@ -216,6 +216,21 @@ export function useAgentThread(props: {
     }
   }
 
+  async function cancelRun() {
+    if (!runningRunId) return
+    setBusy(true)
+    setError(null)
+    try {
+      const state = await api.cancelAgentRun(runningRunId)
+      applyThreadState(state, false)
+      void refreshThreads()
+    } catch (cancelError) {
+      setError(cancelError instanceof Error ? cancelError.message : String(cancelError))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function updateAction(actionId: string, payload: AgentActionUpdatePayload) {
     setBusy(true)
     setError(null)
@@ -267,11 +282,13 @@ export function useAgentThread(props: {
     planner,
     memories,
     threadSummaries,
+    runningRunId,
     busy: busy || Boolean(runningRunId),
     error,
     sendMessage,
     confirmAction,
     cancelAction,
+    cancelRun,
     updateAction,
     loadThread,
     startNewThread,

@@ -13,6 +13,7 @@ export type RuntimePlanningInput = {
   settings: Settings
   message: string
   context: unknown
+  abortSignal?: AbortSignal
 }
 
 export interface RuntimeAdapter {

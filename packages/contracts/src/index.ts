@@ -214,7 +214,7 @@ export type AgentPlannerSource = 'openai_agents' | 'openai_compatible_tool_calls
 export type AgentRunRecord = {
   id: string
   threadId: string
-  status: 'running' | 'completed' | 'failed'
+  status: 'running' | 'completed' | 'failed' | 'cancelled'
   planner: AgentPlannerSource | null
   createdAt: string
   completedAt: string | null

@@ -30,7 +30,7 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
     if (!input.settings.openaiCompatibleApiKey) return null
 
     try {
-      const response = await fetch(`${input.settings.openaiCompatibleBaseUrl.replace(/\/$/, '')}/chat/completions`, {
+      const init: RequestInit = {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${input.settings.openaiCompatibleApiKey}`,
@@ -47,7 +47,9 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
           temperature: 0,
           max_tokens: 1600,
         }),
-      })
+      }
+      if (input.abortSignal) init.signal = input.abortSignal
+      const response = await fetch(`${input.settings.openaiCompatibleBaseUrl.replace(/\/$/, '')}/chat/completions`, init)
 
       if (!response.ok) return null
       const body = (await response.json()) as any

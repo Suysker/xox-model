@@ -1014,6 +1014,62 @@ describe('xox TypeScript API', () => {
     })
   })
 
+  it('cancels running agent runs and prevents late model results from leaving pending actions', async () => {
+    let releaseProvider!: () => void
+    const providerGate = new Promise<void>((resolve) => {
+      releaseProvider = resolve
+    })
+
+    await withFakeOpenAICompatibleProvider(async () => {
+      await providerGate
+      return fakeToolResponse('ledger_create_member_income', {
+        monthLabel: '3月',
+        memberName: '成员 A',
+        offlineUnits: 1,
+        onlineUnits: 0,
+      })
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-cancel-running-run', {
+        llmProvider: 'openai-compatible',
+        openaiCompatibleProvider: 'test-compatible',
+        openaiCompatibleBaseUrl: baseUrl,
+        openaiCompatibleApiKey: 'test-key',
+      })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-cancel-running-run@example.com')
+
+      const started = await client.post('/api/v1/agent/messages', {
+        message: '把 3 月成员 A 线下 1 张入账',
+        background: true,
+      })
+      expect(started.statusCode).toBe(200)
+      expect(started.json.status).toBe('running')
+
+      const cancelled = await client.post(`/api/v1/agent/runs/${started.json.runId}/cancel`)
+      expect(cancelled.statusCode).toBe(200)
+      expect(cancelled.json.runs[0].status).toBe('cancelled')
+      expect(cancelled.json.messages.at(-1).content).toContain('已取消当前 Agent 运行')
+      expect(cancelled.json.actionRequests.filter((action: any) => action.status === 'pending')).toHaveLength(0)
+
+      releaseProvider()
+      let finalState = cancelled.json
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        await sleep(25)
+        const nextState = await client.get(`/api/v1/agent/threads/${started.json.threadId}`)
+        finalState = nextState.json
+        if (finalState.runs[0].status !== 'running') break
+      }
+
+      expect(finalState.runs[0].status).toBe('cancelled')
+      expect(finalState.actionRequests.filter((action: any) => action.status === 'pending')).toHaveLength(0)
+      expect(finalState.actionRequests.every((action: any) => action.status !== 'executed')).toBe(true)
+      const threads = await client.get('/api/v1/agent/threads')
+      expect(threads.json.threads[0].latestRunStatus).toBe('cancelled')
+      expect(threads.json.threads[0].pendingActionCount).toBe(0)
+      await closeHarness(harness)
+    })
+  })
+
   it('recovers safe running agent runs after an API process restart', async () => {
     let releaseProvider!: () => void
     const providerGate = new Promise<void>((resolve) => {
