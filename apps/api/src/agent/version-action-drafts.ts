@@ -1,0 +1,171 @@
+import type { AgentActionDraft } from './action-requests.js'
+import type { PlannerContext } from './planner.js'
+import { getWorkspaceDraft, listVersions } from '../modules/workspace.js'
+
+function numberAfter(label: string, message: string) {
+  const match = message.match(new RegExp(`${label}\\s*(\\d+(?:\\.\\d+)?)`))
+  return match ? Number(match[1]) : null
+}
+
+function versionPanelNavigation(reason: string) {
+  return {
+    type: 'navigation' as const,
+    route: { mainTab: 'dashboard' as const, secondaryTab: 'overview' as const },
+    panel: 'workspace' as const,
+    reason,
+  }
+}
+
+export function buildPublishReleaseDraft(ctx: PlannerContext, createShare: boolean) {
+  return {
+    kind: 'workspace.publish_release',
+    title: createShare ? '确认发布并创建分享链接' : '确认发布正式版本',
+    summary: createShare ? '发布当前草稿为不可变正式版本，并为该版本创建只读分享链接。' : '发布当前草稿为不可变正式版本。',
+    targetLabel: ctx.workspace.name,
+    riskLevel: 'high',
+    details: [
+      { label: '工作区', value: ctx.workspace.name },
+      { label: '分享链接', value: createShare ? '发布后创建' : '不创建' },
+    ],
+    navigation: versionPanelNavigation('发布版本属于版本管理动作，需要打开版本管理面板。'),
+    payload: { kind: 'release', createShare },
+  } satisfies AgentActionDraft
+}
+
+export async function planPublishVersionAction(ctx: PlannerContext) {
+  if (!/发布(?!版)|正式版本/.test(ctx.message)) return null
+  return buildPublishReleaseDraft(ctx, /分享|链接/.test(ctx.message))
+}
+
+export async function planSaveSnapshotAction(ctx: PlannerContext) {
+  if (!/保存.*快照|快照|保存当前版本/.test(ctx.message)) return null
+  return {
+    kind: 'workspace.save_snapshot',
+    title: '确认保存草稿快照',
+    summary: '将当前草稿保存为可恢复快照，不影响当前正式发布版。',
+    targetLabel: ctx.workspace.name,
+    riskLevel: 'low',
+    details: [{ label: '工作区', value: ctx.workspace.name }],
+    navigation: versionPanelNavigation('保存快照属于版本管理动作，需要打开版本管理面板。'),
+    payload: { kind: 'snapshot' },
+  } satisfies AgentActionDraft
+}
+
+export async function planResetDraftAction(ctx: PlannerContext) {
+  if (!/重置.*草稿|重置工作区|恢复默认/.test(ctx.message)) return null
+  const draft = await getWorkspaceDraft(ctx.db, ctx.workspace)
+  return {
+    kind: 'workspace.reset_draft',
+    title: '确认重置当前草稿',
+    summary: '用默认模型覆盖当前草稿。历史版本不会被删除。',
+    targetLabel: ctx.workspace.name,
+    riskLevel: 'high',
+    details: [
+      { label: '工作区', value: ctx.workspace.name },
+      { label: '当前修订', value: `${draft.revision}` },
+    ],
+    navigation: {
+      type: 'navigation',
+      route: { mainTab: 'inputs', secondaryTab: 'revenue' },
+      panel: 'workspace',
+      reason: '重置草稿会覆盖当前输入，需要打开版本管理面板。',
+    },
+    payload: { revision: draft.revision },
+  } satisfies AgentActionDraft
+}
+
+async function versionFromMessage(ctx: PlannerContext, message: string, versionNo?: number | null, versionName?: string | null) {
+  const versions = await listVersions(ctx.db, ctx.workspace)
+  if (versionNo) return versions.find((item) => item.version_no === versionNo) ?? null
+  if (versionName) return versions.find((item) => item.name === versionName || item.name.includes(versionName)) ?? null
+  const inferredNo = numberAfter('版本', message) ?? numberAfter('发布版', message) ?? numberAfter('快照', message)
+  if (inferredNo) return versions.find((item) => item.version_no === inferredNo) ?? null
+  return versions.find((item) => message.includes(item.name)) ?? versions[0] ?? null
+}
+
+function buildRollbackVersionDraft(ctx: PlannerContext, version: Awaited<ReturnType<typeof versionFromMessage>>) {
+  if (!version) return null
+  return {
+    kind: 'workspace.rollback_version',
+    title: '确认恢复版本到草稿',
+    summary: `用“${version.name}”覆盖当前草稿，历史版本不会被改写。`,
+    targetLabel: version.name,
+    riskLevel: 'high',
+    details: [
+      { label: '版本', value: version.name },
+      { label: '版本号', value: `${version.version_no}` },
+    ],
+    navigation: versionPanelNavigation('恢复版本会覆盖当前草稿，需要打开版本管理面板。'),
+    payload: { versionId: version.id },
+  } satisfies AgentActionDraft
+}
+
+export async function planRollbackVersionAction(
+  ctx: PlannerContext,
+  input?: { versionNo?: number | null; versionName?: string | null; requireKeyword?: boolean },
+) {
+  if (input?.requireKeyword !== false && !/恢复|回滚/.test(ctx.message)) return null
+  const versionNo = input?.versionNo ?? numberAfter('版本', ctx.message) ?? numberAfter('发布版', ctx.message)
+  const version = await versionFromMessage(ctx, ctx.message, versionNo, input?.versionName)
+  return buildRollbackVersionDraft(ctx, version)
+}
+
+export async function planPromoteVersionAction(ctx: PlannerContext, input?: { versionNo?: number; versionName?: string }) {
+  const version = await versionFromMessage(ctx, ctx.message, input?.versionNo, input?.versionName)
+  if (!version) return null
+  return {
+    kind: 'workspace.promote_version',
+    title: '确认将快照发布为正式版',
+    summary: `先用“${version.name}”覆盖当前草稿，再发布为新的不可变正式版本。历史版本不会被改写。`,
+    targetLabel: version.name,
+    riskLevel: 'high',
+    details: [
+      { label: '来源版本', value: version.name },
+      { label: '版本号', value: `${version.version_no}` },
+      { label: '审计说明', value: '执行会产生一次恢复草稿和一次发布版本记录。' },
+    ],
+    navigation: versionPanelNavigation('快照发布属于版本管理动作，需要打开版本管理面板。'),
+    payload: { versionId: version.id },
+  } satisfies AgentActionDraft
+}
+
+export async function planDeleteVersionAction(ctx: PlannerContext) {
+  if (!/删除.*版本|删除.*快照|删掉.*版本|删掉.*快照/.test(ctx.message)) return null
+  const version = await versionFromMessage(ctx, ctx.message)
+  if (!version) return null
+  return {
+    kind: 'workspace.delete_version',
+    title: '确认删除版本',
+    summary: `删除“${version.name}”。如果该版本已发布、已分享或被账期引用，系统会拒绝执行。`,
+    targetLabel: version.name,
+    riskLevel: 'high',
+    details: [
+      { label: '版本', value: version.name },
+      { label: '版本号', value: `${version.version_no}` },
+    ],
+    navigation: versionPanelNavigation('删除版本属于版本管理动作，需要打开版本管理面板。'),
+    payload: { versionId: version.id },
+  } satisfies AgentActionDraft
+}
+
+export async function planShareAction(ctx: PlannerContext, input?: { versionNo?: number; versionName?: string; revoke?: boolean }) {
+  const wantsShare = /分享|链接/.test(ctx.message)
+  const revoke = input?.revoke ?? /撤销|取消|关闭|移除/.test(ctx.message)
+  if (!wantsShare && !input) return null
+  if (/发布(?!版)|正式版本/.test(ctx.message)) return null
+  const version = await versionFromMessage(ctx, ctx.message, input?.versionNo, input?.versionName)
+  if (!version) return null
+  return {
+    kind: revoke ? 'share.revoke' : 'share.create',
+    title: revoke ? '确认撤销分享链接' : '确认创建分享链接',
+    summary: revoke ? `撤销“${version.name}”当前有效分享链接。` : `为“${version.name}”创建只读分享链接。`,
+    targetLabel: version.name,
+    riskLevel: revoke ? 'medium' : 'high',
+    details: [
+      { label: '版本', value: version.name },
+      { label: '版本号', value: `${version.version_no}` },
+    ],
+    navigation: versionPanelNavigation('分享链接属于版本管理动作，需要打开版本管理面板。'),
+    payload: { versionId: version.id },
+  } satisfies AgentActionDraft
+}

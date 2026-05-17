@@ -125,7 +125,8 @@ modules/agent.ts
 - `modules/agent.ts` 继续负责 HTTP routes、SSE 和 DTO 序列化；run queue/recovery/cancel 和 worker lease 回写逐步下沉到 `agent/run-worker.ts`。
 - 确认卡创建、编辑、确认、取消、执行状态更新、assistant message、run event 和审计已下沉到 `apps/api/src/agent/action-requests.ts`；route 只负责认证、HTTP DTO 序列化和 thread publish。
 - 已确认 action 的业务执行已下沉到 `apps/api/src/agent/tool-executor.ts`；confirmation service 先做 policy，再把当前 workspace/user 和 action payload 交给 executor 调用 workspace / ledger / share 模块。
-- 后续再把业务预览下沉到 `agent/kernel` 与 `agent/tools`。
+- 高风险版本 / 分享动作的确认卡预览已下沉到 `apps/api/src/agent/version-action-drafts.ts`；planner 只负责意图路由和多步骤组合，不再内联发布、快照、回滚、快照发布、删除版本、创建/撤销分享和重置草稿的业务预览。
+- 后续继续把账本、结构化模型变更和成本 / 收入类业务预览按同一模式下沉到领域 action draft 模块。
 
 ### `apps/api/src/agent/kernel`
 
@@ -175,6 +176,14 @@ modules/agent routes
 - 依赖方向：`modules/agent routes -> agent/run-submission -> agent/run-worker + agent/thread-store + agent/run-events + agent/memory`。
 - 复用计划：继续复用 `getOrCreateThread`、`addMessage`、`rememberFromUserMessage`、`addRunEvent`、`completeAgentRun` 和 `scheduleAgentRunQueueDrain`；不新增第二套 run 创建或 action graph 序列化。
 - 验收：前台消息、后台消息、thread history、memory、run event、确认卡和 action graph 相关 API 测试必须继续通过。
+
+版本 / 分享确认卡边界落在 `apps/api/src/agent/version-action-drafts.ts`：
+
+- 模块职责：为版本管理和分享类写入动作构造可编辑确认卡 preview，包括保存快照、发布正式版、发布并分享、恢复版本、把快照发布为正式版、删除版本、创建/撤销分享链接、重置草稿。
+- 依赖方向：`agent/planner -> agent/version-action-drafts -> modules/workspace`；该模块只读取当前 workspace 的 draft revision 和版本列表，不执行写入、不持久化确认卡、不绕过 action policy。
+- 复用计划：运行时 tool-call handler 和本地多步骤拆分共用同一组 `plan*VersionAction` / `planShareAction` builder；发布确认卡共用 `buildPublishReleaseDraft`，版本定位共用模块内 `versionFromMessage`。
+- 命名风格：使用 `plan<Action>VersionAction` / `planShareAction`，保持返回 `AgentActionDraft | null` 的 planner builder 约定。
+- 验收：版本/分享 API 测试必须覆盖发布、快照发布、回滚、分享、删除和重置草稿确认卡；构建必须证明 planner 没有继续引用旧的版本预览函数。
 
 ### `apps/api/src/agent/tools`
 
