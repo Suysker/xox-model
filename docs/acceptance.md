@@ -134,6 +134,7 @@
 - [x] 代码和文档不引入 Claude Agent SDK adapter；Claude Code 只作为交互模式参考
 - [x] Agent 可写模型字段矩阵已注册在 `apps/api/src/agent/tool-coverage.ts`，覆盖资本规划、收入引擎、团队成员、成本结构、运营员工、月份模板、工作区 bundle 导入导出等主要手动输入路径；账号动作列为明确手动项
 - [x] Lean Harness 第一切片已落地：`apps/api/src/agent/tool-projector.ts` 为完整 tool catalog 增加 capability/risk/navigation/confirmation metadata，并在调用 OpenAI Agents SDK 或 OpenAI-compatible provider 前按用户指令投影任务相关工具子集；API 测试覆盖成员只读问题、复杂“预测+成本+记账”任务和账号动作拒绝均不会暴露完整工具目录
+- [x] Lean Harness Context Pack 边界已落地：`apps/api/src/agent/context-pack.ts` 统一构造 provider 上下文，集中注入当前 workspace 月份/成员/员工/版本/账期/科目、同 user/workspace/thread 的 memory、context summary、recent messages、可写模型字段矩阵和服务端解析 artifact；`planner.ts` 不再内联拼 provider context
 - [x] `workspace_patch_config` 的通用草稿 path 解析和旧值/新值 preview 已抽到 `apps/api/src/agent/config-patch.ts`，支持 dot path 与数组 path，供 Agent 覆盖页面手动可编辑字段时复用
 - [x] Tool policy / permission hooks 覆盖账号动作拒绝、写入确认、确认卡编辑后的必需导航、跨租户 payload 禁止、锁账禁止、派生提成禁止直接编辑
 - [x] 多步骤消息中如果同时包含合法业务动作和账号禁用动作，合法业务动作仍会生成确认卡，账号动作只作为该步骤的只读拒绝项展示

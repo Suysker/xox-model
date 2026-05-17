@@ -27,18 +27,18 @@ import { utcNow } from '../core/time.js'
 import type { CurrentUser } from '../modules/auth.js'
 import { exportWorkspaceBundle, getWorkspaceDraft, listVersions } from '../modules/workspace.js'
 import { listEntries, listPeriods, listSubjectsForPeriod } from '../modules/ledger.js'
-import { loadAgentRuntimeContext, redactSecretLikeContent } from './memory.js'
+import { redactSecretLikeContent } from './memory.js'
 import { planWithRuntimeAdapter } from './runtime/adapter-router.js'
 import type { RuntimePlanError, RuntimePlanResult, RuntimeStreamEvent } from './runtime/runtime-adapter.js'
 import { assertAgentRunLease } from './run-lease.js'
 import { agentThreadEvents } from './thread-events.js'
-import { buildAgentWritableConfigContext } from './tool-coverage.js'
 import { projectAgentTools } from './tool-projector.js'
 import { extractWorkspaceBundleArtifact, type ParsedWorkspaceBundleArtifact } from './workspace-bundle-artifact.js'
 import { addRunEvent } from './run-events.js'
 import { addAgentActionRequest, addAgentPlanStep, type AgentActionDraft } from './action-requests.js'
 import { answerWorkspaceDataQuestion } from './data-agent.js'
 import { cloneModelConfig, getConfigPath, setConfigPath } from './config-patch.js'
+import { buildAgentContextPack } from './context-pack.js'
 
 export type PlannerContext = {
   db: Kysely<Database>
@@ -2142,48 +2142,13 @@ async function planImportBundle(ctx: PlannerContext) {
 }
 
 async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePlanResult | null> {
-  const { config } = await currentDraftConfig(ctx)
-  const periods = await listPeriods(ctx.db, ctx.workspace)
-  const versions = await listVersions(ctx.db, ctx.workspace)
-  const runtimeContext = await loadAgentRuntimeContext({
+  const context = await buildAgentContextPack({
     db: ctx.db,
     workspace: ctx.workspace,
     user: ctx.user,
     threadId: ctx.threadId,
+    ...(ctx.providedWorkspaceBundle ? { providedWorkspaceBundle: ctx.providedWorkspaceBundle } : {}),
   })
-  const context = {
-    months: config.months.map((month, index) => ({ label: month.label, index, id: month.id })),
-    teamMembers: config.teamMembers.map((member) => ({ id: member.id, name: member.name })),
-    employees: config.employees.map((employee) => ({ id: employee.id, name: employee.name, role: employee.role })),
-    versions: versions.map((version) => ({ versionNo: version.version_no, name: version.name, kind: version.kind })),
-    periods: periods.map((period) => ({ id: period.id, monthLabel: period.monthLabel })),
-    ledgerSubjects: periods[0]
-      ? (await listSubjectsForPeriod(ctx.db, ctx.workspace, periods[0].id)).map((subject) => ({
-          key: subject.subjectKey,
-          name: subject.subjectName,
-          type: subject.subjectType,
-          group: subject.subjectGroup,
-        }))
-      : [],
-    tenantScopedMemory: runtimeContext.memories.map((memory) => ({
-      kind: memory.kind,
-      key: memory.key,
-      value: memory.value,
-    })),
-    contextSummary: runtimeContext.contextSummary,
-    recentMessages: runtimeContext.recentMessages.map((message) => ({
-      role: message.role,
-      content: message.content.slice(0, 500),
-    })),
-    writableConfig: buildAgentWritableConfigContext(config),
-    ...(ctx.providedWorkspaceBundle
-      ? {
-          providedArtifacts: {
-            workspaceBundle: ctx.providedWorkspaceBundle.summary,
-          },
-        }
-      : {}),
-  }
 
   const tools = projectAgentTools({ message: ctx.message })
   await addRunEvent(ctx.db, {
