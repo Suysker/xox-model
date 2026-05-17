@@ -54,10 +54,27 @@ export async function answerWorkspaceDataQuestion(ctx: DataAgentContext, step: D
   const baseScenario = projection.scenarios.find((scenario) => scenario.key === 'base') ?? projection.scenarios[0] ?? null
   if (!baseScenario) return null
 
-  const scope = step.scope === 'workspace_summary' || step.scope === 'period_summary' || step.scope === 'member_summary' || step.scope === 'top_months'
+  const scope = step.scope === 'workspace_summary' || step.scope === 'period_summary' || step.scope === 'member_summary' || step.scope === 'team_summary' || step.scope === 'top_months'
     ? step.scope
     : 'workspace_summary'
   const metrics = normalizeDataMetrics(step.metrics)
+
+  if (scope === 'team_summary') {
+    const members = config.teamMembers
+    const names = members.map((member) => member.name).filter((name) => name.trim().length > 0)
+    const includeNames = metrics.length === 0 || metrics.includes('teamMemberNames')
+    const nameText = includeNames && names.length > 0 ? `，分别是：${names.join('、')}` : ''
+    return {
+      title: '回答团队成员问题',
+      message: `当前工作区共有 ${members.length} 个成员${nameText}。本次只读取当前工作区数据，未修改业务数据。`,
+      navigation: {
+        type: 'navigation',
+        route: { mainTab: 'dashboard', secondaryTab: 'members' },
+        reason: '团队成员问答需要打开成员分析页面，便于核对成员口径。',
+      },
+      status: 'executed',
+    }
+  }
 
   if (scope === 'period_summary') {
     const period = step.monthLabel ? await periodForMonth(ctx, step.monthLabel) : null

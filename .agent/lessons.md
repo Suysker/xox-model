@@ -65,6 +65,7 @@
 - Agent planner code should live outside HTTP route modules. Keep provider-native tool_call normalization, tenant planning context, multi-step decomposition, read steps, and action drafts in a planner boundary so routes only own authentication, transport, run lifecycle, and serialization.
 - Provider-native tool calling still needs a read-only conversational tool. If prompts forbid ordinary text but the catalog has no `agent_reply`-style tool, greetings and identity questions become false planning failures even though no business write was requested.
 - Provider HTTP/network errors must not be collapsed into "model returned no tool_call". Authentication failures usually mean the user kept an old provider key after switching vendors, and the UI needs to say that directly.
+- Data-agent tool schemas need metrics for entity counts and rosters, not only financial summaries. Without a `team_summary`-style scope, questions like "how many members do we have" get misrouted to workspace financial overview.
 
 ## Testing
 

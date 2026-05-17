@@ -326,6 +326,22 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     rememberCoverage(coveredDirections, 'background_run_recovery')
     rememberCoverage(coveredDirections, 'agent_run_trace')
 
+    const teamQuestion = await sendAgentMessage(client, plannerSources, {
+      label: 'team member count question',
+      threadId: forecast.json.threadId,
+      message: '我们有几个成员？只回答当前工作区团队成员数量，不要回答收入利润总览',
+    })
+    assertSmoke(Array.isArray(teamQuestion.json.actionRequests) && teamQuestion.json.actionRequests.length === 0, 'team question created a write confirmation')
+    assertSmoke(
+      String(teamQuestion.json.messages.at(-1)?.content ?? '').includes('共有 7 个成员'),
+      `team question did not answer member count: ${String(teamQuestion.json.messages.at(-1)?.content ?? '')}`,
+    )
+    assertSmoke(
+      Array.isArray(teamQuestion.json.navigationEvents) && teamQuestion.json.navigationEvents.some((event: any) => event.route?.secondaryTab === 'members'),
+      'team question did not navigate to member analysis page',
+    )
+    rememberCoverage(coveredDirections, 'data_agent_team_member_count')
+
     const clarification = await sendAgentMessage(client, plannerSources, {
       label: 'clarification for missing ledger fields',
       threadId: forecast.json.threadId,

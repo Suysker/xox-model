@@ -1258,6 +1258,41 @@ describe('xox TypeScript API', () => {
     })
   })
 
+  it('answers team member count through a model-selected data tool call', async () => {
+    await withFakeOpenAICompatibleProvider((body) => {
+      const dataTool = body.tools.find((tool: any) => tool.function.name === 'data_query_workspace')
+      expect(dataTool).toBeTruthy()
+      expect(dataTool.function.parameters.properties.scope.enum).toContain('team_summary')
+      expect(dataTool.function.parameters.properties.metrics.items.enum).toContain('teamMemberCount')
+      return fakeToolResponse('data_query_workspace', {
+        question: '我们有几个成员',
+        scope: 'team_summary',
+        metrics: ['teamMemberCount', 'teamMemberNames'],
+      })
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-team-member-count', {
+        llmProvider: 'openai-compatible',
+        openaiCompatibleProvider: 'test-compatible',
+        openaiCompatibleBaseUrl: baseUrl,
+        openaiCompatibleApiKey: 'test-key',
+      })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-team-member-count@example.com')
+
+      const response = await client.post('/api/v1/agent/messages', {
+        message: '我们有几个成员？',
+      })
+      expect(response.statusCode).toBe(200)
+      expect(response.json.planner).toBe('openai_compatible_tool_calls')
+      expect(response.json.actionRequests).toHaveLength(0)
+      expect(response.json.planSteps[0].status).toBe('executed')
+      expect(response.json.navigationEvents[0].route.secondaryTab).toBe('members')
+      expect(response.json.messages.at(-1).content).toContain('共有 7 个成员')
+      expect(response.json.messages.at(-1).content).toContain('成员 A')
+      await closeHarness(harness)
+    })
+  })
+
   it('asks for clarification through a model-selected tool when required business details are missing', async () => {
     await withFakeOpenAICompatibleProvider((body) => {
       expect(body.tools.some((tool: any) => tool.function.name === 'ask_user_clarification')).toBe(true)

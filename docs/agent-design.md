@@ -412,7 +412,7 @@ provider-neutral source 当前固定为：
 
 ### Data Agent 只读问答
 
-简单数据问答不走自由 SQL，也不让后端用正则猜问题。模型必须调用 `data_query_workspace`，把用户问题归一成 `scope / monthLabel / memberName / metrics / order / limit` 等结构化参数；服务端再用当前租户内的 domain services 和账本汇总计算答案。
+简单数据问答不走自由 SQL，也不让后端用正则猜问题。模型必须调用 `data_query_workspace`，把用户问题归一成 `scope / monthLabel / memberName / metrics / order / limit` 等结构化参数；服务端再用当前租户内的 domain services 和账本汇总计算答案。团队成员数量、成员名单和团队构成使用 `scope=team_summary`，不要落到工作区财务总览。
 
 当前只读回答生成落在 `apps/api/src/agent/data-agent.ts`。该模块只读取当前 workspace 的 draft projection 和 ledger period summary，返回 `ReadDraft` 风格的回答与导航事件；它不创建确认卡、不调用写入工具、不读取跨租户参数，也不接触 provider 原始响应。
 

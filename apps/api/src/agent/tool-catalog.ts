@@ -16,7 +16,7 @@ export type AgentToolCallStep = {
   question?: string
   missingFields?: string[]
   suggestions?: string[]
-  scope?: 'workspace_summary' | 'period_summary' | 'member_summary' | 'top_months'
+  scope?: 'workspace_summary' | 'period_summary' | 'member_summary' | 'team_summary' | 'top_months'
   metrics?: string[]
   order?: 'asc' | 'desc'
   limit?: number
@@ -236,13 +236,13 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
     type: 'function',
     function: {
       name: 'data_query_workspace',
-      description: '回答当前工作区的只读数据问题，例如某月计划/实际收入成本利润、成员贡献、回本、最佳月份。只读，不生成确认卡，不修改业务数据。',
+      description: '回答当前工作区的只读数据问题，例如团队成员数量/成员名单、某月计划/实际收入成本利润、成员贡献、回本、最佳月份。只读，不生成确认卡，不修改业务数据。',
       parameters: objectSchema({
         question: { type: 'string', description: '用户原始问题的简短复述。' },
         scope: {
           type: 'string',
-          enum: ['workspace_summary', 'period_summary', 'member_summary', 'top_months'],
-          description: '查询范围：整体工作区、单月汇总、成员汇总、月份排行。',
+          enum: ['workspace_summary', 'period_summary', 'member_summary', 'team_summary', 'top_months'],
+          description: '查询范围：整体工作区、单月汇总、指定成员汇总、团队成员数量/名单、月份排行。用户问“几个成员/有哪些成员/团队构成”时用 team_summary。',
         },
         monthLabel: { ...monthLabel, description: '可选目标月份，例如 3月；scope=period_summary 时优先提供。' },
         memberName: { type: 'string', description: '可选成员名称；scope=member_summary 时优先提供。' },
@@ -250,7 +250,7 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
           type: 'array',
           items: {
             type: 'string',
-            enum: ['plannedRevenue', 'plannedCost', 'actualRevenue', 'actualCost', 'plannedProfit', 'actualProfit', 'cash', 'roi', 'payback', 'memberRevenue', 'memberCommission', 'memberContribution'],
+            enum: ['plannedRevenue', 'plannedCost', 'actualRevenue', 'actualCost', 'plannedProfit', 'actualProfit', 'cash', 'roi', 'payback', 'memberRevenue', 'memberCommission', 'memberContribution', 'teamMemberCount', 'teamMemberNames'],
           },
           description: '需要回答的指标；不确定时传空数组或省略，由服务端返回该范围的核心指标。',
         },
