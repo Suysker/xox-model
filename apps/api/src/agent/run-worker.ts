@@ -1,13 +1,12 @@
 import type { Kysely } from 'kysely'
-import type { AgentNavigationEvent, AgentPlannerSource } from '@xox/contracts'
 import type { Database, Row } from '../db/schema.js'
 import type { Settings } from '../core/settings.js'
 import { utcNow } from '../core/time.js'
 import type { CurrentUser } from '../modules/auth.js'
-import { compactThreadContextIfNeeded, redactSecretLikeContent } from './memory.js'
+import { redactSecretLikeContent } from './memory.js'
 import { resolveAgentRuntimeSettings } from './provider-settings.js'
-import { planResponse } from './planner.js'
 import type { PlannerContext } from './planning-context.js'
+import { executeAgentKernelRun, type AgentKernelRunResult } from './agent-kernel.js'
 import {
   AgentRunLeaseLostError,
   claimAgentRunLease,
@@ -36,13 +35,7 @@ type AgentRunQueueState = {
 
 const agentRunQueueStates = new WeakMap<Kysely<Database>, AgentRunQueueState>()
 
-export type CompletedAgentRun = {
-  plannerSource: AgentPlannerSource
-  assistantMessage: Row<'agent_messages'>
-  navigationEvents: AgentNavigationEvent[]
-  actionRows: Row<'agent_action_requests'>[]
-  planRows: Row<'agent_plan_steps'>[]
-}
+export type CompletedAgentRun = AgentKernelRunResult
 
 function getAgentRunQueueState(db: Kysely<Database>) {
   let state = agentRunQueueStates.get(db)
@@ -158,23 +151,13 @@ export async function completeAgentRun(ctx: PlannerContext & { thread: Row<'agen
       status: 'running',
     })
     stopHeartbeat = startAgentRunLeaseHeartbeat(ctx.db, runtimeSettings, ctx.runId)
-    await addRunEvent(ctx.db, {
-      threadId: ctx.thread.id,
-      runId: ctx.runId,
-      type: 'model_planning',
-      title: '模型规划中',
-      message: '正在调用配置的模型，并等待 provider-native tool calls。',
-      status: 'running',
-      data: { provider: runtimeSettings.llmProvider },
+    const kernelResult = await executeAgentKernelRun(runtimeCtx, {
+      beforeStateWrite: () => refreshAgentRunLease(ctx.db, runtimeSettings, ctx.runId),
     })
-    const planned = await planResponse(runtimeCtx)
-    if (!(await refreshAgentRunLease(ctx.db, runtimeSettings, ctx.runId))) return null
-    const assistantMessage = await addMessage(ctx.db, ctx.thread.id, 'assistant', planned.assistant)
-    await compactThreadContextIfNeeded({ db: ctx.db, workspace: ctx.workspace, user: ctx.user, threadId: ctx.thread.id })
-    if (!(await refreshAgentRunLease(ctx.db, runtimeSettings, ctx.runId))) return null
+    if (!kernelResult) return null
     await ctx.db
       .updateTable('agent_runs')
-      .set({ status: 'completed', planner_source: planned.plannerSource, completed_at: utcNow(), lease_expires_at: null })
+      .set({ status: 'completed', planner_source: kernelResult.plannerSource, completed_at: utcNow(), lease_expires_at: null })
       .where('id', '=', ctx.runId)
       .where('status', '=', 'running')
       .where('worker_id', '=', runtimeSettings.agentWorkerId)
@@ -185,18 +168,12 @@ export async function completeAgentRun(ctx: PlannerContext & { thread: Row<'agen
       runId: ctx.runId,
       type: 'run_completed',
       title: '运行完成',
-      message: planned.actionRows.length > 0 ? '模型规划已完成，等待用户处理确认卡。' : '模型规划和只读回答已完成。',
+      message: kernelResult.actionRows.length > 0 ? '模型规划已完成，等待用户处理确认卡。' : '模型规划和只读回答已完成。',
       status: 'completed',
-      data: { actionCount: planned.actionRows.length, planStepCount: planned.planRows.length },
+      data: { actionCount: kernelResult.actionRows.length, planStepCount: kernelResult.planRows.length },
     })
     agentThreadEvents.publish(ctx.thread.id, 'run_completed')
-    return {
-      plannerSource: planned.plannerSource,
-      assistantMessage,
-      navigationEvents: planned.navigationEvents,
-      actionRows: planned.actionRows,
-      planRows: planned.planRows,
-    }
+    return kernelResult
   } catch (error) {
     if (error instanceof AgentRunLeaseLostError) return null
     if (!(await refreshAgentRunLease(ctx.db, runtimeSettings, ctx.runId).catch(() => false))) {

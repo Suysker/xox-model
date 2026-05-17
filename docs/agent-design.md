@@ -192,7 +192,7 @@ planner.ts
 
 Agent OS 内核，和具体 provider 解耦：
 
-- `agent-kernel.ts`：创建 run，协调 runtime、memory、tool policy、action graph 和事件输出。
+- `agent-kernel.ts`：推进单次 run 的核心业务循环，协调 runtime planning、action graph、assistant message 和 memory compaction；它不注册 HTTP routes、不持有 worker queue、不直接确认执行写入。
 - `action-graph.ts`：多步骤计划、依赖关系、状态转移。
 - `confirmation-service.ts`：创建、编辑、确认、取消 action request。
 - `run-events.ts`：持久化 run 级 trace，并发布 thread state 刷新信号。
@@ -202,14 +202,16 @@ Agent OS 内核，和具体 provider 解耦：
 - `prompt-registry.ts`：系统提示词、工具说明和 skills 说明文件读取。
 - `event-stream.ts`：向前端输出 streaming event。
 
-当前增量拆分先落在 `apps/api/src/agent/run-worker.ts`：
+当前 run lifecycle 拆分为 `apps/api/src/agent/agent-kernel.ts` 与 `apps/api/src/agent/run-worker.ts`：
 
-- 模块职责：持有后台 run controller、worker lease heartbeat、run completion、run cancellation、进程重启恢复和队列 sweep；它只处理 server-owned run lifecycle，不注册 HTTP routes。
+- `agent-kernel.ts` 模块职责：在已获得 lease 的上下文中调用 planner，持久化模型规划 trace、action graph、assistant message，并触发 thread memory compaction。
+- `run-worker.ts` 模块职责：持有后台 run controller、worker lease heartbeat、run completion finalization、run cancellation、进程重启恢复和队列 sweep；它只处理 server-owned run lifecycle，不注册 HTTP routes。
 - 依赖方向：
 
 ```text
 agent/routes.ts
   -> agent/run-worker
+    -> agent/agent-kernel
     -> agent/planner
     -> agent/run-lease
     -> agent/run-events
@@ -219,7 +221,7 @@ agent/routes.ts
     -> db
 ```
 
-- 复用计划：继续复用现有 `planResponse`、`claimAgentRunLease`、`addRunEvent`、`buildThreadState`、`compactThreadContextIfNeeded` 和 `agentThreadEvents`；不新增并行业务执行路径。
+- 复用计划：继续复用现有 `planResponse`、`claimAgentRunLease`、`addRunEvent`、`buildThreadState`、`compactThreadContextIfNeeded` 和 `agentThreadEvents`；不新增并行业务执行路径。`run-worker.ts` 通过 `executeAgentKernelRun` 进入内核，并在每次状态写入前刷新 lease。
 - 命名风格：保持现有 `AgentRun*` / `run_*` 命名，导出 `completeAgentRun`、`recoverRunningAgentRuns`、`scheduleAgentRunQueueDrain`、`startAgentRunQueueWorker`、`cancelRunningAgentRun` 和 `safeRunErrorMessage`。
 - 验收：现有 API 测试中的 background run、取消、lease 恢复、worker sweep、迟到模型结果防护和 SSE thread state 必须继续通过。
 
@@ -921,7 +923,7 @@ Agent: workspace_import_bundle
 仍需重构：
 
 - `apps/api/src/agent/routes.ts` 是当前 Agent API Boundary，只承载认证、HTTP DTO、SSE route 和 thread publish；run queue/recovery/cancel 与 worker lifecycle 已在 `run-worker.ts`。
-- `apps/api/src/agent/planner.ts` 当前已收敛为 planning session + action graph store 的薄入口；下一阶段继续拆分更明确的 `agent-kernel` 协调层，而不是让 routes 或 planner 回收运行生命周期职责。
+- `apps/api/src/agent/agent-kernel.ts` 已承接单次 run 的 planning/action graph/message/memory 协调；下一阶段可以继续收敛 kernel 输入输出命名，但 routes 和 worker 不应回收模型规划职责。
 - OpenAI Agents SDK adapter 已形成最小可验证路径，但还没有把 SDK streaming/tracing/human-in-the-loop events 映射为前端实时事件。
 - 前端已有后端状态刷新式 action graph / memory panel，OpenAI-compatible provider chunk 已进入实时预览；后续要继续做跨实例 pubsub 和 SDK tracing。
 - 文档验收需要区分当前可验证能力和下一阶段 runtime maturity gate。
@@ -930,7 +932,7 @@ Agent: workspace_import_bundle
 
 1. 固化 ADR 和设计文档。
 2. 把 contracts 改为 provider-neutral Agent Protocol。
-3. 拆分 `modules/agent.ts` 到 `runtime / kernel / tools / routes`。（routes 已迁到 `agent/routes.ts`，worker/runtime/tools/approval/context 已拆出；后续只剩更明确的 kernel façade）
+3. 拆分 `modules/agent.ts` 到 `runtime / kernel / tools / routes`。（已完成 routes、worker、runtime、tools、approval、context 和 kernel façade 的代码边界）
 4. 把兼容 Chat Completions provider 迁入 `openai-compatible-chat-adapter.ts`。（已完成 provider-native tool_calls 与 chunk streaming，仍需继续补 tracing）
 5. 实现 OpenAI Agents SDK adapter。（已完成最小可验证路径，仍需 streaming/tracing/human-in-the-loop events）
 6. 增强 React Agent OS 的 action graph、event timeline、memory 管理。（已完成后端状态刷新式 action graph 与 provider chunk 预览，仍需跨实例实时成熟化）
