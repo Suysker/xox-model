@@ -119,7 +119,7 @@
 
 ## Agent Runtime 成熟化
 
-- [ ] `docs/adr/0001-agent-runtime-architecture.md` 中的 runtime 采用策略完成代码落地
+- [x] `docs/adr/0001-agent-runtime-architecture.md` 中的 runtime 采用策略核心代码已落地：Agent boundary、Lean Kernel、runtime adapters、Tool Catalog Gateway、Context Pack、Action Graph Store、Approval Executor、Tool Executor、memory/context、prompts 和 React thread state 均有独立边界与测试；OpenAI Agents SDK 原生 handoff/guardrail/tracing/HITL 深度映射按 ADR 0003 归入后续 runtime maturity gate，不作为当前产品阻塞项
 - [x] `apps/api/src/modules/agent.ts` 已移除；Agent API Boundary 迁到 `apps/api/src/agent/routes.ts`，runtime adapters、tools、memory/context、approval executor、thread store、run submission 和 run worker 均在 `apps/api/src/agent/*` 独立边界内
 - [x] Lean Agent Kernel façade 已落到 `apps/api/src/agent/agent-kernel.ts`：单次 run 的 provider planning、action graph store、assistant message 和 memory compaction 由 kernel 协调；`run-worker.ts` 只负责 lease、queue、恢复、取消和最终状态写入
 - [x] Agent ADR 架构守护测试已加入 `apps/api/tests/agent-architecture.test.ts`，锁定旧 `modules/agent.ts` 不复活、runtime adapters 不读 DB/领域模块、routes 不直接拥有 planner/runtime/executor、tool executor 不依赖 provider SDK

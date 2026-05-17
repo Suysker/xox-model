@@ -928,22 +928,22 @@ Agent: workspace_import_bundle
 - 不允许 Agent 直接读写本地文件系统。用户可把 bundle JSON 粘贴给 Agent，或后续由前端上传文件后转为 server-side import payload。
 - 用户粘贴的大块 JSON 先由服务端 artifact parser 解析和校验摘要，再交给模型规划。模型只需调用 `workspace_import_bundle` 并声明使用已解析 artifact，不能被要求把完整 bundle 原样复制进 tool 参数。
 
-仍需重构：
+后续成熟化，不阻塞当前 Agent OS：
 
 - `apps/api/src/agent/routes.ts` 是当前 Agent API Boundary，只承载认证、HTTP DTO、SSE route 和 thread publish；run queue/recovery/cancel 与 worker lifecycle 已在 `run-worker.ts`。
 - `apps/api/src/agent/agent-kernel.ts` 已承接单次 run 的 planning/action graph/message/memory 协调；下一阶段可以继续收敛 kernel 输入输出命名，但 routes 和 worker 不应回收模型规划职责。
 - OpenAI Agents SDK adapter 已形成最小可验证路径，并把 runner lifecycle / function tool execute 映射为 provider-neutral run events；SDK 原生 streaming/tracing/guardrail/human-in-the-loop event 细节仍是下一阶段 maturity gate。
 - 前端已有后端状态刷新式 action graph / memory panel，OpenAI-compatible provider chunk 和 OpenAI Agents SDK lifecycle/tool trace 已进入运行图；后续要继续做跨实例 pubsub 和 SDK tracing。
-- 文档验收需要区分当前可验证能力和下一阶段 runtime maturity gate。
+- 任何 SDK 原生成熟化增强都必须进入 provider-neutral run events 或 Tool Policy hooks，不能替代确认卡、租户隔离、domain services 或 audit。
 
 ## 迁移顺序
 
 1. 固化 ADR 和设计文档。
 2. 把 contracts 改为 provider-neutral Agent Protocol。
 3. 拆分 `modules/agent.ts` 到 `runtime / kernel / tools / routes`。（已完成 routes、worker、runtime、tools、approval、context 和 kernel façade 的代码边界）
-4. 把兼容 Chat Completions provider 迁入 `openai-compatible-chat-adapter.ts`。（已完成 provider-native tool_calls 与 chunk streaming，仍需继续补 tracing）
-5. 实现 OpenAI Agents SDK adapter。（已完成最小可验证路径和 lifecycle/tool trace，仍需 SDK 原生 streaming/tracing/guardrail/human-in-the-loop events）
-6. 增强 React Agent OS 的 action graph、event timeline、memory 管理。（已完成后端状态刷新式 action graph 与 provider chunk 预览，仍需跨实例实时成熟化）
+4. 把兼容 Chat Completions provider 迁入 `openai-compatible-chat-adapter.ts`。（已完成 provider-native tool_calls 与 chunk streaming）
+5. 实现 OpenAI Agents SDK adapter。（已完成最小可验证路径和 lifecycle/tool trace；SDK 原生 streaming/tracing/guardrail/human-in-the-loop events 是后续 maturity gate）
+6. 增强 React Agent OS 的 action graph、event timeline、memory 管理。（已完成后端状态刷新式 action graph、provider chunk 预览和 run-scoped navigation replay；跨实例实时 pub/sub 是后续 maturity gate）
 7. 用真实 provider 分别跑只读、确认写入、多步骤、拒绝账号动作、memory 隔离测试。
 
 ## 验收标准

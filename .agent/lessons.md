@@ -105,6 +105,7 @@
 - Long-term memory writes should be model-selected tool calls, not submission-time text capture. Use a `memory_remember` provider-native tool for explicit “remember/default” requests, then let the server enforce tenant scope, redaction, and secret rejection.
 - OpenAI Agents SDK adapter events should still flow through provider-neutral runtime trace services. Keep SDK tool execute callbacks as planning-only collectors, pass abort signals into `Runner.run`, close the SDK provider in `finally`, and persist only redacted lifecycle/tool-call summaries.
 - Frontend Agent navigation replay keys need the server run identity and event position, not only navigation JSON. The same route can be valid in multiple user runs, while the same run can arrive through immediate response, SSE, and polling.
+- When ADRs evolve from broad runtime ambitions to a lean product harness, split acceptance into implemented core and explicit maturity gates. Do not let future SDK-native tracing/guardrail/handoff work make current product validation look unfinished, and do not pretend those provider features replace local policy, approval, tenant isolation, or audit.
 
 ## Testing
 
