@@ -92,7 +92,7 @@ sudo systemctl status xox-model-web
 
 ### 真实模型 Smoke
 
-`npm.cmd run smoke:agent` 是外网真实 provider 验收命令，不包含在默认 `npm.cmd run test` 中。它会读取本地 `.env` 或当前 shell 中的 `OPENAI_COMPATIBLE_API_KEY` / `DEEPSEEK_API_KEY`，创建临时 SQLite 数据库，注册临时用户，把真实 provider 保存到当前用户 / 工作区的 provider setting，然后通过真实 HTTP API 验证：
+`npm.cmd run smoke:agent` 是外网真实 provider 验收命令，不包含在默认 `npm.cmd run test` 中。它会读取根目录 `.env`、`apps/api/.env` 或当前 shell 中的 `OPENAI_COMPATIBLE_API_KEY` / `DEEPSEEK_API_KEY`；这些 `.env` 文件必须保持本地未跟踪，已经由 `.gitignore` 忽略。命令会创建临时 SQLite 数据库，注册临时用户，把真实 provider 保存到当前用户 / 工作区的 provider setting，然后通过真实 HTTP API 验证：
 
 - OpenAI-compatible Chat Completions `tool_calls`，planner 必须返回 `openai_compatible_tool_calls`
 - provider setting 不回传 API key，且真实模型调用来自当前用户 / 工作区设置；smoke 的临时数据库会启用 provider key encryption secret

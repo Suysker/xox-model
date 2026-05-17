@@ -156,3 +156,4 @@
 - [x] 浏览器刷新时 `/api/v1/auth/me` 并发恢复保持幂等，不会因 token 旋转竞态把用户踢回登录页，从而保证 Agent thread 恢复能发生
 - [x] React Agent OS 支持 OpenAI-compatible provider token/tool-call chunk 级流式输出；服务端以 `stream: true` 调用兼容 Chat Completions provider，把脱敏截断后的 `provider_stream_*` 持久 run event 通过既有 thread state SSE 投影到前端实时预览；API 测试覆盖 fake SSE provider 的 chunk 聚合和确认卡生成，web 测试覆盖前端聚合展示
 - [x] 页面手动可修改的业务能力已映射到语义 tool 或 `workspace_patch_config` 覆盖矩阵；账号动作是明确手动项
+- [x] 真实 provider smoke 的 key 只从当前 shell、根目录 `.env` 或 `apps/api/.env` 读取；本地 `.env` 路径已加入 `.gitignore`，避免把 DeepSeek/OpenAI-compatible key 误提交到仓库

@@ -75,7 +75,7 @@ npm.cmd run test:api
 npm.cmd run test
 ```
 
-真实模型 smoke 需要本地提供 `OPENAI_COMPATIBLE_API_KEY` 或 `DEEPSEEK_API_KEY`，不会纳入默认测试命令：
+真实模型 smoke 需要在当前 shell、根目录 `.env` 或 `apps/api/.env` 本地提供 `OPENAI_COMPATIBLE_API_KEY` 或 `DEEPSEEK_API_KEY`；这些 `.env` 文件已被 `.gitignore` 忽略，不会纳入默认测试命令：
 
 ```bash
 npm.cmd run smoke:agent
