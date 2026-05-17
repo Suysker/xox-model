@@ -18,7 +18,7 @@ import {
   type StageCostMode,
   type TeamMember,
 } from '@xox/domain'
-import type { AgentNavigationEvent, AgentPlannerSource, AgentPlanStepStatus } from '@xox/contracts'
+import type { AgentNavigationEvent, AgentPlannerSource } from '@xox/contracts'
 import type { Database, Row } from '../db/schema.js'
 import { parseJson } from '../db/database.js'
 import type { Settings } from '../core/settings.js'
@@ -39,6 +39,15 @@ import { addAgentActionRequest, addAgentPlanStep, type AgentActionDraft } from '
 import { answerWorkspaceDataQuestion } from './data-agent.js'
 import { cloneModelConfig, getConfigPath, setConfigPath } from './config-patch.js'
 import { buildAgentContextPack } from './context-pack.js'
+import {
+  accountForbiddenRead,
+  buildPlannedItemFromRuntimeStep,
+  isActionDraft,
+  type ActionDraftBuilderHandlers,
+  type PlannedItem,
+  type ReadDraft,
+  type RuntimePlannerStep,
+} from './action-draft-builder.js'
 
 export type PlannerContext = {
   db: Kysely<Database>
@@ -52,29 +61,11 @@ export type PlannerContext = {
   providedWorkspaceBundle?: ParsedWorkspaceBundleArtifact
 }
 
-type ReadDraft = {
-  title: string
-  message: string
-  navigation?: AgentNavigationEvent | null
-  status?: AgentPlanStepStatus
-}
-
-type PlannedItem = AgentActionDraft | ReadDraft
-
-type RuntimePlannerStep = RuntimePlanResult['steps'][number]
 const PROVIDER_STREAM_DELTA_LIMIT = 240
 const PROVIDER_STREAM_PREVIEW_LIMIT = 700
 
 function accountActionRequested(message: string) {
   return /(注销|删除账号|退出登录|登录|注册|改密码|密码)/.test(message)
-}
-
-function accountForbiddenRead(): ReadDraft {
-  return {
-    title: '账号动作需要手动完成',
-    message: '账号登录、退出、注销、删除账号和密码类动作不能由 Agent 自动执行，请在账号入口手动操作。',
-    status: 'info',
-  }
 }
 
 function modelToolCallRequiredRead(error?: RuntimePlanError | null): ReadDraft {
@@ -260,10 +251,6 @@ async function currentDraftConfig(ctx: PlannerContext) {
 
 function memberFromMessage(config: ModelConfig, message: string) {
   return config.teamMembers.find((member) => message.includes(member.name)) ?? null
-}
-
-function isActionDraft(item: PlannedItem): item is AgentActionDraft {
-  return Boolean((item as AgentActionDraft).kind)
 }
 
 function splitRequestedSteps(message: string) {
@@ -2174,83 +2161,83 @@ async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePlanResul
   })
 }
 
-async function plannedItemFromRuntimeStep(ctx: PlannerContext, step: RuntimePlannerStep): Promise<PlannedItem | PlannedItem[] | null> {
-  if (step.intent === 'agent.ask_clarification') {
-    const question = typeof step.question === 'string' && step.question.trim()
-      ? step.question.trim()
-      : '我还缺少必要信息，能补充一下吗？'
-    const missingFields = Array.isArray(step.missingFields)
-      ? step.missingFields.filter((field): field is string => typeof field === 'string' && field.trim().length > 0)
-      : []
-    const suggestions = Array.isArray(step.suggestions)
-      ? step.suggestions.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
-      : []
-    const suffix = [
-      missingFields.length > 0 ? `缺少：${missingFields.join('、')}` : null,
-      suggestions.length > 0 ? `可选参考：${suggestions.join('、')}` : null,
-    ].filter(Boolean).join('。')
+const runtimeStepHandlers: ActionDraftBuilderHandlers<PlannerContext> = {
+  'ledger.create_member_income': (ctx, step) => step.monthLabel && step.memberName
+    ? planLedgerCreateFromFields(ctx, {
+        monthLabel: step.monthLabel,
+        memberName: step.memberName,
+        offlineUnits: step.offlineUnits ?? 0,
+        onlineUnits: step.onlineUnits ?? 0,
+      })
+    : null,
+  'ledger.create_entry': planGenericLedgerCreateFromStep,
+  'ledger.create_planned_member_income_batch': planPlannedMemberIncomeBatch,
+  'ledger.create_planned_related_expense_batch': planPlannedRelatedExpenseBatch,
+  'ledger.set_period_lock': async (ctx, step) => {
+    if (!step.monthLabel) return null
+    const period = await periodForMonth(ctx, step.monthLabel)
+    if (!period) return null
+    const locked = Boolean(step.locked)
     return {
-      title: '需要补充信息',
-      message: `${question}${suffix ? `（${suffix}）` : ''}`,
-      status: 'info',
-    } satisfies ReadDraft
-  }
-  if (step.intent === 'account.forbidden') {
-    return accountForbiddenRead()
-  }
-  if (step.intent === 'ledger.create_member_income' && step.monthLabel && step.memberName) {
-    return planLedgerCreateFromFields(ctx, {
-      monthLabel: step.monthLabel,
-      memberName: step.memberName,
-      offlineUnits: step.offlineUnits ?? 0,
-      onlineUnits: step.onlineUnits ?? 0,
-    })
-  }
-  if (step.intent === 'ledger.create_entry') return planGenericLedgerCreateFromStep(ctx, step)
-  if (step.intent === 'ledger.create_planned_member_income_batch') return planPlannedMemberIncomeBatch(ctx, step)
-  if (step.intent === 'ledger.create_planned_related_expense_batch') return planPlannedRelatedExpenseBatch(ctx, step)
-  if (step.intent === 'workspace.update_online_factor' && step.monthLabel && typeof step.onlineSalesFactor === 'number') {
-    return planOnlineFactorFromFields(ctx, {
-      monthLabel: step.monthLabel,
-      factor: step.onlineSalesFactor,
-      mode: step.mode === 'forecast' || readOnlyForecastRequested(ctx.message) ? 'forecast' : 'write',
-    })
-  }
-  if (step.intent === 'team_member.add') return planAddTeamMemberFromStep(ctx, step)
-  if (step.intent === 'team_member.delete') return planDeleteTeamMemberFromStep(ctx, step)
-  if (step.intent === 'employee.add') return planAddEmployeeFromStep(ctx, step)
-  if (step.intent === 'employee.delete') return planDeleteEmployeeFromStep(ctx, step)
-  if (step.intent === 'shareholder.add') return planAddShareholderFromStep(ctx, step)
-  if (step.intent === 'shareholder.delete') return planDeleteShareholderFromStep(ctx, step)
-  if (step.intent === 'cost_item.add') return planAddCostItemFromStep(ctx, step)
-  if (step.intent === 'cost_item.delete') return planDeleteCostItemFromStep(ctx, step)
-  if (step.intent === 'stage_cost_type.add') return planAddStageCostTypeFromStep(ctx, step)
-  if (step.intent === 'stage_cost_type.delete') return planDeleteStageCostTypeFromStep(ctx, step)
-  if (step.intent === 'workspace.patch_config' && readOnlyForecastRequested(ctx.message)) return null
-  if (step.intent === 'workspace.patch_config' && step.patches) return planWorkspacePatch(ctx, step.patches)
-  if (step.intent === 'workspace.rename') return planWorkspaceRename(ctx, step.workspaceName)
-  if (step.intent === 'workspace.save_snapshot') return planSnapshot(ctx)
-  if (step.intent === 'workspace.publish_release') {
-    return {
-      kind: 'workspace.publish_release',
-      title: step.createShare ? '确认发布并创建分享链接' : '确认发布正式版本',
-      summary: step.createShare ? '发布当前草稿为不可变正式版本，并为该版本创建只读分享链接。' : '发布当前草稿为不可变正式版本。',
-      targetLabel: ctx.workspace.name,
+      kind: locked ? 'ledger.lock_period' : 'ledger.unlock_period',
+      title: locked ? '确认锁定账期' : '确认解锁账期',
+      summary: locked ? `锁定 ${step.monthLabel} 后将禁止新增、修改和作废分录。` : `解锁 ${step.monthLabel} 后可以继续修改已过账记录。`,
+      targetLabel: step.monthLabel,
       riskLevel: 'high',
-      details: [
-        { label: '工作区', value: ctx.workspace.name },
-        { label: '分享链接', value: step.createShare ? '发布后创建' : '不创建' },
-      ],
+      details: [{ label: '账期', value: step.monthLabel }],
       navigation: {
         type: 'navigation',
-        route: { mainTab: 'dashboard', secondaryTab: 'overview' },
-        panel: 'workspace',
-        reason: '发布版本属于版本管理动作，需要打开版本管理面板。',
+        route: { mainTab: 'bookkeeping', secondaryTab: 'entries', selectedPeriodId: period.id },
+        reason: '锁账动作需要打开本期账本并选中目标账期。',
       },
-      payload: { kind: 'release', createShare: Boolean(step.createShare) },
+      payload: { periodId: period.id },
     } satisfies AgentActionDraft
-  }
-  if (step.intent === 'workspace.rollback_version') {
+  },
+  'ledger.update_entry': planLedgerUpdateFromStep,
+  'ledger.restore_entry': planLedgerRestoreFromStep,
+  'ledger.void_entry': planLedgerVoidFromStep,
+  'workspace.update_online_factor': (ctx, step) => step.monthLabel && typeof step.onlineSalesFactor === 'number'
+    ? planOnlineFactorFromFields(ctx, {
+        monthLabel: step.monthLabel,
+        factor: step.onlineSalesFactor,
+        mode: step.mode === 'forecast' || readOnlyForecastRequested(ctx.message) ? 'forecast' : 'write',
+      })
+    : null,
+  'team_member.add': planAddTeamMemberFromStep,
+  'team_member.delete': planDeleteTeamMemberFromStep,
+  'employee.add': planAddEmployeeFromStep,
+  'employee.delete': planDeleteEmployeeFromStep,
+  'shareholder.add': planAddShareholderFromStep,
+  'shareholder.delete': planDeleteShareholderFromStep,
+  'cost_item.add': planAddCostItemFromStep,
+  'cost_item.delete': planDeleteCostItemFromStep,
+  'stage_cost_type.add': planAddStageCostTypeFromStep,
+  'stage_cost_type.delete': planDeleteStageCostTypeFromStep,
+  'workspace.patch_config': (ctx, step) => {
+    if (readOnlyForecastRequested(ctx.message)) return null
+    return step.patches ? planWorkspacePatch(ctx, step.patches) : null
+  },
+  'workspace.rename': (ctx, step) => planWorkspaceRename(ctx, step.workspaceName),
+  'workspace.save_snapshot': planSnapshot,
+  'workspace.publish_release': (ctx, step) => ({
+    kind: 'workspace.publish_release',
+    title: step.createShare ? '确认发布并创建分享链接' : '确认发布正式版本',
+    summary: step.createShare ? '发布当前草稿为不可变正式版本，并为该版本创建只读分享链接。' : '发布当前草稿为不可变正式版本。',
+    targetLabel: ctx.workspace.name,
+    riskLevel: 'high',
+    details: [
+      { label: '工作区', value: ctx.workspace.name },
+      { label: '分享链接', value: step.createShare ? '发布后创建' : '不创建' },
+    ],
+    navigation: {
+      type: 'navigation',
+      route: { mainTab: 'dashboard', secondaryTab: 'overview' },
+      panel: 'workspace',
+      reason: '发布版本属于版本管理动作，需要打开版本管理面板。',
+    },
+    payload: { kind: 'release', createShare: Boolean(step.createShare) },
+  } satisfies AgentActionDraft),
+  'workspace.rollback_version': async (ctx, step) => {
     const version = await versionFromMessage(ctx, ctx.message, step.versionNo, step.versionName)
     if (!version) return null
     return {
@@ -2271,76 +2258,31 @@ async function plannedItemFromRuntimeStep(ctx: PlannerContext, step: RuntimePlan
       },
       payload: { versionId: version.id },
     } satisfies AgentActionDraft
-  }
-  if (step.intent === 'workspace.promote_version') {
-    return planPromoteVersion(ctx, {
-      ...(step.versionNo !== undefined ? { versionNo: step.versionNo } : {}),
-      ...(step.versionName !== undefined ? { versionName: step.versionName } : {}),
-    })
-  }
-  if (step.intent === 'workspace.delete_version') return planDeleteVersion(ctx)
-  if (step.intent === 'workspace.reset_draft') return planResetDraft(ctx)
-  if (step.intent === 'workspace.export_bundle') {
-    return planExportBundleRead(ctx)
-  }
-  if (step.intent === 'workspace.import_bundle') {
+  },
+  'workspace.promote_version': (ctx, step) => planPromoteVersion(ctx, {
+    ...(step.versionNo !== undefined ? { versionNo: step.versionNo } : {}),
+    ...(step.versionName !== undefined ? { versionName: step.versionName } : {}),
+  }),
+  'workspace.delete_version': planDeleteVersion,
+  'workspace.reset_draft': planResetDraft,
+  'workspace.export_bundle': planExportBundleRead,
+  'workspace.import_bundle': (ctx, step) => {
     const rawBundle = step.bundle && typeof step.bundle === 'object'
       ? step.bundle
-      : step.useProvidedBundle
-        ? ctx.providedWorkspaceBundle?.bundle
-        : ctx.providedWorkspaceBundle?.bundle
+      : ctx.providedWorkspaceBundle?.bundle
     return planImportBundleFromValue(ctx, rawBundle)
-  }
-  if (step.intent === 'share.create') {
-    return planShare(ctx, {
-      ...(step.versionNo !== undefined ? { versionNo: step.versionNo } : {}),
-      ...(step.versionName !== undefined ? { versionName: step.versionName } : {}),
-      revoke: false,
-    })
-  }
-  if (step.intent === 'share.revoke') {
-    return planShare(ctx, {
-      ...(step.versionNo !== undefined ? { versionNo: step.versionNo } : {}),
-      ...(step.versionName !== undefined ? { versionName: step.versionName } : {}),
-      revoke: true,
-    })
-  }
-  if (step.intent === 'ledger.set_period_lock' && step.monthLabel) {
-    const period = await periodForMonth(ctx, step.monthLabel)
-    if (!period) return null
-    const locked = Boolean(step.locked)
-    return {
-      kind: locked ? 'ledger.lock_period' : 'ledger.unlock_period',
-      title: locked ? '确认锁定账期' : '确认解锁账期',
-      summary: locked ? `锁定 ${step.monthLabel} 后将禁止新增、修改和作废分录。` : `解锁 ${step.monthLabel} 后可以继续修改已过账记录。`,
-      targetLabel: step.monthLabel,
-      riskLevel: 'high',
-      details: [{ label: '账期', value: step.monthLabel }],
-      navigation: {
-        type: 'navigation',
-        route: { mainTab: 'bookkeeping', secondaryTab: 'entries', selectedPeriodId: period.id },
-        reason: '锁账动作需要打开本期账本并选中目标账期。',
-      },
-      payload: { periodId: period.id },
-    } satisfies AgentActionDraft
-  }
-  if (step.intent === 'ledger.update_entry') return planLedgerUpdateFromStep(ctx, step)
-  if (step.intent === 'ledger.restore_entry') return planLedgerRestoreFromStep(ctx, step)
-  if (step.intent === 'ledger.void_entry') return planLedgerVoidFromStep(ctx, step)
-  if (step.intent === 'data.query_workspace') return answerWorkspaceDataQuestion(ctx, step)
-  if (step.intent === 'ui.navigate' && step.mainTab) {
-    return {
-      title: '打开页面',
-      message: '已打开相关页面。',
-      navigation: {
-        type: 'navigation',
-        route: { mainTab: step.mainTab, secondaryTab: step.secondaryTab as never },
-        reason: '用户要求切换工作台页面。',
-      },
-      status: 'executed',
-    } satisfies ReadDraft
-  }
-  return null
+  },
+  'share.create': (ctx, step) => planShare(ctx, {
+    ...(step.versionNo !== undefined ? { versionNo: step.versionNo } : {}),
+    ...(step.versionName !== undefined ? { versionName: step.versionName } : {}),
+    revoke: false,
+  }),
+  'share.revoke': (ctx, step) => planShare(ctx, {
+    ...(step.versionNo !== undefined ? { versionNo: step.versionNo } : {}),
+    ...(step.versionName !== undefined ? { versionName: step.versionName } : {}),
+    revoke: true,
+  }),
+  'data.query_workspace': answerWorkspaceDataQuestion,
 }
 
 async function localPlannedItems(ctx: PlannerContext): Promise<PlannedItem[]> {
@@ -2405,7 +2347,7 @@ async function modelPlannedItems(ctx: PlannerContext): Promise<{ source: AgentPl
         : 'openai_compatible_tool_calls'
     const partItems: PlannedItem[] = []
     for (const step of result.steps) {
-      const item = await plannedItemFromRuntimeStep(planningCtx, step)
+      const item = await buildPlannedItemFromRuntimeStep(planningCtx, step, runtimeStepHandlers)
       if (Array.isArray(item)) {
         partItems.push(...item)
       } else if (item) {
