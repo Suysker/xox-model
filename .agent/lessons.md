@@ -104,6 +104,7 @@
 - Add architecture guard tests for Agent harness boundaries after refactors. Runtime adapters, routes, kernel, approval executor, and tool executor should have import-level tests so future edits cannot quietly reintroduce DB access, provider coupling, or old route modules.
 - Long-term memory writes should be model-selected tool calls, not submission-time text capture. Use a `memory_remember` provider-native tool for explicit “remember/default” requests, then let the server enforce tenant scope, redaction, and secret rejection.
 - OpenAI Agents SDK adapter events should still flow through provider-neutral runtime trace services. Keep SDK tool execute callbacks as planning-only collectors, pass abort signals into `Runner.run`, close the SDK provider in `finally`, and persist only redacted lifecycle/tool-call summaries.
+- Frontend Agent navigation replay keys need the server run identity and event position, not only navigation JSON. The same route can be valid in multiple user runs, while the same run can arrive through immediate response, SSE, and polling.
 
 ## Testing
 

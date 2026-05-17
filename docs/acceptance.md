@@ -157,7 +157,7 @@
 - [x] 多步骤消息中如果同时包含合法业务动作和账号禁用动作，合法业务动作仍会生成确认卡，账号动作只作为该步骤的只读拒绝项展示
 - [x] Memory list/delete/context injection 有测试证明不会跨用户或跨工作区，并且不会保存 secrets；memory 写入由模型显式调用 `memory_remember`，message submission 不再用正则捕获“记住”意图；当前 secret-like 消息会在 provider prompt 中 redaction，后续新线程不再注入
 - [x] Context compaction 有测试证明 summary 只来自同一 thread / user / workspace，并且 summary 不包含 API key/token 原文
-- [x] React Agent OS 展示 action graph、导航事件、确认卡状态、确认卡编辑、取消、失败和执行后刷新；当前为后端状态刷新式 timeline
+- [x] React Agent OS 展示 action graph、导航事件、确认卡状态、确认卡编辑、取消、失败和执行后刷新；当前为后端状态刷新式 timeline，web 测试覆盖同一 run 的导航事件不会因 SSE 重放重复执行，后续 run 打开同一页面也不会被旧 replay 状态误吞
 - [x] Agent 历史对话和当前线程恢复已由 `/api/v1/agent/threads` 与 `/api/v1/agent/threads/{threadId}` 提供；API 测试覆盖 messages、runs、planSteps、actionRequests、navigationEvents、跨用户隔离和确认后状态恢复，React hook 会用本地 threadId 指针恢复服务端状态
 - [x] Agent thread store 已从 `apps/api/src/modules/agent.ts` 拆到 `apps/api/src/agent/thread-store.ts`，集中处理 thread ownership、message 写入、ThreadState 恢复和 DTO 序列化，避免 routes 自己拼恢复状态
 - [x] Agent message run submission 已从 `apps/api/src/modules/agent.ts` 拆到 `apps/api/src/agent/run-submission.ts`，集中处理 run 创建、user message 持久化、queued event、background enqueue 和同步 completion 返回；route module 不再直接拼 run/action graph 响应，也不在提交阶段做本地语义捕获

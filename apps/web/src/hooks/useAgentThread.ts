@@ -38,6 +38,23 @@ function writeCurrentThreadId(threadId: string | null) {
   }
 }
 
+export function takeUnreplayedNavigationEvents(input: {
+  threadId: string
+  runId: string | null
+  navigationEvents: AgentNavigationEvent[]
+  replayedKeys: Set<string>
+}) {
+  const runKey = input.runId ?? 'no-run'
+  const nextEvents: AgentNavigationEvent[] = []
+  input.navigationEvents.forEach((navigation, index) => {
+    const key = `${input.threadId}:${runKey}:${index}:${JSON.stringify(navigation)}`
+    if (input.replayedKeys.has(key)) return
+    input.replayedKeys.add(key)
+    nextEvents.push(navigation)
+  })
+  return nextEvents
+}
+
 export function useAgentThread(props: {
   onNavigate: (event: AgentNavigationEvent) => void
   onActionExecuted: (action: AgentActionRequest) => Promise<void> | void
@@ -70,12 +87,12 @@ export function useAgentThread(props: {
     setRunningRunId(latestRun?.status === 'running' ? latestRun.id : null)
     writeCurrentThreadId(state.thread.id)
     if (replayNavigation) {
-      for (const navigation of state.navigationEvents) {
-        const key = `${state.thread.id}:${JSON.stringify(navigation)}`
-        if (replayedNavigationKeys.current.has(key)) continue
-        replayedNavigationKeys.current.add(key)
-        props.onNavigate(navigation)
-      }
+      takeUnreplayedNavigationEvents({
+        threadId: state.thread.id,
+        runId: latestRun?.id ?? null,
+        navigationEvents: state.navigationEvents,
+        replayedKeys: replayedNavigationKeys.current,
+      }).forEach(props.onNavigate)
     }
   }
 
@@ -243,7 +260,12 @@ export function useAgentThread(props: {
       setRunEvents(response.runEvents)
       setNavigationEvents(response.navigationEvents)
       setRunningRunId(response.status === 'running' ? response.runId : null)
-      response.navigationEvents.forEach(props.onNavigate)
+      takeUnreplayedNavigationEvents({
+        threadId: response.threadId,
+        runId: response.runId,
+        navigationEvents: response.navigationEvents,
+        replayedKeys: replayedNavigationKeys.current,
+      }).forEach(props.onNavigate)
       void refreshMemories()
       void refreshThreads()
     } catch (sendError) {
