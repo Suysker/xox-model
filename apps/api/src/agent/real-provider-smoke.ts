@@ -159,7 +159,17 @@ function assertPlanner(response: JsonResponse, label: string, planners: Set<stri
 
 function findAction(response: JsonResponse, kind: string, label: string) {
   const action = response.json.actionRequests.find((item: any) => item.kind === kind)
-  assertSmoke(action, `${label} missing ${kind} action: ${JSON.stringify(response.json.actionRequests)}`)
+  assertSmoke(action, `${label} missing ${kind} action: ${JSON.stringify({
+    actionRequests: response.json.actionRequests,
+    lastMessage: response.json.messages?.at(-1)?.content,
+    planSteps: response.json.planSteps,
+    navigationEvents: response.json.navigationEvents,
+    runEvents: response.json.runEvents?.map((event: any) => ({
+      type: event.type,
+      status: event.status,
+      data: event.data,
+    })),
+  })}`)
   return action
 }
 
@@ -295,7 +305,17 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     assertSmoke(Array.isArray(forecast.json.actionRequests) && forecast.json.actionRequests.length === 0, 'read-only forecast created a write confirmation')
     assertSmoke(
       Array.isArray(forecast.json.navigationEvents) && forecast.json.navigationEvents.some((event: any) => event.route?.mainTab === 'inputs'),
-      'forecast did not navigate to model page',
+      `forecast did not navigate to model page: ${JSON.stringify({
+        actionRequests: forecast.json.actionRequests,
+        lastMessage: forecast.json.messages?.at(-1)?.content,
+        planSteps: forecast.json.planSteps,
+        navigationEvents: forecast.json.navigationEvents,
+        runEvents: forecast.json.runEvents?.map((event: any) => ({
+          type: event.type,
+          status: event.status,
+          data: event.data,
+        })),
+      })}`,
     )
     rememberCoverage(coveredDirections, 'read_only_forecast')
 

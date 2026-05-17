@@ -1,6 +1,20 @@
+export type AgentToolCapability =
+  | 'account'
+  | 'clarification'
+  | 'data'
+  | 'draft'
+  | 'import_export'
+  | 'ledger'
+  | 'navigation'
+  | 'share'
+  | 'version'
+
 export type AgentToolCallStep = {
   intent?: string
+  capabilities?: AgentToolCapability[]
+  reason?: string
   monthLabel?: string
+  name?: string
   memberId?: string
   memberName?: string
   newMemberName?: string
@@ -19,9 +33,12 @@ export type AgentToolCallStep = {
   costItemName?: string
   newCostItemName?: string
   amount?: number
+  costTypeName?: string
+  newCostTypeName?: string
   stageCostItemId?: string
   stageCostItemName?: string
   newStageCostItemName?: string
+  newStageCostTypeName?: string
   costMode?: 'monthly' | 'perEvent' | 'perUnit'
   count?: number
   employmentType?: 'salary' | 'partTime'
@@ -40,6 +57,7 @@ export type AgentToolCallStep = {
   entryId?: string
   entryStatus?: 'posted' | 'voided'
   occurredAt?: string
+  date?: string
   occurredOn?: string
   counterparty?: string
   description?: string
@@ -57,6 +75,9 @@ export type AgentToolCallStep = {
   newOccurredAt?: string
   newRelatedEntityName?: string
   onlineSalesFactor?: number
+  newFactor?: number
+  factor?: number
+  onlineFactor?: number
   mode?: 'forecast' | 'write'
   workspaceName?: string
   versionNo?: number
@@ -96,17 +117,6 @@ export type ChatTool = {
   }
 }
 
-export type AgentToolCapability =
-  | 'account'
-  | 'clarification'
-  | 'data'
-  | 'draft'
-  | 'import_export'
-  | 'ledger'
-  | 'navigation'
-  | 'share'
-  | 'version'
-
 export type AgentToolRiskLevel = 'read' | 'low' | 'medium' | 'high'
 
 export type AgentToolConfirmationMode = 'never' | 'always' | 'conditional'
@@ -143,7 +153,7 @@ const versionName: JsonSchema = {
 const ledgerDirection: JsonSchema = {
   type: 'string',
   enum: ['income', 'expense'],
-  description: '账本方向：income=收入，expense=支出。',
+  description: '账本方向：income=收入，expense=支出。不要填写 revenue/cost；若模型误填 revenue 服务端会按 income 归一，误填 cost 会按 expense 归一。',
 }
 
 const ledgerSubjectKey: JsonSchema = {
@@ -198,6 +208,7 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
         subjectName: ledgerSubjectName,
         amount: { type: 'number', description: '入账金额。' },
         occurredAt: { type: 'string', description: '业务发生时间 ISO 字符串；只有用户明确日期时填写。' },
+        date: { type: 'string', description: '业务发生日期别名，YYYY-MM-DD；优先使用 occurredAt，若只知道日期可填写本字段。' },
         counterparty: { type: 'string', description: '对方单位或收付款方。' },
         description: { type: 'string', description: '分录备注。' },
         relatedEntityType: { type: 'string', enum: ['teamMember', 'employee'], description: '归属对象类型。成员/员工支出或成员收入需要填写。' },
@@ -308,12 +319,15 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
     type: 'function',
     function: {
       name: 'workspace_update_online_factor',
-      description: '规划修改或只读试算某个月线上系数。',
+      description: '规划修改或只读试算某个月线上系数。用户说“如果 4 月线上系数变成 0.3，利润会怎样 / 试算线上系数”时必须调用本工具并设置 mode=forecast；用户说“改成/保存/应用”时设置 mode=write。',
       parameters: objectSchema({
         monthLabel,
         onlineSalesFactor: { type: 'number', description: '新的线上销售系数。' },
+        newFactor: { type: 'number', description: '新的线上销售系数别名；模型误用 newFactor 时填写。' },
+        factor: { type: 'number', description: '新的线上销售系数别名。' },
+        onlineFactor: { type: 'number', description: '新的线上销售系数别名。' },
         mode: { type: 'string', enum: ['forecast', 'write'], description: 'forecast 表示只读试算，write 表示保存草稿。' },
-      }, ['monthLabel', 'onlineSalesFactor', 'mode']),
+      }, ['monthLabel', 'mode']),
     },
   },
   {
@@ -323,7 +337,9 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
       description:
         '规划在当前模型草稿里新增一个团队成员。用户说“新增成员 / 添加成员 / 加一个成员 / 新建成员”时必须调用本工具；本工具只生成确认卡，不直接保存。若用户没有提供姓名，可以省略 newMemberName，服务端会按当前人数生成类似“成员 8”的默认名称。',
       parameters: objectSchema({
-        newMemberName: { type: 'string', description: '新增成员名称；用户未指定时可省略，由服务端生成默认名称。' },
+        newMemberName: { type: 'string', description: '新增成员名称；用户说“名字叫 成员 G / 叫做 成员 G”时必须填写。用户未指定时可省略，由服务端生成默认名称。' },
+        memberName: { type: 'string', description: '新增成员名称别名；如果模型倾向使用 memberName，也必须填写用户给出的新成员名字。' },
+        name: { type: 'string', description: '新增成员名称通用别名；用户给了名字但不确定字段时填写。' },
         employmentType: { type: 'string', enum: ['salary', 'partTime'], description: '合作类型：salary=底薪制，partTime=兼职/分成制。' },
         monthlyBasePay: { type: 'number', description: '月固定底薪，未提及时省略。' },
         perEventTravelCost: { type: 'number', description: '每场路费，未提及时省略。' },
@@ -343,6 +359,8 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
         '规划从当前模型草稿里删除一个团队成员。用户说“删除成员 / 移除成员 / 删掉成员”时必须调用本工具；必须提供明确 memberName 或 memberId。若用户没有指定删除谁，调用 ask_user_clarification，不要猜测。',
       parameters: objectSchema({
         memberName: { type: 'string', description: '要删除的成员名称，例如 成员 A。' },
+        newMemberName: { type: 'string', description: '要删除的成员名称别名；模型误用新增字段时也填写目标成员名。' },
+        name: { type: 'string', description: '要删除的成员名称通用别名。' },
         memberId: { type: 'string', description: '要删除的成员 id；如果已经知道 id，可用 id 精确定位。' },
       }),
     },
@@ -354,7 +372,9 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
       description:
         '规划在当前模型草稿里新增一个运营员工。用户说“新增员工 / 添加员工 / 加一个员工 / 新建员工”时必须调用本工具；本工具只生成确认卡，不直接保存。',
       parameters: objectSchema({
-        newEmployeeName: { type: 'string', description: '新增员工名称；用户未指定时可省略，由服务端生成默认名称。' },
+        newEmployeeName: { type: 'string', description: '新增员工名称；用户说“名字叫 场务 C / 叫做 场务 C”时必须填写。用户未指定时可省略，由服务端生成默认名称。' },
+        employeeName: { type: 'string', description: '新增员工名称别名；如果模型倾向使用 employeeName，也必须填写用户给出的新员工名字。' },
+        name: { type: 'string', description: '新增员工名称通用别名；用户给了名字但不确定字段时填写。' },
         role: { type: 'string', description: '岗位，例如 场务、助理、执行。' },
         monthlyBasePay: { type: 'number', description: '月固定薪酬，未提及时省略。' },
         perEventCost: { type: 'number', description: '每场补贴或场次成本，未提及时省略。' },
@@ -369,6 +389,8 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
         '规划从当前模型草稿里删除一个运营员工。用户说“删除员工 / 移除员工 / 删掉员工”时必须调用本工具；必须提供 employeeName 或 employeeId。若用户没有指定删除谁，调用 ask_user_clarification，不要猜测。',
       parameters: objectSchema({
         employeeName: { type: 'string', description: '要删除的员工名称，例如 员工 1、场务 A。' },
+        newEmployeeName: { type: 'string', description: '要删除的员工名称别名；模型误用新增字段时也填写目标员工名。' },
+        name: { type: 'string', description: '要删除的员工名称通用别名。' },
         employeeId: { type: 'string', description: '要删除的员工 id；如果已经知道 id，可用 id 精确定位。' },
       }),
     },
@@ -378,9 +400,11 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
     function: {
       name: 'shareholder_add',
       description:
-        '规划在当前模型草稿里新增一个股东。用户说“新增股东 / 添加股东 / 加一个股东 / 新建股东”时必须调用本工具；本工具只生成确认卡，不直接保存。',
+        '规划在当前模型草稿里新增一个股东。用户说“新增股东 / 添加股东 / 加一个股东 / 新建股东”时必须调用本工具；例如“新增一个股东，名字叫 股东 C，投资额 10000，分红比例 0.1”必须调用 shareholder_add，并填写 newShareholderName=股东 C、investmentAmount=10000、dividendRate=0.1。本工具只生成确认卡，不直接保存。',
       parameters: objectSchema({
-        newShareholderName: { type: 'string', description: '新增股东名称；用户未指定时可省略，由服务端生成默认名称。' },
+        newShareholderName: { type: 'string', description: '新增股东名称；用户说“名字叫 股东 C / 叫做 股东 C”时必须填写。用户未指定时可省略，由服务端生成默认名称。' },
+        shareholderName: { type: 'string', description: '新增股东名称别名；如果模型倾向使用 shareholderName，也必须填写用户给出的新股东名字。' },
+        name: { type: 'string', description: '新增股东名称通用别名；用户给了名字但不确定字段时填写。' },
         investmentAmount: { type: 'number', description: '投资额，未提及时省略。' },
         dividendRate: { type: 'number', description: '分红比例，使用小数，例如 30% 填 0.3。' },
       }),
@@ -394,6 +418,8 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
         '规划从当前模型草稿里删除一个股东。用户说“删除股东 / 移除股东 / 删掉股东”时必须调用本工具；必须提供明确 shareholderName 或 shareholderId。若用户没有指定删除谁，调用 ask_user_clarification，不要猜测。',
       parameters: objectSchema({
         shareholderName: { type: 'string', description: '要删除的股东名称，例如 股东 A。' },
+        newShareholderName: { type: 'string', description: '要删除的股东名称别名；模型误用新增字段时也填写目标股东名。' },
+        name: { type: 'string', description: '要删除的股东名称通用别名。' },
         shareholderId: { type: 'string', description: '要删除的股东 id；如果已经知道 id，可用 id 精确定位。' },
       }),
     },
@@ -410,7 +436,9 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
           enum: ['monthlyFixed', 'perEvent', 'perUnit'],
           description: '成本项归属：monthlyFixed=每月固定，perEvent=每场，perUnit=每张。用户说“每月/固定/月租”时用 monthlyFixed，说“每场/按场”时用 perEvent，说“每张/按张/单张”时用 perUnit。',
         },
-        newCostItemName: { type: 'string', description: '新增成本项名称。' },
+        newCostItemName: { type: 'string', description: '新增成本项名称；用户说“名字叫 房租 / 叫做 房租”时必须填写。' },
+        costItemName: { type: 'string', description: '新增成本项名称别名；用户给了名字但不确定字段时填写。' },
+        name: { type: 'string', description: '新增成本项名称通用别名；用户给了名字但不确定字段时填写。' },
         amount: { type: 'number', description: '成本金额，未提及时省略，服务端默认 0。' },
       }, ['costCategory']),
     },
@@ -420,7 +448,7 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
     function: {
       name: 'cost_item_delete',
       description:
-        '规划删除基础成本项，用于“每月固定成本 / 每场成本 / 每张成本”列表。必须提供 costItemName 或 costItemId；如果名称可能跨分类重复，优先提供 costCategory。',
+        '规划删除基础成本项，用于“每月固定成本 / 每场成本 / 每张成本”列表。用户说“删除每月固定成本房租”时必须调用本工具，costCategory=monthlyFixed，costItemName=房租；说“删除每场成本摄影/每张成本耗材”时同理。必须提供 costItemName 或 costItemId；如果名称可能跨分类重复，优先提供 costCategory。',
       parameters: objectSchema({
         costCategory: {
           type: 'string',
@@ -428,6 +456,8 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
           description: '成本项归属；如果用户明确说了每月固定/每场/每张，必须传该分类。',
         },
         costItemName: { type: 'string', description: '要删除的成本项名称。' },
+        newCostItemName: { type: 'string', description: '要删除的成本项名称别名；模型误用新增字段时也填写目标成本项名。' },
+        name: { type: 'string', description: '要删除的成本项名称通用别名。' },
         costItemId: { type: 'string', description: '要删除的成本项 id。' },
       }),
     },
@@ -439,7 +469,12 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
       description:
         '规划新增专项成本类型，也就是月度成本表里可按“每月 / 每场 / 每张”录入的成本类型。用户说“新增成本类型 / 新增专项成本 / 添加一个可按场记录的成本类型”时调用本工具；本工具只生成确认卡，不直接保存。',
       parameters: objectSchema({
-        newStageCostItemName: { type: 'string', description: '新增专项成本类型名称。' },
+        newStageCostItemName: { type: 'string', description: '新增专项成本类型名称；用户说“名字叫 摄影 / 叫做 摄影”时必须填写。' },
+        newStageCostTypeName: { type: 'string', description: '新增专项成本类型名称别名；用户给了名字但不确定字段时填写。' },
+        stageCostItemName: { type: 'string', description: '新增专项成本类型名称别名；用户给了名字但不确定字段时填写。' },
+        costTypeName: { type: 'string', description: '新增成本类型名称别名；用户给了名字但不确定字段时填写。' },
+        newCostTypeName: { type: 'string', description: '新增成本类型名称别名；用户给了名字但不确定字段时填写。' },
+        name: { type: 'string', description: '新增专项成本类型名称通用别名；用户给了名字但不确定字段时填写。' },
         costMode: { type: 'string', enum: ['monthly', 'perEvent', 'perUnit'], description: '计费方式：monthly=每月，perEvent=每场，perUnit=每张。用户未指定时可省略，服务端默认 perEvent。' },
         amount: { type: 'number', description: '可选默认金额；提供时服务端会写入模板和现有月份对应成本值。' },
         count: { type: 'number', description: '可选默认数量或系数；仅用户明确说明时填写。' },
@@ -454,6 +489,11 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
         '规划删除专项成本类型，也就是月度成本表里的一个成本类型。用户说“删除成本类型 / 删除专项成本 / 移除某个按场成本类型”时调用本工具；必须提供 stageCostItemName 或 stageCostItemId。',
       parameters: objectSchema({
         stageCostItemName: { type: 'string', description: '要删除的专项成本类型名称。' },
+        newStageCostItemName: { type: 'string', description: '要删除的专项成本类型名称别名；模型误用新增字段时也填写目标成本类型名。' },
+        newStageCostTypeName: { type: 'string', description: '要删除的专项成本类型名称别名。' },
+        costTypeName: { type: 'string', description: '要删除的成本类型名称别名。' },
+        newCostTypeName: { type: 'string', description: '要删除的成本类型名称别名。' },
+        name: { type: 'string', description: '要删除的专项成本类型名称通用别名。' },
         stageCostItemId: { type: 'string', description: '要删除的专项成本类型 id。' },
       }),
     },
@@ -479,7 +519,7 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
     type: 'function',
     function: {
       name: 'workspace_rename',
-      description: '规划修改当前工作区名称。用户说“把工作区改名为 / 重命名工作区”时调用本工具；只生成确认卡。',
+      description: '规划修改当前工作区名称。用户说“把当前工作区改名为 Agent Smoke 工作区 / 重命名工作区为 X”时必须调用本工具，并填写 workspaceName=X；只生成确认卡，不直接改名。',
       parameters: objectSchema({
         workspaceName: { type: 'string', description: '新的工作区名称。' },
       }, ['workspaceName']),
@@ -585,15 +625,15 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
     type: 'function',
     function: {
       name: 'data_query_workspace',
-      description: '回答当前工作区的只读数据问题，例如团队成员数量/成员名单、某月计划/实际收入成本利润、成员贡献、回本、最佳月份。只读，不生成确认卡，不修改业务数据。',
+      description: '回答当前工作区的只读数据问题，例如团队成员数量/成员名单、某月计划/实际收入成本利润、成员贡献、回本、最佳月份。用户问“3月计划收入和计划成本是多少/某月实际收入成本利润”时必须用 scope=period_summary 并填写 monthLabel，不要用 workspace_summary。只读，不生成确认卡，不修改业务数据。',
       parameters: objectSchema({
         question: { type: 'string', description: '用户原始问题的简短复述。' },
         scope: {
           type: 'string',
           enum: ['workspace_summary', 'period_summary', 'member_summary', 'team_summary', 'top_months', 'variance_detail', 'ledger_history'],
-          description: '查询范围：整体工作区、单月汇总、指定成员汇总、团队成员数量/名单、月份排行、预实科目差异、账本历史筛选。用户问“几个成员/有哪些成员/团队构成”时用 team_summary。',
+          description: '查询范围：整体工作区、单月汇总、指定成员汇总、团队成员数量/名单、月份排行、预实科目差异、账本历史筛选。用户问“几个成员/有哪些成员/团队构成”时用 team_summary；用户问“3月/4月/某月计划收入、计划成本、计划利润、实际收入、实际成本、实际利润”时必须用 period_summary。',
         },
-        monthLabel: { ...monthLabel, description: '可选目标月份，例如 3月；scope=period_summary 时优先提供。' },
+        monthLabel: { ...monthLabel, description: '目标月份，例如 3月；scope=period_summary、variance_detail、ledger_history 涉及月份时必须填写。' },
         memberName: { type: 'string', description: '可选成员名称；scope=member_summary 时优先提供。' },
         metrics: {
           type: 'array',
@@ -601,7 +641,7 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
             type: 'string',
             enum: ['plannedRevenue', 'plannedCost', 'actualRevenue', 'actualCost', 'plannedProfit', 'actualProfit', 'cash', 'roi', 'payback', 'memberRevenue', 'memberCommission', 'memberContribution', 'teamMemberCount', 'teamMemberNames'],
           },
-          description: '需要回答的指标；不确定时传空数组或省略，由服务端返回该范围的核心指标。',
+          description: '需要回答的指标；例如“3月计划收入和计划成本”传 ["plannedRevenue","plannedCost"]。不确定时传空数组或省略，由服务端返回该范围的核心指标。',
         },
         order: { type: 'string', enum: ['asc', 'desc'], description: '排行方向，仅 scope=top_months 使用。' },
         limit: { type: 'number', description: '返回排行数量，仅 scope=top_months 使用。' },
@@ -870,6 +910,8 @@ export const AGENT_TOOL_REGISTRY: AgentToolRegistryEntry[] = AGENT_TOOL_CATALOG.
 
 export function toolCallToPlannerStep(toolName: string, args: Record<string, unknown>): AgentToolCallStep | null {
   switch (toolName) {
+    case 'tool_catalog_select_capabilities':
+      return { intent: 'tool_catalog.select_capabilities', ...args }
     case 'ledger_create_member_income':
       return { intent: 'ledger.create_member_income', ...args }
     case 'ledger_create_entry':

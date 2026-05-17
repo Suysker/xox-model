@@ -20,6 +20,15 @@ type JsonResponse = {
   json: any
 }
 
+type FakeCapability = 'data' | 'draft' | 'import_export' | 'ledger' | 'navigation' | 'share' | 'version'
+
+type FakeProviderOptions = {
+  autoSelectCapabilities?: boolean
+  capabilities?: FakeCapability[]
+}
+
+const DEFAULT_FAKE_CAPABILITIES: FakeCapability[] = ['data', 'draft', 'import_export', 'ledger', 'navigation', 'share', 'version']
+
 function testSettings(databasePath: string): Settings {
   return {
     databaseUrl: `sqlite:///${databasePath.replaceAll('\\', '/')}`,
@@ -50,6 +59,21 @@ function fakeProviderSettings(baseUrl: string): Partial<Settings> {
   }
 }
 
+function isCapabilityRouterRequest(body: any) {
+  const toolNames = Array.isArray(body?.tools)
+    ? body.tools.map((tool: any) => tool?.function?.name ?? tool?.name)
+    : []
+  return toolNames.includes('tool_catalog_select_capabilities') ||
+    JSON.stringify(body).includes('Tool Catalog Gateway capability router')
+}
+
+function fakeCapabilitySelectionResponse(capabilities: FakeCapability[] = DEFAULT_FAKE_CAPABILITIES) {
+  return fakeOpenAIChatToolResponse('tool_catalog_select_capabilities', {
+    capabilities,
+    reason: 'test-selected-capabilities',
+  })
+}
+
 async function buildHarness(name: string, overrides: Partial<Settings> = {}) {
   const dir = mkdtempSync(join(tmpdir(), `xox-api-${name}-`))
   const settings = { ...testSettings(join(dir, 'test.db')), ...overrides }
@@ -67,6 +91,7 @@ async function readRequestBody(request: IncomingMessage) {
 async function withFakeOpenAICompatibleProvider(
   handler: (body: any, request: IncomingMessage) => unknown | Promise<unknown>,
   run: (baseUrl: string) => Promise<void>,
+  options: FakeProviderOptions = {},
 ) {
   const server = createServer(async (request: IncomingMessage, response: ServerResponse) => {
     const rawBody = await readRequestBody(request)
@@ -76,7 +101,9 @@ async function withFakeOpenAICompatibleProvider(
       return
     }
     const body = JSON.parse(rawBody)
-    const payload = await handler(body, request)
+    const payload = (options.autoSelectCapabilities ?? true) && isCapabilityRouterRequest(body)
+      ? fakeCapabilitySelectionResponse(options.capabilities ?? DEFAULT_FAKE_CAPABILITIES)
+      : await handler(body, request)
     if (payload && typeof payload === 'object' && '__statusCode' in payload) {
       const statusPayload = payload as { __statusCode: number; body: unknown }
       response.writeHead(statusPayload.__statusCode, { 'Content-Type': 'application/json' })
@@ -1033,7 +1060,8 @@ describe('xox TypeScript API', () => {
       expect(planned.json.actionRequests[0].payload.amount).toBe(176)
       expect(planned.json.runEvents.some((event: any) =>
         event.type === 'tool_catalog_ready' &&
-        event.data.projectionStrategy === 'full_registry' &&
+        event.data.projectionStrategy === 'model_selected_capabilities' &&
+        event.data.selectedCapabilities.includes('ledger') &&
         event.data.toolNames.includes('ledger_create_member_income'),
       )).toBe(true)
       await closeHarness(harness)
@@ -1053,6 +1081,88 @@ describe('xox TypeScript API', () => {
     expect(projection.strategy).toBe('full_registry')
     expect(projection.toolNames).toEqual(names)
     expect(projection.tools).toEqual(AGENT_TOOL_CATALOG)
+
+    const ledgerProjection = buildRuntimeToolCatalogProjection({ selectedCapabilities: ['ledger'] })
+    expect(ledgerProjection.strategy).toBe('model_selected_capabilities')
+    expect(ledgerProjection.selectedCapabilities).toEqual(['ledger'])
+    expect(ledgerProjection.toolNames).toContain('ledger_create_member_income')
+    expect(ledgerProjection.toolNames).toContain('ledger_create_entry')
+    expect(ledgerProjection.toolNames).toContain('account_forbidden')
+    expect(ledgerProjection.toolNames).toContain('ask_user_clarification')
+    expect(ledgerProjection.toolNames).not.toContain('ui_navigate')
+    expect(ledgerProjection.toolNames).not.toContain('workspace_publish_release')
+    expect(ledgerProjection.toolNames).not.toContain('workspace_patch_config')
+
+    const navigationProjection = buildRuntimeToolCatalogProjection({ selectedCapabilities: ['navigation'] })
+    expect(navigationProjection.toolNames).toContain('ui_navigate')
+    expect(navigationProjection.toolNames).toContain('account_forbidden')
+    expect(navigationProjection.toolNames).not.toContain('ledger_create_member_income')
+
+    const dataProjection = buildRuntimeToolCatalogProjection({ selectedCapabilities: ['data'] })
+    expect(dataProjection.toolNames).toContain('data_query_workspace')
+    expect(dataProjection.toolNames).toContain('workspace_update_online_factor')
+    expect(dataProjection.toolNames).not.toContain('workspace_patch_config')
+
+    const fallbackProjection = buildRuntimeToolCatalogProjection({
+      strategy: 'router_fallback_business_core',
+      selectedCapabilities: ['data', 'draft', 'import_export', 'ledger', 'share', 'version'],
+    })
+    expect(fallbackProjection.strategy).toBe('router_fallback_business_core')
+    expect(fallbackProjection.toolNames).toContain('data_query_workspace')
+    expect(fallbackProjection.toolNames).toContain('ledger_create_entry')
+    expect(fallbackProjection.toolNames).toContain('workspace_publish_release')
+    expect(fallbackProjection.toolNames).not.toContain('ui_navigate')
+  })
+
+  it('projects task-relevant tools through a model-selected capability router', async () => {
+    await withFakeOpenAICompatibleProvider((body) => {
+      if (isCapabilityRouterRequest(body)) {
+        expect(body.tool_choice).toMatchObject({
+          type: 'function',
+          function: { name: 'tool_catalog_select_capabilities' },
+        })
+        expect(body.stream).toBe(false)
+        return fakeCapabilitySelectionResponse(['ledger'])
+      }
+
+      const toolNames = new Set(body.tools.map((tool: any) => tool.function.name))
+      expect(body.tool_choice).toBe('auto')
+      expect(toolNames.has('ledger_create_member_income')).toBe(true)
+      expect(toolNames.has('ledger_update_entry')).toBe(true)
+      expect(toolNames.has('workspace_publish_release')).toBe(false)
+      expect(toolNames.has('workspace_patch_config')).toBe(false)
+      expect(toolNames.has('account_forbidden')).toBe(true)
+      expect(toolNames.has('ask_user_clarification')).toBe(true)
+      expect(toolNames.has('ui_navigate')).toBe(false)
+      return fakeToolResponse('ledger_create_member_income', {
+        monthLabel: '3月',
+        memberName: '成员 A',
+        offlineUnits: 1,
+        onlineUnits: 0,
+      })
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-tool-router-projection', {
+        llmProvider: 'openai-compatible',
+        openaiCompatibleProvider: 'test-compatible',
+        openaiCompatibleBaseUrl: baseUrl,
+        openaiCompatibleApiKey: 'test-key',
+      })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-tool-router-projection@example.com')
+
+      const planned = await client.post('/api/v1/agent/messages', {
+        message: '把 3 月成员 A 线下 1 张入账',
+      })
+
+      expect(planned.statusCode).toBe(200)
+      expect(planned.json.actionRequests[0].kind).toBe('ledger.create_entry')
+      const event = planned.json.runEvents.find((item: any) => item.type === 'tool_catalog_ready')
+      expect(event.data.projectionStrategy).toBe('model_selected_capabilities')
+      expect(event.data.selectedCapabilities).toEqual(['ledger'])
+      expect(event.data.toolNames).toContain('ledger_create_member_income')
+      expect(event.data.toolNames).not.toContain('workspace_publish_release')
+      await closeHarness(harness)
+    }, { autoSelectCapabilities: false })
   })
 
   it('keeps provider tool registry metadata in sync with the catalog', async () => {
@@ -1479,6 +1589,39 @@ describe('xox TypeScript API', () => {
       expect(response.json.navigationEvents[0].route.mainTab).toBe('dashboard')
       expect(response.json.messages.at(-1).content).toContain('3月计划收入')
       expect(response.json.messages.at(-1).content).toContain('计划成本')
+      await closeHarness(harness)
+    })
+  })
+
+  it('normalizes month-scoped data tool arguments to a period summary', async () => {
+    await withFakeOpenAICompatibleProvider((body) => {
+      expect(body.tools.some((tool: any) => tool.function.name === 'data_query_workspace')).toBe(true)
+      return fakeToolResponse('data_query_workspace', {
+        question: '3 月计划收入和计划成本是多少',
+        scope: 'workspace_summary',
+        monthLabel: '3月',
+        metrics: ['plannedRevenue', 'plannedCost'],
+      })
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-data-query-normalized-period', {
+        llmProvider: 'openai-compatible',
+        openaiCompatibleProvider: 'test-compatible',
+        openaiCompatibleBaseUrl: baseUrl,
+        openaiCompatibleApiKey: 'test-key',
+      })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-data-query-normalized-period@example.com')
+
+      const response = await client.post('/api/v1/agent/messages', {
+        message: '3 月计划收入和计划成本是多少？',
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(response.json.actionRequests).toHaveLength(0)
+      expect(response.json.navigationEvents[0].route.mainTab).toBe('dashboard')
+      expect(response.json.messages.at(-1).content).toContain('3月计划收入')
+      expect(response.json.messages.at(-1).content).toContain('计划成本')
+      expect(response.json.messages.at(-1).content).not.toContain('基准场景总收入')
       await closeHarness(harness)
     })
   })
@@ -1968,8 +2111,8 @@ describe('xox TypeScript API', () => {
   it('uses OpenAI Agents SDK adapter for OpenAI provider planning', async () => {
     await withFakeOpenAICompatibleProvider((body) => {
       expect(body.messages.some((message: any) => typeof message.content === 'string' && message.content.includes('需要操作系统能力时，通过 tool_calls 表达意图'))).toBe(true)
-      const prompt = body.messages.map((message: any) => message.content).join('\n')
-      if (prompt.includes('如果 4 月线上系数变成 0.3')) {
+      const instruction = fakeCurrentInstruction(body)
+      if (instruction.includes('如果 4 月线上系数变成 0.3')) {
         expect(body.tools.some((tool: any) => tool.function.name === 'workspace_update_online_factor')).toBe(true)
         expect(body.tools.some((tool: any) => tool.function.name === 'ledger_create_member_income')).toBe(true)
         return fakeOpenAIChatToolResponse('workspace_update_online_factor', {
@@ -2297,7 +2440,7 @@ describe('xox TypeScript API', () => {
 
       if (instruction.includes('新增成员')) {
         return fakeToolResponse('team_member_add', {
-          newMemberName: '成员 G',
+          memberName: '成员 G',
           commissionRate: 0.3,
           baseUnitsPerEvent: 18,
         })
@@ -2417,14 +2560,14 @@ describe('xox TypeScript API', () => {
       }
       if (instruction.includes('新增成本类型')) {
         return fakeToolResponse('stage_cost_type_add', {
-          newStageCostItemName: '摄影',
+          costTypeName: '摄影',
           costMode: 'perEvent',
           amount: 300,
           count: 1,
         })
       }
       if (instruction.includes('删除成本类型摄影')) {
-        return fakeToolResponse('stage_cost_type_delete', { stageCostItemName: '摄影' })
+        return fakeToolResponse('stage_cost_type_delete', { newStageCostItemName: '摄影' })
       }
       return fakeToolResponse('ui_navigate', { mainTab: 'inputs', secondaryTab: 'cost' })
     }, async (baseUrl) => {
@@ -2581,10 +2724,10 @@ describe('xox TypeScript API', () => {
       if (instruction.includes('其他收入')) {
         return fakeToolResponse('ledger_create_entry', {
           monthLabel: '3月',
-          direction: 'income',
+          direction: 'revenue',
           subjectKey: 'cost.other.refund',
           amount: 500,
-          occurredAt: '2026-03-08',
+          date: '2026-03-08',
           counterparty: '场地方退款',
           description: '其他收入测试',
         })
@@ -3090,7 +3233,7 @@ describe('xox TypeScript API', () => {
       if (instruction.includes('注销账号')) return fakeToolResponse('account_forbidden')
       return fakeToolResponse('workspace_update_online_factor', {
         monthLabel: '4月',
-        onlineSalesFactor: 0.3,
+        newFactor: 0.3,
         mode: 'forecast',
       })
     }, async (baseUrl) => {

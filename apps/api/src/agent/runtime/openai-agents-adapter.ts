@@ -44,7 +44,7 @@ export class OpenAIAgentsAdapter implements RuntimeAdapter {
       })
       const planner = new Agent({
         name: 'XOX Agent Planner',
-        instructions: plannerSystemPrompt(),
+        instructions: input.systemPrompt ?? plannerSystemPrompt(),
         model: input.settings.openaiModel,
         tools: buildPlannerTools(input.tools, collectedSteps),
         toolUseBehavior: () => ({

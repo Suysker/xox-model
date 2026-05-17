@@ -210,14 +210,14 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
         body: JSON.stringify({
           model: input.settings.openaiCompatibleModel,
           messages: [
-            { role: 'system', content: plannerSystemPrompt() },
+            { role: 'system', content: input.systemPrompt ?? plannerSystemPrompt() },
             { role: 'user', content: `上下文：${JSON.stringify(input.context)}\n用户指令：${input.message}` },
           ],
           tools: input.tools,
-          tool_choice: 'auto',
+          tool_choice: input.toolChoice ?? 'auto',
           temperature: 0,
-          max_tokens: 1600,
-          stream: true,
+          max_tokens: input.maxTokens ?? 1600,
+          stream: input.stream ?? true,
         }),
       }
       if (input.abortSignal) init.signal = input.abortSignal

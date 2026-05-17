@@ -40,6 +40,14 @@ import {
   planWorkspaceRename,
 } from './workspace-action-drafts.js'
 
+function numericAlias(...values: unknown[]) {
+  for (const value of values) {
+    if (typeof value !== 'number') continue
+    if (Number.isFinite(value)) return value
+  }
+  return null
+}
+
 export const runtimeIntentHandlers: ActionDraftBuilderHandlers<PlannerContext> = {
   'ledger.create_member_income': (ctx, step) => step.monthLabel && step.memberName
     ? planLedgerCreateFromFields(ctx, {
@@ -56,13 +64,16 @@ export const runtimeIntentHandlers: ActionDraftBuilderHandlers<PlannerContext> =
   'ledger.update_entry': planLedgerUpdateFromStep,
   'ledger.restore_entry': planLedgerRestoreFromStep,
   'ledger.void_entry': planLedgerVoidFromStep,
-  'workspace.update_online_factor': (ctx, step) => step.monthLabel && typeof step.onlineSalesFactor === 'number'
-    ? planOnlineFactorFromFields(ctx, {
-        monthLabel: step.monthLabel,
-        factor: step.onlineSalesFactor,
-        mode: step.mode === 'forecast' ? 'forecast' : 'write',
-      })
-    : null,
+  'workspace.update_online_factor': (ctx, step) => {
+    const factor = numericAlias(step.onlineSalesFactor, step.newFactor, step.factor, step.onlineFactor)
+    return step.monthLabel && factor !== null
+      ? planOnlineFactorFromFields(ctx, {
+          monthLabel: step.monthLabel,
+          factor,
+          mode: step.mode === 'forecast' ? 'forecast' : 'write',
+        })
+      : null
+  },
   'team_member.add': planAddTeamMemberFromStep,
   'team_member.delete': planDeleteTeamMemberFromStep,
   'employee.add': planAddEmployeeFromStep,

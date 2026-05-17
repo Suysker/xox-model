@@ -15,7 +15,15 @@ export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePl
     ...(ctx.providedWorkspaceBundle ? { providedWorkspaceBundle: ctx.providedWorkspaceBundle } : {}),
   })
 
-  const toolCatalog = await provideRuntimeToolCatalog(ctx)
+  const toolCatalog = await provideRuntimeToolCatalog({
+    db: ctx.db,
+    threadId: ctx.threadId,
+    runId: ctx.runId,
+    settings: ctx.settings,
+    message: ctx.message,
+    context,
+    ...(ctx.abortSignal ? { abortSignal: ctx.abortSignal } : {}),
+  })
 
   return planWithRuntimeAdapter({
     settings: ctx.settings,

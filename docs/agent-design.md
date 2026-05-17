@@ -121,7 +121,7 @@ modules/agent.ts
 - runtime adapter 不读取数据库、不写数据库、不创建确认卡、不执行业务工具。
 - OpenAI Agents SDK adapter 使用 SDK 的 `Agent / Runner / tool / OpenAIChatCompletionsModel` 做 orchestration；SDK tool 的 `execute` 只把工具参数收集为内部 `AgentToolCallStep`，返回 model-visible preview receipt，不执行领域服务。
 - `LLM_PROVIDER=openai` 只选择 OpenAI Agents SDK adapter；`LLM_PROVIDER=openai-compatible / deepseek / doubao / qwen` 继续走通用 Chat Completions adapter。两条路径都输出同一个 `RuntimePlanResult`。
-- Runtime 当前通过 `tool-gateway.ts` 暴露 provider-neutral runtime tool catalog。`tool-catalog.ts` 只维护 `AGENT_TOOL_REGISTRY` 源数据：每个工具同时带有 Chat Completions schema、capability、risk level、confirmation mode 和 navigation target。不再保留 `tool-projector.ts` 这种误导性边界。模型负责语义 tool selection；服务端负责确认卡、policy、租户隔离、审计和领域服务执行。未来如果工具目录增长到必须缩小时，只能在 Tool Catalog Gateway 内引入模型选择的 capability router 或更高层工具设计，不能在后端写关键词路由器。
+- Runtime 当前通过 `tool-gateway.ts` 暴露 provider-neutral runtime tool catalog。`tool-catalog.ts` 只维护 `AGENT_TOOL_REGISTRY` 源数据：每个工具同时带有 Chat Completions schema、capability、risk level、confirmation mode 和 navigation target。不再保留 `tool-projector.ts` 这种误导性边界。模型负责语义 tool selection；服务端负责确认卡、policy、租户隔离、审计和领域服务执行。Tool Catalog Gateway 先让模型通过 provider-native `tool_catalog_select_capabilities` 选择本轮需要的能力域，再只投影这些能力域下的业务工具；它不能用关键词或正则替模型判断用户意图。
 - `planner.ts` 负责协调 planning session、runtime intent handler registry 和 action graph store；它不处理 HTTP DTO、不执行已确认写入，也不内联单次 runtime 调用、多段 session loop 或业务 intent handler map。
 - `planning-context.ts` 持有 Agent planning context 类型，draft builders、run worker、planning session 都从这里依赖上下文协议，不再 type-import `planner.ts`。
 - `planning-session.ts` 负责一次用户消息内的多段拆分、workspace bundle artifact 替换、多次 runtime planning 调用聚合和 provider source 合并；planner 只提供单次 runtime 调用能力，并注入 runtime intent handler registry。
@@ -180,9 +180,9 @@ planner.ts
       -> run-events.ts
 ```
 
-模块职责：`tool-gateway.ts` 负责把 registry 投影成 runtime 可用工具目录、记录 `tool_catalog_ready` run event，并暴露投影策略和工具 metadata 给运行图。当前策略按 ADR 0003 保持 `full_registry`，避免后端关键词/正则替模型做语义选择；后续如工具目录必须缩小，只能在该模块内升级为模型选择的 capability router。
+模块职责：`tool-gateway.ts` 负责把 registry 投影成 runtime 可用工具目录、记录 `tool_catalog_ready` run event，并暴露投影策略和工具 metadata 给运行图。当前主策略是 `model_selected_capabilities`：先用一个 provider-native router tool 让模型选择 `ledger / draft / version / share / data / import_export / navigation` 等能力域，再按 registry metadata 投影工具。`account / clarification` 始终作为安全协议工具保留；`navigation` 只在用户明确要求打开页面或面板时由 router 选择。业务工具和数据工具会自己返回导航事件，不需要把 `ui_navigate` 常驻暴露给所有任务。Gateway 可以维护 capability-level tool expansion，例如 `data` 能力额外暴露只读线上系数试算工具，避免 what-if 问题被错误投影掉；这种 expansion 只依赖 capability 图，不读取用户文本。如果真实 provider 连续两次没有返回 capability tool call 或返回空能力域，Gateway 退到 `router_fallback_business_core`，暴露除纯导航外的业务核心能力并在运行图中记录该策略；这不是语义关键词路由，而是 router 失效时的可观测降级。该模块不能使用后端关键词/正则做语义选择。
 
-复用计划：`runtime-planning-call.ts` 只向 gateway 请求 `tools`，再交给 runtime adapter；runtime adapter 仍只接收 provider-neutral tool schema，不读取 registry metadata、不写 run event、不执行领域服务。
+复用计划：`runtime-planning-call.ts` 向 gateway 传入已脱敏用户消息、Context Pack 和 provider settings；gateway 内部只调用 runtime adapter 做 capability selection，然后把投影后的 `tools` 交回主 planning call。runtime adapter 仍只接收 provider-neutral tool schema，不读取 registry metadata、不写 run event、不执行领域服务。
 
 ### `apps/api/src/agent/kernel`
 
@@ -882,7 +882,7 @@ API startup / recovery
 - `runtime-intent-handlers.ts`，负责 provider tool_call intent 到业务 draft/read builder 的 handler registry；planner 不再直接依赖各业务 draft builder。
 - `apps/api/src/agent/prompts`。
 - `tool-catalog.ts`。
-- `tool-gateway.ts`，负责 runtime tool projection 和 `tool_catalog_ready` run event；当前使用 `full_registry`，后续如需缩小目录只能升级为模型选择的 capability router。
+- `tool-gateway.ts`，负责 runtime tool projection 和 `tool_catalog_ready` run event；当前使用模型选择的 capability router 生成 task-relevant tool projection，不使用后端关键词/正则路由。
 - `memory.ts`。
 - `runtime/openai-agents-adapter.ts`，`LLM_PROVIDER=openai` 时通过 OpenAI Agents SDK 的 `Agent / Runner / tool / OpenAIProvider` 收集 tool call plan，并规范化为内部 `RuntimePlanResult`。
 - `runtime/openai-compatible-chat-adapter.ts` 和 `adapter-router.ts`，OpenAI-compatible `tool_calls` 不再写在 route module 内，也不与 DeepSeek 绑定。

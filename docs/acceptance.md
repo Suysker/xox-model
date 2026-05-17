@@ -133,9 +133,12 @@
 - [x] `LLM_PROVIDER=deepseek` 或 `LLM_PROVIDER=openai-compatible` 时可用 OpenAI-compatible Chat Completions `tool_calls` 跑通真实模型 10+ 方向 smoke test，并已沉淀为 `npm.cmd run smoke:agent`
 - [x] 代码和文档不引入 Claude Agent SDK adapter；Claude Code 只作为交互模式参考
 - [x] Agent 可写模型字段矩阵已注册在 `apps/api/src/agent/tool-coverage.ts`，覆盖资本规划、收入引擎、团队成员、成本结构、运营员工、月份模板、工作区 bundle 导入导出等主要手动输入路径；账号动作列为明确手动项
-- [x] Lean Harness 工具入口已纠偏：删除 `apps/api/src/agent/tool-projector.ts`，runtime 通过 `apps/api/src/agent/tool-gateway.ts` 获取 provider-neutral tool catalog；后端不再用正则或关键词枚举替模型判断意图，安全边界由确认卡、tool policy、租户隔离和领域服务执行兜住，后续如需缩小工具集必须在 Tool Catalog Gateway 中使用模型选择的 capability router，而不是代码关键词路由
+- [x] Lean Harness 工具入口已纠偏：删除 `apps/api/src/agent/tool-projector.ts`，runtime 通过 `apps/api/src/agent/tool-gateway.ts` 获取 provider-neutral tool catalog；后端不再用正则或关键词枚举替模型判断意图，安全边界由确认卡、tool policy、租户隔离和领域服务执行兜住，工具集缩小必须使用模型选择的 capability router，而不是代码关键词路由
 - [x] `apps/api/src/agent/tool-catalog.ts` 已升级为 `AGENT_TOOL_REGISTRY`：工具 schema 与 capability、risk level、confirmation mode、navigation target 同源维护；API 测试锁定 registry 与 provider tool catalog 一一同步，避免重新引入隐式 projector
-- [x] Tool Catalog Gateway 已从 `planner.ts` 拆到 `apps/api/src/agent/tool-gateway.ts`：gateway 负责 runtime tool projection、`tool_catalog_ready` 运行事件、projection strategy 和 tool metadata；`runtime-planning-call.ts` 只消费 `tools` 并交给 provider adapter
+- [x] Tool Catalog Gateway 已从 `planner.ts` 拆到 `apps/api/src/agent/tool-gateway.ts`：gateway 负责 provider-native capability router、task-relevant runtime tool projection、`tool_catalog_ready` 运行事件、projection strategy 和 tool metadata；`runtime-planning-call.ts` 只消费投影后的 `tools` 并交给 provider adapter
+- [x] `ui_navigate` 不再作为所有任务的常驻工具暴露；Tool Gateway 只常驻账号禁用和澄清工具，纯页面跳转才由 capability router 选择 `navigation`，业务读写工具自行返回显式导航事件，避免模型用“已打开页面”替代数据或业务工具调用
+- [x] Tool Gateway 支持 capability-level tool expansion：`data` 投影会额外保留 `workspace_update_online_factor` 这类只读试算入口，保证 DeepSeek 把 what-if 问题归入 data 时仍能调用正确业务试算工具；该扩展不读取用户文本、不做关键词路由
+- [x] Tool Gateway 支持可观测降级：当真实 provider 连续两次没有返回 capability 选择时，使用 `router_fallback_business_core` 暴露除纯导航外的业务核心工具，并在 `tool_catalog_ready` 事件记录该策略，避免 Agent OS 退化成无工具空回复
 - [x] Lean Harness Context Pack 边界已落地：`apps/api/src/agent/context-pack.ts` 统一构造 provider 上下文，集中注入当前 workspace 月份/成员/员工/版本/账期/科目、同 user/workspace/thread 的 memory、context summary、recent messages、可写模型字段矩阵和服务端解析 artifact；`planner.ts` 不再内联拼 provider context
 - [x] Runtime plan reader 已从 `planner.ts` 拆到 `apps/api/src/agent/runtime-plan-reader.ts`：该模块统一把 provider assistant text、空响应、认证失败、HTTP/network error 转成只读 `ReadDraft`，并负责 provider-neutral planner source 判定
 - [x] Planning session 已从 `planner.ts` 拆到 `apps/api/src/agent/planning-session.ts`：该模块负责多段消息拆分、workspace bundle artifact 替换、多次 runtime planning 调用聚合和 planned item 汇总；planner 不再内联 session loop

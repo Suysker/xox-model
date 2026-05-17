@@ -47,6 +47,10 @@ export type RuntimePlanningInput = {
   message: string
   context: unknown
   tools: ChatTool[]
+  systemPrompt?: string
+  toolChoice?: 'auto' | { type: 'function'; function: { name: string } }
+  stream?: boolean
+  maxTokens?: number
   abortSignal?: AbortSignal
   onStreamEvent?: (event: RuntimeStreamEvent) => void | Promise<void>
 }

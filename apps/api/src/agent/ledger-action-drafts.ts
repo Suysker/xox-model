@@ -102,6 +102,12 @@ function isoFromDateLike(value: unknown) {
   return Number.isNaN(date.getTime()) ? null : date.toISOString()
 }
 
+function normalizedLedgerDirection(value: unknown): 'income' | 'expense' | null {
+  if (value === 'income' || value === 'revenue' || value === '收入') return 'income'
+  if (value === 'expense' || value === 'cost' || value === '支出' || value === '成本') return 'expense'
+  return null
+}
+
 function subjectMatches(subject: LedgerSubject, key?: unknown, name?: unknown) {
   const subjectKey = asNonEmptyString(key)
   if (subjectKey && subject.subjectKey === subjectKey) return true
@@ -171,7 +177,7 @@ function ledgerNavigation(periodId: string, reason: string, focusRecordId?: stri
 
 export async function planGenericLedgerCreateFromStep(ctx: PlannerContext, step: RuntimePlannerStep) {
   const monthLabel = asNonEmptyString(step.monthLabel)
-  const direction = step.direction === 'income' || step.direction === 'expense' ? step.direction : null
+  const direction = normalizedLedgerDirection(step.direction)
   const amount = moneyAmount(step.amount)
   if (!monthLabel || !direction || amount === null || amount <= 0) {
     return {
@@ -213,7 +219,7 @@ export async function planGenericLedgerCreateFromStep(ctx: PlannerContext, step:
     } satisfies ReadDraft
   }
 
-  const occurredAt = isoFromDateLike(step.occurredAt) ?? periodOccurrenceDate(config, period)
+  const occurredAt = isoFromDateLike(step.occurredAt) ?? isoFromDateLike(step.date) ?? periodOccurrenceDate(config, period)
   const details = [
     { label: '期间', value: period.monthLabel },
     { label: '方向', value: direction === 'income' ? '收入' : '支出' },

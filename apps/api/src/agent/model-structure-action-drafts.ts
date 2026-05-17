@@ -65,6 +65,13 @@ function defaultTeamMemberName(config: ModelConfig) {
   return `成员 ${index}`
 }
 
+function firstNonEmptyString(...values: unknown[]) {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return ''
+}
+
 function applyTeamMemberToolFields(member: TeamMember, step: RuntimePlannerStep) {
   const next: TeamMember = {
     ...member,
@@ -102,11 +109,7 @@ function applyTeamMemberToolFields(member: TeamMember, step: RuntimePlannerStep)
 
 export async function planAddTeamMemberFromStep(ctx: PlannerContext, step: RuntimePlannerStep) {
   const { draft, config } = await currentDraftConfig(ctx)
-  const requestedName = typeof step.newMemberName === 'string' && step.newMemberName.trim()
-    ? step.newMemberName.trim()
-    : typeof step.memberName === 'string' && step.memberName.trim()
-      ? step.memberName.trim()
-      : ''
+  const requestedName = firstNonEmptyString(step.newMemberName, step.memberName, step.name)
   const name = requestedName || defaultTeamMemberName(config)
   if (config.teamMembers.some((member) => normalizedMemberKey(member.name) === normalizedMemberKey(name))) {
     return {
@@ -150,10 +153,11 @@ export async function planAddTeamMemberFromStep(ctx: PlannerContext, step: Runti
 
 export async function planDeleteTeamMemberFromStep(ctx: PlannerContext, step: RuntimePlannerStep) {
   const { draft, config } = await currentDraftConfig(ctx)
-  const target = findTeamMember(config, { memberId: step.memberId, memberName: step.memberName })
+  const memberName = firstNonEmptyString(step.memberName, step.newMemberName, step.name)
+  const target = findTeamMember(config, { memberId: step.memberId, memberName })
   const navigation = memberWorkbenchNavigation('删除成员需要打开团队成员假设供核对。')
 
-  if (!step.memberId && !step.memberName) {
+  if (!step.memberId && !memberName) {
     return {
       title: '需要指定要删除的成员',
       message: `请告诉我要删除哪位成员。当前成员有：${config.teamMembers.map((member) => member.name).join('、')}。`,
@@ -165,7 +169,7 @@ export async function planDeleteTeamMemberFromStep(ctx: PlannerContext, step: Ru
   if (!target) {
     return {
       title: '没有找到要删除的成员',
-      message: `当前工作区没有匹配“${step.memberName ?? step.memberId}”的成员。当前成员有：${config.teamMembers.map((member) => member.name).join('、')}。`,
+      message: `当前工作区没有匹配“${memberName || step.memberId}”的成员。当前成员有：${config.teamMembers.map((member) => member.name).join('、')}。`,
       status: 'failed',
       navigation,
     } satisfies ReadDraft
@@ -226,11 +230,7 @@ function applyEmployeeToolFields(employee: Employee, step: RuntimePlannerStep) {
 
 export async function planAddEmployeeFromStep(ctx: PlannerContext, step: RuntimePlannerStep) {
   const { draft, config } = await currentDraftConfig(ctx)
-  const requestedName = typeof step.newEmployeeName === 'string' && step.newEmployeeName.trim()
-    ? step.newEmployeeName.trim()
-    : typeof step.employeeName === 'string' && step.employeeName.trim()
-      ? step.employeeName.trim()
-      : ''
+  const requestedName = firstNonEmptyString(step.newEmployeeName, step.employeeName, step.name)
   const name = requestedName || defaultEmployeeName(config)
   if (config.employees.some((employee) => normalizedMemberKey(employee.name) === normalizedMemberKey(name))) {
     return {
@@ -274,9 +274,10 @@ export async function planAddEmployeeFromStep(ctx: PlannerContext, step: Runtime
 export async function planDeleteEmployeeFromStep(ctx: PlannerContext, step: RuntimePlannerStep) {
   const { draft, config } = await currentDraftConfig(ctx)
   const navigation = costWorkbenchNavigation('删除员工需要打开运营员工配置供核对。')
-  const target = findEmployee(config, { employeeId: step.employeeId, employeeName: step.employeeName })
+  const employeeName = firstNonEmptyString(step.employeeName, step.newEmployeeName, step.name)
+  const target = findEmployee(config, { employeeId: step.employeeId, employeeName })
 
-  if (!step.employeeId && !step.employeeName) {
+  if (!step.employeeId && !employeeName) {
     return {
       title: '需要指定要删除的员工',
       message: `请告诉我要删除哪位员工。当前员工有：${config.employees.map((employee) => employee.name).join('、') || '暂无员工'}。`,
@@ -288,7 +289,7 @@ export async function planDeleteEmployeeFromStep(ctx: PlannerContext, step: Runt
   if (!target) {
     return {
       title: '没有找到要删除的员工',
-      message: `当前工作区没有匹配“${step.employeeName ?? step.employeeId}”的员工。当前员工有：${config.employees.map((employee) => employee.name).join('、') || '暂无员工'}。`,
+      message: `当前工作区没有匹配“${employeeName || step.employeeId}”的员工。当前员工有：${config.employees.map((employee) => employee.name).join('、') || '暂无员工'}。`,
       status: 'failed',
       navigation,
     } satisfies ReadDraft
@@ -357,11 +358,7 @@ function applyShareholderToolFields(shareholder: Shareholder, step: RuntimePlann
 
 export async function planAddShareholderFromStep(ctx: PlannerContext, step: RuntimePlannerStep) {
   const { draft, config } = await currentDraftConfig(ctx)
-  const requestedName = typeof step.newShareholderName === 'string' && step.newShareholderName.trim()
-    ? step.newShareholderName.trim()
-    : typeof step.shareholderName === 'string' && step.shareholderName.trim()
-      ? step.shareholderName.trim()
-      : ''
+  const requestedName = firstNonEmptyString(step.newShareholderName, step.shareholderName, step.name)
   const name = requestedName || defaultShareholderName(config)
   if (config.shareholders.some((shareholder) => normalizedMemberKey(shareholder.name) === normalizedMemberKey(name))) {
     return {
@@ -404,9 +401,10 @@ export async function planAddShareholderFromStep(ctx: PlannerContext, step: Runt
 export async function planDeleteShareholderFromStep(ctx: PlannerContext, step: RuntimePlannerStep) {
   const { draft, config } = await currentDraftConfig(ctx)
   const navigation = capitalWorkbenchNavigation('删除股东需要打开股东投资页面供核对。')
-  const target = findShareholder(config, { shareholderId: step.shareholderId, shareholderName: step.shareholderName })
+  const shareholderName = firstNonEmptyString(step.shareholderName, step.newShareholderName, step.name)
+  const target = findShareholder(config, { shareholderId: step.shareholderId, shareholderName })
 
-  if (!step.shareholderId && !step.shareholderName) {
+  if (!step.shareholderId && !shareholderName) {
     return {
       title: '需要指定要删除的股东',
       message: `请告诉我要删除哪位股东。当前股东有：${config.shareholders.map((shareholder) => shareholder.name).join('、')}。`,
@@ -418,7 +416,7 @@ export async function planDeleteShareholderFromStep(ctx: PlannerContext, step: R
   if (!target) {
     return {
       title: '没有找到要删除的股东',
-      message: `当前工作区没有匹配“${step.shareholderName ?? step.shareholderId}”的股东。当前股东有：${config.shareholders.map((shareholder) => shareholder.name).join('、')}。`,
+      message: `当前工作区没有匹配“${shareholderName || step.shareholderId}”的股东。当前股东有：${config.shareholders.map((shareholder) => shareholder.name).join('、')}。`,
       status: 'failed',
       navigation,
     } satisfies ReadDraft
@@ -538,11 +536,7 @@ export async function planAddCostItemFromStep(ctx: PlannerContext, step: Runtime
   const { draft, config } = await currentDraftConfig(ctx)
   const category = step.costCategory
   const items = costItemsForCategory(config, category)
-  const requestedName = typeof step.newCostItemName === 'string' && step.newCostItemName.trim()
-    ? step.newCostItemName.trim()
-    : typeof step.costItemName === 'string' && step.costItemName.trim()
-      ? step.costItemName.trim()
-      : ''
+  const requestedName = firstNonEmptyString(step.newCostItemName, step.costItemName, step.name)
   const name = requestedName || defaultCostItemName(config, category)
   if (items.some((item) => normalizedMemberKey(item.name) === normalizedMemberKey(name))) {
     return {
@@ -584,7 +578,8 @@ export async function planDeleteCostItemFromStep(ctx: PlannerContext, step: Runt
   const { draft, config } = await currentDraftConfig(ctx)
   const category = isCostCategory(step.costCategory) ? step.costCategory : null
   const navigation = costWorkbenchNavigation('删除基础成本项需要打开成本编辑页面供核对。')
-  if (!step.costItemId && !step.costItemName) {
+  const costItemName = firstNonEmptyString(step.costItemName, step.newCostItemName, step.name)
+  if (!step.costItemId && !costItemName) {
     return {
       title: '需要指定要删除的成本项',
       message: '请告诉我要删除哪个成本项；如果同名成本项可能存在于多个分类，请同时说明每月固定、每场或每张。',
@@ -593,7 +588,7 @@ export async function planDeleteCostItemFromStep(ctx: PlannerContext, step: Runt
     } satisfies ReadDraft
   }
 
-  const lookup = findCostItem(config, { category, costItemId: step.costItemId, costItemName: step.costItemName })
+  const lookup = findCostItem(config, { category, costItemId: step.costItemId, costItemName })
   if (lookup.status === 'ambiguous') {
     return {
       title: '需要指定成本项分类',
@@ -605,7 +600,7 @@ export async function planDeleteCostItemFromStep(ctx: PlannerContext, step: Runt
   if (lookup.status === 'missing') {
     return {
       title: '没有找到要删除的成本项',
-      message: `当前工作区没有匹配“${step.costItemName ?? step.costItemId}”的基础成本项。`,
+      message: `当前工作区没有匹配“${costItemName || step.costItemId}”的基础成本项。`,
       status: 'failed',
       navigation,
     } satisfies ReadDraft
@@ -682,11 +677,14 @@ function syncStageCostItemsForPlanner(config: ModelConfig, stageCostItems: Stage
 
 export async function planAddStageCostTypeFromStep(ctx: PlannerContext, step: RuntimePlannerStep) {
   const { draft, config } = await currentDraftConfig(ctx)
-  const requestedName = typeof step.newStageCostItemName === 'string' && step.newStageCostItemName.trim()
-    ? step.newStageCostItemName.trim()
-    : typeof step.stageCostItemName === 'string' && step.stageCostItemName.trim()
-      ? step.stageCostItemName.trim()
-      : ''
+  const requestedName = firstNonEmptyString(
+    step.newStageCostItemName,
+    step.newStageCostTypeName,
+    step.stageCostItemName,
+    step.costTypeName,
+    step.newCostTypeName,
+    step.name,
+  )
   const name = requestedName || defaultStageCostName(config)
   if (config.stageCostItems.some((item) => normalizedMemberKey(item.name) === normalizedMemberKey(name))) {
     return {
@@ -734,7 +732,15 @@ export async function planAddStageCostTypeFromStep(ctx: PlannerContext, step: Ru
 export async function planDeleteStageCostTypeFromStep(ctx: PlannerContext, step: RuntimePlannerStep) {
   const { draft, config } = await currentDraftConfig(ctx)
   const navigation = costWorkbenchNavigation('删除专项成本类型需要打开成本编辑页面供核对。')
-  if (!step.stageCostItemId && !step.stageCostItemName) {
+  const stageCostItemName = firstNonEmptyString(
+    step.stageCostItemName,
+    step.newStageCostItemName,
+    step.newStageCostTypeName,
+    step.costTypeName,
+    step.newCostTypeName,
+    step.name,
+  )
+  if (!step.stageCostItemId && !stageCostItemName) {
     return {
       title: '需要指定要删除的成本类型',
       message: `请告诉我要删除哪个专项成本类型。当前类型有：${config.stageCostItems.map((item) => item.name).join('、')}。`,
@@ -743,11 +749,11 @@ export async function planDeleteStageCostTypeFromStep(ctx: PlannerContext, step:
     } satisfies ReadDraft
   }
 
-  const target = findStageCostItem(config, { stageCostItemId: step.stageCostItemId, stageCostItemName: step.stageCostItemName })
+  const target = findStageCostItem(config, { stageCostItemId: step.stageCostItemId, stageCostItemName })
   if (!target) {
     return {
       title: '没有找到要删除的成本类型',
-      message: `当前工作区没有匹配“${step.stageCostItemName ?? step.stageCostItemId}”的专项成本类型。`,
+      message: `当前工作区没有匹配“${stageCostItemName || step.stageCostItemId}”的专项成本类型。`,
       status: 'failed',
       navigation,
     } satisfies ReadDraft

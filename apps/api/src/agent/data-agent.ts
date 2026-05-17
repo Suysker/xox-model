@@ -46,6 +46,32 @@ function normalizeDataMetrics(raw: unknown): string[] {
   return Array.isArray(raw) ? raw.filter((item): item is string => typeof item === 'string') : []
 }
 
+function normalizedDataScope(step: DataAgentQueryStep, metrics: string[]) {
+  const scope = step.scope === 'workspace_summary' ||
+    step.scope === 'period_summary' ||
+    step.scope === 'member_summary' ||
+    step.scope === 'team_summary' ||
+    step.scope === 'top_months' ||
+    step.scope === 'variance_detail' ||
+    step.scope === 'ledger_history'
+    ? step.scope
+    : 'workspace_summary'
+
+  if (scope === 'workspace_summary' && typeof step.monthLabel === 'string' && step.monthLabel.trim().length > 0) {
+    const metricSet = new Set(metrics)
+    const hasMonthMetric = metrics.length === 0 ||
+      metricSet.has('plannedRevenue') ||
+      metricSet.has('plannedCost') ||
+      metricSet.has('plannedProfit') ||
+      metricSet.has('actualRevenue') ||
+      metricSet.has('actualCost') ||
+      metricSet.has('actualProfit')
+    if (hasMonthMetric) return 'period_summary'
+  }
+
+  return scope
+}
+
 function normalizeLookup(value: string) {
   return value.trim().replace(/\s+/g, '').toLocaleLowerCase()
 }
@@ -99,16 +125,8 @@ export async function answerWorkspaceDataQuestion(ctx: DataAgentContext, step: D
   const baseScenario = projection.scenarios.find((scenario) => scenario.key === 'base') ?? projection.scenarios[0] ?? null
   if (!baseScenario) return null
 
-  const scope = step.scope === 'workspace_summary' ||
-    step.scope === 'period_summary' ||
-    step.scope === 'member_summary' ||
-    step.scope === 'team_summary' ||
-    step.scope === 'top_months' ||
-    step.scope === 'variance_detail' ||
-    step.scope === 'ledger_history'
-    ? step.scope
-    : 'workspace_summary'
   const metrics = normalizeDataMetrics(step.metrics)
+  const scope = normalizedDataScope(step, metrics)
 
   if (scope === 'team_summary') {
     const members = config.teamMembers
