@@ -6,17 +6,16 @@ import type { CurrentUser } from '../modules/auth.js'
 import { redactSecretLikeContent } from './memory.js'
 import { planWithRuntimeAdapter } from './runtime/adapter-router.js'
 import type { RuntimePlanResult } from './runtime/runtime-adapter.js'
-import { extractWorkspaceBundleArtifact, type ParsedWorkspaceBundleArtifact } from './workspace-bundle-artifact.js'
+import type { ParsedWorkspaceBundleArtifact } from './workspace-bundle-artifact.js'
 import { answerWorkspaceDataQuestion } from './data-agent.js'
 import { buildAgentContextPack } from './context-pack.js'
 import { provideRuntimeToolCatalog } from './tool-gateway.js'
 import { addRuntimeStreamRunEvent } from './runtime-trace-events.js'
 import { storePlannedActionGraph } from './action-graph-store.js'
-import { configuredRuntimePlannerSource, readDraftFromRuntimeResult } from './runtime-plan-reader.js'
+import { configuredRuntimePlannerSource } from './runtime-plan-reader.js'
+import { runPlanningSession } from './planning-session.js'
 import {
-  buildPlannedItemFromRuntimeStep,
   type ActionDraftBuilderHandlers,
-  type PlannedItem,
   type RuntimePlannerStep,
 } from './action-draft-builder.js'
 import {
@@ -68,56 +67,6 @@ export type PlannerContext = {
   message: string
   abortSignal?: AbortSignal
   providedWorkspaceBundle?: ParsedWorkspaceBundleArtifact
-}
-
-function splitRequestedSteps(message: string) {
-  const parts: string[] = []
-  let current = ''
-  let depth = 0
-  let inString = false
-  let escaped = false
-
-  for (let index = 0; index < message.length; index += 1) {
-    const char = message[index] ?? ''
-    if (inString) {
-      current += char
-      if (escaped) {
-        escaped = false
-      } else if (char === '\\') {
-        escaped = true
-      } else if (char === '"') {
-        inString = false
-      }
-      continue
-    }
-
-    if (char === '"') {
-      inString = true
-      current += char
-      continue
-    }
-    if (char === '{' || char === '[') {
-      depth += 1
-      current += char
-      continue
-    }
-    if ((char === '}' || char === ']') && depth > 0) {
-      depth -= 1
-      current += char
-      continue
-    }
-    if (depth === 0 && /[；;\n]/.test(char)) {
-      const part = current.trim()
-      if (part) parts.push(part)
-      current = ''
-      continue
-    }
-    current += char
-  }
-
-  const finalPart = current.trim()
-  if (finalPart) parts.push(finalPart)
-  return parts.length > 0 ? parts : [message]
 }
 
 async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePlanResult | null> {
@@ -211,46 +160,11 @@ const runtimeStepHandlers: ActionDraftBuilderHandlers<PlannerContext> = {
   'data.query_workspace': answerWorkspaceDataQuestion,
 }
 
-async function modelPlannedItems(ctx: PlannerContext): Promise<{ source: AgentPlannerSource; items: PlannedItem[] } | null> {
-  const requiredSource = configuredRuntimePlannerSource(ctx.settings)
-  const items: PlannedItem[] = []
-  let source: AgentPlannerSource | null = null
-  for (const part of splitRequestedSteps(ctx.message)) {
-    const artifact = extractWorkspaceBundleArtifact(part)
-    const baseCtx: PlannerContext = { ...ctx, message: part }
-    const planningCtx: PlannerContext = artifact ? { ...baseCtx, providedWorkspaceBundle: artifact } : baseCtx
-    const runtimeCtx: PlannerContext = artifact ? { ...planningCtx, message: artifact.messageForModel } : planningCtx
-    const result = await callRuntimePlanner(runtimeCtx)
-    if (!result || result.steps.length === 0) {
-      if (!requiredSource) return null
-      source = source ?? result?.source ?? requiredSource
-      items.push(readDraftFromRuntimeResult(result))
-      continue
-    }
-    source =
-      result.source === 'openai_agents' || source === 'openai_agents'
-        ? 'openai_agents'
-        : 'openai_compatible_tool_calls'
-    const partItems: PlannedItem[] = []
-    for (const step of result.steps) {
-      const item = await buildPlannedItemFromRuntimeStep(planningCtx, step, runtimeStepHandlers)
-      if (Array.isArray(item)) {
-        partItems.push(...item)
-      } else if (item) {
-        partItems.push(item)
-      }
-    }
-    if (partItems.length > 0) {
-      items.push(...partItems)
-    } else if (requiredSource) {
-      items.push(readDraftFromRuntimeResult(result))
-    }
-  }
-  return items.length > 0 ? { source: source ?? requiredSource ?? 'openai_compatible_tool_calls', items } : null
-}
-
 export async function planResponse(ctx: PlannerContext) {
-  const modelPlan = await modelPlannedItems(ctx)
+  const modelPlan = await runPlanningSession(ctx, {
+    handlers: runtimeStepHandlers,
+    callRuntimePlanner,
+  })
   const items = modelPlan?.items ?? []
   const plannerSource: AgentPlannerSource = modelPlan?.source ?? configuredRuntimePlannerSource(ctx.settings) ?? 'rules'
   return storePlannedActionGraph(ctx, { items, plannerSource })

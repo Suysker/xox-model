@@ -121,7 +121,7 @@
 
 - [ ] `docs/adr/0001-agent-runtime-architecture.md` 中的 runtime 采用策略完成代码落地
 - [ ] `apps/api/src/modules/agent.ts` 拆分为 routes、kernel、runtime adapters、tools、memory/context、confirmation service
-- [x] Agent planner 已从 `modules/agent.ts` 抽到 `apps/api/src/agent/planner.ts`，集中处理 provider-native tool_call 归一、多步骤拆分、只读步骤、待确认动作草稿和 tenant/workspace planning context；route module 只调用 `planResponse`
+- [x] Agent planner 已从 `modules/agent.ts` 抽到 `apps/api/src/agent/planner.ts`，并继续下沉为 `planning-session / runtime-plan-reader / action-draft-builder / action-graph-store` 等边界；route module 只调用 `planResponse`
 - [x] OpenAI-compatible Chat Completions provider 调用已从 `modules/agent.ts` 抽到 `apps/api/src/agent/runtime/openai-compatible-chat-adapter.ts`，通过 `adapter-router.ts` 输出统一 runtime plan result
 - [x] Confirmation service 已从 `modules/agent.ts` 抽到 `apps/api/src/agent/action-requests.ts`，统一处理确认卡创建、编辑、确认、取消、执行状态、assistant message、run event 和审计；routes 只做 HTTP 编排与 thread publish
 - [x] Server tool execution 已从 confirmation service 抽到 `apps/api/src/agent/tool-executor.ts`，确认执行时先走 tool policy，再由 executor 调用 workspace / ledger / share 领域服务；provider/runtime 仍不能直接写业务数据
@@ -138,6 +138,7 @@
 - [x] Tool Catalog Gateway 已从 `planner.ts` 拆到 `apps/api/src/agent/tool-gateway.ts`：gateway 负责 runtime tool projection、`tool_catalog_ready` 运行事件、projection strategy 和 tool metadata；planner 只消费 `tools` 并交给 provider adapter
 - [x] Lean Harness Context Pack 边界已落地：`apps/api/src/agent/context-pack.ts` 统一构造 provider 上下文，集中注入当前 workspace 月份/成员/员工/版本/账期/科目、同 user/workspace/thread 的 memory、context summary、recent messages、可写模型字段矩阵和服务端解析 artifact；`planner.ts` 不再内联拼 provider context
 - [x] Runtime plan reader 已从 `planner.ts` 拆到 `apps/api/src/agent/runtime-plan-reader.ts`：该模块统一把 provider assistant text、空响应、认证失败、HTTP/network error 转成只读 `ReadDraft`，并负责 provider-neutral planner source 判定
+- [x] Planning session 已从 `planner.ts` 拆到 `apps/api/src/agent/planning-session.ts`：该模块负责多段消息拆分、workspace bundle artifact 替换、多次 runtime planning 调用聚合和 planned item 汇总；planner 不再内联 session loop
 - [x] Lean Harness Action Draft Builder 边界已开始落地：`apps/api/src/agent/action-draft-builder.ts` 持有 read/action draft 类型、默认澄清/账号拒绝/导航只读动作、runtime intent handler 协议和 action draft type guard；`planner.ts` 通过 handler map 把 provider tool calls 路由为 read result 或 editable action draft，为后续迁移具体业务 draft builders 留出稳定边界
 - [x] Action graph store 已从 `planner.ts` 拆到 `apps/api/src/agent/action-graph-store.ts`：该模块统一持久化只读 plan steps、写入 confirmation cards、`tool_plan_ready` / `confirmation_ready` run events 和 `plan_ready` thread event；planner 只返回模型规划 items 并调用 store 边界
 - [x] `workspace_patch_config` 的通用草稿 path 解析和旧值/新值 preview 已抽到 `apps/api/src/agent/config-patch.ts`，支持 dot path 与数组 path，供 Agent 覆盖页面手动可编辑字段时复用

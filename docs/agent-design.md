@@ -122,12 +122,13 @@ modules/agent.ts
 - OpenAI Agents SDK adapter 使用 SDK 的 `Agent / Runner / tool / OpenAIChatCompletionsModel` 做 orchestration；SDK tool 的 `execute` 只把工具参数收集为内部 `AgentToolCallStep`，返回 model-visible preview receipt，不执行领域服务。
 - `LLM_PROVIDER=openai` 只选择 OpenAI Agents SDK adapter；`LLM_PROVIDER=openai-compatible / deepseek / doubao / qwen` 继续走通用 Chat Completions adapter。两条路径都输出同一个 `RuntimePlanResult`。
 - Runtime 当前通过 `tool-gateway.ts` 暴露 provider-neutral runtime tool catalog。`tool-catalog.ts` 只维护 `AGENT_TOOL_REGISTRY` 源数据：每个工具同时带有 Chat Completions schema、capability、risk level、confirmation mode 和 navigation target。不再保留 `tool-projector.ts` 这种误导性边界。模型负责语义 tool selection；服务端负责确认卡、policy、租户隔离、审计和领域服务执行。未来如果工具目录增长到必须缩小时，只能在 Tool Catalog Gateway 内引入模型选择的 capability router 或更高层工具设计，不能在后端写关键词路由器。
-- `planner.ts` 负责 tenant/workspace planning context、provider-native tool_call 结果归一、多步骤拆分、只读步骤和待确认动作草稿；它不处理 HTTP DTO、不执行已确认写入。
+- `planner.ts` 负责协调单次 runtime 调用、tenant/workspace context、tool catalog、stream trace 和 runtime intent handler map；它不处理 HTTP DTO、不执行已确认写入，也不内联多段 session loop。
+- `planning-session.ts` 负责一次用户消息内的多段拆分、workspace bundle artifact 替换、多次 runtime planning 调用聚合和 provider source 合并；planner 只提供单次 runtime 调用能力和 intent handler map。
 - `runtime-plan-reader.ts` 负责把 provider `RuntimePlanResult` 中的 assistant text、空响应和 provider 错误转成只读 `ReadDraft`，并提供 provider-neutral planner source 判定；planner 不再拼认证失败、网络失败或普通 assistant 回复文案。
 - `modules/agent.ts` 继续负责 HTTP routes、SSE 和 DTO 序列化；run queue/recovery/cancel 和 worker lease 回写逐步下沉到 `agent/run-worker.ts`。
 - 确认卡创建、编辑、确认、取消、执行状态更新、assistant message、run event 和审计已下沉到 `apps/api/src/agent/action-requests.ts`；route 只负责认证、HTTP DTO 序列化和 thread publish。
 - 已确认 action 的业务执行已下沉到 `apps/api/src/agent/tool-executor.ts`；confirmation service 先做 policy，再把当前 workspace/user 和 action payload 交给 executor 调用 workspace / ledger / share 模块。
-- 高风险版本 / 分享动作的确认卡预览已下沉到 `apps/api/src/agent/version-action-drafts.ts`；planner 只负责意图路由和多步骤组合，不再内联发布、快照、回滚、快照发布、删除版本、创建/撤销分享和重置草稿的业务预览。
+- 高风险版本 / 分享动作的确认卡预览已下沉到 `apps/api/src/agent/version-action-drafts.ts`；planner 只保留 runtime intent handler map，不再内联发布、快照、回滚、快照发布、删除版本、创建/撤销分享和重置草稿的业务预览。
 - 账本类写入 preview 已下沉到 `apps/api/src/agent/ledger-action-drafts.ts`；planner 只负责把 provider tool call 的 intent 分发给 draft builder，不再内联成员收入、普通收支、一键入账、历史修改、作废/恢复和锁账/解锁的确认卡生成。
 - 结构化模型变更 preview 继续按同一边界下沉到 `apps/api/src/agent/model-structure-action-drafts.ts`：成员、员工、股东、基础成本项、专项成本类型的新增/删除都由该模块读取当前草稿、生成 normalized config、输出可编辑 `workspace.update_draft` action draft。planner 不持有这些领域对象构造、删除校验、依赖数组同步和确认卡细节。
 - 通用工作区和草稿 preview 下沉到 `apps/api/src/agent/workspace-action-drafts.ts`：线上系数试算/写入、通用草稿 patch、工作区改名、bundle 导入导出都由该模块读取当前草稿或 workspace bundle，输出只读结果或可编辑确认卡。planner 不再持有模型投影、config path 写入、workspace rename 或 bundle preview 细节。
@@ -866,6 +867,7 @@ API startup / recovery
 - TypeScript API。
 - `agent_action_requests`、`agent_plan_steps`、确认/取消/编辑/执行接口。
 - `action-graph-store.ts`，负责把 planned items 持久化为 `agent_plan_steps` / `agent_action_requests`、写 `tool_plan_ready` / `confirmation_ready` run events，并发布 `plan_ready`。
+- `planning-session.ts`，负责多段消息拆分、bundle artifact 替换、多次 runtime planning 调用和 planned item 聚合；planner 不再内联 session loop。
 - `apps/api/src/agent/prompts`。
 - `tool-catalog.ts`。
 - `tool-gateway.ts`，负责 runtime tool projection 和 `tool_catalog_ready` run event；当前使用 `full_registry`，后续如需缩小目录只能升级为模型选择的 capability router。
@@ -903,7 +905,7 @@ Agent: workspace_import_bundle
 仍需重构：
 
 - `apps/api/src/modules/agent.ts` 已不再承载 provider/tool_call planner，但仍承载 routes、SSE、run queue/recovery/cancel 和 worker lifecycle；后续继续拆到 routes 与 kernel/worker 边界。
-- `apps/api/src/agent/planner.ts` 当前承载业务预览和 tool_call 归一，是下一阶段拆分 `agent/tools/*` 和 `agent/kernel` 的中间边界。
+- `apps/api/src/agent/planner.ts` 当前仍承载 runtime intent handler map 和单次 runtime 调用协调，是下一阶段继续拆分 `agent/kernel` / runtime call service / intent handlers 的中间边界。
 - OpenAI Agents SDK adapter 已形成最小可验证路径，但还没有把 SDK streaming/tracing/human-in-the-loop events 映射为前端实时事件。
 - 前端已有后端状态刷新式 action graph / memory panel，OpenAI-compatible provider chunk 已进入实时预览；后续要继续做跨实例 pubsub 和 SDK tracing。
 - 文档验收需要区分当前可验证能力和下一阶段 runtime maturity gate。
