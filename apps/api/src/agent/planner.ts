@@ -8,12 +8,12 @@ import { planWithRuntimeAdapter } from './runtime/adapter-router.js'
 import type { RuntimePlanError, RuntimePlanResult, RuntimeStreamEvent } from './runtime/runtime-adapter.js'
 import { assertAgentRunLease } from './run-lease.js'
 import { agentThreadEvents } from './thread-events.js'
-import { AGENT_TOOL_REGISTRY } from './tool-catalog.js'
 import { extractWorkspaceBundleArtifact, type ParsedWorkspaceBundleArtifact } from './workspace-bundle-artifact.js'
 import { addRunEvent } from './run-events.js'
 import { addAgentActionRequest, addAgentPlanStep } from './action-requests.js'
 import { answerWorkspaceDataQuestion } from './data-agent.js'
 import { buildAgentContextPack } from './context-pack.js'
+import { provideRuntimeToolCatalog } from './tool-gateway.js'
 import {
   buildPlannedItemFromRuntimeStep,
   isActionDraft,
@@ -274,32 +274,13 @@ async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePlanResul
     ...(ctx.providedWorkspaceBundle ? { providedWorkspaceBundle: ctx.providedWorkspaceBundle } : {}),
   })
 
-  const tools = AGENT_TOOL_REGISTRY.map((entry) => entry.tool)
-  await addRunEvent(ctx.db, {
-    threadId: ctx.threadId,
-    runId: ctx.runId,
-    type: 'tool_catalog_ready',
-    title: '工具目录已提供',
-    message: `本轮向模型提供 ${tools.length} 个 provider-native 工具，由模型通过 tool_calls 选择。`,
-    status: 'running',
-    data: {
-      toolCount: tools.length,
-      toolNames: AGENT_TOOL_REGISTRY.map((entry) => entry.name),
-      toolCapabilities: AGENT_TOOL_REGISTRY.map((entry) => ({
-        name: entry.name,
-        capability: entry.capability,
-        riskLevel: entry.riskLevel,
-        confirmationMode: entry.confirmationMode,
-        navigationTarget: entry.navigationTarget,
-      })),
-    },
-  })
+  const toolCatalog = await provideRuntimeToolCatalog(ctx)
 
   return planWithRuntimeAdapter({
     settings: ctx.settings,
     message: redactSecretLikeContent(ctx.message),
     context,
-    tools,
+    tools: toolCatalog.tools,
     ...(ctx.abortSignal ? { abortSignal: ctx.abortSignal } : {}),
     onStreamEvent: (event) => addProviderStreamRunEvent(ctx, event),
   })

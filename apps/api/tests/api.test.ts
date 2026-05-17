@@ -11,6 +11,7 @@ import type { Database } from '../src/db/schema.js'
 import type { Settings } from '../src/core/settings.js'
 import { AGENT_MANUAL_CAPABILITY_COVERAGE, agentWritableConfigPatterns, buildAgentWritableConfigCatalog } from '../src/agent/tool-coverage.js'
 import { AGENT_TOOL_CATALOG, AGENT_TOOL_REGISTRY } from '../src/agent/tool-catalog.js'
+import { buildRuntimeToolCatalogProjection } from '../src/agent/tool-gateway.js'
 import { createProductDefaultModel } from '@xox/domain'
 import { recoverRunningAgentRuns } from '../src/modules/agent.js'
 
@@ -1030,7 +1031,11 @@ describe('xox TypeScript API', () => {
       expect(planned.json.planner).toBe('openai_compatible_tool_calls')
       expect(planned.json.actionRequests[0].kind).toBe('ledger.create_entry')
       expect(planned.json.actionRequests[0].payload.amount).toBe(176)
-      expect(planned.json.runEvents.some((event: any) => event.type === 'tool_catalog_ready' && event.data.toolNames.includes('ledger_create_member_income'))).toBe(true)
+      expect(planned.json.runEvents.some((event: any) =>
+        event.type === 'tool_catalog_ready' &&
+        event.data.projectionStrategy === 'full_registry' &&
+        event.data.toolNames.includes('ledger_create_member_income'),
+      )).toBe(true)
       await closeHarness(harness)
     })
   })
@@ -1043,6 +1048,11 @@ describe('xox TypeScript API', () => {
     expect(names).toContain('workspace_rename')
     expect(names).toContain('account_forbidden')
     expect(names).not.toContain('agent_reply')
+
+    const projection = buildRuntimeToolCatalogProjection()
+    expect(projection.strategy).toBe('full_registry')
+    expect(projection.toolNames).toEqual(names)
+    expect(projection.tools).toEqual(AGENT_TOOL_CATALOG)
   })
 
   it('keeps provider tool registry metadata in sync with the catalog', async () => {

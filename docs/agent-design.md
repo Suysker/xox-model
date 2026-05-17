@@ -121,7 +121,7 @@ modules/agent.ts
 - runtime adapter 不读取数据库、不写数据库、不创建确认卡、不执行业务工具。
 - OpenAI Agents SDK adapter 使用 SDK 的 `Agent / Runner / tool / OpenAIChatCompletionsModel` 做 orchestration；SDK tool 的 `execute` 只把工具参数收集为内部 `AgentToolCallStep`，返回 model-visible preview receipt，不执行领域服务。
 - `LLM_PROVIDER=openai` 只选择 OpenAI Agents SDK adapter；`LLM_PROVIDER=openai-compatible / deepseek / doubao / qwen` 继续走通用 Chat Completions adapter。两条路径都输出同一个 `RuntimePlanResult`。
-- Runtime 当前通过 `tool-catalog.ts` 暴露 provider-neutral `AGENT_TOOL_REGISTRY`：每个工具同时带有 Chat Completions schema、capability、risk level、confirmation mode 和 navigation target。不再保留 `tool-projector.ts` 这种误导性边界。模型负责语义 tool selection；服务端负责确认卡、policy、租户隔离、审计和领域服务执行。未来如果工具目录增长到必须缩小时，只能引入模型选择的 capability router 或更高层工具设计，不能在后端写关键词路由器。
+- Runtime 当前通过 `tool-gateway.ts` 暴露 provider-neutral runtime tool catalog。`tool-catalog.ts` 只维护 `AGENT_TOOL_REGISTRY` 源数据：每个工具同时带有 Chat Completions schema、capability、risk level、confirmation mode 和 navigation target。不再保留 `tool-projector.ts` 这种误导性边界。模型负责语义 tool selection；服务端负责确认卡、policy、租户隔离、审计和领域服务执行。未来如果工具目录增长到必须缩小时，只能在 Tool Catalog Gateway 内引入模型选择的 capability router 或更高层工具设计，不能在后端写关键词路由器。
 - `planner.ts` 负责 tenant/workspace planning context、provider-native tool_call 结果归一、多步骤拆分、只读步骤和待确认动作草稿；它不处理 HTTP DTO、不执行已确认写入。
 - `modules/agent.ts` 继续负责 HTTP routes、SSE 和 DTO 序列化；run queue/recovery/cancel 和 worker lease 回写逐步下沉到 `agent/run-worker.ts`。
 - 确认卡创建、编辑、确认、取消、执行状态更新、assistant message、run event 和审计已下沉到 `apps/api/src/agent/action-requests.ts`；route 只负责认证、HTTP DTO 序列化和 thread publish。
@@ -159,6 +159,19 @@ planner.ts
 复用计划：`workspace.update_online_factor`、`workspace.patch_config`、`workspace.rename`、`workspace.export_bundle` 和 `workspace.import_bundle` 的 runtime handler 都只把 provider-native tool args 交给 workspace draft builder。该模块可以读取当前 workspace 草稿和导出 bundle，但不持久化 action request、不执行写入、不参与语义 tool selection。
 
 命名保持 handler intent 风格，例如 `workspace.patch_config -> planWorkspacePatch`、`workspace.import_bundle -> planImportBundleFromValue`。验收要求构建证明 `planner.ts` 不再引用 `projectModel`、`hydrateModelConfig`、`config-patch.ts` 或 `modules/workspace.ts` 的业务 draft 依赖。
+
+本轮 Tool Catalog Gateway 拆分的依赖方向固定为：
+
+```text
+planner.ts
+  -> tool-gateway.ts
+      -> tool-catalog.ts
+      -> run-events.ts
+```
+
+模块职责：`tool-gateway.ts` 负责把 registry 投影成 runtime 可用工具目录、记录 `tool_catalog_ready` run event，并暴露投影策略和工具 metadata 给运行图。当前策略按 ADR 0003 保持 `full_registry`，避免后端关键词/正则替模型做语义选择；后续如工具目录必须缩小，只能在该模块内升级为模型选择的 capability router。
+
+复用计划：`planner.ts` 只向 gateway 请求 `tools`，再交给 runtime adapter；runtime adapter 仍只接收 provider-neutral tool schema，不读取 registry metadata、不写 run event、不执行领域服务。
 
 ### `apps/api/src/agent/kernel`
 
@@ -828,6 +841,7 @@ API startup / recovery
 - `agent_action_requests`、`agent_plan_steps`、确认/取消/编辑/执行接口。
 - `apps/api/src/agent/prompts`。
 - `tool-catalog.ts`。
+- `tool-gateway.ts`，负责 runtime tool projection 和 `tool_catalog_ready` run event；当前使用 `full_registry`，后续如需缩小目录只能升级为模型选择的 capability router。
 - `memory.ts`。
 - `runtime/openai-agents-adapter.ts`，`LLM_PROVIDER=openai` 时通过 OpenAI Agents SDK 的 `Agent / Runner / tool / OpenAIProvider` 收集 tool call plan，并规范化为内部 `RuntimePlanResult`。
 - `runtime/openai-compatible-chat-adapter.ts` 和 `adapter-router.ts`，OpenAI-compatible `tool_calls` 不再写在 route module 内，也不与 DeepSeek 绑定。
