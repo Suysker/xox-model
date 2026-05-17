@@ -10,7 +10,7 @@ import { exportWorkspaceBundle, getWorkspaceDraft, listVersions } from '../modul
 import { listEntries, listPeriods, listSubjectsForPeriod } from '../modules/ledger.js'
 import { loadAgentRuntimeContext, redactSecretLikeContent } from './memory.js'
 import { planWithRuntimeAdapter } from './runtime/adapter-router.js'
-import type { RuntimePlanResult } from './runtime/runtime-adapter.js'
+import type { RuntimePlanError, RuntimePlanResult } from './runtime/runtime-adapter.js'
 import { assertAgentRunLease } from './run-lease.js'
 import { agentThreadEvents } from './thread-events.js'
 import { buildAgentWritableConfigContext } from './tool-coverage.js'
@@ -55,7 +55,34 @@ function accountForbiddenRead(): ReadDraft {
   }
 }
 
-function modelToolCallRequiredRead(): ReadDraft {
+function modelToolCallRequiredRead(error?: RuntimePlanError | null): ReadDraft {
+  if (error?.kind === 'missing_api_key') {
+    return {
+      title: '模型 API key 未配置',
+      message: '当前已选择真实模型 provider，但没有可用 API key。请在模型配置里重新填写该 provider 的 API key；如果刚从 qwen 切到 DeepSeek，不要留空沿用旧 key。',
+      status: 'failed',
+    }
+  }
+
+  if (error?.kind === 'provider_http_error') {
+    const authFailed = error.statusCode === 401 || error.statusCode === 403
+    return {
+      title: authFailed ? '模型服务认证失败' : '模型服务请求失败',
+      message: authFailed
+        ? `模型服务认证失败：模型服务返回 HTTP ${error.statusCode}，当前保存的 API key 可能不是这个 provider 的 key，或已经失效。请重新保存 DeepSeek/Qwen/Doubao 对应的 API key。${error.message ? ` Provider 提示：${error.message}` : ''}`
+        : `模型服务返回 HTTP ${error.statusCode ?? '错误'}。请检查 base URL、model 名称和 provider 配置。${error.message ? ` Provider 提示：${error.message}` : ''}`,
+      status: 'failed',
+    }
+  }
+
+  if (error?.kind === 'provider_network_error') {
+    return {
+      title: '无法连接模型服务',
+      message: `无法连接当前 provider 的 Chat Completions 接口。请检查 base URL 是否可访问，以及本地代理/网络设置。${error.message ? ` 错误：${error.message}` : ''}`,
+      status: 'failed',
+    }
+  }
+
   return {
     title: '模型未返回工具调用',
     message: '已配置真实模型规划，但本轮没有返回可执行 tool_call。为避免用本地规则或正则冒充模型调用，我没有生成写入动作；请补充指令或重试。',
@@ -887,8 +914,8 @@ async function modelPlannedItems(ctx: PlannerContext): Promise<{ source: AgentPl
     const result = await callRuntimePlanner(runtimeCtx)
     if (!result || result.steps.length === 0) {
       if (!requiredSource) return null
-      source = source ?? requiredSource
-      items.push(modelToolCallRequiredRead())
+      source = source ?? result?.source ?? requiredSource
+      items.push(modelToolCallRequiredRead(result?.error))
       continue
     }
     source =
@@ -903,7 +930,7 @@ async function modelPlannedItems(ctx: PlannerContext): Promise<{ source: AgentPl
     if (partItems.length > 0) {
       items.push(...partItems)
     } else if (requiredSource) {
-      items.push(modelToolCallRequiredRead())
+      items.push(modelToolCallRequiredRead(result.error))
     } else {
       items.push(...(await localPlannedItems(planningCtx)))
     }

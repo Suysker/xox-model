@@ -64,6 +64,7 @@
 - Generic draft patch support should use a shared config-path service. Agent coverage for manual UI fields depends on reliable dot/array path parsing, old/new preview values, and model hydration after edits; do not duplicate that traversal inside planner routes.
 - Agent planner code should live outside HTTP route modules. Keep provider-native tool_call normalization, tenant planning context, multi-step decomposition, read steps, and action drafts in a planner boundary so routes only own authentication, transport, run lifecycle, and serialization.
 - Provider-native tool calling still needs a read-only conversational tool. If prompts forbid ordinary text but the catalog has no `agent_reply`-style tool, greetings and identity questions become false planning failures even though no business write was requested.
+- Provider HTTP/network errors must not be collapsed into "model returned no tool_call". Authentication failures usually mean the user kept an old provider key after switching vendors, and the UI needs to say that directly.
 
 ## Testing
 

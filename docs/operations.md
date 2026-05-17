@@ -82,6 +82,7 @@ sudo systemctl status xox-model-web
 - 浏览器刷新会并发触发会话恢复和业务数据加载。`/api/v1/auth/me` 必须保持幂等，只延长当前 token 有效期，不在每次恢复时旋转 token，否则并发请求会因为旧 cookie 竞态导致误登出。
 - Agent 数据问答通过 `data_query_workspace` 只读工具完成。模型只负责选择查询 scope 和指标，服务端用当前工作区的测算、账本和预实汇总计算答案；不要暴露自由 SQL，也不要在 provider 模式下用本地正则替模型选择工具。
 - Agent 普通对话、问候、身份说明和能力说明通过 `agent_reply` 只读工具完成。provider 模式下如果模型只返回普通文本而没有 tool call，系统仍不会用规则伪造业务动作；真实 provider 应被 prompt/tool catalog 引导为 `agent_reply`。
+- Agent provider 调用错误会按缺少 API key、HTTP 认证/请求失败、网络/base URL 失败、真实无 tool_call 分开展示。切换 provider 时如果 API key 留空会保留旧 key；从 qwen 切到 DeepSeek 时必须重新填写 DeepSeek key，否则会显示 HTTP 401/403 认证失败。
 - Agent 可写模型字段矩阵维护在 `apps/api/src/agent/tool-coverage.ts`。新增前端手动输入字段时，必须同步补该矩阵和 API 覆盖测试，否则模型可能不知道对应 patch path。真实 provider prompt 只注入 patterns 和少量样例字段，完整矩阵留在代码和测试里，避免每次请求携带所有月份/成本项导致延迟过高。
 - 工作区 JSON 导入 / 导出已经走 server-side bundle：`GET /api/v1/workspace/bundle` 只读导出，`POST /api/v1/workspace/bundle/import` 覆盖当前草稿。Agent 工具为 `workspace_export_bundle` / `workspace_import_bundle`；导入时用户粘贴的大块 JSON 会先由服务端 artifact parser 解析，模型只选择工具，不负责原样复制 bundle。
 - Agent 写入安全策略集中在 `apps/api/src/agent/tool-policy.ts`。确认卡创建、确认卡编辑和确认执行都会校验 action kind、风险等级、必需导航、payload 所属工作区、账期锁定和派生分录限制；用户可以编辑未执行动作，但不能通过编辑确认卡绕过这些策略。

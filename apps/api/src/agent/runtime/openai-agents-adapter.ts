@@ -3,6 +3,8 @@ import { plannerSystemPrompt } from '../prompt-registry.js'
 import { AGENT_TOOL_CATALOG, toolCallToPlannerStep, type AgentToolCallStep } from '../tool-catalog.js'
 import type { RuntimeAdapter, RuntimePlanningInput, RuntimePlanResult } from './runtime-adapter.js'
 
+const SOURCE = 'openai_agents' as const
+
 function buildPlannerTools(collectedSteps: AgentToolCallStep[]) {
   return AGENT_TOOL_CATALOG.map((descriptor) => {
     const name = descriptor.function.name
@@ -25,7 +27,13 @@ export class OpenAIAgentsAdapter implements RuntimeAdapter {
   readonly name = 'openai-agents'
 
   async plan(input: RuntimePlanningInput): Promise<RuntimePlanResult | null> {
-    if (!input.settings.openaiApiKey) return null
+    if (!input.settings.openaiApiKey) {
+      return {
+        source: SOURCE,
+        steps: [],
+        error: { kind: 'missing_api_key' },
+      }
+    }
 
     const collectedSteps: AgentToolCallStep[] = []
     try {
@@ -61,9 +69,23 @@ export class OpenAIAgentsAdapter implements RuntimeAdapter {
       )
       await modelProvider.close()
 
-      return collectedSteps.length > 0 ? { source: 'openai_agents', steps: collectedSteps } : null
-    } catch {
-      return null
+      return collectedSteps.length > 0
+        ? { source: SOURCE, steps: collectedSteps }
+        : {
+            source: SOURCE,
+            steps: [],
+            error: { kind: 'no_tool_calls' },
+          }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return {
+        source: SOURCE,
+        steps: [],
+        error: {
+          kind: 'provider_network_error',
+          message: message.replace(/sk-[A-Za-z0-9_-]{8,}/g, 'sk-***').slice(0, 300),
+        },
+      }
     }
   }
 }

@@ -4,9 +4,16 @@ import type { AgentToolCallStep } from '../tool-catalog.js'
 
 export type RuntimePlannerSource = Extract<AgentPlannerSource, 'openai_agents' | 'openai_compatible_tool_calls'>
 
+export type RuntimePlanError = {
+  kind: 'missing_api_key' | 'provider_http_error' | 'provider_network_error' | 'no_tool_calls'
+  statusCode?: number
+  message?: string
+}
+
 export type RuntimePlanResult = {
   source: RuntimePlannerSource
   steps: AgentToolCallStep[]
+  error?: RuntimePlanError
 }
 
 export type RuntimePlanningInput = {

@@ -60,6 +60,12 @@ async function withFakeOpenAICompatibleProvider(
   const server = createServer(async (request: IncomingMessage, response: ServerResponse) => {
     const body = JSON.parse(await readRequestBody(request))
     const payload = await handler(body, request)
+    if (payload && typeof payload === 'object' && '__statusCode' in payload) {
+      const statusPayload = payload as { __statusCode: number; body: unknown }
+      response.writeHead(statusPayload.__statusCode, { 'Content-Type': 'application/json' })
+      response.end(JSON.stringify(statusPayload.body))
+      return
+    }
     response.writeHead(200, { 'Content-Type': 'application/json' })
     response.end(JSON.stringify(payload))
   })
@@ -982,6 +988,33 @@ describe('xox TypeScript API', () => {
     })
   })
 
+  it('surfaces provider authentication failures instead of reporting them as missing tool calls', async () => {
+    await withFakeOpenAICompatibleProvider(() => ({
+      __statusCode: 401,
+      body: { error: { message: 'invalid api key' } },
+    }), async (baseUrl) => {
+      const harness = await buildHarness('agent-provider-auth-failure', {
+        llmProvider: 'openai-compatible',
+        openaiCompatibleProvider: 'test-compatible',
+        openaiCompatibleBaseUrl: baseUrl,
+        openaiCompatibleApiKey: 'wrong-key',
+      })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-provider-auth-failure@example.com')
+
+      const planned = await client.post('/api/v1/agent/messages', {
+        message: '你好',
+      })
+      expect(planned.statusCode).toBe(200)
+      expect(planned.json.planner).toBe('openai_compatible_tool_calls')
+      expect(planned.json.actionRequests).toHaveLength(0)
+      expect(planned.json.planSteps[0].status).toBe('failed')
+      expect(planned.json.messages.at(-1).content).toContain('认证失败')
+      expect(planned.json.messages.at(-1).content).toContain('HTTP 401')
+      await closeHarness(harness)
+    })
+  })
+
   it('does not fall back to regex rules when a model provider is selected without a key', async () => {
     const harness = await buildHarness('agent-provider-without-key', {
       llmProvider: 'deepseek',
@@ -997,7 +1030,7 @@ describe('xox TypeScript API', () => {
     expect(planned.json.planner).toBe('openai_compatible_tool_calls')
     expect(planned.json.actionRequests).toHaveLength(0)
     expect(planned.json.planSteps[0].status).toBe('failed')
-    expect(planned.json.messages.at(-1).content).toContain('没有返回可执行 tool_call')
+    expect(planned.json.messages.at(-1).content).toContain('API key')
     await closeHarness(harness)
   })
 
