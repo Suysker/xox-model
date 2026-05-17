@@ -10,7 +10,7 @@ import { createDatabase } from '../src/db/database.js'
 import type { Database } from '../src/db/schema.js'
 import type { Settings } from '../src/core/settings.js'
 import { AGENT_MANUAL_CAPABILITY_COVERAGE, agentWritableConfigPatterns, buildAgentWritableConfigCatalog } from '../src/agent/tool-coverage.js'
-import { AGENT_TOOL_CATALOG } from '../src/agent/tool-catalog.js'
+import { AGENT_TOOL_CATALOG, AGENT_TOOL_REGISTRY } from '../src/agent/tool-catalog.js'
 import { createProductDefaultModel } from '@xox/domain'
 import { recoverRunningAgentRuns } from '../src/modules/agent.js'
 
@@ -932,7 +932,7 @@ describe('xox TypeScript API', () => {
       expect(toolNames.has('agent_reply')).toBe(false)
       expect(toolNames.has('ledger_create_member_income')).toBe(true)
       expect(toolNames.has('workspace_publish_release')).toBe(true)
-      expect(body.tools.length).toBe(AGENT_TOOL_CATALOG.length)
+      expect(body.tools.length).toBe(AGENT_TOOL_REGISTRY.length)
       expect(body.messages[0].content).toContain('tool_calls')
       return {
         choices: [{
@@ -974,12 +974,46 @@ describe('xox TypeScript API', () => {
 
   it('exposes the model-owned tool catalog without regex intent projection', async () => {
     const names = AGENT_TOOL_CATALOG.map((tool) => tool.function.name)
-    expect(names).toEqual(AGENT_TOOL_CATALOG.map((tool) => tool.function.name))
+    expect(names).toEqual(AGENT_TOOL_REGISTRY.map((entry) => entry.name))
     expect(names).toContain('data_query_workspace')
     expect(names).toContain('ledger_create_entry')
     expect(names).toContain('workspace_rename')
     expect(names).toContain('account_forbidden')
     expect(names).not.toContain('agent_reply')
+  })
+
+  it('keeps provider tool registry metadata in sync with the catalog', async () => {
+    const catalogNames = AGENT_TOOL_CATALOG.map((tool) => tool.function.name)
+    const registryNames = AGENT_TOOL_REGISTRY.map((entry) => entry.name)
+    expect(registryNames).toEqual(catalogNames)
+
+    const byName = new Map(AGENT_TOOL_REGISTRY.map((entry) => [entry.name, entry]))
+    expect(byName.get('ledger_create_entry')).toMatchObject({
+      capability: 'ledger',
+      riskLevel: 'medium',
+      confirmationMode: 'always',
+      navigationTarget: 'bookkeeping',
+    })
+    expect(byName.get('data_query_workspace')).toMatchObject({
+      capability: 'data',
+      riskLevel: 'read',
+      confirmationMode: 'never',
+    })
+    expect(byName.get('workspace_update_online_factor')).toMatchObject({
+      capability: 'draft',
+      confirmationMode: 'conditional',
+      navigationTarget: 'inputs',
+    })
+    expect(byName.get('account_forbidden')).toMatchObject({
+      capability: 'account',
+      riskLevel: 'read',
+      confirmationMode: 'never',
+    })
+
+    for (const entry of AGENT_TOOL_REGISTRY) {
+      if (entry.confirmationMode === 'never') continue
+      expect(entry.riskLevel, entry.name).not.toBe('read')
+    }
   })
 
   it('streams OpenAI-compatible tool-call chunks into durable run events', async () => {

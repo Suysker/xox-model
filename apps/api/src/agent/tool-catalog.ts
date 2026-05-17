@@ -96,6 +96,35 @@ export type ChatTool = {
   }
 }
 
+export type AgentToolCapability =
+  | 'account'
+  | 'clarification'
+  | 'data'
+  | 'draft'
+  | 'import_export'
+  | 'ledger'
+  | 'navigation'
+  | 'share'
+  | 'version'
+
+export type AgentToolRiskLevel = 'read' | 'low' | 'medium' | 'high'
+
+export type AgentToolConfirmationMode = 'never' | 'always' | 'conditional'
+
+export type AgentToolNavigationTarget = 'dashboard' | 'inputs' | 'bookkeeping' | 'variance' | 'workspace' | null
+
+export type AgentToolMetadata = {
+  name: string
+  capability: AgentToolCapability
+  riskLevel: AgentToolRiskLevel
+  confirmationMode: AgentToolConfirmationMode
+  navigationTarget: AgentToolNavigationTarget
+}
+
+export type AgentToolRegistryEntry = AgentToolMetadata & {
+  tool: ChatTool
+}
+
 const monthLabel: JsonSchema = {
   type: 'string',
   description: '业务账期中文月份标签，例如 3月、4月。',
@@ -616,6 +645,228 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
     },
   },
 ]
+
+const TOOL_METADATA: Record<string, Omit<AgentToolMetadata, 'name'>> = {
+  account_forbidden: {
+    capability: 'account',
+    riskLevel: 'read',
+    confirmationMode: 'never',
+    navigationTarget: null,
+  },
+  ask_user_clarification: {
+    capability: 'clarification',
+    riskLevel: 'read',
+    confirmationMode: 'never',
+    navigationTarget: null,
+  },
+  cost_item_add: {
+    capability: 'draft',
+    riskLevel: 'medium',
+    confirmationMode: 'always',
+    navigationTarget: 'inputs',
+  },
+  cost_item_delete: {
+    capability: 'draft',
+    riskLevel: 'high',
+    confirmationMode: 'always',
+    navigationTarget: 'inputs',
+  },
+  data_query_workspace: {
+    capability: 'data',
+    riskLevel: 'read',
+    confirmationMode: 'never',
+    navigationTarget: null,
+  },
+  employee_add: {
+    capability: 'draft',
+    riskLevel: 'medium',
+    confirmationMode: 'always',
+    navigationTarget: 'inputs',
+  },
+  employee_delete: {
+    capability: 'draft',
+    riskLevel: 'high',
+    confirmationMode: 'always',
+    navigationTarget: 'inputs',
+  },
+  ledger_create_entry: {
+    capability: 'ledger',
+    riskLevel: 'medium',
+    confirmationMode: 'always',
+    navigationTarget: 'bookkeeping',
+  },
+  ledger_create_member_income: {
+    capability: 'ledger',
+    riskLevel: 'medium',
+    confirmationMode: 'always',
+    navigationTarget: 'bookkeeping',
+  },
+  ledger_create_planned_member_income_batch: {
+    capability: 'ledger',
+    riskLevel: 'medium',
+    confirmationMode: 'always',
+    navigationTarget: 'bookkeeping',
+  },
+  ledger_create_planned_related_expense_batch: {
+    capability: 'ledger',
+    riskLevel: 'medium',
+    confirmationMode: 'always',
+    navigationTarget: 'bookkeeping',
+  },
+  ledger_restore_entry: {
+    capability: 'ledger',
+    riskLevel: 'high',
+    confirmationMode: 'always',
+    navigationTarget: 'bookkeeping',
+  },
+  ledger_set_period_lock: {
+    capability: 'ledger',
+    riskLevel: 'high',
+    confirmationMode: 'always',
+    navigationTarget: 'bookkeeping',
+  },
+  ledger_update_entry: {
+    capability: 'ledger',
+    riskLevel: 'medium',
+    confirmationMode: 'always',
+    navigationTarget: 'bookkeeping',
+  },
+  ledger_void_entry: {
+    capability: 'ledger',
+    riskLevel: 'high',
+    confirmationMode: 'always',
+    navigationTarget: 'bookkeeping',
+  },
+  share_create: {
+    capability: 'share',
+    riskLevel: 'high',
+    confirmationMode: 'always',
+    navigationTarget: 'workspace',
+  },
+  share_revoke: {
+    capability: 'share',
+    riskLevel: 'medium',
+    confirmationMode: 'always',
+    navigationTarget: 'workspace',
+  },
+  shareholder_add: {
+    capability: 'draft',
+    riskLevel: 'medium',
+    confirmationMode: 'always',
+    navigationTarget: 'inputs',
+  },
+  shareholder_delete: {
+    capability: 'draft',
+    riskLevel: 'high',
+    confirmationMode: 'always',
+    navigationTarget: 'inputs',
+  },
+  stage_cost_type_add: {
+    capability: 'draft',
+    riskLevel: 'medium',
+    confirmationMode: 'always',
+    navigationTarget: 'inputs',
+  },
+  stage_cost_type_delete: {
+    capability: 'draft',
+    riskLevel: 'high',
+    confirmationMode: 'always',
+    navigationTarget: 'inputs',
+  },
+  team_member_add: {
+    capability: 'draft',
+    riskLevel: 'medium',
+    confirmationMode: 'always',
+    navigationTarget: 'inputs',
+  },
+  team_member_delete: {
+    capability: 'draft',
+    riskLevel: 'high',
+    confirmationMode: 'always',
+    navigationTarget: 'inputs',
+  },
+  ui_navigate: {
+    capability: 'navigation',
+    riskLevel: 'read',
+    confirmationMode: 'never',
+    navigationTarget: null,
+  },
+  workspace_delete_version: {
+    capability: 'version',
+    riskLevel: 'high',
+    confirmationMode: 'always',
+    navigationTarget: 'workspace',
+  },
+  workspace_export_bundle: {
+    capability: 'import_export',
+    riskLevel: 'read',
+    confirmationMode: 'never',
+    navigationTarget: 'workspace',
+  },
+  workspace_import_bundle: {
+    capability: 'import_export',
+    riskLevel: 'high',
+    confirmationMode: 'always',
+    navigationTarget: 'workspace',
+  },
+  workspace_patch_config: {
+    capability: 'draft',
+    riskLevel: 'medium',
+    confirmationMode: 'always',
+    navigationTarget: 'inputs',
+  },
+  workspace_promote_version: {
+    capability: 'version',
+    riskLevel: 'high',
+    confirmationMode: 'always',
+    navigationTarget: 'workspace',
+  },
+  workspace_publish_release: {
+    capability: 'version',
+    riskLevel: 'high',
+    confirmationMode: 'always',
+    navigationTarget: 'workspace',
+  },
+  workspace_rename: {
+    capability: 'draft',
+    riskLevel: 'medium',
+    confirmationMode: 'always',
+    navigationTarget: 'workspace',
+  },
+  workspace_reset_draft: {
+    capability: 'version',
+    riskLevel: 'high',
+    confirmationMode: 'always',
+    navigationTarget: 'inputs',
+  },
+  workspace_rollback_version: {
+    capability: 'version',
+    riskLevel: 'high',
+    confirmationMode: 'always',
+    navigationTarget: 'workspace',
+  },
+  workspace_save_snapshot: {
+    capability: 'version',
+    riskLevel: 'low',
+    confirmationMode: 'always',
+    navigationTarget: 'workspace',
+  },
+  workspace_update_online_factor: {
+    capability: 'draft',
+    riskLevel: 'medium',
+    confirmationMode: 'conditional',
+    navigationTarget: 'inputs',
+  },
+}
+
+export const AGENT_TOOL_REGISTRY: AgentToolRegistryEntry[] = AGENT_TOOL_CATALOG.map((tool) => {
+  const name = tool.function.name
+  const metadata = TOOL_METADATA[name]
+  if (!metadata) {
+    throw new Error(`Agent tool metadata missing for ${name}`)
+  }
+  return { name, tool, ...metadata }
+})
 
 export function toolCallToPlannerStep(toolName: string, args: Record<string, unknown>): AgentToolCallStep | null {
   switch (toolName) {

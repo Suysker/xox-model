@@ -83,7 +83,7 @@ flowchart TB
 
   subgraph Kernel[Lean Agent Kernel]
     Context[Context Pack<br/>workspace snapshot / page state / memory / summary]
-    Projector[Tool Catalog Gateway<br/>provider-neutral tool catalog]
+    ToolGateway[Tool Catalog Gateway<br/>provider-neutral registry]
     Runtime[Runtime Adapter<br/>OpenAI Agents SDK or compatible chat]
     Drafts[Action Draft Builder<br/>read result or write preview]
     Approval[Approval Executor<br/>policy re-check / execute / audit]
@@ -112,9 +112,9 @@ flowchart TB
 
   Routes --> Store
   Routes --> Context
-  Context --> Projector
-  ToolMeta --> Projector
-  Projector --> Runtime
+  Context --> ToolGateway
+  ToolMeta --> ToolGateway
+  ToolGateway --> Runtime
   Runtime --> Drafts
 
   Drafts --> Store
@@ -155,8 +155,8 @@ sequenceDiagram
   API->>Store: persist user message and run
   API->>Kernel: start run
   Kernel->>Kernel: build Context Pack
-  Kernel->>Kernel: project task-relevant tools
-  Kernel->>Runtime: call model with projected tools
+  Kernel->>Kernel: provide provider-neutral tool registry
+  Kernel->>Runtime: call model with tool catalog
   Runtime-->>Kernel: assistant text or tool calls
   Kernel->>Store: persist timeline events
   alt read-only tool
@@ -207,7 +207,7 @@ tool = {
   capability,
   inputSchema,
   riskLevel,
-  requiresConfirmation,
+  confirmationMode,
   navigationTarget,
   previewBuilder,
   executor,
@@ -253,7 +253,7 @@ OpenAI Agents SDK、DeepSeek、Qwen 或其他兼容 provider 都是 runtime adap
 
 这套架构的先进性不是“模块多”，而是把当前 Harness Agent 领域最重要的几个趋势压缩到产品可落地的最小形态。
 
-- **Tool projection first**：从一开始避免 flat function-calling catalog，这是工具规模化的核心。
+- **Model-owned tool selection + registry metadata**：模型通过 provider-native `tool_calls` 做语义选择；服务端用 tool registry 元数据承接 capability、风险、确认、导航、审计和执行边界。
 - **Editable action drafts**：把 human approval 升级为可编辑业务交易草稿，适合 SaaS 写入场景。
 - **Domain-owned execution**：Agent 只规划，业务服务执行，避免影子业务系统。
 - **Provider-neutral runtime**：OpenAI Agents SDK 和兼容 Chat Completions 都是薄 adapter，未来切 provider 不改业务工具。
@@ -271,8 +271,8 @@ OpenAI Agents SDK、DeepSeek、Qwen 或其他兼容 provider 都是 runtime adap
 
 1. domain service 支持该能力。
 2. tool registry 增加 metadata。
-3. projector 增加选择规则。
-4. action draft 增加 preview/edit schema。
+3. action draft 增加 preview/edit schema。
+4. tool policy / executor 增加确认后执行路径。
 5. smoke test 增加真实 provider 场景。
 
 不需要重写 runtime，也不需要改前端对话协议。
@@ -386,6 +386,6 @@ MCP 或 connector 只作为外部系统接入：
 
 代价：
 
-- 需要尽快把 flat tool catalog 改成 metadata registry。
-- 需要为 tool catalog gateway 和 action draft lifecycle 增加测试。
+- tool registry metadata 需要和每个新增工具一起维护，测试必须防止 schema 与 metadata 漂移。
+- 需要继续为 tool catalog gateway 和 action draft lifecycle 增加覆盖。
 - 不追求一开始就支持通用 agent platform 能力。
