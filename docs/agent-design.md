@@ -185,6 +185,14 @@ modules/agent routes
 - 命名风格：使用 `plan<Action>VersionAction` / `planShareAction`，保持返回 `AgentActionDraft | null` 的 planner builder 约定。
 - 验收：版本/分享 API 测试必须覆盖发布、快照发布、回滚、分享、删除和重置草稿确认卡；构建必须证明 planner 没有继续引用旧的版本预览函数。
 
+账本确认卡边界落在 `apps/api/src/agent/ledger-action-drafts.ts`：
+
+- 模块职责：为记账、计划一键入账、普通收入/支出、按人支出、历史分录修改、作废、恢复和锁账/解锁构造可编辑确认卡 preview 或必要的只读澄清步骤。
+- 依赖方向：`agent/planner -> agent/ledger-action-drafts -> modules/ledger + modules/workspace + @xox/domain`；该模块只读取当前 workspace 的 draft、账期、科目和分录，不执行写入、不创建 action request。
+- 复用计划：运行时 tool-call handler 与本地多步骤拆分共用同一套 ledger builder；账本定位、科目解析、按人支出推导、导航事件统一在 ledger 模块内部复用。
+- 命名风格：使用 `planLedger<Action>Action` 和 `planLedger<Action>FromStep`，继续返回 `PlannedItem | PlannedItem[] | null`。
+- 验收：API 测试必须继续覆盖成员收入入账、普通收入/支出、按人支出批量入账、历史分录修改、精确作废、恢复、锁账拒绝和 action graph 展示。
+
 ### `apps/api/src/agent/tools`
 
 受控业务工具层。工具只调用现有领域服务或模块服务，不直接写数据库，也不依赖 provider SDK。

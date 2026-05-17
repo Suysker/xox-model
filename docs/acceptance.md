@@ -138,6 +138,7 @@
 - [x] Lean Harness Action Draft Builder 边界已开始落地：`apps/api/src/agent/action-draft-builder.ts` 持有 read/action draft 类型、默认澄清/账号拒绝/导航只读动作、runtime intent handler 协议和 action draft type guard；`planner.ts` 通过 handler map 把 provider tool calls 路由为 read result 或 editable action draft，为后续迁移具体业务 draft builders 留出稳定边界
 - [x] `workspace_patch_config` 的通用草稿 path 解析和旧值/新值 preview 已抽到 `apps/api/src/agent/config-patch.ts`，支持 dot path 与数组 path，供 Agent 覆盖页面手动可编辑字段时复用
 - [x] 版本 / 分享类写入 preview 已从 `planner.ts` 抽到 `apps/api/src/agent/version-action-drafts.ts`，覆盖保存快照、发布正式版、发布并分享、恢复版本、把快照发布为正式版、删除版本、创建/撤销分享链接和重置草稿；runtime tool-call handler 与本地多步骤规划复用同一套确认卡 builder
+- [x] 账本类写入 preview 已从 `planner.ts` 抽到 `apps/api/src/agent/ledger-action-drafts.ts`，覆盖成员收入入账、普通收入/支出、成员/员工支出、一键入账多笔、历史分录修改、精确作废、恢复分录和锁账/解锁；`apps/api/src/agent/action-draft-utils.ts` 统一复用月份、草稿、成员/员工定位和数字解析工具
 - [x] Tool policy / permission hooks 覆盖账号动作拒绝、写入确认、确认卡编辑后的必需导航、跨租户 payload 禁止、锁账禁止、派生提成禁止直接编辑
 - [x] 多步骤消息中如果同时包含合法业务动作和账号禁用动作，合法业务动作仍会生成确认卡，账号动作只作为该步骤的只读拒绝项展示
 - [x] Memory list/delete/context injection 有测试证明不会跨用户或跨工作区，并且不会保存 secrets；当前 secret-like 消息会在 provider prompt 中 redaction，后续新线程不再注入
