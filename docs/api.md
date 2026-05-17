@@ -128,6 +128,7 @@
   - 缺少必要业务信息时，模型应调用 `ask_user_clarification`，返回只读澄清消息和 `info` 计划步骤，不生成确认卡
   - 读取和试算类请求不会生成写入动作
   - 新增或删除团队成员由模型调用 `team_member_add / team_member_delete` 后生成 `workspace.update_draft` 确认卡；用户可以在确认前编辑载荷，确认执行前仍会校验当前用户 / 工作区、显式导航、风险等级和草稿至少保留 1 个成员
+  - 新增或删除股东、基础成本项和专项成本类型分别由模型调用 `shareholder_add / shareholder_delete`、`cost_item_add / cost_item_delete`、`stage_cost_type_add / stage_cost_type_delete`；股东编辑继续用 `workspace_patch_config` 覆盖既有字段，删除最后一个股东会被拒绝
   - 账号登录、退出、注销、删除账号和密码类请求会被拒绝自动执行
 - `GET /api/v1/agent/memories`
   - 返回当前登录用户在当前工作区内可用的 Agent 记忆
@@ -147,7 +148,7 @@
   - 取消待确认动作，不写业务数据
   - 返回取消后的确认卡、assistant message、最新 `runEvents` 和该 run 的 `planSteps`
 
-Agent 写入动作统一遵循 `preview -> confirm -> execute -> audit -> refresh`。当前支持记账、草稿修改、团队成员新增/删除、发布版本、恢复版本、删除版本、重置草稿、工作区 bundle 导入、创建 / 撤销分享、锁账 / 解锁；所有写入都先生成确认卡。工作区 bundle 导出为只读工具，Agent 会打开版本管理面板并提示通过 `/api/v1/workspace/bundle` 获取完整 JSON。
+Agent 写入动作统一遵循 `preview -> confirm -> execute -> audit -> refresh`。当前支持记账、草稿修改、团队成员新增/删除、股东新增/删除、基础成本项新增/删除、专项成本类型新增/删除、发布版本、恢复版本、删除版本、重置草稿、工作区 bundle 导入、创建 / 撤销分享、锁账 / 解锁；所有写入都先生成确认卡。工作区 bundle 导出为只读工具，Agent 会打开版本管理面板并提示通过 `/api/v1/workspace/bundle` 获取完整 JSON。
 
 Agent 只读数据问答通过模型选择 `data_query_workspace` 工具完成，支持整体工作区、单月汇总、成员汇总和月份排行。该工具只返回 `planSteps / messages / navigationEvents`，不生成 `actionRequests`，不修改业务数据。
 

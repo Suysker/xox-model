@@ -74,10 +74,11 @@
 - [x] 记账类命令会生成确认卡，确认后过账并刷新工作台
 - [x] 线上系数试算类命令只读执行，不修改草稿
 - [x] 团队成员新增/删除通过 `team_member_add / team_member_delete` 专用 tool call 生成可编辑草稿确认卡；删除最后一个成员会被服务端拒绝，不生成破坏模型可计算性的确认卡
+- [x] 股东新增/删除、基础成本项新增/删除、专项成本类型新增/删除通过专用 tool call 生成可编辑草稿确认卡；股东已有字段编辑继续走 `workspace_patch_config`，删除最后一个股东会被服务端拒绝
 - [x] 草稿修改、发布、恢复、分享、锁账等写入动作采用确认卡协议
 - [x] 账号登录、退出、注销、删除账号和密码类动作不允许 Agent 自动执行
 - [x] Agent 写入动作会记录 `agent_action_requests` 和 `audit_logs`
-- [x] `npm.cmd run smoke:agent` 提供受控真实 OpenAI-compatible provider smoke：默认使用 DeepSeek，但通过 `OPENAI_COMPATIBLE_*` 可切换豆包、Qwen 等兼容服务；不允许无 key 回退，覆盖 31 个真实模型方向：provider setting、普通对话只读回复、只读预测、Data agent 单月问题、Data agent 团队成员数量、团队成员新增确认卡、团队成员删除确认卡、background run 恢复、持久运行轨迹、缺信息澄清提问、memory 写入、新对话记忆注入、多步骤、账号动作拒绝、记账确认卡、确认卡载荷编辑、作废分录、草稿专用字段保存、通用草稿 patch、工作区 bundle 导出、工作区 bundle 导入、锁账、解锁、保存快照、发布、创建分享、撤销分享、恢复版本、删除版本、重置草稿和审计
+- [x] `npm.cmd run smoke:agent` 提供受控真实 OpenAI-compatible provider smoke：默认使用 DeepSeek，但通过 `OPENAI_COMPATIBLE_*` 可切换豆包、Qwen 等兼容服务；不允许无 key 回退，覆盖 37 个真实模型方向：provider setting、普通对话只读回复、只读预测、Data agent 单月问题、Data agent 团队成员数量、团队成员新增确认卡、团队成员删除确认卡、股东新增确认卡、股东删除确认卡、基础成本项新增确认卡、基础成本项删除确认卡、专项成本类型新增确认卡、专项成本类型删除确认卡、background run 恢复、持久运行轨迹、缺信息澄清提问、memory 写入、新对话记忆注入、多步骤、账号动作拒绝、记账确认卡、确认卡载荷编辑、作废分录、草稿专用字段保存、通用草稿 patch、工作区 bundle 导出、工作区 bundle 导入、锁账、解锁、保存快照、发布、创建分享、撤销分享、恢复版本、删除版本、重置草稿和审计
 - [x] 真实 DeepSeek smoke 已验证锁账/解锁不是后端规则推断：planner source 为 `openai_compatible_tool_calls`，模型会根据 tool catalog 和 planner prompt 调用 `ledger_set_period_lock` 并生成确认卡
 - [x] 后端接口级 Agent capability matrix 覆盖超过 10 个不同方向的复杂任务，并全部通过：
   - 记忆写入
@@ -87,6 +88,9 @@
   - 草稿参数保存
   - 通用模型 patch
   - 新增 / 删除团队成员
+  - 新增 / 编辑 / 删除股东
+  - 新增 / 删除基础成本项
+  - 新增 / 删除专项成本类型
   - 确认卡编辑后执行
   - 锁账 / 解锁
   - 工作区 bundle 导出 / 导入

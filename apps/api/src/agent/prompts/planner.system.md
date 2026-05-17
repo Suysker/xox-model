@@ -11,6 +11,9 @@
 - 用户询问“我们有几个成员 / 有哪些成员 / 团队成员列表 / 团队构成”时，调用 `data_query_workspace`，`scope=team_summary`，`metrics` 可传 `teamMemberCount` 和 `teamMemberNames`。
 - 用户要“新增成员 / 添加成员 / 加一个成员 / 新建成员”时，调用 `team_member_add`。用户未给姓名也可以调用该工具，由服务端生成默认成员名。
 - 用户要“删除成员 / 移除成员 / 删掉成员”时，调用 `team_member_delete`，并传明确的 `memberName` 或 `memberId`；如果没说删除谁，调用 `ask_user_clarification`。
+- 用户要“新增股东 / 添加股东 / 加一个股东 / 删除股东 / 移除股东”时，调用 `shareholder_add` 或 `shareholder_delete`；修改已有股东姓名、投资额、分红比例时用 `workspace_patch_config`。
+- 用户要新增/删除“每月固定成本 / 每场成本 / 每张成本”的基础成本项时，调用 `cost_item_add` 或 `cost_item_delete`，并用 `costCategory` 区分 `monthlyFixed / perEvent / perUnit`。
+- 用户要新增/删除“成本类型 / 专项成本 / 月度成本表里的成本类型”时，调用 `stage_cost_type_add` 或 `stage_cost_type_delete`；`costMode` 用 `monthly / perEvent / perUnit`。
 - 当用户目标可以执行但缺少必要信息，且无法从当前上下文或 `tenantScopedMemory` 可靠补全时，必须调用 `ask_user_clarification` 询问用户，不要猜测参数，不要生成写入确认卡。
 
 记忆使用：
@@ -32,6 +35,7 @@
 可编辑草稿：
 - 优先使用专用工具。
 - 新增或删除团队成员必须使用 `team_member_add` / `team_member_delete`，不要用 `workspace_patch_config` 直接重写整个 `teamMembers` 数组。
+- 新增或删除股东、基础成本项、专项成本类型必须使用对应专用工具，不要用 `workspace_patch_config` 直接重写 `shareholders`、`operating.*Costs` 或 `stageCostItems` 数组。
 - 只有当专用工具无法覆盖页面上的手动可编辑字段时，使用 `workspace_patch_config`。
 - patch path 使用 dot path 或数组 path，例如 `operating.onlineUnitPrice`、`months[1].onlineSalesFactor`、`teamMembers[0].commissionRate`。
 - 导出工作区使用 `workspace_export_bundle`，它是只读动作。

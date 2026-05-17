@@ -5,6 +5,21 @@ export type AgentToolCallStep = {
   memberId?: string
   memberName?: string
   newMemberName?: string
+  shareholderId?: string
+  shareholderName?: string
+  newShareholderName?: string
+  investmentAmount?: number
+  dividendRate?: number
+  costCategory?: 'monthlyFixed' | 'perEvent' | 'perUnit'
+  costItemId?: string
+  costItemName?: string
+  newCostItemName?: string
+  amount?: number
+  stageCostItemId?: string
+  stageCostItemName?: string
+  newStageCostItemName?: string
+  costMode?: 'monthly' | 'perEvent' | 'perUnit'
+  count?: number
   employmentType?: 'salary' | 'partTime'
   monthlyBasePay?: number
   perEventTravelCost?: number
@@ -165,6 +180,91 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
       parameters: objectSchema({
         memberName: { type: 'string', description: '要删除的成员名称，例如 成员 A。' },
         memberId: { type: 'string', description: '要删除的成员 id；如果已经知道 id，可用 id 精确定位。' },
+      }),
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'shareholder_add',
+      description:
+        '规划在当前模型草稿里新增一个股东。用户说“新增股东 / 添加股东 / 加一个股东 / 新建股东”时必须调用本工具；本工具只生成确认卡，不直接保存。',
+      parameters: objectSchema({
+        newShareholderName: { type: 'string', description: '新增股东名称；用户未指定时可省略，由服务端生成默认名称。' },
+        investmentAmount: { type: 'number', description: '投资额，未提及时省略。' },
+        dividendRate: { type: 'number', description: '分红比例，使用小数，例如 30% 填 0.3。' },
+      }),
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'shareholder_delete',
+      description:
+        '规划从当前模型草稿里删除一个股东。用户说“删除股东 / 移除股东 / 删掉股东”时必须调用本工具；必须提供明确 shareholderName 或 shareholderId。若用户没有指定删除谁，调用 ask_user_clarification，不要猜测。',
+      parameters: objectSchema({
+        shareholderName: { type: 'string', description: '要删除的股东名称，例如 股东 A。' },
+        shareholderId: { type: 'string', description: '要删除的股东 id；如果已经知道 id，可用 id 精确定位。' },
+      }),
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'cost_item_add',
+      description:
+        '规划新增基础成本项，用于“每月固定成本 / 每场成本 / 每张成本”列表。用户说新增房租、摄影、耗材这类基础成本项时调用本工具；本工具只生成确认卡，不直接保存。',
+      parameters: objectSchema({
+        costCategory: {
+          type: 'string',
+          enum: ['monthlyFixed', 'perEvent', 'perUnit'],
+          description: '成本项归属：monthlyFixed=每月固定，perEvent=每场，perUnit=每张。用户说“每月/固定/月租”时用 monthlyFixed，说“每场/按场”时用 perEvent，说“每张/按张/单张”时用 perUnit。',
+        },
+        newCostItemName: { type: 'string', description: '新增成本项名称。' },
+        amount: { type: 'number', description: '成本金额，未提及时省略，服务端默认 0。' },
+      }, ['costCategory']),
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'cost_item_delete',
+      description:
+        '规划删除基础成本项，用于“每月固定成本 / 每场成本 / 每张成本”列表。必须提供 costItemName 或 costItemId；如果名称可能跨分类重复，优先提供 costCategory。',
+      parameters: objectSchema({
+        costCategory: {
+          type: 'string',
+          enum: ['monthlyFixed', 'perEvent', 'perUnit'],
+          description: '成本项归属；如果用户明确说了每月固定/每场/每张，必须传该分类。',
+        },
+        costItemName: { type: 'string', description: '要删除的成本项名称。' },
+        costItemId: { type: 'string', description: '要删除的成本项 id。' },
+      }),
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'stage_cost_type_add',
+      description:
+        '规划新增专项成本类型，也就是月度成本表里可按“每月 / 每场 / 每张”录入的成本类型。用户说“新增成本类型 / 新增专项成本 / 添加一个可按场记录的成本类型”时调用本工具；本工具只生成确认卡，不直接保存。',
+      parameters: objectSchema({
+        newStageCostItemName: { type: 'string', description: '新增专项成本类型名称。' },
+        costMode: { type: 'string', enum: ['monthly', 'perEvent', 'perUnit'], description: '计费方式：monthly=每月，perEvent=每场，perUnit=每张。用户未指定时可省略，服务端默认 perEvent。' },
+        amount: { type: 'number', description: '可选默认金额；提供时服务端会写入模板和现有月份对应成本值。' },
+        count: { type: 'number', description: '可选默认数量或系数；仅用户明确说明时填写。' },
+      }),
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'stage_cost_type_delete',
+      description:
+        '规划删除专项成本类型，也就是月度成本表里的一个成本类型。用户说“删除成本类型 / 删除专项成本 / 移除某个按场成本类型”时调用本工具；必须提供 stageCostItemName 或 stageCostItemId。',
+      parameters: objectSchema({
+        stageCostItemName: { type: 'string', description: '要删除的专项成本类型名称。' },
+        stageCostItemId: { type: 'string', description: '要删除的专项成本类型 id。' },
       }),
     },
   },
@@ -346,6 +446,18 @@ export function toolCallToPlannerStep(toolName: string, args: Record<string, unk
       return { intent: 'team_member.add', ...args }
     case 'team_member_delete':
       return { intent: 'team_member.delete', ...args }
+    case 'shareholder_add':
+      return { intent: 'shareholder.add', ...args }
+    case 'shareholder_delete':
+      return { intent: 'shareholder.delete', ...args }
+    case 'cost_item_add':
+      return { intent: 'cost_item.add', ...args }
+    case 'cost_item_delete':
+      return { intent: 'cost_item.delete', ...args }
+    case 'stage_cost_type_add':
+      return { intent: 'stage_cost_type.add', ...args }
+    case 'stage_cost_type_delete':
+      return { intent: 'stage_cost_type.delete', ...args }
     case 'workspace_patch_config':
       return { intent: 'workspace.patch_config', ...args }
     case 'workspace_save_snapshot':

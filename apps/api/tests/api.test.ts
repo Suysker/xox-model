@@ -2135,6 +2135,142 @@ describe('xox TypeScript API', () => {
     })
   })
 
+  it('plans shareholder and cost structure add/delete through dedicated Agent confirmations', async () => {
+    await withFakeOpenAICompatibleProvider((body) => {
+      const prompt = body.messages.map((message: any) => message.content).join('\n')
+      const instruction = prompt.split('用户指令：').at(-1) ?? prompt
+      const toolNames = new Set(body.tools.map((tool: any) => tool.function.name))
+      for (const name of ['shareholder_add', 'shareholder_delete', 'cost_item_add', 'cost_item_delete', 'stage_cost_type_add', 'stage_cost_type_delete']) {
+        expect(toolNames.has(name), name).toBe(true)
+      }
+
+      if (instruction.includes('新增股东')) {
+        return fakeToolResponse('shareholder_add', {
+          newShareholderName: '股东 C',
+          investmentAmount: 10000,
+          dividendRate: 0.1,
+        })
+      }
+      if (instruction.includes('股东 C 投资额')) {
+        return fakeToolResponse('workspace_patch_config', {
+          patches: [{ path: 'shareholders[2].investmentAmount', value: 20000, label: '股东 C 投资额' }],
+        })
+      }
+      if (instruction.includes('删除股东 C')) return fakeToolResponse('shareholder_delete', { shareholderName: '股东 C' })
+      if (instruction.includes('删除股东 A')) return fakeToolResponse('shareholder_delete', { shareholderName: '股东 A' })
+      if (instruction.includes('新增每月固定成本')) {
+        return fakeToolResponse('cost_item_add', {
+          costCategory: 'monthlyFixed',
+          newCostItemName: '房租',
+          amount: 1200,
+        })
+      }
+      if (instruction.includes('删除每月固定成本房租')) {
+        return fakeToolResponse('cost_item_delete', { costCategory: 'monthlyFixed', costItemName: '房租' })
+      }
+      if (instruction.includes('新增成本类型')) {
+        return fakeToolResponse('stage_cost_type_add', {
+          newStageCostItemName: '摄影',
+          costMode: 'perEvent',
+          amount: 300,
+          count: 1,
+        })
+      }
+      if (instruction.includes('删除成本类型摄影')) {
+        return fakeToolResponse('stage_cost_type_delete', { stageCostItemName: '摄影' })
+      }
+      return fakeToolResponse('ui_navigate', { mainTab: 'inputs', secondaryTab: 'cost' })
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-shareholder-cost-tools', { llmProvider: 'openai-compatible', openaiCompatibleProvider: 'test-compatible', openaiCompatibleBaseUrl: baseUrl, openaiCompatibleApiKey: 'test-key' })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-shareholder-cost-tools@example.com')
+
+      async function confirm(action: any) {
+        const response = await client.post(`/api/v1/agent/action-requests/${action.id}/confirm`)
+        expect(response.statusCode).toBe(200)
+        return response.json
+      }
+
+      const addedShareholder = await client.post('/api/v1/agent/messages', { message: '新增股东，名字叫 股东 C，投资 10000，分红比例 10%' })
+      expect(addedShareholder.statusCode).toBe(200)
+      expect(addedShareholder.json.actionRequests[0].title).toContain('新增股东')
+      expect(addedShareholder.json.actionRequests[0].navigation.route.secondaryTab).toBe('capital')
+      await confirm(addedShareholder.json.actionRequests[0])
+      let draft = (await client.get('/api/v1/workspace/draft')).json
+      expect(draft.config.shareholders).toHaveLength(3)
+      expect(draft.config.shareholders.find((shareholder: any) => shareholder.name === '股东 C').investmentAmount).toBe(10000)
+
+      const editedShareholder = await client.post('/api/v1/agent/messages', { threadId: addedShareholder.json.threadId, message: '把股东 C 投资额改成 20000 并保存' })
+      expect(editedShareholder.statusCode).toBe(200)
+      expect(editedShareholder.json.actionRequests[0].kind).toBe('workspace.update_draft')
+      await confirm(editedShareholder.json.actionRequests[0])
+      draft = (await client.get('/api/v1/workspace/draft')).json
+      expect(draft.config.shareholders.find((shareholder: any) => shareholder.name === '股东 C').investmentAmount).toBe(20000)
+
+      const deletedShareholder = await client.post('/api/v1/agent/messages', { threadId: addedShareholder.json.threadId, message: '删除股东 C' })
+      expect(deletedShareholder.statusCode).toBe(200)
+      expect(deletedShareholder.json.actionRequests[0].title).toContain('删除股东')
+      expect(deletedShareholder.json.actionRequests[0].riskLevel).toBe('high')
+      await confirm(deletedShareholder.json.actionRequests[0])
+      draft = (await client.get('/api/v1/workspace/draft')).json
+      expect(draft.config.shareholders.some((shareholder: any) => shareholder.name === '股东 C')).toBe(false)
+
+      const oneShareholderDraft = await client.patch('/api/v1/workspace/draft', {
+        revision: draft.revision,
+        workspaceName: draft.workspaceName,
+        config: { ...draft.config, shareholders: [draft.config.shareholders[0]] },
+      })
+      expect(oneShareholderDraft.statusCode).toBe(200)
+      const lastShareholderDelete = await client.post('/api/v1/agent/messages', { threadId: addedShareholder.json.threadId, message: '删除股东 A' })
+      expect(lastShareholderDelete.statusCode).toBe(200)
+      expect(lastShareholderDelete.json.actionRequests).toHaveLength(0)
+      expect(lastShareholderDelete.json.messages.at(-1).content).toContain('不能删除最后一个股东')
+
+      draft = (await client.get('/api/v1/workspace/draft')).json
+      const restoredShareholders = createProductDefaultModel().shareholders
+      const restored = await client.patch('/api/v1/workspace/draft', {
+        revision: draft.revision,
+        workspaceName: draft.workspaceName,
+        config: { ...draft.config, shareholders: restoredShareholders },
+      })
+      expect(restored.statusCode).toBe(200)
+
+      const addedCost = await client.post('/api/v1/agent/messages', { threadId: addedShareholder.json.threadId, message: '新增每月固定成本房租 1200' })
+      expect(addedCost.statusCode).toBe(200)
+      expect(addedCost.json.actionRequests[0].title).toContain('新增基础成本项')
+      expect(addedCost.json.actionRequests[0].navigation.route.secondaryTab).toBe('cost')
+      await confirm(addedCost.json.actionRequests[0])
+      draft = (await client.get('/api/v1/workspace/draft')).json
+      expect(draft.config.operating.monthlyFixedCosts.find((item: any) => item.name === '房租').amount).toBe(1200)
+
+      const deletedCost = await client.post('/api/v1/agent/messages', { threadId: addedShareholder.json.threadId, message: '删除每月固定成本房租' })
+      expect(deletedCost.statusCode).toBe(200)
+      expect(deletedCost.json.actionRequests[0].title).toContain('删除基础成本项')
+      await confirm(deletedCost.json.actionRequests[0])
+      draft = (await client.get('/api/v1/workspace/draft')).json
+      expect(draft.config.operating.monthlyFixedCosts.some((item: any) => item.name === '房租')).toBe(false)
+
+      const addedStageCost = await client.post('/api/v1/agent/messages', { threadId: addedShareholder.json.threadId, message: '新增成本类型摄影，按场计费，默认 300 元 1 场' })
+      expect(addedStageCost.statusCode).toBe(200)
+      expect(addedStageCost.json.actionRequests[0].title).toContain('新增专项成本类型')
+      await confirm(addedStageCost.json.actionRequests[0])
+      draft = (await client.get('/api/v1/workspace/draft')).json
+      const photography = draft.config.stageCostItems.find((item: any) => item.name === '摄影')
+      expect(photography.mode).toBe('perEvent')
+      expect(draft.config.months.every((month: any) => month.specialCosts.some((cost: any) => cost.itemId === photography.id))).toBe(true)
+
+      const deletedStageCost = await client.post('/api/v1/agent/messages', { threadId: addedShareholder.json.threadId, message: '删除成本类型摄影' })
+      expect(deletedStageCost.statusCode).toBe(200)
+      expect(deletedStageCost.json.actionRequests[0].title).toContain('删除专项成本类型')
+      await confirm(deletedStageCost.json.actionRequests[0])
+      draft = (await client.get('/api/v1/workspace/draft')).json
+      expect(draft.config.stageCostItems.some((item: any) => item.name === '摄影')).toBe(false)
+      expect(draft.config.months.every((month: any) => month.specialCosts.every((cost: any) => cost.itemId !== photography.id))).toBe(true)
+
+      await closeHarness(harness)
+    })
+  })
+
   it('validates a broad Agent OS capability matrix through backend APIs', async () => {
     await withFakeOpenAICompatibleProvider((body) => {
       const prompt = body.messages.map((message: any) => message.content).join('\n')
@@ -2524,19 +2660,39 @@ describe('xox TypeScript API', () => {
 
     for (const pattern of [
       'operating.monthlyFixedCosts[n].amount',
+      'operating.monthlyFixedCosts.add',
+      'operating.monthlyFixedCosts.delete',
       'operating.perEventCosts[n].amount',
+      'operating.perEventCosts.add',
+      'operating.perEventCosts.delete',
       'operating.perUnitCosts[n].amount',
+      'operating.perUnitCosts.add',
+      'operating.perUnitCosts.delete',
+      'shareholders.add',
+      'shareholders.delete',
       'teamMembers.add',
       'teamMembers.delete',
       'teamMembers[n].unitsPerEvent.optimistic',
+      'stageCostItems.add',
+      'stageCostItems.delete',
       'months[n].specialCosts[m].count',
     ]) {
       expect(patterns.has(pattern), pattern).toBe(true)
     }
 
     const toolNames = new Set(AGENT_TOOL_CATALOG.map((tool) => tool.function.name))
-    expect(toolNames.has('team_member_add')).toBe(true)
-    expect(toolNames.has('team_member_delete')).toBe(true)
+    for (const name of [
+      'team_member_add',
+      'team_member_delete',
+      'shareholder_add',
+      'shareholder_delete',
+      'cost_item_add',
+      'cost_item_delete',
+      'stage_cost_type_add',
+      'stage_cost_type_delete',
+    ]) {
+      expect(toolNames.has(name), name).toBe(true)
+    }
 
     const supported = AGENT_MANUAL_CAPABILITY_COVERAGE.filter((item) => item.status === 'supported').map((item) => item.capability)
     expect(supported).toEqual(expect.arrayContaining([

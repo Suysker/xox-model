@@ -73,6 +73,9 @@ function assertDraftConfigPayload(payload: Record<string, unknown>) {
   if (!Array.isArray(config.teamMembers) || config.teamMembers.length < 1) {
     throw conflict('Workspace draft must keep at least one team member')
   }
+  if (!Array.isArray(config.shareholders) || config.shareholders.length < 1) {
+    throw conflict('Workspace draft must keep at least one shareholder')
+  }
 }
 
 function assertRisk(kind: AgentActionKind, riskLevel: string) {

@@ -66,7 +66,7 @@
 - Provider-native tool calling still needs a read-only conversational tool. If prompts forbid ordinary text but the catalog has no `agent_reply`-style tool, greetings and identity questions become false planning failures even though no business write was requested.
 - Provider HTTP/network errors must not be collapsed into "model returned no tool_call". Authentication failures usually mean the user kept an old provider key after switching vendors, and the UI needs to say that directly.
 - Data-agent tool schemas need metrics for entity counts and rosters, not only financial summaries. Without a `team_summary`-style scope, questions like "how many members do we have" get misrouted to workspace financial overview.
-- Agent structural roster changes need dedicated tools, not generic array rewrites. For actions such as adding or deleting team members, let the model choose a semantic tool and let the server create/delete validated domain objects, generate the confirmation card, and re-check invariants such as “at least one member remains” at execution time.
+- Agent structural model changes need dedicated tools, not generic array rewrites. For actions such as adding/deleting team members, shareholders, cost items, or stage cost types, let the model choose a semantic tool and let the server create/delete validated domain objects, generate the confirmation card, synchronize dependent arrays, and re-check invariants such as “at least one member/shareholder remains” at execution time.
 
 ## Testing
 

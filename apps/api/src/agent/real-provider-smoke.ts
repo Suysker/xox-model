@@ -376,6 +376,87 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     )
     rememberCoverage(coveredDirections, 'team_member_delete_confirmation')
 
+    const addShareholder = await sendAgentMessage(client, plannerSources, {
+      label: 'add shareholder',
+      threadId: forecast.json.threadId,
+      message: '新增一个股东，名字叫 股东 C，投资额 10000，分红比例 0.1，只生成确认卡',
+    })
+    const addShareholderAction = findAction(addShareholder, 'workspace.update_draft', 'add shareholder')
+    assertSmoke(String(addShareholderAction.title).includes('新增股东'), `shareholder add did not use dedicated add planner: ${String(addShareholderAction.title)}`)
+    assertSmoke(addShareholderAction.navigation?.route?.secondaryTab === 'capital', 'shareholder add did not navigate to capital inputs')
+    await confirmAction(client, addShareholderAction, 'confirm add shareholder', actionKinds)
+    const draftAfterAddShareholder = await client.get('/api/v1/workspace/draft')
+    assertOk(draftAfterAddShareholder, 'draft after add shareholder')
+    assertSmoke(
+      draftAfterAddShareholder.json.config.shareholders.some((shareholder: any) => shareholder.name === '股东 C'),
+      'confirmed add shareholder did not persist 股东 C',
+    )
+    rememberCoverage(coveredDirections, 'shareholder_add_confirmation')
+
+    const deleteShareholder = await sendAgentMessage(client, plannerSources, {
+      label: 'delete shareholder',
+      threadId: forecast.json.threadId,
+      message: '删除股东 C',
+    })
+    const deleteShareholderAction = findAction(deleteShareholder, 'workspace.update_draft', 'delete shareholder')
+    assertSmoke(String(deleteShareholderAction.title).includes('删除股东'), `shareholder delete did not use dedicated delete planner: ${String(deleteShareholderAction.title)}`)
+    assertSmoke(deleteShareholderAction.riskLevel === 'high', 'shareholder delete should be a high-risk confirmation')
+    await confirmAction(client, deleteShareholderAction, 'confirm delete shareholder', actionKinds)
+    rememberCoverage(coveredDirections, 'shareholder_delete_confirmation')
+
+    const addCostItem = await sendAgentMessage(client, plannerSources, {
+      label: 'add monthly fixed cost item',
+      threadId: forecast.json.threadId,
+      message: '新增每月固定成本，名字叫 房租，金额 1200，只生成确认卡',
+    })
+    const addCostItemAction = findAction(addCostItem, 'workspace.update_draft', 'add monthly fixed cost item')
+    assertSmoke(String(addCostItemAction.title).includes('新增基础成本项'), `cost item add did not use dedicated add planner: ${String(addCostItemAction.title)}`)
+    assertSmoke(addCostItemAction.navigation?.route?.secondaryTab === 'cost', 'cost item add did not navigate to cost inputs')
+    await confirmAction(client, addCostItemAction, 'confirm add monthly fixed cost item', actionKinds)
+    const draftAfterAddCost = await client.get('/api/v1/workspace/draft')
+    assertOk(draftAfterAddCost, 'draft after add monthly fixed cost item')
+    assertSmoke(
+      draftAfterAddCost.json.config.operating.monthlyFixedCosts.some((item: any) => item.name === '房租'),
+      'confirmed add monthly fixed cost item did not persist 房租',
+    )
+    rememberCoverage(coveredDirections, 'cost_item_add_confirmation')
+
+    const deleteCostItem = await sendAgentMessage(client, plannerSources, {
+      label: 'delete monthly fixed cost item',
+      threadId: forecast.json.threadId,
+      message: '删除每月固定成本房租',
+    })
+    const deleteCostItemAction = findAction(deleteCostItem, 'workspace.update_draft', 'delete monthly fixed cost item')
+    assertSmoke(String(deleteCostItemAction.title).includes('删除基础成本项'), `cost item delete did not use dedicated delete planner: ${String(deleteCostItemAction.title)}`)
+    await confirmAction(client, deleteCostItemAction, 'confirm delete monthly fixed cost item', actionKinds)
+    rememberCoverage(coveredDirections, 'cost_item_delete_confirmation')
+
+    const addStageCostType = await sendAgentMessage(client, plannerSources, {
+      label: 'add stage cost type',
+      threadId: forecast.json.threadId,
+      message: '新增成本类型，名字叫 摄影，按场计费，只生成确认卡',
+    })
+    const addStageCostTypeAction = findAction(addStageCostType, 'workspace.update_draft', 'add stage cost type')
+    assertSmoke(String(addStageCostTypeAction.title).includes('新增专项成本类型'), `stage cost type add did not use dedicated add planner: ${String(addStageCostTypeAction.title)}`)
+    await confirmAction(client, addStageCostTypeAction, 'confirm add stage cost type', actionKinds)
+    const draftAfterAddStageCost = await client.get('/api/v1/workspace/draft')
+    assertOk(draftAfterAddStageCost, 'draft after add stage cost type')
+    assertSmoke(
+      draftAfterAddStageCost.json.config.stageCostItems.some((item: any) => item.name === '摄影'),
+      'confirmed add stage cost type did not persist 摄影',
+    )
+    rememberCoverage(coveredDirections, 'stage_cost_type_add_confirmation')
+
+    const deleteStageCostType = await sendAgentMessage(client, plannerSources, {
+      label: 'delete stage cost type',
+      threadId: forecast.json.threadId,
+      message: '删除成本类型摄影',
+    })
+    const deleteStageCostTypeAction = findAction(deleteStageCostType, 'workspace.update_draft', 'delete stage cost type')
+    assertSmoke(String(deleteStageCostTypeAction.title).includes('删除专项成本类型'), `stage cost type delete did not use dedicated delete planner: ${String(deleteStageCostTypeAction.title)}`)
+    await confirmAction(client, deleteStageCostTypeAction, 'confirm delete stage cost type', actionKinds)
+    rememberCoverage(coveredDirections, 'stage_cost_type_delete_confirmation')
+
     const clarification = await sendAgentMessage(client, plannerSources, {
       label: 'clarification for missing ledger fields',
       threadId: forecast.json.threadId,
