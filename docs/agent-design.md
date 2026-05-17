@@ -129,7 +129,7 @@ modules/agent.ts
 - 高风险版本 / 分享动作的确认卡预览已下沉到 `apps/api/src/agent/version-action-drafts.ts`；planner 只负责意图路由和多步骤组合，不再内联发布、快照、回滚、快照发布、删除版本、创建/撤销分享和重置草稿的业务预览。
 - 账本类写入 preview 已下沉到 `apps/api/src/agent/ledger-action-drafts.ts`；planner 只负责把 provider tool call 的 intent 分发给 draft builder，不再内联成员收入、普通收支、一键入账、历史修改、作废/恢复和锁账/解锁的确认卡生成。
 - 结构化模型变更 preview 继续按同一边界下沉到 `apps/api/src/agent/model-structure-action-drafts.ts`：成员、员工、股东、基础成本项、专项成本类型的新增/删除都由该模块读取当前草稿、生成 normalized config、输出可编辑 `workspace.update_draft` action draft。planner 不持有这些领域对象构造、删除校验、依赖数组同步和确认卡细节。
-- 后续继续把通用草稿 patch、线上系数试算/写入和 bundle 导入导出按同一模式下沉到更小的领域 action draft 模块。
+- 通用工作区和草稿 preview 下沉到 `apps/api/src/agent/workspace-action-drafts.ts`：线上系数试算/写入、通用草稿 patch、工作区改名、bundle 导入导出都由该模块读取当前草稿或 workspace bundle，输出只读结果或可编辑确认卡。planner 不再持有模型投影、config path 写入、workspace rename 或 bundle preview 细节。
 
 本轮结构化模型变更拆分的依赖方向固定为：
 
@@ -143,6 +143,22 @@ planner.ts
 ```
 
 命名保持现有 handler intent 风格，例如 `team_member.add -> planAddTeamMemberFromStep`、`stage_cost_type.delete -> planDeleteStageCostTypeFromStep`。验证必须至少运行 `npm.cmd run build`、`npm.cmd run test`，并在涉及真实 provider 行为时运行 `npm.cmd run smoke:agent`。
+
+本轮 workspace/draft/bundle 拆分的依赖方向固定为：
+
+```text
+planner.ts
+  -> workspace-action-drafts.ts
+      -> action-draft-utils.ts
+      -> config-patch.ts
+      -> modules/workspace.ts
+      -> @xox/domain projection / hydration
+      -> action-requests.ts types only
+```
+
+复用计划：`workspace.update_online_factor`、`workspace.patch_config`、`workspace.rename`、`workspace.export_bundle` 和 `workspace.import_bundle` 的 runtime handler 都只把 provider-native tool args 交给 workspace draft builder。该模块可以读取当前 workspace 草稿和导出 bundle，但不持久化 action request、不执行写入、不参与语义 tool selection。
+
+命名保持 handler intent 风格，例如 `workspace.patch_config -> planWorkspacePatch`、`workspace.import_bundle -> planImportBundleFromValue`。验收要求构建证明 `planner.ts` 不再引用 `projectModel`、`hydrateModelConfig`、`config-patch.ts` 或 `modules/workspace.ts` 的业务 draft 依赖。
 
 ### `apps/api/src/agent/kernel`
 

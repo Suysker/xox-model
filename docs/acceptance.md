@@ -141,6 +141,7 @@
 - [x] 版本 / 分享类写入 preview 已从 `planner.ts` 抽到 `apps/api/src/agent/version-action-drafts.ts`，覆盖保存快照、发布正式版、发布并分享、恢复版本、把快照发布为正式版、删除版本、创建/撤销分享链接和重置草稿；runtime tool-call handler 与本地多步骤规划复用同一套确认卡 builder
 - [x] 账本类写入 preview 已从 `planner.ts` 抽到 `apps/api/src/agent/ledger-action-drafts.ts`，覆盖成员收入入账、普通收入/支出、成员/员工支出、一键入账多笔、历史分录修改、精确作废、恢复分录和锁账/解锁；`apps/api/src/agent/action-draft-utils.ts` 统一复用月份、草稿、成员/员工定位和数字解析工具
 - [x] 结构化模型变更 preview 已从 `planner.ts` 抽到 `apps/api/src/agent/model-structure-action-drafts.ts`，覆盖团队成员、运营员工、股东、基础成本项和专项成本类型的新增/删除；planner 不再内联这些领域对象构造、删除校验、依赖数组同步和确认卡细节
+- [x] 通用工作区 / 草稿 / bundle preview 已从 `planner.ts` 抽到 `apps/api/src/agent/workspace-action-drafts.ts`，覆盖线上系数试算/写入、通用草稿 patch、工作区改名、bundle 导入导出；planner 不再直接引用 `@xox/domain` 投影/水合、`config-patch.ts` 或 `modules/workspace.ts` 的业务 draft 依赖
 - [x] Tool policy / permission hooks 覆盖账号动作拒绝、写入确认、确认卡编辑后的必需导航、跨租户 payload 禁止、锁账禁止、派生提成禁止直接编辑
 - [x] 多步骤消息中如果同时包含合法业务动作和账号禁用动作，合法业务动作仍会生成确认卡，账号动作只作为该步骤的只读拒绝项展示
 - [x] Memory list/delete/context injection 有测试证明不会跨用户或跨工作区，并且不会保存 secrets；当前 secret-like 消息会在 provider prompt 中 redaction，后续新线程不再注入
