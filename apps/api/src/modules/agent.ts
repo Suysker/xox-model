@@ -18,7 +18,7 @@ import {
   cancelAgentActionRequest,
   confirmAgentActionRequest,
   updateAgentActionRequest,
-} from '../agent/action-requests.js'
+} from '../agent/approval-executor.js'
 import {
   deleteAgentProviderSetting,
   getAgentProviderSetting,

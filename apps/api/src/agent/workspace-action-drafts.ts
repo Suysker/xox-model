@@ -1,7 +1,7 @@
 import { hydrateModelConfig, projectModel } from '@xox/domain'
 import type { AgentNavigationEvent } from '@xox/contracts'
 import { exportWorkspaceBundle } from '../modules/workspace.js'
-import type { AgentActionDraft } from './action-requests.js'
+import type { AgentActionDraft } from './approval-executor.js'
 import type { ReadDraft, RuntimePlannerStep } from './action-draft-builder.js'
 import { currentDraftConfig } from './action-draft-utils.js'
 import { cloneModelConfig, getConfigPath, setConfigPath } from './config-patch.js'

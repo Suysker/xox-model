@@ -98,6 +98,7 @@
 - Agent structural model changes need dedicated tools, not generic array rewrites. For actions such as adding/deleting team members, shareholders, cost items, or stage cost types, let the model choose a semantic tool and let the server create/delete validated domain objects, generate the confirmation card, synchronize dependent arrays, and re-check invariants such as “at least one member/shareholder remains” at execution time.
 - Manual SaaS operations need a coverage matrix that includes ledger history and read-only filters, not just writes. If the page lets users add/delete employees, rename workspaces, edit/void/restore entries, batch-post actuals, or filter history, those actions need semantic Agent tools or `data_query_workspace` scopes plus API tests and real-provider smoke coverage.
 - Batch Agent tools should expand into multiple stored confirmation cards instead of one opaque "batch execute" payload. This keeps every pending write editable, auditable, and visibly tied to a page navigation event.
+- Keep the Approval Executor boundary focused on editable confirmation cards, policy re-checks, confirmed execution, audit, and action status. Action graph step persistence belongs in `action-graph-store`, otherwise the harness boundary drifts back into a generic action-request utility.
 
 ## Testing
 

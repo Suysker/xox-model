@@ -120,11 +120,11 @@
 ## Agent Runtime 成熟化
 
 - [ ] `docs/adr/0001-agent-runtime-architecture.md` 中的 runtime 采用策略完成代码落地
-- [ ] `apps/api/src/modules/agent.ts` 拆分为 routes、kernel、runtime adapters、tools、memory/context、confirmation service
+- [ ] `apps/api/src/modules/agent.ts` 拆分为 routes、kernel、runtime adapters、tools、memory/context、approval executor
 - [x] Agent planner 已从 `modules/agent.ts` 抽到 `apps/api/src/agent/planner.ts`，并继续下沉为 `planning-session / runtime-plan-reader / action-draft-builder / action-graph-store` 等边界；route module 只调用 `planResponse`
 - [x] OpenAI-compatible Chat Completions provider 调用已从 `modules/agent.ts` 抽到 `apps/api/src/agent/runtime/openai-compatible-chat-adapter.ts`，通过 `adapter-router.ts` 输出统一 runtime plan result
-- [x] Confirmation service 已从 `modules/agent.ts` 抽到 `apps/api/src/agent/action-requests.ts`，统一处理确认卡创建、编辑、确认、取消、执行状态、assistant message、run event 和审计；routes 只做 HTTP 编排与 thread publish
-- [x] Server tool execution 已从 confirmation service 抽到 `apps/api/src/agent/tool-executor.ts`，确认执行时先走 tool policy，再由 executor 调用 workspace / ledger / share 领域服务；provider/runtime 仍不能直接写业务数据
+- [x] Approval Executor 已从 `modules/agent.ts` 抽到 `apps/api/src/agent/approval-executor.ts`，统一处理确认卡创建、编辑、确认、取消、执行状态、assistant message、run event 和审计；routes 只做 HTTP 编排与 thread publish，plan step 持久化由 `action-graph-store.ts` 负责
+- [x] Server tool execution 已从 Approval Executor 抽到 `apps/api/src/agent/tool-executor.ts`，确认执行时先走 tool policy，再由 executor 调用 workspace / ledger / share 领域服务；provider/runtime 仍不能直接写业务数据
 - [x] `packages/contracts` 的 planner source 已改为 `openai_agents / openai_compatible_tool_calls / rules`，不再把 DeepSeek planner source 作为唯一主语义，也不再接受 assistant JSON 文本冒充 tool call
 - [x] 常规 Agent 请求不会用本地正则/规则替模型生成业务动作；API 测试覆盖“provider 有 key 但只返回 assistant 文本”和“provider 被选择但无 key”两种情况，均不生成确认卡；`rules` 只保留为本地/CI no-op 生命周期路径，不能生成业务确认卡
 - [x] Data agent 只读问答必须由模型调用 `data_query_workspace`，API 测试和真实 smoke 覆盖“3 月计划收入和计划成本是多少”这类问题；该路径不生成确认卡、不写业务数据，并打开对应分析页面
@@ -166,7 +166,7 @@
 - [x] 后台 run 支持 worker lease：API 测试覆盖未租约/过期租约可恢复、其他 worker 的未过期租约不会被抢占、旧 worker 在失去租约后收到迟到模型结果也不能写 assistant message、plan step 或 pending confirmation card
 - [x] 后台 run 支持周期 worker sweep：background 请求只入队，API 测试覆盖未显式调用 recovery 时，worker 也会按队列扫描认领 unleased running run 并完成真实 provider-compatible tool call 规划
 - [x] 后台 run 有持久化 `agent_run_events` 运行轨迹：API、SSE、React 运行图和真实 provider smoke 均覆盖 run 入队、worker 认领、模型规划、工具计划、确认卡生成、确认卡编辑、执行、取消和失败等用户可见步骤
-- [x] Run trace 写入和序列化已从 `apps/api/src/modules/agent.ts` 拆到 `apps/api/src/agent/run-events.ts`，作为后续 routes/kernel/confirmation service 继续切分的独立服务边界
+- [x] Run trace 写入和序列化已从 `apps/api/src/modules/agent.ts` 拆到 `apps/api/src/agent/run-events.ts`，作为后续 routes/kernel/Approval Executor 继续切分的独立服务边界
 - [x] Provider stream trace 投影已从 `planner.ts` 抽到 `apps/api/src/agent/runtime-trace-events.ts`：runtime adapter 只输出 provider-neutral `RuntimeStreamEvent`，trace service 负责脱敏、截断并写入 `provider_stream_*` run events，planner 不再拼 raw stream payload
 - [x] Agent run worker lifecycle 已从 `apps/api/src/modules/agent.ts` 拆到 `apps/api/src/agent/run-worker.ts`，集中处理 run controller、worker lease heartbeat、completion、cancellation、进程重启恢复和 queue sweep；route module 不再直接持有后台 run 队列状态
 - [x] 用户可取消 running run；取消后 run 进入 `cancelled`，当前 provider 请求会被中止，迟到的模型结果不能把 run 改回 completed，也不能留下 pending 确认卡

@@ -1,5 +1,5 @@
 import type { AgentNavigationEvent, AgentPlanStepStatus } from '@xox/contracts'
-import type { AgentActionDraft } from './action-requests.js'
+import type { AgentActionDraft } from './approval-executor.js'
 import type { RuntimePlanResult } from './runtime/runtime-adapter.js'
 
 export type ReadDraft = {

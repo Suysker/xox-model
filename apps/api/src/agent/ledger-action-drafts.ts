@@ -1,7 +1,7 @@
 import { projectModel, type ModelConfig } from '@xox/domain'
 import type { AgentNavigationEvent } from '@xox/contracts'
 import { listEntries, listSubjectsForPeriod } from '../modules/ledger.js'
-import type { AgentActionDraft } from './action-requests.js'
+import type { AgentActionDraft } from './approval-executor.js'
 import type { PlannedItem, ReadDraft, RuntimePlannerStep } from './action-draft-builder.js'
 import {
   currentDraftConfig,

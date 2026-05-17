@@ -1,9 +1,12 @@
 import type { Kysely } from 'kysely'
-import type { AgentNavigationEvent, AgentPlannerSource } from '@xox/contracts'
+import type { AgentNavigationEvent, AgentPlannerSource, AgentPlanStepStatus } from '@xox/contracts'
 import type { Database, Row } from '../db/schema.js'
+import { jsonString } from '../db/database.js'
 import type { Settings } from '../core/settings.js'
+import { newId } from '../core/security.js'
+import { utcNow } from '../core/time.js'
 import type { CurrentUser } from '../modules/auth.js'
-import { addAgentActionRequest, addAgentPlanStep } from './action-requests.js'
+import { addAgentActionRequest } from './approval-executor.js'
 import { isActionDraft, type PlannedItem } from './action-draft-builder.js'
 import { addRunEvent } from './run-events.js'
 import { assertAgentRunLease } from './run-lease.js'
@@ -24,6 +27,37 @@ export type StoredActionGraph = {
   actionRows: Row<'agent_action_requests'>[]
   planRows: Row<'agent_plan_steps'>[]
   plannerSource: AgentPlannerSource
+}
+
+type AddAgentPlanStepInput = {
+  sequence: number
+  title: string
+  description: string
+  status: AgentPlanStepStatus
+  actionRequestId?: string | null
+  navigation?: AgentNavigationEvent | null
+}
+
+async function addAgentPlanStep(ctx: ActionGraphContext, input: AddAgentPlanStepInput) {
+  const id = newId()
+  const now = utcNow()
+  await ctx.db
+    .insertInto('agent_plan_steps')
+    .values({
+      id,
+      thread_id: ctx.threadId,
+      run_id: ctx.runId,
+      action_request_id: input.actionRequestId ?? null,
+      sequence_no: input.sequence,
+      title: input.title,
+      description: input.description,
+      status: input.status,
+      navigation_json: input.navigation ? jsonString(input.navigation) : null,
+      created_at: now,
+      updated_at: now,
+    })
+    .execute()
+  return ctx.db.selectFrom('agent_plan_steps').selectAll().where('id', '=', id).executeTakeFirstOrThrow()
 }
 
 export async function storePlannedActionGraph(

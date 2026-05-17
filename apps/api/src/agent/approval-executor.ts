@@ -3,7 +3,6 @@ import type {
   AgentActionKind,
   AgentActionUpdatePayload,
   AgentNavigationEvent,
-  AgentPlanStepStatus,
 } from '@xox/contracts'
 import type { Database, Row } from '../db/schema.js'
 import { jsonString } from '../db/database.js'
@@ -44,15 +43,6 @@ export type AgentPlanContext = {
   workspace: Row<'workspaces'>
   threadId: string
   runId: string
-}
-
-export type AddAgentPlanStepInput = {
-  sequence: number
-  title: string
-  description: string
-  status: AgentPlanStepStatus
-  actionRequestId?: string | null
-  navigation?: AgentNavigationEvent | null
 }
 
 function safeActionErrorMessage(error: unknown) {
@@ -101,28 +91,6 @@ export async function addAgentActionRequest(ctx: AgentPlanContext, draft: AgentA
     })
     .execute()
   return ctx.db.selectFrom('agent_action_requests').selectAll().where('id', '=', id).executeTakeFirstOrThrow()
-}
-
-export async function addAgentPlanStep(ctx: AgentPlanContext, input: AddAgentPlanStepInput) {
-  const id = newId()
-  const now = utcNow()
-  await ctx.db
-    .insertInto('agent_plan_steps')
-    .values({
-      id,
-      thread_id: ctx.threadId,
-      run_id: ctx.runId,
-      action_request_id: input.actionRequestId ?? null,
-      sequence_no: input.sequence,
-      title: input.title,
-      description: input.description,
-      status: input.status,
-      navigation_json: input.navigation ? jsonString(input.navigation) : null,
-      created_at: now,
-      updated_at: now,
-    })
-    .execute()
-  return ctx.db.selectFrom('agent_plan_steps').selectAll().where('id', '=', id).executeTakeFirstOrThrow()
 }
 
 export async function executeAgentActionRequest(db: Kysely<Database>, settings: Settings, user: CurrentUser, action: Row<'agent_action_requests'>) {

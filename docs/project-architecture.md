@@ -30,7 +30,7 @@
 apps/web -> packages/contracts -> packages/domain
 apps/api/routes -> apps/api/modules -> packages/domain -> apps/api/db
 apps/api/agent/planner -> apps/api/agent/runtime -> provider SDKs
-apps/api/agent/planner -> apps/api/agent/action-requests -> apps/api/agent/tool-policy
+apps/api/agent/planner -> apps/api/agent/action-graph-store -> apps/api/agent/approval-executor -> apps/api/agent/tool-policy
 apps/api/agent/kernel -> apps/api/agent/tools -> apps/api/modules -> packages/domain -> apps/api/db
 ```
 

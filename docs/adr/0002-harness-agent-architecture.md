@@ -534,7 +534,7 @@ DeepSeek、Qwen、Doubao 等 provider 通过 `openai-compatible-chat-adapter.ts`
 
 - `apps/api/src/modules/agent.ts`
 - `apps/api/src/agent/kernel/*`
-- `apps/api/src/agent/action-requests.ts`
+- `apps/api/src/agent/approval-executor.ts`
 - `apps/api/src/agent/tool-executor.ts`
 
 验收：

@@ -1,4 +1,4 @@
-import type { AgentActionDraft } from './action-requests.js'
+import type { AgentActionDraft } from './approval-executor.js'
 import type { PlannerContext } from './planning-context.js'
 import { getWorkspaceDraft, listVersions } from '../modules/workspace.js'
 
