@@ -138,6 +138,7 @@
 - [x] Tool Catalog Gateway 已从 `planner.ts` 拆到 `apps/api/src/agent/tool-gateway.ts`：gateway 负责 runtime tool projection、`tool_catalog_ready` 运行事件、projection strategy 和 tool metadata；planner 只消费 `tools` 并交给 provider adapter
 - [x] Lean Harness Context Pack 边界已落地：`apps/api/src/agent/context-pack.ts` 统一构造 provider 上下文，集中注入当前 workspace 月份/成员/员工/版本/账期/科目、同 user/workspace/thread 的 memory、context summary、recent messages、可写模型字段矩阵和服务端解析 artifact；`planner.ts` 不再内联拼 provider context
 - [x] Lean Harness Action Draft Builder 边界已开始落地：`apps/api/src/agent/action-draft-builder.ts` 持有 read/action draft 类型、默认澄清/账号拒绝/导航只读动作、runtime intent handler 协议和 action draft type guard；`planner.ts` 通过 handler map 把 provider tool calls 路由为 read result 或 editable action draft，为后续迁移具体业务 draft builders 留出稳定边界
+- [x] Action graph store 已从 `planner.ts` 拆到 `apps/api/src/agent/action-graph-store.ts`：该模块统一持久化只读 plan steps、写入 confirmation cards、`tool_plan_ready` / `confirmation_ready` run events 和 `plan_ready` thread event；planner 只返回模型规划 items 并调用 store 边界
 - [x] `workspace_patch_config` 的通用草稿 path 解析和旧值/新值 preview 已抽到 `apps/api/src/agent/config-patch.ts`，支持 dot path 与数组 path，供 Agent 覆盖页面手动可编辑字段时复用
 - [x] 版本 / 分享类写入 preview 已从 `planner.ts` 抽到 `apps/api/src/agent/version-action-drafts.ts`，覆盖保存快照、发布正式版、发布并分享、恢复版本、把快照发布为正式版、删除版本、创建/撤销分享链接和重置草稿；runtime tool-call handler 与本地多步骤规划复用同一套确认卡 builder
 - [x] 账本类写入 preview 已从 `planner.ts` 抽到 `apps/api/src/agent/ledger-action-drafts.ts`，覆盖成员收入入账、普通收入/支出、成员/员工支出、一键入账多笔、历史分录修改、精确作废、恢复分录和锁账/解锁；`apps/api/src/agent/action-draft-utils.ts` 统一复用月份、草稿、成员/员工定位和数字解析工具
