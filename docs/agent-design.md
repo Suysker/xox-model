@@ -1,6 +1,6 @@
 # Agent OS 设计
 
-本文件描述 `xox-model` 的目标 Agent OS 架构。正式 runtime 采用策略见 [ADR 0001](adr/0001-agent-runtime-architecture.md)。
+本文件描述 `xox-model` 的目标 Agent OS 架构。正式 runtime 采用策略见 [ADR 0001](adr/0001-agent-runtime-architecture.md)，Harness Agent 分层架构见 [ADR 0002](adr/0002-harness-agent-architecture.md)，项目目标架构见 [ADR 0003](adr/0003-xox-model-agent-os-target-architecture.md)。
 
 ## 目标
 
@@ -40,7 +40,7 @@
 | 方案 | 决策 | 边界 |
 | --- | --- | --- |
 | OpenAI Agents SDK | 主 runtime 方向 | 用于 orchestration、tool、handoff、guardrail、tracing、session/context；不托管业务权限、确认卡和审计 |
-| OpenClaw | 架构参考 | 借鉴 control plane / execution plane / approval / observability，不直接 fork |
+| OpenClaw | 架构参考 | 借鉴模型外壳、approval、observability 和 context 思想；不复制 control plane / gateway |
 | DeepSeek | provider adapter 与真实模型测试通道 | 使用 OpenAI-compatible Chat Completions `tool_calls`，不作为 Agent OS 架构底座 |
 | Claude Code | 交互模式参考 | 不引入 Claude Agent SDK；只借鉴 memory、subagents、hooks、skills、MCP 的产品模式 |
 | Skills | 可选过程知识层 | 不能替代 server tools，不能绕过确认、权限、审计 |
