@@ -5,7 +5,7 @@ import type { AgentActionDraft } from './action-requests.js'
 import type { ReadDraft, RuntimePlannerStep } from './action-draft-builder.js'
 import { currentDraftConfig } from './action-draft-utils.js'
 import { cloneModelConfig, getConfigPath, setConfigPath } from './config-patch.js'
-import type { PlannerContext } from './planner.js'
+import type { PlannerContext } from './planning-context.js'
 
 function modelWorkbenchNavigation(reason: string): AgentNavigationEvent {
   return {

@@ -6,7 +6,8 @@ import { utcNow } from '../core/time.js'
 import type { CurrentUser } from '../modules/auth.js'
 import { compactThreadContextIfNeeded, redactSecretLikeContent } from './memory.js'
 import { resolveAgentRuntimeSettings } from './provider-settings.js'
-import { planResponse, type PlannerContext } from './planner.js'
+import { planResponse } from './planner.js'
+import type { PlannerContext } from './planning-context.js'
 import {
   AgentRunLeaseLostError,
   claimAgentRunLease,

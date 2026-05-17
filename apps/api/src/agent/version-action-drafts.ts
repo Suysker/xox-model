@@ -1,5 +1,5 @@
 import type { AgentActionDraft } from './action-requests.js'
-import type { PlannerContext } from './planner.js'
+import type { PlannerContext } from './planning-context.js'
 import { getWorkspaceDraft, listVersions } from '../modules/workspace.js'
 
 function versionPanelNavigation(reason: string) {

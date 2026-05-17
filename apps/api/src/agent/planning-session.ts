@@ -1,5 +1,5 @@
 import type { AgentPlannerSource } from '@xox/contracts'
-import type { PlannerContext } from './planner.js'
+import type { PlannerContext } from './planning-context.js'
 import {
   buildPlannedItemFromRuntimeStep,
   type ActionDraftBuilderHandlers,
