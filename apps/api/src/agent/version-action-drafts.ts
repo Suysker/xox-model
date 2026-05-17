@@ -2,11 +2,6 @@ import type { AgentActionDraft } from './action-requests.js'
 import type { PlannerContext } from './planner.js'
 import { getWorkspaceDraft, listVersions } from '../modules/workspace.js'
 
-function numberAfter(label: string, message: string) {
-  const match = message.match(new RegExp(`${label}\\s*(\\d+(?:\\.\\d+)?)`))
-  return match ? Number(match[1]) : null
-}
-
 function versionPanelNavigation(reason: string) {
   return {
     type: 'navigation' as const,
@@ -32,13 +27,7 @@ export function buildPublishReleaseDraft(ctx: PlannerContext, createShare: boole
   } satisfies AgentActionDraft
 }
 
-export async function planPublishVersionAction(ctx: PlannerContext) {
-  if (!/发布(?!版)|正式版本/.test(ctx.message)) return null
-  return buildPublishReleaseDraft(ctx, /分享|链接/.test(ctx.message))
-}
-
 export async function planSaveSnapshotAction(ctx: PlannerContext) {
-  if (!/保存.*快照|快照|保存当前版本/.test(ctx.message)) return null
   return {
     kind: 'workspace.save_snapshot',
     title: '确认保存草稿快照',
@@ -52,7 +41,6 @@ export async function planSaveSnapshotAction(ctx: PlannerContext) {
 }
 
 export async function planResetDraftAction(ctx: PlannerContext) {
-  if (!/重置.*草稿|重置工作区|恢复默认/.test(ctx.message)) return null
   const draft = await getWorkspaceDraft(ctx.db, ctx.workspace)
   return {
     kind: 'workspace.reset_draft',
@@ -74,16 +62,14 @@ export async function planResetDraftAction(ctx: PlannerContext) {
   } satisfies AgentActionDraft
 }
 
-async function versionFromMessage(ctx: PlannerContext, message: string, versionNo?: number | null, versionName?: string | null) {
+async function versionFromInput(ctx: PlannerContext, versionNo?: number | null, versionName?: string | null) {
   const versions = await listVersions(ctx.db, ctx.workspace)
   if (versionNo) return versions.find((item) => item.version_no === versionNo) ?? null
   if (versionName) return versions.find((item) => item.name === versionName || item.name.includes(versionName)) ?? null
-  const inferredNo = numberAfter('版本', message) ?? numberAfter('发布版', message) ?? numberAfter('快照', message)
-  if (inferredNo) return versions.find((item) => item.version_no === inferredNo) ?? null
-  return versions.find((item) => message.includes(item.name)) ?? versions[0] ?? null
+  return versions.length === 1 ? versions[0]! : null
 }
 
-function buildRollbackVersionDraft(ctx: PlannerContext, version: Awaited<ReturnType<typeof versionFromMessage>>) {
+function buildRollbackVersionDraft(ctx: PlannerContext, version: Awaited<ReturnType<typeof versionFromInput>>) {
   if (!version) return null
   return {
     kind: 'workspace.rollback_version',
@@ -102,16 +88,14 @@ function buildRollbackVersionDraft(ctx: PlannerContext, version: Awaited<ReturnT
 
 export async function planRollbackVersionAction(
   ctx: PlannerContext,
-  input?: { versionNo?: number | null; versionName?: string | null; requireKeyword?: boolean },
+  input?: { versionNo?: number | null; versionName?: string | null },
 ) {
-  if (input?.requireKeyword !== false && !/恢复|回滚/.test(ctx.message)) return null
-  const versionNo = input?.versionNo ?? numberAfter('版本', ctx.message) ?? numberAfter('发布版', ctx.message)
-  const version = await versionFromMessage(ctx, ctx.message, versionNo, input?.versionName)
+  const version = await versionFromInput(ctx, input?.versionNo, input?.versionName)
   return buildRollbackVersionDraft(ctx, version)
 }
 
 export async function planPromoteVersionAction(ctx: PlannerContext, input?: { versionNo?: number; versionName?: string }) {
-  const version = await versionFromMessage(ctx, ctx.message, input?.versionNo, input?.versionName)
+  const version = await versionFromInput(ctx, input?.versionNo, input?.versionName)
   if (!version) return null
   return {
     kind: 'workspace.promote_version',
@@ -129,9 +113,8 @@ export async function planPromoteVersionAction(ctx: PlannerContext, input?: { ve
   } satisfies AgentActionDraft
 }
 
-export async function planDeleteVersionAction(ctx: PlannerContext) {
-  if (!/删除.*版本|删除.*快照|删掉.*版本|删掉.*快照/.test(ctx.message)) return null
-  const version = await versionFromMessage(ctx, ctx.message)
+export async function planDeleteVersionAction(ctx: PlannerContext, input?: { versionNo?: number; versionName?: string }) {
+  const version = await versionFromInput(ctx, input?.versionNo, input?.versionName)
   if (!version) return null
   return {
     kind: 'workspace.delete_version',
@@ -149,11 +132,9 @@ export async function planDeleteVersionAction(ctx: PlannerContext) {
 }
 
 export async function planShareAction(ctx: PlannerContext, input?: { versionNo?: number; versionName?: string; revoke?: boolean }) {
-  const wantsShare = /分享|链接/.test(ctx.message)
-  const revoke = input?.revoke ?? /撤销|取消|关闭|移除/.test(ctx.message)
-  if (!wantsShare && !input) return null
-  if (/发布(?!版)|正式版本/.test(ctx.message)) return null
-  const version = await versionFromMessage(ctx, ctx.message, input?.versionNo, input?.versionName)
+  if (!input) return null
+  const revoke = Boolean(input.revoke)
+  const version = await versionFromInput(ctx, input.versionNo, input.versionName)
   if (!version) return null
   return {
     kind: revoke ? 'share.revoke' : 'share.create',

@@ -92,7 +92,7 @@ provider adapter 层。所有 provider 必须输出统一的内部 plan/event，
 
 - `openai-agents-adapter.ts`
 - `openai-compatible-chat-adapter.ts`
-- `rules-adapter.ts`
+- `rules` 本地/CI no-op 路径
 - `runtime-adapter.ts`
 
 本轮先落地最小可验证切分：
@@ -524,9 +524,9 @@ provider-neutral source 当前固定为：
 
 - 业务工具规划必须来自 provider-native tool calls：OpenAI Agents SDK 的 function tool 执行，或 OpenAI-compatible Chat Completions 的 `message.tool_calls`。
 - 兼容 provider 不再接受 assistant 文本里的 JSON steps 作为工具计划。模型如果只返回 assistant 文本，后端把它作为普通回复持久化，不生成确认卡、不触发本地规则、不产生任何业务副作用。
-- 当 `LLM_PROVIDER` 不是 `rules` 时，`POST /api/v1/agent/messages` 不允许静默回退到本地规则/正则生成业务动作。这样可以防止“模型没调用工具，但页面仍靠代码猜测生成确认卡”的假 Agent。
+- `POST /api/v1/agent/messages` 不允许静默回退到本地规则/正则生成业务动作。这样可以防止“模型没调用工具，但页面仍靠代码猜测生成确认卡”的假 Agent。
 - 普通对话、问候、身份说明和能力说明直接使用 assistant 文本返回；不保留 `agent_reply` 这类把普通回复包装成工具调用的废弃路径。
-- `rules` 只保留给明确配置的本地/CI 降级路径；真实 smoke 和产品验收必须使用 provider key，并验证 planner source 为 `openai_agents` 或 `openai_compatible_tool_calls`。
+- `rules` 只保留给明确配置的本地/CI 生命周期路径；它不能根据自然语言生成业务确认卡。业务动作测试必须使用 fake OpenAI-compatible provider 返回 provider-native `tool_calls`；真实 smoke 和产品验收必须使用 provider key，并验证 planner source 为 `openai_agents` 或 `openai_compatible_tool_calls`。
 - Tool catalog 的 `description` 要把常见中文业务动词映射到目标工具和关键参数，例如锁定/锁账/封账/关闭账期必须对应 `ledger_set_period_lock` 且 `locked=true`。这不是规则兜底，而是提供给不同 OpenAI-compatible 模型做 provider-native tool selection 的语义说明。
 
 ### Data Agent 只读问答
@@ -818,7 +818,7 @@ API startup / recovery
 - `tool-coverage.ts`，把资本、收入、成员、成本、员工、月份模板和工作区 bundle 导入导出等手动可编辑能力注册为 Agent 覆盖矩阵，并把账号动作列为明确手动项。
 - `config-patch.ts`，集中处理 `workspace_patch_config` 的 dot/array path 解析、旧值读取、写入和模型克隆，通用草稿修改不再在 route/planner 文件里手写路径遍历。
 - `team_member_add` / `team_member_delete`、`shareholder_add` / `shareholder_delete`、`cost_item_add` / `cost_item_delete`、`stage_cost_type_add` / `stage_cost_type_delete` 已作为结构性草稿变更专用工具接入 tool catalog；服务端负责创建完整领域对象、删除目标校验、依赖数组同步、最后成员/股东保护和确认卡预览。
-- 显式 `LLM_PROVIDER=rules` 的本地/CI 兜底；真实 provider 配置下不再用规则冒充模型 tool call。
+- 显式 `LLM_PROVIDER=rules` 的本地/CI no-op 路径；真实 provider 配置下不再用规则冒充模型 tool call，业务动作测试也必须走 fake provider tool_call。
 - 记账、线上系数试算/保存、发布、恢复、分享、锁账等主链路测试。
 
 ### Server-side Workspace Bundle

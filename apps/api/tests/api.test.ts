@@ -40,6 +40,15 @@ function testSettings(databasePath: string): Settings {
   }
 }
 
+function fakeProviderSettings(baseUrl: string): Partial<Settings> {
+  return {
+    llmProvider: 'openai-compatible',
+    openaiCompatibleProvider: 'test-compatible',
+    openaiCompatibleBaseUrl: baseUrl,
+    openaiCompatibleApiKey: 'test-key',
+  }
+}
+
 async function buildHarness(name: string, overrides: Partial<Settings> = {}) {
   const dir = mkdtempSync(join(tmpdir(), `xox-api-${name}-`))
   const settings = { ...testSettings(join(dir, 'test.db')), ...overrides }
@@ -227,6 +236,11 @@ function fakeOpenAIChatToolResponse(name: string, args: Record<string, unknown> 
     }],
     usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
   }
+}
+
+function fakeCurrentInstruction(body: any) {
+  const prompt = body.messages.map((message: any) => message.content).join('\n')
+  return prompt.split('用户指令：').at(-1) ?? prompt
 }
 
 async function insertRunningAgentRun(
@@ -738,191 +752,240 @@ describe('xox TypeScript API', () => {
   })
 
   it('creates agent navigation events, confirmation cards, and executes confirmed ledger writes', async () => {
-    const harness = await buildHarness('agent-ledger')
-    const client = new Client(harness.app)
-    await registerUser(client, 'agent-ledger@example.com')
+    await withFakeOpenAICompatibleProvider(() => fakeToolResponse('ledger_create_member_income', {
+      monthLabel: '3月',
+      memberName: '成员 A',
+      offlineUnits: 10,
+      onlineUnits: 2,
+    }), async (baseUrl) => {
+      const harness = await buildHarness('agent-ledger', fakeProviderSettings(baseUrl))
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-ledger@example.com')
 
-    const planned = await client.post('/api/v1/agent/messages', {
-      message: '把 3 月成员 A 线下 10 张、线上 2 张入账',
+      const planned = await client.post('/api/v1/agent/messages', {
+        message: '把 3 月成员 A 线下 10 张、线上 2 张入账',
+      })
+      expect(planned.statusCode).toBe(200)
+      expect(planned.json.planner).toBe('openai_compatible_tool_calls')
+      expect(planned.json.navigationEvents[0].route.mainTab).toBe('bookkeeping')
+      expect(planned.json.planSteps).toHaveLength(1)
+      expect(planned.json.planSteps[0].status).toBe('ready')
+      expect(planned.json.actionRequests[0].kind).toBe('ledger.create_entry')
+      expect(planned.json.actionRequests[0].status).toBe('pending')
+      expect(planned.json.runEvents.map((event: any) => event.type)).toEqual(
+        expect.arrayContaining(['run_queued', 'worker_claimed', 'model_planning', 'tool_plan_ready', 'confirmation_ready', 'run_completed']),
+      )
+      expect(planned.json.actionRequests[0].details).toEqual(
+        expect.arrayContaining([expect.objectContaining({ label: '发生日', value: expect.stringMatching(/-03-01$/) })]),
+      )
+
+      const confirmed = await client.post(`/api/v1/agent/action-requests/${planned.json.actionRequests[0].id}/confirm`)
+      expect(confirmed.statusCode).toBe(200)
+      expect(confirmed.json.actionRequest.status).toBe('executed')
+      expect(confirmed.json.result.amount).toBe(1056)
+      expect(confirmed.json.runEvents.some((event: any) => event.type === 'action_executed')).toBe(true)
+
+      const periodId = planned.json.navigationEvents[0].route.selectedPeriodId
+      const entries = (await client.get(`/api/v1/ledger/entries?periodId=${periodId}`)).json
+      const memberEntry = entries.find((entry: any) => entry.relatedEntityId === 'member-a' && entry.amount === 1056)
+      expect(memberEntry).toBeTruthy()
+      expect(memberEntry.occurredAt).toContain('-03-01T')
+      const audit = await harness.db.selectFrom('audit_logs').select('action').where('action', '=', 'agent.action_executed').execute()
+      expect(audit).toHaveLength(1)
+      await closeHarness(harness)
     })
-    expect(planned.statusCode).toBe(200)
-    expect(planned.json.navigationEvents[0].route.mainTab).toBe('bookkeeping')
-    expect(planned.json.planSteps).toHaveLength(1)
-    expect(planned.json.planSteps[0].status).toBe('ready')
-    expect(planned.json.actionRequests[0].kind).toBe('ledger.create_entry')
-    expect(planned.json.actionRequests[0].status).toBe('pending')
-    expect(planned.json.runEvents.map((event: any) => event.type)).toEqual(
-      expect.arrayContaining(['run_queued', 'worker_claimed', 'model_planning', 'tool_plan_ready', 'confirmation_ready', 'run_completed']),
-    )
-    expect(planned.json.actionRequests[0].details).toEqual(
-      expect.arrayContaining([expect.objectContaining({ label: '发生日', value: expect.stringMatching(/-03-01$/) })]),
-    )
-
-    const confirmed = await client.post(`/api/v1/agent/action-requests/${planned.json.actionRequests[0].id}/confirm`)
-    expect(confirmed.statusCode).toBe(200)
-    expect(confirmed.json.actionRequest.status).toBe('executed')
-    expect(confirmed.json.result.amount).toBe(1056)
-    expect(confirmed.json.runEvents.some((event: any) => event.type === 'action_executed')).toBe(true)
-
-    const periodId = planned.json.navigationEvents[0].route.selectedPeriodId
-    const entries = (await client.get(`/api/v1/ledger/entries?periodId=${periodId}`)).json
-    const memberEntry = entries.find((entry: any) => entry.relatedEntityId === 'member-a' && entry.amount === 1056)
-    expect(memberEntry).toBeTruthy()
-    expect(memberEntry.occurredAt).toContain('-03-01T')
-    const audit = await harness.db.selectFrom('audit_logs').select('action').where('action', '=', 'agent.action_executed').execute()
-    expect(audit).toHaveLength(1)
-    await closeHarness(harness)
   })
 
   it('plans multiple agent steps and lets users edit pending action payloads before execution', async () => {
-    const harness = await buildHarness('agent-multi-edit')
-    const client = new Client(harness.app)
-    await registerUser(client, 'agent-multi-edit@example.com')
+    await withFakeOpenAICompatibleProvider((body) => {
+      const instruction = fakeCurrentInstruction(body)
+      if (instruction.includes('线上系数')) {
+        return fakeToolResponse('workspace_update_online_factor', {
+          monthLabel: '4月',
+          onlineSalesFactor: 0.3,
+          mode: 'write',
+        })
+      }
+      return fakeToolResponse('ledger_create_member_income', {
+        monthLabel: '3月',
+        memberName: '成员 B',
+        offlineUnits: 1,
+        onlineUnits: 1,
+      })
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-multi-edit', fakeProviderSettings(baseUrl))
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-multi-edit@example.com')
 
-    const planned = await client.post('/api/v1/agent/messages', {
-      message: '把 3 月成员 B 线下 1 张、线上 1 张入账；把 4 月线上系数改成 0.3 并保存',
+      const planned = await client.post('/api/v1/agent/messages', {
+        message: '把 3 月成员 B 线下 1 张、线上 1 张入账；把 4 月线上系数改成 0.3 并保存',
+      })
+      expect(planned.statusCode).toBe(200)
+      expect(planned.json.planner).toBe('openai_compatible_tool_calls')
+      expect(planned.json.planSteps).toHaveLength(2)
+      expect(planned.json.actionRequests.map((action: any) => action.kind)).toEqual([
+        'ledger.create_entry',
+        'workspace.update_draft',
+      ])
+
+      const ledgerAction = planned.json.actionRequests[0]
+      const invalidNavigation = await client.patch(`/api/v1/agent/action-requests/${ledgerAction.id}`, {
+        navigation: {
+          type: 'navigation',
+          route: { mainTab: 'dashboard', secondaryTab: 'overview' },
+          reason: '试图把记账确认卡切到错误页面。',
+        },
+      })
+      expect(invalidNavigation.statusCode).toBe(422)
+
+      const editedPayload = {
+        ...ledgerAction.payload,
+        amount: 264,
+        allocations: ledgerAction.payload.allocations.map((allocation: any, index: number) => ({
+          ...allocation,
+          amount: index === 0 ? 176 : 88,
+        })),
+      }
+      const edited = await client.patch(`/api/v1/agent/action-requests/${ledgerAction.id}`, {
+        summary: '编辑后：3月成员 B 入账 264 元。',
+        details: [...ledgerAction.details.filter((detail: any) => detail.label !== '入账金额'), { label: '入账金额', value: '264' }],
+        payload: editedPayload,
+      })
+      expect(edited.statusCode).toBe(200)
+      expect(edited.json.actionRequest.summary).toContain('264')
+      expect(edited.json.planSteps[0].description).toContain('264')
+      expect(edited.json.runEvents.some((event: any) => event.type === 'action_updated')).toBe(true)
+
+      const confirmedLedger = await client.post(`/api/v1/agent/action-requests/${ledgerAction.id}/confirm`)
+      expect(confirmedLedger.statusCode).toBe(200)
+      expect(confirmedLedger.json.result.amount).toBe(264)
+      expect(confirmedLedger.json.planSteps[0].status).toBe('executed')
+      expect(confirmedLedger.json.runEvents.some((event: any) => event.type === 'action_executed')).toBe(true)
+
+      const draftAction = planned.json.actionRequests[1]
+      const confirmedDraft = await client.post(`/api/v1/agent/action-requests/${draftAction.id}/confirm`)
+      expect(confirmedDraft.statusCode).toBe(200)
+      const draft = (await client.get('/api/v1/workspace/draft')).json
+      expect(draft.config.months.find((month: any) => month.label === '4月').onlineSalesFactor).toBe(0.3)
+      await closeHarness(harness)
     })
-    expect(planned.statusCode).toBe(200)
-    expect(planned.json.planSteps).toHaveLength(2)
-    expect(planned.json.actionRequests.map((action: any) => action.kind)).toEqual([
-      'ledger.create_entry',
-      'workspace.update_draft',
-    ])
-
-    const ledgerAction = planned.json.actionRequests[0]
-    const invalidNavigation = await client.patch(`/api/v1/agent/action-requests/${ledgerAction.id}`, {
-      navigation: {
-        type: 'navigation',
-        route: { mainTab: 'dashboard', secondaryTab: 'overview' },
-        reason: '试图把记账确认卡切到错误页面。',
-      },
-    })
-    expect(invalidNavigation.statusCode).toBe(422)
-
-    const editedPayload = {
-      ...ledgerAction.payload,
-      amount: 264,
-      allocations: ledgerAction.payload.allocations.map((allocation: any, index: number) => ({
-        ...allocation,
-        amount: index === 0 ? 176 : 88,
-      })),
-    }
-    const edited = await client.patch(`/api/v1/agent/action-requests/${ledgerAction.id}`, {
-      summary: '编辑后：3月成员 B 入账 264 元。',
-      details: [...ledgerAction.details.filter((detail: any) => detail.label !== '入账金额'), { label: '入账金额', value: '264' }],
-      payload: editedPayload,
-    })
-    expect(edited.statusCode).toBe(200)
-    expect(edited.json.actionRequest.summary).toContain('264')
-    expect(edited.json.planSteps[0].description).toContain('264')
-    expect(edited.json.runEvents.some((event: any) => event.type === 'action_updated')).toBe(true)
-
-    const confirmedLedger = await client.post(`/api/v1/agent/action-requests/${ledgerAction.id}/confirm`)
-    expect(confirmedLedger.statusCode).toBe(200)
-    expect(confirmedLedger.json.result.amount).toBe(264)
-    expect(confirmedLedger.json.planSteps[0].status).toBe('executed')
-    expect(confirmedLedger.json.runEvents.some((event: any) => event.type === 'action_executed')).toBe(true)
-
-    const draftAction = planned.json.actionRequests[1]
-    const confirmedDraft = await client.post(`/api/v1/agent/action-requests/${draftAction.id}/confirm`)
-    expect(confirmedDraft.statusCode).toBe(200)
-    const draft = (await client.get('/api/v1/workspace/draft')).json
-    expect(draft.config.months.find((month: any) => month.label === '4月').onlineSalesFactor).toBe(0.3)
-    await closeHarness(harness)
   })
 
   it('keeps allowed steps when a multi-step message also contains a forbidden account action', async () => {
-    const harness = await buildHarness('agent-mixed-account-step')
-    const client = new Client(harness.app)
-    await registerUser(client, 'agent-mixed-account-step@example.com')
+    await withFakeOpenAICompatibleProvider((body) => {
+      const instruction = fakeCurrentInstruction(body)
+      if (instruction.includes('注销账号')) return fakeToolResponse('account_forbidden')
+      return fakeToolResponse('ledger_create_member_income', {
+        monthLabel: '3月',
+        memberName: '成员 A',
+        offlineUnits: 1,
+        onlineUnits: 0,
+      })
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-mixed-account-step', fakeProviderSettings(baseUrl))
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-mixed-account-step@example.com')
 
-    const planned = await client.post('/api/v1/agent/messages', {
-      message: '把 3 月成员 A 线下 1 张入账；帮我注销账号',
+      const planned = await client.post('/api/v1/agent/messages', {
+        message: '把 3 月成员 A 线下 1 张入账；帮我注销账号',
+      })
+      expect(planned.statusCode).toBe(200)
+      expect(planned.json.planner).toBe('openai_compatible_tool_calls')
+      expect(planned.json.planSteps).toHaveLength(2)
+      expect(planned.json.actionRequests).toHaveLength(1)
+      expect(planned.json.actionRequests[0].kind).toBe('ledger.create_entry')
+      expect(planned.json.planSteps.map((step: any) => step.status)).toEqual(['ready', 'info'])
+      expect(planned.json.messages.at(-1).content).toContain('2 个步骤')
+      expect(planned.json.messages.at(-1).content).toContain('账号登录、退出、注销')
+
+      const restored = await client.get(`/api/v1/agent/threads/${planned.json.threadId}`)
+      expect(restored.statusCode).toBe(200)
+      expect(restored.json.planSteps).toHaveLength(2)
+      expect(restored.json.actionRequests[0].status).toBe('pending')
+      await closeHarness(harness)
     })
-    expect(planned.statusCode).toBe(200)
-    expect(planned.json.planSteps).toHaveLength(2)
-    expect(planned.json.actionRequests).toHaveLength(1)
-    expect(planned.json.actionRequests[0].kind).toBe('ledger.create_entry')
-    expect(planned.json.planSteps.map((step: any) => step.status)).toEqual(['ready', 'info'])
-    expect(planned.json.messages.at(-1).content).toContain('2 个步骤')
-    expect(planned.json.messages.at(-1).content).toContain('账号登录、退出、注销')
-
-    const restored = await client.get(`/api/v1/agent/threads/${planned.json.threadId}`)
-    expect(restored.statusCode).toBe(200)
-    expect(restored.json.planSteps).toHaveLength(2)
-    expect(restored.json.actionRequests[0].status).toBe('pending')
-    await closeHarness(harness)
   })
 
   it('enforces Agent tool policy for edited payload ownership and derived ledger entries', async () => {
-    const harness = await buildHarness('agent-tool-policy')
-    const firstClient = new Client(harness.app)
-    const secondClient = new Client(harness.app)
-    const firstUser = await registerUser(firstClient, 'agent-tool-policy-a@example.com')
-    await registerUser(secondClient, 'agent-tool-policy-b@example.com')
+    await withFakeOpenAICompatibleProvider((body) => {
+      const instruction = fakeCurrentInstruction(body)
+      return fakeToolResponse('ledger_create_member_income', {
+        monthLabel: '3月',
+        memberName: instruction.includes('成员 B') ? '成员 B' : '成员 A',
+        offlineUnits: 1,
+        onlineUnits: 0,
+      })
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-tool-policy', fakeProviderSettings(baseUrl))
+      const firstClient = new Client(harness.app)
+      const secondClient = new Client(harness.app)
+      const firstUser = await registerUser(firstClient, 'agent-tool-policy-a@example.com')
+      await registerUser(secondClient, 'agent-tool-policy-b@example.com')
 
-    const planned = await firstClient.post('/api/v1/agent/messages', {
-      message: '把 3 月成员 A 线下 1 张、线上 0 张入账',
+      const planned = await firstClient.post('/api/v1/agent/messages', {
+        message: '把 3 月成员 A 线下 1 张、线上 0 张入账',
+      })
+      expect(planned.statusCode).toBe(200)
+      expect(planned.json.planner).toBe('openai_compatible_tool_calls')
+      const ledgerAction = planned.json.actionRequests[0]
+      const secondPeriod = (await secondClient.get('/api/v1/ledger/periods')).json.find((period: any) => period.monthLabel === '3月')
+      const crossWorkspacePayload = {
+        ...ledgerAction.payload,
+        ledgerPeriodId: secondPeriod.id,
+      }
+      const editedCrossWorkspace = await firstClient.patch(`/api/v1/agent/action-requests/${ledgerAction.id}`, {
+        payload: crossWorkspacePayload,
+      })
+      expect(editedCrossWorkspace.statusCode).toBe(200)
+      const rejectedCrossWorkspace = await firstClient.post(`/api/v1/agent/action-requests/${ledgerAction.id}/confirm`)
+      expect(rejectedCrossWorkspace.statusCode).toBe(403)
+
+      const plannedForDerived = await firstClient.post('/api/v1/agent/messages', {
+        message: '把 3 月成员 B 线下 1 张、线上 0 张入账',
+      })
+      expect(plannedForDerived.statusCode).toBe(200)
+      const confirmedForDerived = await firstClient.post(`/api/v1/agent/action-requests/${plannedForDerived.json.actionRequests[0].id}/confirm`)
+      expect(confirmedForDerived.statusCode).toBe(200)
+      const periodId = plannedForDerived.json.navigationEvents[0].route.selectedPeriodId
+      const entries = (await firstClient.get(`/api/v1/ledger/entries?periodId=${periodId}`)).json
+      const derived = entries.find((entry: any) => entry.entryOrigin === 'derived')
+      expect(derived).toBeTruthy()
+
+      const workspace = await harness.db.selectFrom('workspaces').selectAll().where('owner_id', '=', firstUser.id).executeTakeFirstOrThrow()
+      const pendingActionId = 'agent-policy-derived-update'
+      await harness.db.insertInto('agent_action_requests').values({
+        id: pendingActionId,
+        thread_id: plannedForDerived.json.threadId,
+        run_id: plannedForDerived.json.runId,
+        workspace_id: workspace.id,
+        user_id: firstUser.id,
+        kind: 'ledger.update_entry',
+        status: 'pending',
+        title: '尝试直接编辑派生提成',
+        summary: '这个动作应被 Tool Policy 拒绝。',
+        target_label: '派生提成',
+        risk_level: 'medium',
+        details_json: JSON.stringify([]),
+        navigation_json: JSON.stringify({
+          type: 'navigation',
+          route: { mainTab: 'bookkeeping', secondaryTab: 'entries', selectedPeriodId: periodId },
+          focusRecordId: derived.id,
+          reason: '定位派生分录。',
+        }),
+        payload_json: JSON.stringify({
+          entryId: derived.id,
+          amount: derived.amount,
+          allocations: derived.allocations,
+        }),
+        created_at: new Date().toISOString(),
+        executed_at: null,
+        error_message: null,
+      }).execute()
+
+      const rejectedDerived = await firstClient.post(`/api/v1/agent/action-requests/${pendingActionId}/confirm`)
+      expect(rejectedDerived.statusCode).toBe(409)
+      await closeHarness(harness)
     })
-    expect(planned.statusCode).toBe(200)
-    const ledgerAction = planned.json.actionRequests[0]
-    const secondPeriod = (await secondClient.get('/api/v1/ledger/periods')).json.find((period: any) => period.monthLabel === '3月')
-    const crossWorkspacePayload = {
-      ...ledgerAction.payload,
-      ledgerPeriodId: secondPeriod.id,
-    }
-    const editedCrossWorkspace = await firstClient.patch(`/api/v1/agent/action-requests/${ledgerAction.id}`, {
-      payload: crossWorkspacePayload,
-    })
-    expect(editedCrossWorkspace.statusCode).toBe(200)
-    const rejectedCrossWorkspace = await firstClient.post(`/api/v1/agent/action-requests/${ledgerAction.id}/confirm`)
-    expect(rejectedCrossWorkspace.statusCode).toBe(403)
-
-    const plannedForDerived = await firstClient.post('/api/v1/agent/messages', {
-      message: '把 3 月成员 B 线下 1 张、线上 0 张入账',
-    })
-    expect(plannedForDerived.statusCode).toBe(200)
-    const confirmedForDerived = await firstClient.post(`/api/v1/agent/action-requests/${plannedForDerived.json.actionRequests[0].id}/confirm`)
-    expect(confirmedForDerived.statusCode).toBe(200)
-    const periodId = plannedForDerived.json.navigationEvents[0].route.selectedPeriodId
-    const entries = (await firstClient.get(`/api/v1/ledger/entries?periodId=${periodId}`)).json
-    const derived = entries.find((entry: any) => entry.entryOrigin === 'derived')
-    expect(derived).toBeTruthy()
-
-    const workspace = await harness.db.selectFrom('workspaces').selectAll().where('owner_id', '=', firstUser.id).executeTakeFirstOrThrow()
-    const pendingActionId = 'agent-policy-derived-update'
-    await harness.db.insertInto('agent_action_requests').values({
-      id: pendingActionId,
-      thread_id: plannedForDerived.json.threadId,
-      run_id: plannedForDerived.json.runId,
-      workspace_id: workspace.id,
-      user_id: firstUser.id,
-      kind: 'ledger.update_entry',
-      status: 'pending',
-      title: '尝试直接编辑派生提成',
-      summary: '这个动作应被 Tool Policy 拒绝。',
-      target_label: '派生提成',
-      risk_level: 'medium',
-      details_json: JSON.stringify([]),
-      navigation_json: JSON.stringify({
-        type: 'navigation',
-        route: { mainTab: 'bookkeeping', secondaryTab: 'entries', selectedPeriodId: periodId },
-        focusRecordId: derived.id,
-        reason: '定位派生分录。',
-      }),
-      payload_json: JSON.stringify({
-        entryId: derived.id,
-        amount: derived.amount,
-        allocations: derived.allocations,
-      }),
-      created_at: new Date().toISOString(),
-      executed_at: null,
-      error_message: null,
-    }).execute()
-
-    const rejectedDerived = await firstClient.post(`/api/v1/agent/action-requests/${pendingActionId}/confirm`)
-    expect(rejectedDerived.statusCode).toBe(409)
-    await closeHarness(harness)
   })
 
   it('uses OpenAI-compatible tool calls as the primary model planning protocol', async () => {
@@ -1942,105 +2005,125 @@ describe('xox TypeScript API', () => {
   })
 
   it('persists agent thread history and restores messages, runs, plan steps, and pending actions', async () => {
-    const harness = await buildHarness('agent-thread-history')
-    const firstClient = new Client(harness.app)
-    const secondClient = new Client(harness.app)
-    await registerUser(firstClient, 'agent-thread-history-a@example.com')
-    await registerUser(secondClient, 'agent-thread-history-b@example.com')
+    await withFakeOpenAICompatibleProvider(() => fakeToolResponse('ledger_create_member_income', {
+      monthLabel: '3月',
+      memberName: '成员 A',
+      offlineUnits: 1,
+      onlineUnits: 0,
+    }), async (baseUrl) => {
+      const harness = await buildHarness('agent-thread-history', fakeProviderSettings(baseUrl))
+      const firstClient = new Client(harness.app)
+      const secondClient = new Client(harness.app)
+      await registerUser(firstClient, 'agent-thread-history-a@example.com')
+      await registerUser(secondClient, 'agent-thread-history-b@example.com')
 
-    const planned = await firstClient.post('/api/v1/agent/messages', {
-      message: '把 3 月成员 A 线下 1 张入账',
+      const planned = await firstClient.post('/api/v1/agent/messages', {
+        message: '把 3 月成员 A 线下 1 张入账',
+      })
+      expect(planned.statusCode).toBe(200)
+      expect(planned.json.planner).toBe('openai_compatible_tool_calls')
+      expect(planned.json.actionRequests).toHaveLength(1)
+
+      const threads = await firstClient.get('/api/v1/agent/threads')
+      expect(threads.statusCode).toBe(200)
+      expect(threads.json.threads).toHaveLength(1)
+      expect(threads.json.threads[0].id).toBe(planned.json.threadId)
+      expect(threads.json.threads[0].title).toContain('把 3 月成员 A')
+      expect(threads.json.threads[0].latestRunStatus).toBe('completed')
+      expect(threads.json.threads[0].planner).toBe('openai_compatible_tool_calls')
+      expect(threads.json.threads[0].pendingActionCount).toBe(1)
+
+      const restored = await firstClient.get(`/api/v1/agent/threads/${planned.json.threadId}`)
+      expect(restored.statusCode).toBe(200)
+      expect(restored.json.messages.map((message: any) => message.role)).toEqual(['user', 'assistant'])
+      expect(restored.json.runs[0].status).toBe('completed')
+      expect(restored.json.runs[0].planner).toBe('openai_compatible_tool_calls')
+      expect(restored.json.planSteps).toHaveLength(1)
+      expect(restored.json.planSteps[0].actionRequestId).toBe(planned.json.actionRequests[0].id)
+      expect(restored.json.actionRequests[0].status).toBe('pending')
+      expect(restored.json.navigationEvents[0].route.mainTab).toBe('bookkeeping')
+      expect(restored.json.runEvents.map((event: any) => event.type)).toEqual(
+        expect.arrayContaining(['run_queued', 'model_planning', 'tool_plan_ready', 'confirmation_ready', 'run_completed']),
+      )
+
+      const secondThreads = await secondClient.get('/api/v1/agent/threads')
+      expect(secondThreads.statusCode).toBe(200)
+      expect(secondThreads.json.threads).toHaveLength(0)
+      const crossUserRestore = await secondClient.get(`/api/v1/agent/threads/${planned.json.threadId}`)
+      expect(crossUserRestore.statusCode).toBe(403)
+
+      const confirmed = await firstClient.post(`/api/v1/agent/action-requests/${planned.json.actionRequests[0].id}/confirm`)
+      expect(confirmed.statusCode).toBe(200)
+      const restoredAfterConfirm = await firstClient.get(`/api/v1/agent/threads/${planned.json.threadId}`)
+      expect(restoredAfterConfirm.statusCode).toBe(200)
+      expect(restoredAfterConfirm.json.actionRequests[0].status).toBe('executed')
+      expect(restoredAfterConfirm.json.planSteps[0].status).toBe('executed')
+      expect(restoredAfterConfirm.json.runEvents.some((event: any) => event.type === 'action_executed')).toBe(true)
+      expect(restoredAfterConfirm.json.messages.at(-1).content).toContain('已执行')
+      const threadsAfterConfirm = await firstClient.get('/api/v1/agent/threads')
+      expect(threadsAfterConfirm.json.threads[0].pendingActionCount).toBe(0)
+      await closeHarness(harness)
     })
-    expect(planned.statusCode).toBe(200)
-    expect(planned.json.planner).toBe('rules')
-    expect(planned.json.actionRequests).toHaveLength(1)
-
-    const threads = await firstClient.get('/api/v1/agent/threads')
-    expect(threads.statusCode).toBe(200)
-    expect(threads.json.threads).toHaveLength(1)
-    expect(threads.json.threads[0].id).toBe(planned.json.threadId)
-    expect(threads.json.threads[0].title).toContain('把 3 月成员 A')
-    expect(threads.json.threads[0].latestRunStatus).toBe('completed')
-    expect(threads.json.threads[0].planner).toBe('rules')
-    expect(threads.json.threads[0].pendingActionCount).toBe(1)
-
-    const restored = await firstClient.get(`/api/v1/agent/threads/${planned.json.threadId}`)
-    expect(restored.statusCode).toBe(200)
-    expect(restored.json.messages.map((message: any) => message.role)).toEqual(['user', 'assistant'])
-    expect(restored.json.runs[0].status).toBe('completed')
-    expect(restored.json.runs[0].planner).toBe('rules')
-    expect(restored.json.planSteps).toHaveLength(1)
-    expect(restored.json.planSteps[0].actionRequestId).toBe(planned.json.actionRequests[0].id)
-    expect(restored.json.actionRequests[0].status).toBe('pending')
-    expect(restored.json.navigationEvents[0].route.mainTab).toBe('bookkeeping')
-    expect(restored.json.runEvents.map((event: any) => event.type)).toEqual(
-      expect.arrayContaining(['run_queued', 'model_planning', 'tool_plan_ready', 'confirmation_ready', 'run_completed']),
-    )
-
-    const secondThreads = await secondClient.get('/api/v1/agent/threads')
-    expect(secondThreads.statusCode).toBe(200)
-    expect(secondThreads.json.threads).toHaveLength(0)
-    const crossUserRestore = await secondClient.get(`/api/v1/agent/threads/${planned.json.threadId}`)
-    expect(crossUserRestore.statusCode).toBe(403)
-
-    const confirmed = await firstClient.post(`/api/v1/agent/action-requests/${planned.json.actionRequests[0].id}/confirm`)
-    expect(confirmed.statusCode).toBe(200)
-    const restoredAfterConfirm = await firstClient.get(`/api/v1/agent/threads/${planned.json.threadId}`)
-    expect(restoredAfterConfirm.statusCode).toBe(200)
-    expect(restoredAfterConfirm.json.actionRequests[0].status).toBe('executed')
-    expect(restoredAfterConfirm.json.planSteps[0].status).toBe('executed')
-    expect(restoredAfterConfirm.json.runEvents.some((event: any) => event.type === 'action_executed')).toBe(true)
-    expect(restoredAfterConfirm.json.messages.at(-1).content).toContain('已执行')
-    const threadsAfterConfirm = await firstClient.get('/api/v1/agent/threads')
-    expect(threadsAfterConfirm.json.threads[0].pendingActionCount).toBe(0)
-    await closeHarness(harness)
   })
 
   it('streams server-owned thread state through SSE and keeps events tenant scoped', async () => {
-    const harness = await buildHarness('agent-thread-events')
-    const client = new Client(harness.app)
-    await registerUser(client, 'agent-thread-events@example.com')
-    const initial = await client.post('/api/v1/agent/messages', {
-      message: '打开看测算',
-    })
-    expect(initial.statusCode).toBe(200)
-
-    const baseUrl = await listenOnFetchSafePort(harness.app)
-
-    try {
-      const events = await collectSseEvents(
-        `${baseUrl}/api/v1/agent/threads/${initial.json.threadId}/events`,
-        client.cookieHeader(),
-        7,
-        async () => {
-          const next = await client.post('/api/v1/agent/messages', {
-            threadId: initial.json.threadId,
-            message: '把 3 月成员 A 线下 1 张入账',
-          })
-          expect(next.statusCode).toBe(200)
-        },
-      )
-
-      expect(events.length).toBeGreaterThanOrEqual(2)
-      const initialEvent = events[0]!
-      const updateEvent = events.find((event) => event.data.state.actionRequests.some((action: any) => action.kind === 'ledger.create_entry')) ?? events.at(-1)!
-      expect(initialEvent.event).toBe('thread_state')
-      expect(initialEvent.data.threadId).toBe(initial.json.threadId)
-      expect(initialEvent.data.state.thread.id).toBe(initial.json.threadId)
-      expect(updateEvent.event).toBe('thread_state')
-      expect(updateEvent.data.threadId).toBe(initial.json.threadId)
-      expect(updateEvent.data.state.actionRequests.some((action: any) => action.kind === 'ledger.create_entry')).toBe(true)
-      expect(updateEvent.data.state.runEvents.some((event: any) => event.type === 'tool_plan_ready')).toBe(true)
-
-      const outsider = new Client(harness.app)
-      await registerUser(outsider, 'agent-thread-events-outsider@example.com')
-      const forbidden = await fetch(`${baseUrl}/api/v1/agent/threads/${initial.json.threadId}/events`, {
-        headers: { cookie: outsider.cookieHeader() },
+    await withFakeOpenAICompatibleProvider((body) => {
+      const instruction = fakeCurrentInstruction(body)
+      if (instruction.includes('线下')) {
+        return fakeToolResponse('ledger_create_member_income', {
+          monthLabel: '3月',
+          memberName: '成员 A',
+          offlineUnits: 1,
+          onlineUnits: 0,
+        })
+      }
+      return fakeToolResponse('ui_navigate', { mainTab: 'dashboard', secondaryTab: 'overview' })
+    }, async (providerBaseUrl) => {
+      const harness = await buildHarness('agent-thread-events', fakeProviderSettings(providerBaseUrl))
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-thread-events@example.com')
+      const initial = await client.post('/api/v1/agent/messages', {
+        message: '打开看测算',
       })
-      expect(forbidden.status).toBe(403)
-    } finally {
-      await closeHarness(harness)
-    }
+      expect(initial.statusCode).toBe(200)
+
+      const sseBaseUrl = await listenOnFetchSafePort(harness.app)
+
+      try {
+        const events = await collectSseEvents(
+          `${sseBaseUrl}/api/v1/agent/threads/${initial.json.threadId}/events`,
+          client.cookieHeader(),
+          7,
+          async () => {
+            const next = await client.post('/api/v1/agent/messages', {
+              threadId: initial.json.threadId,
+              message: '把 3 月成员 A 线下 1 张入账',
+            })
+            expect(next.statusCode).toBe(200)
+          },
+        )
+
+        expect(events.length).toBeGreaterThanOrEqual(2)
+        const initialEvent = events[0]!
+        const updateEvent = events.find((event) => event.data.state.actionRequests.some((action: any) => action.kind === 'ledger.create_entry')) ?? events.at(-1)!
+        expect(initialEvent.event).toBe('thread_state')
+        expect(initialEvent.data.threadId).toBe(initial.json.threadId)
+        expect(initialEvent.data.state.thread.id).toBe(initial.json.threadId)
+        expect(updateEvent.event).toBe('thread_state')
+        expect(updateEvent.data.threadId).toBe(initial.json.threadId)
+        expect(updateEvent.data.state.actionRequests.some((action: any) => action.kind === 'ledger.create_entry')).toBe(true)
+        expect(updateEvent.data.state.runEvents.some((event: any) => event.type === 'tool_plan_ready')).toBe(true)
+
+        const outsider = new Client(harness.app)
+        await registerUser(outsider, 'agent-thread-events-outsider@example.com')
+        const forbidden = await fetch(`${sseBaseUrl}/api/v1/agent/threads/${initial.json.threadId}/events`, {
+          headers: { cookie: outsider.cookieHeader() },
+        })
+        expect(forbidden.status).toBe(403)
+      } finally {
+        await closeHarness(harness)
+      }
+    })
   })
 
   it('keeps agent memory scoped by user and workspace and compacts long thread context', async () => {
@@ -2992,26 +3075,37 @@ describe('xox TypeScript API', () => {
   }, 15_000)
 
   it('keeps agent read-only forecasts non-mutating and refuses account actions', async () => {
-    const harness = await buildHarness('agent-read')
-    const client = new Client(harness.app)
-    await registerUser(client, 'agent-read@example.com')
+    await withFakeOpenAICompatibleProvider((body) => {
+      const instruction = fakeCurrentInstruction(body)
+      if (instruction.includes('注销账号')) return fakeToolResponse('account_forbidden')
+      return fakeToolResponse('workspace_update_online_factor', {
+        monthLabel: '4月',
+        onlineSalesFactor: 0.3,
+        mode: 'forecast',
+      })
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-read', fakeProviderSettings(baseUrl))
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-read@example.com')
 
-    const forecast = await client.post('/api/v1/agent/messages', {
-      message: '如果 4 月线上系数变成 0.3，利润会怎样',
-    })
-    expect(forecast.statusCode).toBe(200)
-    expect(forecast.json.navigationEvents[0].route.mainTab).toBe('inputs')
-    expect(forecast.json.actionRequests).toHaveLength(0)
-    expect(forecast.json.messages.at(-1).content).toContain('未修改草稿')
+      const forecast = await client.post('/api/v1/agent/messages', {
+        message: '如果 4 月线上系数变成 0.3，利润会怎样',
+      })
+      expect(forecast.statusCode).toBe(200)
+      expect(forecast.json.planner).toBe('openai_compatible_tool_calls')
+      expect(forecast.json.navigationEvents[0].route.mainTab).toBe('inputs')
+      expect(forecast.json.actionRequests).toHaveLength(0)
+      expect(forecast.json.messages.at(-1).content).toContain('未修改草稿')
 
-    const account = await client.post('/api/v1/agent/messages', {
-      threadId: forecast.json.threadId,
-      message: '帮我注销账号',
+      const account = await client.post('/api/v1/agent/messages', {
+        threadId: forecast.json.threadId,
+        message: '帮我注销账号',
+      })
+      expect(account.statusCode).toBe(200)
+      expect(account.json.actionRequests).toHaveLength(0)
+      expect(account.json.messages.at(-1).content).toContain('不能由 Agent 自动执行')
+      await closeHarness(harness)
     })
-    expect(account.statusCode).toBe(200)
-    expect(account.json.actionRequests).toHaveLength(0)
-    expect(account.json.messages.at(-1).content).toContain('不能由 Agent 自动执行')
-    await closeHarness(harness)
   })
 
   it('exports and imports workspace bundles through REST and Agent confirmation cards', async () => {

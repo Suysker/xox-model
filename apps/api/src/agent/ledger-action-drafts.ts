@@ -8,41 +8,10 @@ import {
   findEmployee,
   findTeamMember,
   finiteNumber,
-  monthLabelFromMessage,
   periodForMonth,
   periodOccurrenceDate,
 } from './action-draft-utils.js'
 import type { PlannerContext } from './planner.js'
-
-function countBeforeUnit(label: string, message: string) {
-  const match = message.match(new RegExp(`${label}\\s*(\\d+(?:\\.\\d+)?)\\s*张`))
-  if (!match) return 0
-  const value = Number(match[1])
-  return Number.isFinite(value) ? value : 0
-}
-
-function memberFromMessage(config: ModelConfig, message: string) {
-  return config.teamMembers.find((member) => message.includes(member.name)) ?? null
-}
-
-export async function planLedgerCreateAction(ctx: PlannerContext) {
-  if (!/(记|入账|过账)/.test(ctx.message) || !/(成员|线下|线上|张)/.test(ctx.message)) {
-    return null
-  }
-
-  const monthLabel = monthLabelFromMessage(ctx.message)
-  if (!monthLabel) return null
-  const { config } = await currentDraftConfig(ctx)
-  const member = memberFromMessage(config, ctx.message)
-  if (!member) return null
-
-  return planLedgerCreateFromFields(ctx, {
-    monthLabel,
-    memberName: member.name,
-    offlineUnits: countBeforeUnit('线下', ctx.message),
-    onlineUnits: countBeforeUnit('线上', ctx.message),
-  })
-}
 
 export async function planLedgerCreateFromFields(
   ctx: PlannerContext,
@@ -604,38 +573,6 @@ export async function planLedgerUpdateFromStep(ctx: PlannerContext, step: Runtim
   } satisfies AgentActionDraft
 }
 
-export async function planLedgerVoidAction(ctx: PlannerContext) {
-  if (!/作废|撤销入账|取消入账/.test(ctx.message)) return null
-  const monthLabel = monthLabelFromMessage(ctx.message)
-  if (!monthLabel) return null
-  const period = await periodForMonth(ctx, monthLabel)
-  if (!period) return null
-  const { config } = await currentDraftConfig(ctx)
-  const member = memberFromMessage(config, ctx.message)
-  const entries = await listEntries(ctx.db, ctx.workspace, period.id)
-  const candidates = entries.filter((entry) => {
-    if (entry.status !== 'posted' || entry.entryOrigin === 'derived') return false
-    if (member && entry.relatedEntityId !== member.id) return false
-    return true
-  })
-  const entry = candidates[0]
-  if (!entry) return null
-  return {
-    kind: 'ledger.void_entry',
-    title: '确认作废分录',
-    summary: `作废${period.monthLabel}${member ? ` ${member.name}` : ''} 的 ${entry.amount} 元分录，关联派生分录会同步作废。`,
-    targetLabel: `${period.monthLabel} / ${member?.name ?? '账本分录'}`,
-    riskLevel: 'high',
-    details: [
-      { label: '期间', value: period.monthLabel },
-      { label: '金额', value: `${entry.amount}` },
-      { label: '对象', value: entry.relatedEntityName ?? '-' },
-    ],
-    navigation: ledgerNavigation(period.id, '作废分录需要打开本期账本并定位记录。', entry.id),
-    payload: { entryId: entry.id },
-  } satisfies AgentActionDraft
-}
-
 export async function planPeriodLockFromStep(ctx: PlannerContext, step: RuntimePlannerStep) {
   const monthLabel = asNonEmptyString(step.monthLabel)
   if (!monthLabel) return null
@@ -652,13 +589,4 @@ export async function planPeriodLockFromStep(ctx: PlannerContext, step: RuntimeP
     navigation: ledgerNavigation(period.id, '锁账动作需要打开本期账本并选中目标账期。'),
     payload: { periodId: period.id },
   } satisfies AgentActionDraft
-}
-
-export async function planPeriodLockAction(ctx: PlannerContext) {
-  const lock = /锁定/.test(ctx.message)
-  const unlock = /解锁/.test(ctx.message)
-  if (!lock && !unlock) return null
-  const monthLabel = monthLabelFromMessage(ctx.message)
-  if (!monthLabel) return null
-  return planPeriodLockFromStep(ctx, { intent: 'ledger.set_period_lock', monthLabel, locked: lock } as RuntimePlannerStep)
 }

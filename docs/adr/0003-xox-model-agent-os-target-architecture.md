@@ -283,7 +283,7 @@ Runtime adapter 可以替换或并存：
 
 - OpenAI Agents SDK adapter。
 - DeepSeek/Qwen/Doubao compatible chat adapter。
-- rules adapter for CI。
+- rules/no-op path for CI lifecycle tests; it must not infer business actions from natural language.
 
 SDK tracing、guardrails、handoffs 可以后续接入，但它们是增强项，不是业务架构核心。
 

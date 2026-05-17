@@ -271,7 +271,7 @@ xox-model/
 - 底部对话台和确认卡
 - Agent 显式驱动页面导航
 - 独立 prompts、tool catalog、tenant-scoped memory/context 模块
-- 通用 OpenAI-compatible Chat Completions `tool_calls` 规划；规则规划仅限显式 `LLM_PROVIDER=rules` 的本地/CI 降级路径
+- 通用 OpenAI-compatible Chat Completions `tool_calls` 规划；显式 `LLM_PROVIDER=rules` 仅保留为本地/CI no-op 生命周期路径，不能生成业务确认卡
 - 当前用户 / 当前工作区的 provider setting 优先于环境变量，支持 DeepSeek、Qwen、Doubao 等兼容 provider 由用户配置
 - 记账、试算、草稿修改、发布、恢复、分享和锁账工具化
 - 写入动作确认、执行和审计闭环

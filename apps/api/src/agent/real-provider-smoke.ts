@@ -506,7 +506,9 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     assertSmoke(Array.isArray(clarification.json.actionRequests) && clarification.json.actionRequests.length === 0, 'clarification unexpectedly created a write confirmation')
     assertSmoke(
       String(clarification.json.messages.at(-1)?.content ?? '').includes('补充') ||
-        String(clarification.json.messages.at(-1)?.content ?? '').includes('请'),
+        String(clarification.json.messages.at(-1)?.content ?? '').includes('请') ||
+        String(clarification.json.messages.at(-1)?.content ?? '').includes('缺少') ||
+        String(clarification.json.messages.at(-1)?.content ?? '').includes('需要确认'),
       `clarification did not ask the user for missing details: ${String(clarification.json.messages.at(-1)?.content ?? '')}`,
     )
     assertSmoke(

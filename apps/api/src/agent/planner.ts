@@ -18,7 +18,6 @@ import { answerWorkspaceDataQuestion } from './data-agent.js'
 import { cloneModelConfig, getConfigPath, setConfigPath } from './config-patch.js'
 import { buildAgentContextPack } from './context-pack.js'
 import {
-  accountForbiddenRead,
   buildPlannedItemFromRuntimeStep,
   isActionDraft,
   type ActionDraftBuilderHandlers,
@@ -28,18 +27,13 @@ import {
 } from './action-draft-builder.js'
 import {
   currentDraftConfig,
-  monthLabelFromMessage,
-  numberAfter,
 } from './action-draft-utils.js'
 import {
   planGenericLedgerCreateFromStep,
-  planLedgerCreateAction,
   planLedgerCreateFromFields,
   planLedgerRestoreFromStep,
   planLedgerUpdateFromStep,
-  planLedgerVoidAction,
   planLedgerVoidFromStep,
-  planPeriodLockAction,
   planPeriodLockFromStep,
   planPlannedMemberIncomeBatch,
   planPlannedRelatedExpenseBatch,
@@ -48,7 +42,6 @@ import {
   buildPublishReleaseDraft,
   planDeleteVersionAction,
   planPromoteVersionAction,
-  planPublishVersionAction,
   planResetDraftAction,
   planRollbackVersionAction,
   planSaveSnapshotAction,
@@ -81,10 +74,6 @@ export type PlannerContext = {
 
 const PROVIDER_STREAM_DELTA_LIMIT = 240
 const PROVIDER_STREAM_PREVIEW_LIMIT = 700
-
-function accountActionRequested(message: string) {
-  return /(注销|删除账号|退出登录|登录|注册|改密码|密码)/.test(message)
-}
 
 function modelToolCallRequiredRead(error?: RuntimePlanError | null): ReadDraft {
   if (error?.kind === 'missing_api_key') {
@@ -275,19 +264,6 @@ function splitRequestedSteps(message: string) {
   return parts.length > 0 ? parts : [message]
 }
 
-function readOnlyForecastRequested(message: string) {
-  return /如果|会怎样|预测|试算/.test(message) && !/(保存|修改|写入|更新|应用)/.test(message.replace('如果', ''))
-}
-
-async function planOnlineFactor(ctx: PlannerContext) {
-  if (!ctx.message.includes('线上系数')) return null
-  const monthLabel = monthLabelFromMessage(ctx.message)
-  const factor = numberAfter('线上系数', ctx.message)
-  if (!monthLabel || factor === null) return null
-  const mode = readOnlyForecastRequested(ctx.message) ? 'forecast' : 'write'
-  return planOnlineFactorFromFields(ctx, { monthLabel, factor, mode })
-}
-
 async function planOnlineFactorFromFields(
   ctx: PlannerContext,
   input: { monthLabel: string; factor: number; mode: 'forecast' | 'write' },
@@ -412,34 +388,6 @@ async function planWorkspaceRename(ctx: PlannerContext, workspaceName: unknown) 
   } satisfies AgentActionDraft
 }
 
-function planNavigationOnly(message: string): { message: string; navigation: AgentNavigationEvent } | null {
-  if (/记实际|记账|账本/.test(message)) {
-    return {
-      message: '已打开记实际页面。',
-      navigation: { type: 'navigation', route: { mainTab: 'bookkeeping', secondaryTab: 'entries' }, reason: '用户要求打开记账工作台。' },
-    }
-  }
-  if (/看偏差|预实|偏差/.test(message)) {
-    return {
-      message: '已打开偏差复盘页面。',
-      navigation: { type: 'navigation', route: { mainTab: 'variance', secondaryTab: 'analysis' }, reason: '用户要求查看预实偏差。' },
-    }
-  }
-  if (/调模型|收入|成本|资金/.test(message)) {
-    return {
-      message: '已打开调模型页面。',
-      navigation: { type: 'navigation', route: { mainTab: 'inputs', secondaryTab: message.includes('成本') ? 'cost' : message.includes('资金') ? 'capital' : 'revenue' }, reason: '用户要求打开模型输入工作台。' },
-    }
-  }
-  if (/看测算|总览|预测/.test(message)) {
-    return {
-      message: '已打开经营总览页面。',
-      navigation: { type: 'navigation', route: { mainTab: 'dashboard', secondaryTab: 'overview' }, reason: '用户要求查看测算总览。' },
-    }
-  }
-  return null
-}
-
 async function planExportBundleRead(ctx: PlannerContext) {
   const bundle = await exportWorkspaceBundle(ctx.db, ctx.workspace)
   return {
@@ -453,11 +401,6 @@ async function planExportBundleRead(ctx: PlannerContext) {
     },
     status: 'executed',
   } satisfies ReadDraft
-}
-
-async function planExportBundle(ctx: PlannerContext) {
-  if (!/导出/.test(ctx.message) || !/(工作区|bundle|Bundle|JSON)/.test(ctx.message)) return null
-  return planExportBundleRead(ctx)
 }
 
 function planImportBundleFromValue(ctx: PlannerContext, rawBundle: unknown) {
@@ -482,11 +425,6 @@ function planImportBundleFromValue(ctx: PlannerContext, rawBundle: unknown) {
     },
     payload: { bundle },
   } satisfies AgentActionDraft
-}
-
-async function planImportBundle(ctx: PlannerContext) {
-  if (!/导入/.test(ctx.message) || !/(工作区|bundle|Bundle|JSON)/.test(ctx.message)) return null
-  return planImportBundleFromValue(ctx, ctx.providedWorkspaceBundle?.bundle)
 }
 
 async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePlanResult | null> {
@@ -549,7 +487,7 @@ const runtimeStepHandlers: ActionDraftBuilderHandlers<PlannerContext> = {
     ? planOnlineFactorFromFields(ctx, {
         monthLabel: step.monthLabel,
         factor: step.onlineSalesFactor,
-        mode: step.mode === 'forecast' || readOnlyForecastRequested(ctx.message) ? 'forecast' : 'write',
+        mode: step.mode === 'forecast' ? 'forecast' : 'write',
       })
     : null,
   'team_member.add': planAddTeamMemberFromStep,
@@ -563,7 +501,6 @@ const runtimeStepHandlers: ActionDraftBuilderHandlers<PlannerContext> = {
   'stage_cost_type.add': planAddStageCostTypeFromStep,
   'stage_cost_type.delete': planDeleteStageCostTypeFromStep,
   'workspace.patch_config': (ctx, step) => {
-    if (readOnlyForecastRequested(ctx.message)) return null
     return step.patches ? planWorkspacePatch(ctx, step.patches) : null
   },
   'workspace.rename': (ctx, step) => planWorkspaceRename(ctx, step.workspaceName),
@@ -572,13 +509,15 @@ const runtimeStepHandlers: ActionDraftBuilderHandlers<PlannerContext> = {
   'workspace.rollback_version': (ctx, step) => planRollbackVersionAction(ctx, {
     ...(step.versionNo !== undefined ? { versionNo: step.versionNo } : {}),
     ...(step.versionName !== undefined ? { versionName: step.versionName } : {}),
-    requireKeyword: false,
   }),
   'workspace.promote_version': (ctx, step) => planPromoteVersionAction(ctx, {
     ...(step.versionNo !== undefined ? { versionNo: step.versionNo } : {}),
     ...(step.versionName !== undefined ? { versionName: step.versionName } : {}),
   }),
-  'workspace.delete_version': planDeleteVersionAction,
+  'workspace.delete_version': (ctx, step) => planDeleteVersionAction(ctx, {
+    ...(step.versionNo !== undefined ? { versionNo: step.versionNo } : {}),
+    ...(step.versionName !== undefined ? { versionName: step.versionName } : {}),
+  }),
   'workspace.reset_draft': planResetDraftAction,
   'workspace.export_bundle': planExportBundleRead,
   'workspace.import_bundle': (ctx, step) => {
@@ -598,44 +537,6 @@ const runtimeStepHandlers: ActionDraftBuilderHandlers<PlannerContext> = {
     revoke: true,
   }),
   'data.query_workspace': answerWorkspaceDataQuestion,
-}
-
-async function localPlannedItems(ctx: PlannerContext): Promise<PlannedItem[]> {
-  const items: PlannedItem[] = []
-  for (const part of splitRequestedSteps(ctx.message)) {
-    if (accountActionRequested(part)) {
-      items.push(accountForbiddenRead())
-      continue
-    }
-    const artifact = extractWorkspaceBundleArtifact(part)
-    const baseCtx: PlannerContext = { ...ctx, message: part }
-    const scopedCtx: PlannerContext = artifact ? { ...baseCtx, providedWorkspaceBundle: artifact } : baseCtx
-    const plannedItems = [
-      await planLedgerCreateAction(scopedCtx),
-      await planOnlineFactor(scopedCtx),
-      await planImportBundle(scopedCtx),
-      await planExportBundle(scopedCtx),
-      await planSaveSnapshotAction(scopedCtx),
-      /快照.*发布|发布.*快照|升为.*发布版|发布为正式版/.test(scopedCtx.message)
-        ? await planPromoteVersionAction(scopedCtx)
-        : null,
-      await planPublishVersionAction(scopedCtx),
-      await planRollbackVersionAction(scopedCtx),
-      await planDeleteVersionAction(scopedCtx),
-      await planShareAction(scopedCtx),
-      await planResetDraftAction(scopedCtx),
-      await planLedgerVoidAction(scopedCtx),
-      await planPeriodLockAction(scopedCtx),
-    ]
-    const planned = plannedItems.find(Boolean)
-    if (planned) items.push(planned)
-  }
-
-  if (items.length > 0) return items
-  const navigationOnly = planNavigationOnly(ctx.message)
-  return navigationOnly
-    ? [{ title: '切换页面', message: navigationOnly.message, navigation: navigationOnly.navigation, status: 'executed' }]
-    : []
 }
 
 async function modelPlannedItems(ctx: PlannerContext): Promise<{ source: AgentPlannerSource; items: PlannedItem[] } | null> {
@@ -675,8 +576,6 @@ async function modelPlannedItems(ctx: PlannerContext): Promise<{ source: AgentPl
       items.push(...partItems)
     } else if (requiredSource) {
       items.push(modelToolCallRequiredRead(result.error))
-    } else {
-      items.push(...(await localPlannedItems(planningCtx)))
     }
   }
   return items.length > 0 ? { source: source ?? requiredSource ?? 'openai_compatible_tool_calls', items } : null
@@ -684,8 +583,8 @@ async function modelPlannedItems(ctx: PlannerContext): Promise<{ source: AgentPl
 
 export async function planResponse(ctx: PlannerContext) {
   const modelPlan = await modelPlannedItems(ctx)
-  const items = modelPlan?.items ?? (await localPlannedItems(ctx))
-  const plannerSource: AgentPlannerSource = modelPlan?.source ?? 'rules'
+  const items = modelPlan?.items ?? []
+  const plannerSource: AgentPlannerSource = modelPlan?.source ?? configuredModelPlannerSource(ctx.settings) ?? 'rules'
   const navigationEvents: AgentNavigationEvent[] = []
   const actionRows: Row<'agent_action_requests'>[] = []
   const planRows: Row<'agent_plan_steps'>[] = []

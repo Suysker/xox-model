@@ -11,26 +11,12 @@ type WorkspaceContext = {
   workspace: Row<'workspaces'>
 }
 
-export function monthLabelFromMessage(message: string) {
-  const match = message.match(/(\d{1,2})\s*月/)
-  if (!match) return null
-  const month = Number(match[1])
-  return Number.isFinite(month) && month >= 1 && month <= 12 ? `${month}月` : null
-}
-
 export function periodOccurrenceDate(config: ModelConfig, period: { monthIndex: number }) {
   const startMonth = Math.min(12, Math.max(1, Math.round(config.planning.startMonth || 1)))
   const monthOffset = startMonth - 1 + period.monthIndex - 1
   const year = new Date(utcNow()).getUTCFullYear() + Math.floor(monthOffset / 12)
   const month = monthOffset % 12
   return new Date(Date.UTC(year, month, 1, 12, 0, 0)).toISOString()
-}
-
-export function numberAfter(label: string, message: string) {
-  const match = message.match(new RegExp(`${label}\\s*(?:变成|改成|到|为)?\\s*(\\d+(?:\\.\\d+)?)`))
-  if (!match) return null
-  const value = Number(match[1])
-  return Number.isFinite(value) ? value : null
 }
 
 export async function periodForMonth(ctx: WorkspaceContext, monthLabel: string) {
