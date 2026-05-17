@@ -772,6 +772,13 @@ OpenAI-compatible Chat Completions
   -> agentThreadEvents.publish(threadId)
   -> SSE thread_state
   -> React AgentConsole live preview + AgentPlanTimeline trace
+
+OpenAI Agents SDK
+  -> Runner.run
+  -> SDK function tool execute callback
+  -> RuntimeStreamEvent(stream_started | tool_call_delta | stream_completed)
+  -> runtime-trace-events.ts
+  -> agent_run_events(provider_stream_started | provider_stream_delta | provider_stream_completed)
 ```
 
 事件约束：
@@ -780,8 +787,8 @@ OpenAI-compatible Chat Completions
 - `provider_stream_delta` 只记录短 `delta`、累计 `preview`、tool call index、tool name 和 arguments preview；所有字段先经过 secret-like redaction，并有长度上限。
 - `provider_stream_completed` 只记录内容长度和 tool call 数量。
 - 不保存 provider 原始 SSE 行、完整 prompt、API key、HTTP headers、完整 tool arguments 或 provider 原始 JSON。
-- OpenAI-compatible / DeepSeek / Qwen / Doubao 等兼容 Chat Completions `stream + tools + tool_calls` 的 provider 走这条路径；如果 provider 返回普通 JSON，adapter 仍用非流式 tool_calls 解析，但不会伪造 provider stream delta。
-- OpenAI Agents SDK adapter 的 SDK tracing / human-in-the-loop event 映射仍是独立 maturity gate；业务默认 DeepSeek/OpenAI-compatible 路径已经通过 provider chunk run event 接入前端实时预览。
+- OpenAI-compatible / DeepSeek / Qwen / Doubao 等兼容 Chat Completions `stream + tools + tool_calls` 的 provider 走 token/chunk 路径；如果 provider 返回普通 JSON，adapter 仍用非流式 tool_calls 解析，但不会伪造 token delta。
+- OpenAI Agents SDK adapter 已把 runner start、SDK function tool execute 和 runner completed 映射到同一套 provider-neutral run event；SDK 原生 tracing、guardrail 细节和 human-in-the-loop event 仍是独立 maturity gate。
 - `runtime-planning-call.ts` 只把 runtime adapter 的 `onStreamEvent` 连接到 runtime trace service，不直接拼 `provider_stream_*` payload。
 
 ### 恢复语义
@@ -925,8 +932,8 @@ Agent: workspace_import_bundle
 
 - `apps/api/src/agent/routes.ts` 是当前 Agent API Boundary，只承载认证、HTTP DTO、SSE route 和 thread publish；run queue/recovery/cancel 与 worker lifecycle 已在 `run-worker.ts`。
 - `apps/api/src/agent/agent-kernel.ts` 已承接单次 run 的 planning/action graph/message/memory 协调；下一阶段可以继续收敛 kernel 输入输出命名，但 routes 和 worker 不应回收模型规划职责。
-- OpenAI Agents SDK adapter 已形成最小可验证路径，但还没有把 SDK streaming/tracing/human-in-the-loop events 映射为前端实时事件。
-- 前端已有后端状态刷新式 action graph / memory panel，OpenAI-compatible provider chunk 已进入实时预览；后续要继续做跨实例 pubsub 和 SDK tracing。
+- OpenAI Agents SDK adapter 已形成最小可验证路径，并把 runner lifecycle / function tool execute 映射为 provider-neutral run events；SDK 原生 streaming/tracing/guardrail/human-in-the-loop event 细节仍是下一阶段 maturity gate。
+- 前端已有后端状态刷新式 action graph / memory panel，OpenAI-compatible provider chunk 和 OpenAI Agents SDK lifecycle/tool trace 已进入运行图；后续要继续做跨实例 pubsub 和 SDK tracing。
 - 文档验收需要区分当前可验证能力和下一阶段 runtime maturity gate。
 
 ## 迁移顺序
@@ -935,7 +942,7 @@ Agent: workspace_import_bundle
 2. 把 contracts 改为 provider-neutral Agent Protocol。
 3. 拆分 `modules/agent.ts` 到 `runtime / kernel / tools / routes`。（已完成 routes、worker、runtime、tools、approval、context 和 kernel façade 的代码边界）
 4. 把兼容 Chat Completions provider 迁入 `openai-compatible-chat-adapter.ts`。（已完成 provider-native tool_calls 与 chunk streaming，仍需继续补 tracing）
-5. 实现 OpenAI Agents SDK adapter。（已完成最小可验证路径，仍需 streaming/tracing/human-in-the-loop events）
+5. 实现 OpenAI Agents SDK adapter。（已完成最小可验证路径和 lifecycle/tool trace，仍需 SDK 原生 streaming/tracing/guardrail/human-in-the-loop events）
 6. 增强 React Agent OS 的 action graph、event timeline、memory 管理。（已完成后端状态刷新式 action graph 与 provider chunk 预览，仍需跨实例实时成熟化）
 7. 用真实 provider 分别跑只读、确认写入、多步骤、拒绝账号动作、memory 隔离测试。
 

@@ -40,6 +40,7 @@ export type RuntimeStreamEvent =
       kind: 'stream_completed'
       contentLength: number
       toolCallCount: number
+      source?: RuntimePlannerSource
     }
 
 export type RuntimePlanningInput = {

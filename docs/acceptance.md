@@ -131,7 +131,7 @@
 - [x] 常规 Agent 请求不会用本地正则/规则替模型生成业务动作；API 测试覆盖“provider 有 key 但只返回 assistant 文本”和“provider 被选择但无 key”两种情况，均不生成确认卡；`rules` 只保留为本地/CI no-op 生命周期路径，不能生成业务确认卡
 - [x] Data agent 只读问答必须由模型调用 `data_query_workspace`，API 测试和真实 smoke 覆盖“3 月计划收入和计划成本是多少”这类问题；该路径不生成确认卡、不写业务数据，并打开对应分析页面
 - [x] Data Agent 只读回答生成已从 `modules/agent.ts` 抽到 `apps/api/src/agent/data-agent.ts`，只读取当前 workspace projection / ledger period summary，返回回答和导航事件，不创建确认卡、不写业务数据
-- [x] `LLM_PROVIDER=openai` 时可通过 OpenAI Agents SDK adapter 跑通只读 tool call 和确认卡写入预览；API 测试用本地 fake OpenAI Chat Completions server 验证 SDK `Agent / Runner / tool / OpenAIProvider` 路径
+- [x] `LLM_PROVIDER=openai` 时可通过 OpenAI Agents SDK adapter 跑通只读 tool call 和确认卡写入预览；API 测试用本地 fake OpenAI Chat Completions server 验证 SDK `Agent / Runner / tool / OpenAIProvider` 路径，并覆盖 SDK runner lifecycle / function tool execute 映射到 `provider_stream_*` run events
 - [x] `LLM_PROVIDER=deepseek` 或 `LLM_PROVIDER=openai-compatible` 时可用 OpenAI-compatible Chat Completions `tool_calls` 跑通真实模型 10+ 方向 smoke test，并已沉淀为 `npm.cmd run smoke:agent`
 - [x] 代码和文档不引入 Claude Agent SDK adapter；Claude Code 只作为交互模式参考
 - [x] Agent 可写模型字段矩阵已注册在 `apps/api/src/agent/tool-coverage.ts`，覆盖资本规划、收入引擎、团队成员、成本结构、运营员工、月份模板、工作区 bundle 导入导出等主要手动输入路径；账号动作列为明确手动项

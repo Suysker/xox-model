@@ -46,6 +46,7 @@ function runtimeStreamEventPayload(event: RuntimeStreamEvent): Record<string, un
     kind: event.kind,
     contentLength: event.contentLength,
     toolCallCount: event.toolCallCount,
+    ...(event.source ? { source: event.source } : {}),
   }
 }
 

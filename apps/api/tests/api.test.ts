@@ -2153,6 +2153,21 @@ describe('xox TypeScript API', () => {
       expect(forecast.json.planner).toBe('openai_agents')
       expect(forecast.json.actionRequests).toHaveLength(0)
       expect(forecast.json.navigationEvents[0].route.mainTab).toBe('inputs')
+      expect(forecast.json.runEvents.some((event: any) =>
+        event.type === 'provider_stream_started' &&
+        event.data?.source === 'openai_agents' &&
+        event.data?.provider === 'openai',
+      )).toBe(true)
+      expect(forecast.json.runEvents.some((event: any) =>
+        event.type === 'provider_stream_delta' &&
+        event.data?.kind === 'tool_call_delta' &&
+        event.data?.toolName === 'workspace_update_online_factor',
+      )).toBe(true)
+      expect(forecast.json.runEvents.some((event: any) =>
+        event.type === 'provider_stream_completed' &&
+        event.data?.source === 'openai_agents' &&
+        event.data?.toolCallCount === 1,
+      )).toBe(true)
 
       const planned = await client.post('/api/v1/agent/messages', {
         message: '把 3 月成员 A 线下 1 张入账',
@@ -2161,6 +2176,11 @@ describe('xox TypeScript API', () => {
       expect(planned.json.planner).toBe('openai_agents')
       expect(planned.json.actionRequests[0].kind).toBe('ledger.create_entry')
       expect(planned.json.actionRequests[0].payload.amount).toBe(88)
+      expect(planned.json.runEvents.some((event: any) =>
+        event.type === 'provider_stream_delta' &&
+        event.data?.kind === 'tool_call_delta' &&
+        event.data?.toolName === 'ledger_create_member_income',
+      )).toBe(true)
       await closeHarness(harness)
     })
   })
