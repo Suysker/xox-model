@@ -112,6 +112,24 @@ describe('AgentPlanTimeline presentation helpers', () => {
     })
   })
 
+  it('labels newly covered Agent OS action kinds in multi-step timelines', () => {
+    const rows = buildAgentTimelineRows(
+      [
+        buildStep({ id: 'step-1', actionRequestId: 'action-rename', sequence: 1, title: '改名' }),
+        buildStep({ id: 'step-2', actionRequestId: 'action-promote', sequence: 2, title: '快照发布' }),
+        buildStep({ id: 'step-3', actionRequestId: 'action-restore', sequence: 3, title: '恢复分录' }),
+      ],
+      [
+        buildAction({ id: 'action-rename', kind: 'workspace.rename', title: '工作区改名', navigation: buildNavigation({ route: { mainTab: 'dashboard', secondaryTab: 'overview' }, panel: 'workspace' }) }),
+        buildAction({ id: 'action-promote', kind: 'workspace.promote_version', title: '快照发布', riskLevel: 'high', navigation: buildNavigation({ route: { mainTab: 'dashboard', secondaryTab: 'overview' }, panel: 'workspace' }) }),
+        buildAction({ id: 'action-restore', kind: 'ledger.restore_entry', title: '恢复分录', riskLevel: 'high' }),
+      ],
+    )
+
+    expect(rows.map((row) => row.actionLabel)).toEqual(['改名', '快照发布', '恢复分录'])
+    expect(rows[1]?.riskLabel).toBe('高风险')
+  })
+
   it('summarizes executed, cancelled, failed, and pending confirmation counts', () => {
     const rows = buildAgentTimelineRows(
       [

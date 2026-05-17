@@ -140,11 +140,21 @@ export type AgentRoute =
   | { mainTab: 'bookkeeping'; secondaryTab?: 'entries'; selectedPeriodId?: string | null }
   | { mainTab: 'variance'; secondaryTab?: 'analysis'; selectedPeriodId?: string | null }
 
+export type AgentLedgerHistoryFilters = {
+  direction?: 'all' | 'income' | 'expense'
+  status?: 'all' | 'posted' | 'voided'
+  dateMode?: 'all' | 'day' | 'week'
+  day?: string | null
+  week?: string | null
+  keyword?: string | null
+}
+
 export type AgentNavigationEvent = {
   type: 'navigation'
   route: AgentRoute
   panel?: 'workspace' | null
   focusRecordId?: string | null
+  ledgerFilters?: AgentLedgerHistoryFilters | null
   reason: string
 }
 
@@ -155,9 +165,11 @@ export type AgentActionKind =
   | 'ledger.restore_entry'
   | 'ledger.lock_period'
   | 'ledger.unlock_period'
+  | 'workspace.rename'
   | 'workspace.update_draft'
   | 'workspace.save_snapshot'
   | 'workspace.publish_release'
+  | 'workspace.promote_version'
   | 'workspace.rollback_version'
   | 'workspace.delete_version'
   | 'workspace.reset_draft'

@@ -75,14 +75,14 @@ sudo systemctl status xox-model-web
   - `OPENAI_COMPATIBLE_API_KEY=<provider-key>`
   - `AGENT_PROVIDER_KEY_ENCRYPTION_SECRET=<deployment-secret-for-user-provider-keys>`
 - DeepSeek 兼容变量仍可用作默认 smoke 配置：`DEEPSEEK_BASE_URL / DEEPSEEK_MODEL / DEEPSEEK_API_KEY`。密钥只放用户提交的 provider setting、本地 `.env` 或部署环境变量，不写入仓库。
-- `apps/api/src/agent/runtime/openai-agents-adapter.ts` 使用 OpenAI Agents SDK 的 `Agent / Runner / tool / OpenAIProvider`，SDK tool 只收集内部 plan step，不执行领域写入；`apps/api/src/agent/runtime/openai-compatible-chat-adapter.ts` 只接受通用 Chat Completions `tools / tool_choice / tool_calls`。当 `LLM_PROVIDER` 不是 `rules` 时，常规 Agent 请求不会回退到规则/正则生成业务动作；模型未返回 tool call 会返回失败型只读步骤。真实 smoke 命令不允许无 key 运行。
+- `apps/api/src/agent/runtime/openai-agents-adapter.ts` 使用 OpenAI Agents SDK 的 `Agent / Runner / tool / OpenAIProvider`，SDK tool 只收集内部 plan step，不执行领域写入；`apps/api/src/agent/runtime/openai-compatible-chat-adapter.ts` 使用通用 Chat Completions `tools / tool_choice / tool_calls`，同时接受普通 assistant 文本作为只读回复。当 `LLM_PROVIDER` 不是 `rules` 时，常规 Agent 请求不会回退到规则/正则生成业务动作；只有 provider-native tool call 才能生成确认卡。真实 smoke 命令不允许无 key 运行。
 - Agent memory 会拒绝保存 secret-like 内容；context summary 和 provider prompt 注入的 recent messages 会做 secret redaction，避免 key/token 被带入后续模型上下文。
 - `agent_memories` 和 `agent_context_snapshots` 是租户数据，备份、导出和删除策略必须按用户 / 工作区权限处理。
-- Agent 历史对话以服务端 `agent_threads / agent_messages / agent_runs / agent_run_events / agent_plan_steps / agent_action_requests` 为事实源。前端 `localStorage` 只保存当前 threadId 指针；发送消息时默认启动 background run，拿到 `threadId/runId/status=running` 后优先订阅 `/api/v1/agent/threads/:threadId/events` 的 SSE `thread_state` 事件，失败时轮询 `/api/v1/agent/threads/:threadId` 恢复 running/completed/failed/cancelled 状态、messages、持久运行轨迹、运行图和待确认动作；新建对话不会删除历史。`agent_runs` 是持久化 run queue，会保存输入消息、`worker_id`、`lease_expires_at` 和 `heartbeat_at`；`agent_run_events` 保存 run 入队、worker 认领、模型规划、工具计划、确认卡生成、确认卡编辑、执行、取消和失败等用户可见步骤，不保存 provider 原始响应、提示词全文或密钥。background 请求只入队，Agent run worker 按 `AGENT_RUN_WORKER_POLL_MS` 扫描并认领可执行 run。API 启动和周期 worker 都只恢复可认领且尚未产生运行产物的 `running` run；如果 run 在重启前已经生成部分步骤或确认卡，则 fail-closed 并取消未执行确认卡，要求用户重发。用户也可以取消当前 running run，服务端会中止当前进程里的 provider 请求并取消未执行确认卡。多实例部署时必须保证 `AGENT_WORKER_ID` 在每个 API worker 内唯一；`AGENT_RUN_LEASE_TTL_MS` 默认 45000，`AGENT_RUN_WORKER_POLL_MS` 默认 2000，长模型调用期间会 heartbeat 续租，迟到且已失去租约的模型结果不能回写。当前 SSE broker 是单进程内事件总线，跨实例强实时仍需要 Redis/pubsub；当前剩余成熟化工作是独立队列进程和 provider token 级流式输出。
+- Agent 历史对话以服务端 `agent_threads / agent_messages / agent_runs / agent_run_events / agent_plan_steps / agent_action_requests` 为事实源。前端 `localStorage` 只保存当前 threadId 指针；发送消息时默认启动 background run，拿到 `threadId/runId/status=running` 后优先订阅 `/api/v1/agent/threads/:threadId/events` 的 SSE `thread_state` 事件，失败时轮询 `/api/v1/agent/threads/:threadId` 恢复 running/completed/failed/cancelled 状态、messages、持久运行轨迹、运行图和待确认动作；新建对话不会删除历史。`agent_runs` 是持久化 run queue，会保存输入消息、`worker_id`、`lease_expires_at` 和 `heartbeat_at`；`agent_run_events` 保存 run 入队、worker 认领、模型规划、provider chunk 预览、工具计划、确认卡生成、确认卡编辑、执行、取消和失败等用户可见步骤，不保存 provider 原始响应、提示词全文、完整 tool arguments 或密钥。OpenAI-compatible provider 调用默认发送 `stream: true`；DeepSeek/Qwen/Doubao 等兼容 `text/event-stream + tool_calls` 的返回会先脱敏截断为 `provider_stream_*` run event，再通过同一条 thread state SSE 投影给前端。background 请求只入队，Agent run worker 按 `AGENT_RUN_WORKER_POLL_MS` 扫描并认领可执行 run。API 启动和周期 worker 都只恢复可认领且尚未产生运行产物的 `running` run；如果 run 在重启前已经生成部分步骤或确认卡，则 fail-closed 并取消未执行确认卡，要求用户重发。用户也可以取消当前 running run，服务端会中止当前进程里的 provider 请求并取消未执行确认卡。多实例部署时必须保证 `AGENT_WORKER_ID` 在每个 API worker 内唯一；`AGENT_RUN_LEASE_TTL_MS` 默认 45000，`AGENT_RUN_WORKER_POLL_MS` 默认 2000，长模型调用期间会 heartbeat 续租，迟到且已失去租约的模型结果不能回写。当前 SSE broker 是单进程内事件总线，跨实例强实时仍需要 Redis/pubsub；当前剩余成熟化工作是独立队列进程和 OpenAI Agents SDK tracing 事件映射。
 - 浏览器刷新会并发触发会话恢复和业务数据加载。`/api/v1/auth/me` 必须保持幂等，只延长当前 token 有效期，不在每次恢复时旋转 token，否则并发请求会因为旧 cookie 竞态导致误登出。
 - Agent 数据问答通过 `data_query_workspace` 只读工具完成。模型只负责选择查询 scope 和指标，服务端用当前工作区的测算、账本和预实汇总计算答案；不要暴露自由 SQL，也不要在 provider 模式下用本地正则替模型选择工具。
 - 团队成员数量、成员名单和团队构成问题使用 `data_query_workspace` 的 `scope=team_summary`；服务端从当前草稿 `teamMembers` 读取人数和名称，不返回工作区财务总览替代答案。
-- Agent 普通对话、问候、身份说明和能力说明通过 `agent_reply` 只读工具完成。provider 模式下如果模型只返回普通文本而没有 tool call，系统仍不会用规则伪造业务动作；真实 provider 应被 prompt/tool catalog 引导为 `agent_reply`。
+- Agent 普通对话、问候、身份说明和能力说明直接使用 assistant 文本完成。provider 模式下如果模型只返回普通文本而没有 tool call，系统只持久化文本回复，不会用规则伪造业务动作；不保留 `agent_reply` 这类废弃回复工具。
 - Agent provider 调用错误会按缺少 API key、HTTP 认证/请求失败、网络/base URL 失败、真实无 tool_call 分开展示。切换 provider 时如果 API key 留空会保留旧 key；从 qwen 切到 DeepSeek 时必须重新填写 DeepSeek key，否则会显示 HTTP 401/403 认证失败。
 - Agent 可写模型字段矩阵维护在 `apps/api/src/agent/tool-coverage.ts`。新增前端手动输入字段时，必须同步补该矩阵和 API 覆盖测试，否则模型可能不知道对应 patch path。真实 provider prompt 只注入 patterns 和少量样例字段，完整矩阵留在代码和测试里，避免每次请求携带所有月份/成本项导致延迟过高。
 - 团队成员新增/删除是结构性草稿变更，必须走 `team_member_add` / `team_member_delete` 专用 tool call，再由服务端生成 `workspace.update_draft` 确认卡；不要让模型通过 `workspace_patch_config` 直接重写整个 `teamMembers` 数组。确认执行前会拒绝把团队成员编辑到 0 个，防止用户编辑确认卡载荷后破坏模型可计算性。
@@ -101,11 +101,16 @@ sudo systemctl status xox-model-web
 - 新对话注入同用户 / 同工作区 memory
 - 多步骤消息拆出记账确认卡和账号动作拒绝
 - 待确认动作载荷可编辑，确认后执行编辑后的载荷
-- 账本分录作废
+- 员工新增 / 删除和工作区改名
+- 通用其他收入、普通支出、员工按人支出
+- 一键入账多笔展开为多张确认卡
+- 历史账本分录修改、精确作废和恢复作废
+- 预实科目差异深度追问和账本历史筛选导航
 - 草稿专用字段保存和通用模型 patch
 - 工作区 bundle 导出和导入确认卡
 - 锁账 / 解锁
 - 保存快照
+- 把指定快照发布为正式版
 - 发布当前版本并创建分享链接
 - 撤销分享链接
 - 恢复版本、删除快照 / 版本、重置草稿
@@ -113,7 +118,7 @@ sudo systemctl status xox-model-web
 - background run 的持久运行轨迹可从 thread state 恢复
 - `agent.action_executed` 审计记录
 
-如果没有 `OPENAI_COMPATIBLE_API_KEY` 或 `DEEPSEEK_API_KEY`，该命令必须失败，不能回退到规则规划。输出只包含结构化验收摘要，不打印 key，临时 smoke 数据库会在运行结束后删除。该命令会连续调用真实模型覆盖 27 个方向，耗时明显长于单元测试，不适合放入默认 CI。
+如果没有 `OPENAI_COMPATIBLE_API_KEY` 或 `DEEPSEEK_API_KEY`，该命令必须失败，不能回退到规则规划。输出只包含结构化验收摘要，不打印 key，临时 smoke 数据库会在运行结束后删除。本轮 DeepSeek `deepseek-v4-pro` smoke 已覆盖 50 个方向，耗时明显长于单元测试，不适合放入默认 CI。
 
 ## 验证命令
 

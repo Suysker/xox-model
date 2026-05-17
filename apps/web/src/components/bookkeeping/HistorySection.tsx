@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { CalendarRange, ReceiptText, Search } from 'lucide-react'
-import type { EntryAllocation, EntryResponse, SubjectResponse } from '../../lib/api'
+import type { AgentLedgerHistoryFilters, EntryAllocation, EntryResponse, SubjectResponse } from '../../lib/api'
 import { cx, formatCurrency } from '../../lib/format'
 import type { MonthlyScenarioResult } from '../../types'
 import { BodyCell as HistoryCell, DenseFieldInput, HeaderCell as HistoryHeader, Panel, SectionTitle, SegmentTabs } from '../common/ui'
@@ -57,6 +57,7 @@ export function HistorySection(props: {
   plannedMonthResult: MonthlyScenarioResult | null
   offlineUnitPrice: number
   onlineUnitPrice: number
+  initialFilters?: AgentLedgerHistoryFilters | null
   onUpdate: (
     entryId: string,
     payload: {
@@ -80,6 +81,17 @@ export function HistorySection(props: {
   const [selectedDay, setSelectedDay] = useState('')
   const [selectedWeek, setSelectedWeek] = useState('')
   const [rowDrafts, setRowDrafts] = useState<Record<string, HistoryNumericDraft>>({})
+
+  useEffect(() => {
+    const filters = props.initialFilters
+    if (!filters) return
+    setDirectionFilter(filters.direction ?? 'all')
+    setStatusFilter(filters.status ?? 'all')
+    setDateFilterMode(filters.dateMode ?? 'all')
+    setSelectedDay(filters.day ?? '')
+    setSelectedWeek(filters.week ?? '')
+    setKeyword(filters.keyword ?? '')
+  }, [props.initialFilters])
 
   const filteredHistoryGroups = useMemo(
     () =>

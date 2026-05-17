@@ -33,9 +33,11 @@ const ACTION_POLICIES: Record<AgentActionKind, AgentActionPolicy> = {
   'ledger.restore_entry': { kind: 'ledger.restore_entry', minRiskLevel: 'high', requiredMainTab: 'bookkeeping' },
   'ledger.lock_period': { kind: 'ledger.lock_period', minRiskLevel: 'high', requiredMainTab: 'bookkeeping' },
   'ledger.unlock_period': { kind: 'ledger.unlock_period', minRiskLevel: 'high', requiredMainTab: 'bookkeeping' },
+  'workspace.rename': { kind: 'workspace.rename', minRiskLevel: 'medium', requiredMainTab: 'dashboard', requiredPanel: 'workspace' },
   'workspace.update_draft': { kind: 'workspace.update_draft', minRiskLevel: 'medium', requiredMainTab: 'inputs' },
   'workspace.save_snapshot': { kind: 'workspace.save_snapshot', minRiskLevel: 'low', requiredMainTab: 'dashboard', requiredPanel: 'workspace' },
   'workspace.publish_release': { kind: 'workspace.publish_release', minRiskLevel: 'high', requiredMainTab: 'dashboard', requiredPanel: 'workspace' },
+  'workspace.promote_version': { kind: 'workspace.promote_version', minRiskLevel: 'high', requiredMainTab: 'dashboard', requiredPanel: 'workspace' },
   'workspace.rollback_version': { kind: 'workspace.rollback_version', minRiskLevel: 'high', requiredMainTab: 'dashboard', requiredPanel: 'workspace' },
   'workspace.delete_version': { kind: 'workspace.delete_version', minRiskLevel: 'high', requiredMainTab: 'dashboard', requiredPanel: 'workspace' },
   'workspace.reset_draft': { kind: 'workspace.reset_draft', minRiskLevel: 'high', requiredMainTab: 'inputs', requiredPanel: 'workspace' },
@@ -163,6 +165,7 @@ export async function assertActionExecutionAllowed(
       await assertPeriodAllowed(db, workspace, payload.periodId, { allowLocked: true })
       return
     case 'workspace.rollback_version':
+    case 'workspace.promote_version':
     case 'workspace.delete_version':
     case 'share.create':
     case 'share.revoke':
@@ -170,6 +173,9 @@ export async function assertActionExecutionAllowed(
       return
     case 'workspace.update_draft':
       assertDraftConfigPayload(payload)
+      return
+    case 'workspace.rename':
+      if (typeof payload.workspaceName !== 'string' || payload.workspaceName.trim().length === 0) throw unprocessable('Workspace name is required')
       return
     case 'workspace.save_snapshot':
     case 'workspace.publish_release':

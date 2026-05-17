@@ -3,7 +3,7 @@ import { projectModel } from '@xox/domain'
 import type { AgentNavigationEvent } from '@xox/contracts'
 import type { Database, Row } from '../db/schema.js'
 import { draftContext, getWorkspaceDraft } from '../modules/workspace.js'
-import { listPeriods } from '../modules/ledger.js'
+import { listEntries, listPeriods, varianceForPeriod } from '../modules/ledger.js'
 
 type DataAgentContext = {
   db: Kysely<Database>
@@ -15,6 +15,14 @@ export type DataAgentQueryStep = {
   metrics?: unknown
   monthLabel?: string | null
   memberName?: string | null
+  subjectKey?: string | null
+  subjectName?: string | null
+  direction?: 'income' | 'expense' | null
+  entryStatus?: 'posted' | 'voided' | null
+  dateMode?: 'all' | 'day' | 'week' | null
+  day?: string | null
+  week?: string | null
+  keyword?: string | null
   order?: unknown
   limit?: unknown
 }
@@ -38,6 +46,43 @@ function normalizeDataMetrics(raw: unknown): string[] {
   return Array.isArray(raw) ? raw.filter((item): item is string => typeof item === 'string') : []
 }
 
+function normalizeLookup(value: string) {
+  return value.trim().replace(/\s+/g, '').toLocaleLowerCase()
+}
+
+function toInputDate(value: string | null) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60_000)
+  return localDate.toISOString().slice(0, 10)
+}
+
+function toWeekInputValue(value: string | null) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const localDate = new Date(date.getFullYear(), date.getMonth(), date.getDate())
+  const day = localDate.getDay() || 7
+  localDate.setDate(localDate.getDate() + 4 - day)
+  const yearStart = new Date(localDate.getFullYear(), 0, 1)
+  const weekNumber = Math.ceil(((localDate.getTime() - yearStart.getTime()) / 86_400_000 + 1) / 7)
+  return `${localDate.getFullYear()}-W${String(weekNumber).padStart(2, '0')}`
+}
+
+function entryMatchesKeyword(entry: Awaited<ReturnType<typeof listEntries>>[number], keyword: string) {
+  const needle = normalizeLookup(keyword)
+  const haystack = [
+    entry.counterparty,
+    entry.description,
+    entry.relatedEntityName,
+    entry.direction === 'income' ? '收入' : '支出',
+    entry.status === 'voided' ? '已作废' : '已过账',
+    ...entry.allocations.flatMap((allocation) => [allocation.subjectKey, allocation.subjectName]),
+  ]
+  return haystack.some((item) => item && normalizeLookup(item).includes(needle))
+}
+
 async function periodForMonth(ctx: DataAgentContext, monthLabel: string) {
   const periods = await ctx.db.selectFrom('ledger_periods').selectAll().where('workspace_id', '=', ctx.workspace.id).execute()
   return periods.find((period) => period.month_label === monthLabel) ?? null
@@ -54,7 +99,13 @@ export async function answerWorkspaceDataQuestion(ctx: DataAgentContext, step: D
   const baseScenario = projection.scenarios.find((scenario) => scenario.key === 'base') ?? projection.scenarios[0] ?? null
   if (!baseScenario) return null
 
-  const scope = step.scope === 'workspace_summary' || step.scope === 'period_summary' || step.scope === 'member_summary' || step.scope === 'team_summary' || step.scope === 'top_months'
+  const scope = step.scope === 'workspace_summary' ||
+    step.scope === 'period_summary' ||
+    step.scope === 'member_summary' ||
+    step.scope === 'team_summary' ||
+    step.scope === 'top_months' ||
+    step.scope === 'variance_detail' ||
+    step.scope === 'ledger_history'
     ? step.scope
     : 'workspace_summary'
   const metrics = normalizeDataMetrics(step.metrics)
@@ -163,6 +214,99 @@ export async function answerWorkspaceDataQuestion(ctx: DataAgentContext, step: D
         type: 'navigation',
         route: { mainTab: 'dashboard', secondaryTab: 'months' },
         reason: '月份排行问答需要打开按月分析页面，便于核对口径。',
+      },
+      status: 'executed',
+    }
+  }
+
+  if (scope === 'variance_detail') {
+    const period = step.monthLabel ? await periodForMonth(ctx, step.monthLabel) : null
+    if (!period) return null
+    const variance = await varianceForPeriod(ctx.db, ctx.workspace, period.id)
+    const subjectNeedle = typeof step.subjectName === 'string' && step.subjectName.trim() ? normalizeLookup(step.subjectName) : ''
+    const subjectKey = typeof step.subjectKey === 'string' && step.subjectKey.trim() ? step.subjectKey.trim() : ''
+    const keyword = typeof step.keyword === 'string' && step.keyword.trim() ? normalizeLookup(step.keyword) : ''
+    const lines = variance.lines
+      .filter((line) => {
+        if (subjectKey && line.subjectKey !== subjectKey) return false
+        if (subjectNeedle && !normalizeLookup(line.subjectName).includes(subjectNeedle) && !normalizeLookup(line.subjectKey).includes(subjectNeedle)) return false
+        if (keyword && !normalizeLookup(`${line.subjectName}${line.subjectKey}`).includes(keyword)) return false
+        return true
+      })
+      .sort((a, b) => Math.abs(b.varianceAmount) - Math.abs(a.varianceAmount))
+      .slice(0, Math.min(8, Math.max(1, typeof step.limit === 'number' ? Math.round(step.limit) : 5)))
+    const detail = lines.length > 0
+      ? lines.map((line) => `${line.subjectName}：计划 ${money(line.plannedAmount)}，实际 ${money(line.actualAmount)}，差异 ${money(line.varianceAmount)}`).join('；')
+      : '没有找到匹配科目的预实差异明细'
+    return {
+      title: '回答预实差异追问',
+      message: `${variance.monthLabel}收入差异 ${money(variance.revenueVarianceAmount)}，成本差异 ${money(variance.costVarianceAmount)}。${detail}。本次只读取当前工作区数据，未修改业务数据。`,
+      navigation: {
+        type: 'navigation',
+        route: { mainTab: 'variance', secondaryTab: 'analysis', selectedPeriodId: period.id },
+        reason: '预实分析追问需要打开对应月份偏差页，便于核对科目明细。',
+      },
+      status: 'executed',
+    }
+  }
+
+  if (scope === 'ledger_history') {
+    const periods = await listPeriods(ctx.db, ctx.workspace)
+    const targetPeriods = step.monthLabel
+      ? periods.filter((period) => period.monthLabel === step.monthLabel)
+      : periods
+    if (targetPeriods.length === 0) return null
+
+    const filters = {
+      direction: step.direction ?? 'all',
+      status: step.entryStatus ?? 'all',
+      dateMode: step.dateMode ?? (step.day ? 'day' : step.week ? 'week' : 'all'),
+      day: step.day ?? null,
+      week: step.week ?? null,
+      keyword: step.keyword ?? null,
+    } as const
+    const subjectKey = typeof step.subjectKey === 'string' && step.subjectKey.trim() ? step.subjectKey.trim() : ''
+    const subjectName = typeof step.subjectName === 'string' && step.subjectName.trim() ? normalizeLookup(step.subjectName) : ''
+    const keyword = typeof step.keyword === 'string' && step.keyword.trim() ? step.keyword.trim() : ''
+    const rows: Array<{ periodId: string; monthLabel: string; entry: Awaited<ReturnType<typeof listEntries>>[number] }> = []
+
+    for (const period of targetPeriods) {
+      const entries = await listEntries(ctx.db, ctx.workspace, period.id)
+      for (const entry of entries) {
+        if (filters.direction !== 'all' && entry.direction !== filters.direction) continue
+        if (filters.status !== 'all' && entry.status !== filters.status) continue
+        if (filters.dateMode === 'day' && filters.day && toInputDate(entry.occurredAt) !== filters.day) continue
+        if (filters.dateMode === 'week' && filters.week && toWeekInputValue(entry.occurredAt) !== filters.week) continue
+        if (subjectKey && !entry.allocations.some((allocation) => allocation.subjectKey === subjectKey)) continue
+        if (subjectName && !entry.allocations.some((allocation) => normalizeLookup(allocation.subjectName).includes(subjectName))) continue
+        if (keyword && !entryMatchesKeyword(entry, keyword)) continue
+        rows.push({ periodId: period.id, monthLabel: period.monthLabel, entry })
+      }
+    }
+
+    const selectedPeriodId = rows[0]?.periodId ?? targetPeriods[0]!.id
+    const limit = Math.min(10, Math.max(1, typeof step.limit === 'number' ? Math.round(step.limit) : 5))
+    const preview = rows.slice(0, limit).map(({ monthLabel, entry }) => {
+      const subjectText = entry.allocations.map((allocation) => allocation.subjectName).join('/')
+      return `${monthLabel} ${toInputDate(entry.occurredAt)} ${entry.direction === 'income' ? '收入' : '支出'} ${money(entry.amount)} ${entry.relatedEntityName ?? subjectText} ${entry.status === 'voided' ? '已作废' : '已过账'}`
+    })
+    const filterText = [
+      filters.direction !== 'all' ? (filters.direction === 'income' ? '收入' : '支出') : null,
+      filters.status !== 'all' ? (filters.status === 'posted' ? '已过账' : '已作废') : null,
+      filters.dateMode === 'day' && filters.day ? filters.day : null,
+      filters.dateMode === 'week' && filters.week ? filters.week : null,
+      subjectKey || (typeof step.subjectName === 'string' ? step.subjectName : null),
+      keyword,
+    ].filter(Boolean).join(' / ') || '全部记录'
+
+    return {
+      title: '筛选账本历史',
+      message: `已按“${filterText}”筛选账本历史，命中 ${rows.length} 笔${preview.length > 0 ? `：${preview.join('；')}` : ''}。本次只读取当前工作区数据，未修改业务数据。`,
+      navigation: {
+        type: 'navigation',
+        route: { mainTab: 'bookkeeping', secondaryTab: 'entries', selectedPeriodId },
+        ledgerFilters: filters,
+        reason: '账本历史筛选需要打开记实际页面，并同步方向、状态、日期和关键词过滤器。',
       },
       status: 'executed',
     }

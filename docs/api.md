@@ -104,12 +104,13 @@
   - 摘要包含标题、最近消息、最新 run 状态、planner source 和待确认动作数量
 - `GET /api/v1/agent/threads/{threadId}`
   - 返回可恢复的线程状态：messages、runs、最新 run 的 `runEvents`、`planSteps`、`actionRequests`、`navigationEvents` 和 planner source
-  - `runEvents` 是服务端持久化的运行轨迹，覆盖 run 入队、worker 认领、模型规划、工具计划、确认卡生成、确认卡编辑、执行、取消和失败；不包含 provider 原始响应、提示词全文或密钥
+  - `runEvents` 是服务端持久化的运行轨迹，覆盖 run 入队、worker 认领、模型规划、provider chunk 预览、工具计划、确认卡生成、确认卡编辑、执行、取消和失败；不包含 provider 原始响应、提示词全文或密钥
+  - OpenAI-compatible provider 流式输出会以 `provider_stream_started / provider_stream_delta / provider_stream_completed` 进入 `runEvents`；`provider_stream_delta.data` 只包含脱敏截断后的 `kind`、短 `delta`、累计 `preview`、`toolCallIndex`、`toolName`、`argumentsPreview` 等 UI 预览字段，不返回原始 SSE 行、HTTP header、完整 tool arguments 或 API key
   - 只能读取当前用户 / 当前工作区下的 thread；跨用户或跨工作区返回 `403`
 - `GET /api/v1/agent/threads/{threadId}/events`
   - 建立 `text/event-stream` 事件流，事件名为 `thread_state`
   - 初始连接会立即返回一次完整 `AgentThreadState`；后续 run/message/action 状态变化会推送新的完整 thread state
-  - SSE 只投影服务端状态，不包含 provider 原始响应、API key、worker lease 或内部提示词
+  - SSE 只投影服务端状态，不包含 provider 原始响应、API key、worker lease 或内部提示词；provider chunk streaming 也是先落库为安全 run event，再通过同一条 `thread_state` 投影
   - 只能订阅当前用户 / 当前工作区下的 thread；跨用户或跨工作区不能建立事件流
 - `POST /api/v1/agent/runs/{runId}/cancel`
   - 取消当前用户 / 当前工作区下仍在 `running` 的 run，并返回最新 thread state
@@ -124,11 +125,16 @@
   - 后台执行在回写 assistant message、计划步骤和确认卡前会刷新 worker lease；如果租约已经被其他 worker 认领，迟到的模型结果会被丢弃，不能写入 pending 动作
   - `planner` 为 `openai_agents`、`openai_compatible_tool_calls`、`rules` 或运行中时的 `null`
   - 一条消息可拆成多个 `planSteps`，写入步骤会关联一个待确认动作卡
-  - 当 `LLM_PROVIDER` 不是 `rules` 时，只有模型返回 provider-native tool call 才会生成业务确认卡；模型未返回 tool call 时只返回失败型只读步骤，不用本地规则猜测业务动作
+  - 当 `LLM_PROVIDER` 不是 `rules` 时，只有模型返回 provider-native tool call 才会生成业务确认卡；模型只返回 assistant 文本时按普通回复持久化，不用本地规则猜测业务动作
   - 缺少必要业务信息时，模型应调用 `ask_user_clarification`，返回只读澄清消息和 `info` 计划步骤，不生成确认卡
   - 读取和试算类请求不会生成写入动作
   - 新增或删除团队成员由模型调用 `team_member_add / team_member_delete` 后生成 `workspace.update_draft` 确认卡；用户可以在确认前编辑载荷，确认执行前仍会校验当前用户 / 工作区、显式导航、风险等级和草稿至少保留 1 个成员
+  - 新增或删除运营员工由模型调用 `employee_add / employee_delete` 后生成 `workspace.update_draft` 确认卡；该路径进入成本工作台，确认后更新当前草稿
   - 新增或删除股东、基础成本项和专项成本类型分别由模型调用 `shareholder_add / shareholder_delete`、`cost_item_add / cost_item_delete`、`stage_cost_type_add / stage_cost_type_delete`；股东编辑继续用 `workspace_patch_config` 覆盖既有字段，删除最后一个股东会被拒绝
+  - 工作区改名由模型调用 `workspace_rename`，生成 `workspace.rename` 确认卡；该卡必须打开版本管理面板，确认后只改当前工作区名称
+  - 通用收入、普通支出、成员/员工按人支出由模型调用 `ledger_create_entry`；一键入账多笔由 `ledger_create_planned_member_income_batch / ledger_create_planned_related_expense_batch` 展开为多张 `ledger.create_entry` 确认卡
+  - 修改历史分录、精确作废某一笔、取消作废/恢复分录分别由 `ledger_update_entry / ledger_void_entry / ledger_restore_entry` 生成确认卡；服务端会用 `entryId` 或金额/日期/科目/对象/关键词唯一定位，无法唯一定位时不会猜测执行
+  - 把某快照发布为正式版由 `workspace_promote_version` 生成 `workspace.promote_version` 确认卡；执行时先恢复指定版本到草稿，再发布新的不可变正式版，历史版本不改写
   - 账号登录、退出、注销、删除账号和密码类请求会被拒绝自动执行
 - `GET /api/v1/agent/memories`
   - 返回当前登录用户在当前工作区内可用的 Agent 记忆
@@ -148,9 +154,9 @@
   - 取消待确认动作，不写业务数据
   - 返回取消后的确认卡、assistant message、最新 `runEvents` 和该 run 的 `planSteps`
 
-Agent 写入动作统一遵循 `preview -> confirm -> execute -> audit -> refresh`。当前支持记账、草稿修改、团队成员新增/删除、股东新增/删除、基础成本项新增/删除、专项成本类型新增/删除、发布版本、恢复版本、删除版本、重置草稿、工作区 bundle 导入、创建 / 撤销分享、锁账 / 解锁；所有写入都先生成确认卡。工作区 bundle 导出为只读工具，Agent 会打开版本管理面板并提示通过 `/api/v1/workspace/bundle` 获取完整 JSON。
+Agent 写入动作统一遵循 `preview -> confirm -> execute -> audit -> refresh`。当前支持通用记账、批量记账确认卡、历史分录修改、精确作废、恢复作废、草稿修改、团队成员/运营员工/股东新增删除、基础成本项新增删除、专项成本类型新增删除、工作区改名、保存快照、发布当前草稿、把指定快照发布为正式版、恢复版本、删除版本、重置草稿、工作区 bundle 导入、创建 / 撤销分享、锁账 / 解锁；所有写入都先生成确认卡。工作区 bundle 导出为只读工具，Agent 会打开版本管理面板并提示通过 `/api/v1/workspace/bundle` 获取完整 JSON。
 
-Agent 只读数据问答通过模型选择 `data_query_workspace` 工具完成，支持整体工作区、单月汇总、成员汇总和月份排行。该工具只返回 `planSteps / messages / navigationEvents`，不生成 `actionRequests`，不修改业务数据。
+Agent 只读数据问答通过模型选择 `data_query_workspace` 工具完成，支持整体工作区、单月汇总、成员汇总、团队成员数量/名单、月份排行、预实科目差异深度追问和账本历史筛选。该工具只返回 `planSteps / messages / navigationEvents`，不生成 `actionRequests`，不修改业务数据；账本历史筛选会在导航事件中携带 `ledgerFilters`，前端据此打开账本页并应用方向、状态、日期和关键词过滤器。
 
 ## 错误语义
 

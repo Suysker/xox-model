@@ -52,6 +52,10 @@ export async function executeAgentTool(
   if (action.kind === 'workspace.update_draft') {
     return saveDraft(db, { workspace, actor: user, revision: payload.revision, workspaceName: payload.workspaceName, config: hydrateModelConfig(payload.config) })
   }
+  if (action.kind === 'workspace.rename') {
+    const draft = await getWorkspaceDraft(db, workspace)
+    return saveDraft(db, { workspace, actor: user, revision: draft.revision, workspaceName: payload.workspaceName, config: hydrateModelConfig(parseJson(draft.config_json, {})) })
+  }
   if (action.kind === 'workspace.save_snapshot') {
     return publishVersion(db, { workspace, actor: user, kind: 'snapshot' })
   }
@@ -62,6 +66,11 @@ export async function executeAgentTool(
   }
   if (action.kind === 'workspace.rollback_version') {
     return rollbackToVersion(db, { workspace, actor: user, versionId: payload.versionId })
+  }
+  if (action.kind === 'workspace.promote_version') {
+    const draft = await rollbackToVersion(db, { workspace, actor: user, versionId: payload.versionId })
+    const version = await publishVersion(db, { workspace, actor: user, kind: 'release' })
+    return { draft, version }
   }
   if (action.kind === 'workspace.delete_version') {
     await deleteVersion(db, workspace, payload.versionId)

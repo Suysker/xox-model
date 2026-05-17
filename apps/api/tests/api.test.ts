@@ -59,12 +59,31 @@ async function withFakeOpenAICompatibleProvider(
   run: (baseUrl: string) => Promise<void>,
 ) {
   const server = createServer(async (request: IncomingMessage, response: ServerResponse) => {
-    const body = JSON.parse(await readRequestBody(request))
+    const rawBody = await readRequestBody(request)
+    if (!rawBody.trim()) {
+      response.writeHead(400, { 'Content-Type': 'application/json' })
+      response.end(JSON.stringify({ error: { message: 'empty request body' } }))
+      return
+    }
+    const body = JSON.parse(rawBody)
     const payload = await handler(body, request)
     if (payload && typeof payload === 'object' && '__statusCode' in payload) {
       const statusPayload = payload as { __statusCode: number; body: unknown }
       response.writeHead(statusPayload.__statusCode, { 'Content-Type': 'application/json' })
       response.end(JSON.stringify(statusPayload.body))
+      return
+    }
+    if (payload && typeof payload === 'object' && '__stream' in payload) {
+      const streamPayload = payload as { __stream: unknown[]; delayMs?: number }
+      response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache' })
+      for (const item of streamPayload.__stream) {
+        response.write(`data: ${typeof item === 'string' ? item : JSON.stringify(item)}\n\n`)
+        if (streamPayload.delayMs && streamPayload.delayMs > 0) {
+          await new Promise((resolve) => setTimeout(resolve, streamPayload.delayMs))
+        }
+      }
+      response.write('data: [DONE]\n\n')
+      response.end()
       return
     }
     response.writeHead(200, { 'Content-Type': 'application/json' })
@@ -151,19 +170,34 @@ async function closeHarness(harness: { app: FastifyInstance; db: Kysely<Database
 }
 
 function fakeToolResponse(name: string, args: Record<string, unknown> = {}) {
+  return fakeToolResponses([{ name, args }])
+}
+
+function fakeAssistantTextResponse(content: string) {
+  return {
+    choices: [{
+      message: {
+        role: 'assistant',
+        content,
+      },
+    }],
+  }
+}
+
+function fakeToolResponses(calls: Array<{ name: string; args?: Record<string, unknown> }>) {
   return {
     choices: [{
       message: {
         role: 'assistant',
         content: null,
-        tool_calls: [{
-          id: `call_${name}`,
+        tool_calls: calls.map((call, index) => ({
+          id: `call_${index}_${call.name}`,
           type: 'function',
           function: {
-            name,
-            arguments: JSON.stringify(args),
+            name: call.name,
+            arguments: JSON.stringify(call.args ?? {}),
           },
-        }],
+        })),
       },
     }],
   }
@@ -339,6 +373,20 @@ async function collectSseEvents(
     reader.releaseLock()
   }
   return parseSseEvents(buffer)
+}
+
+async function listenOnFetchSafePort(app: FastifyInstance) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const port = 41_000 + Math.floor(Math.random() * 10_000)
+    try {
+      await app.listen({ port, host: '127.0.0.1' })
+      return `http://127.0.0.1:${port}`
+    } catch {
+      // Retry another high port; low random ports may hit Fetch's blocked-port list.
+    }
+  }
+  await app.listen({ port: 45_321, host: '127.0.0.1' })
+  return 'http://127.0.0.1:45321'
 }
 
 describe('xox TypeScript API', () => {
@@ -880,7 +928,7 @@ describe('xox TypeScript API', () => {
   it('uses OpenAI-compatible tool calls as the primary model planning protocol', async () => {
     await withFakeOpenAICompatibleProvider((body) => {
       expect(body.tool_choice).toBe('auto')
-      expect(body.tools.some((tool: any) => tool.function.name === 'agent_reply')).toBe(true)
+      expect(body.tools.some((tool: any) => tool.function.name === 'agent_reply')).toBe(false)
       expect(body.tools.some((tool: any) => tool.function.name === 'ledger_create_member_income')).toBe(true)
       expect(body.messages[0].content).toContain('tool_calls')
       return {
@@ -920,24 +968,86 @@ describe('xox TypeScript API', () => {
     })
   })
 
-  it('answers basic conversation through a model-selected read-only reply tool', async () => {
-    let callCount = 0
+  it('streams OpenAI-compatible tool-call chunks into durable run events', async () => {
     await withFakeOpenAICompatibleProvider((body) => {
-      callCount += 1
-      expect(body.tools.some((tool: any) => tool.function.name === 'agent_reply')).toBe(true)
-      expect(body.messages[0].content).toContain('agent_reply')
-      return fakeToolResponse('agent_reply', {
-        message: '我是 xox-model Agent OS，可以通过对话驱动测算、调模型、记账、预实分析、版本、分享和锁账；写入前会先给确认卡。',
-      })
+      expect(body.stream).toBe(true)
+      expect(body.tool_choice).toBe('auto')
+      return {
+        __stream: [
+          { choices: [{ delta: { role: 'assistant' } }] },
+          {
+            choices: [{
+              delta: {
+                tool_calls: [{
+                  index: 0,
+                  id: 'call_stream_1',
+                  type: 'function',
+                  function: {
+                    name: 'ledger_create_member_income',
+                    arguments: '{"monthLabel":"3月","memberName":"成员 A",',
+                  },
+                }],
+              },
+            }],
+          },
+          {
+            choices: [{
+              delta: {
+                tool_calls: [{
+                  index: 0,
+                  function: {
+                    arguments: '"offlineUnits":1,"onlineUnits":1}',
+                  },
+                }],
+              },
+            }],
+          },
+          { choices: [{ delta: {}, finish_reason: 'tool_calls' }] },
+        ],
+      }
     }, async (baseUrl) => {
-      const harness = await buildHarness('agent-basic-reply-tool', {
+      const harness = await buildHarness('agent-streaming-tool-calls', {
         llmProvider: 'openai-compatible',
         openaiCompatibleProvider: 'test-compatible',
         openaiCompatibleBaseUrl: baseUrl,
         openaiCompatibleApiKey: 'test-key',
       })
       const client = new Client(harness.app)
-      await registerUser(client, 'agent-basic-reply-tool@example.com')
+      await registerUser(client, 'agent-streaming-tool-calls@example.com')
+
+      const planned = await client.post('/api/v1/agent/messages', {
+        message: '把 3 月成员 A 线下 1 张、线上 1 张入账',
+      })
+
+      expect(planned.statusCode).toBe(200)
+      expect(planned.json.planner).toBe('openai_compatible_tool_calls')
+      expect(planned.json.actionRequests[0].kind).toBe('ledger.create_entry')
+      expect(planned.json.actionRequests[0].payload.amount).toBe(176)
+      expect(planned.json.runEvents.some((event: any) => event.type === 'provider_stream_started' && event.data?.provider === 'test-compatible')).toBe(true)
+      const streamDeltas = planned.json.runEvents.filter((event: any) => event.type === 'provider_stream_delta')
+      expect(streamDeltas.some((event: any) => event.data?.kind === 'tool_call_delta' && event.data?.toolName === 'ledger_create_member_income')).toBe(true)
+      expect(streamDeltas.some((event: any) => String(event.data?.argumentsPreview ?? '').includes('onlineUnits'))).toBe(true)
+      expect(planned.json.runEvents.some((event: any) => event.type === 'provider_stream_completed' && event.data?.toolCallCount === 1)).toBe(true)
+      await closeHarness(harness)
+    })
+  })
+
+  it('answers basic conversation through direct provider assistant text', async () => {
+    let callCount = 0
+    await withFakeOpenAICompatibleProvider((body) => {
+      callCount += 1
+      expect(body.tools.some((tool: any) => tool.function.name === 'agent_reply')).toBe(false)
+      expect(body.messages[0].content).not.toContain('agent_reply')
+      return fakeAssistantTextResponse('我是 xox-model Agent OS，可以通过对话驱动测算、调模型、记账、预实分析、版本、分享和锁账；写入前会先给确认卡。')
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-basic-assistant-text', {
+        llmProvider: 'openai-compatible',
+        openaiCompatibleProvider: 'test-compatible',
+        openaiCompatibleBaseUrl: baseUrl,
+        openaiCompatibleApiKey: 'test-key',
+      })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-basic-assistant-text@example.com')
 
       const planned = await client.post('/api/v1/agent/messages', {
         message: '告诉我你是谁',
@@ -952,27 +1062,20 @@ describe('xox TypeScript API', () => {
     })
   })
 
-  it('does not fall back to regex rules when a configured model returns no tool calls', async () => {
+  it('persists provider assistant text without falling back to regex rules', async () => {
     let callCount = 0
     await withFakeOpenAICompatibleProvider(() => {
       callCount += 1
-      return {
-        choices: [{
-          message: {
-            role: 'assistant',
-            content: '我可以帮你记账，但这不是 tool call。',
-          },
-        }],
-      }
+      return fakeAssistantTextResponse('我可以帮你记账，但这不是 tool call。')
     }, async (baseUrl) => {
-      const harness = await buildHarness('agent-no-tool-call-no-rules', {
+      const harness = await buildHarness('agent-assistant-text-no-rules', {
         llmProvider: 'openai-compatible',
         openaiCompatibleProvider: 'test-compatible',
         openaiCompatibleBaseUrl: baseUrl,
         openaiCompatibleApiKey: 'test-key',
       })
       const client = new Client(harness.app)
-      await registerUser(client, 'agent-no-tool-call-no-rules@example.com')
+      await registerUser(client, 'agent-assistant-text-no-rules@example.com')
 
       const planned = await client.post('/api/v1/agent/messages', {
         message: '把 3 月成员 A 线下 1 张入账',
@@ -981,8 +1084,8 @@ describe('xox TypeScript API', () => {
       expect(callCount).toBe(1)
       expect(planned.json.planner).toBe('openai_compatible_tool_calls')
       expect(planned.json.actionRequests).toHaveLength(0)
-      expect(planned.json.planSteps[0].status).toBe('failed')
-      expect(planned.json.messages.at(-1).content).toContain('没有返回可执行 tool_call')
+      expect(planned.json.planSteps[0].status).toBe('executed')
+      expect(planned.json.messages.at(-1).content).toContain('这不是 tool call')
       const entries = await client.get(`/api/v1/ledger/entries?periodId=${(await client.get('/api/v1/ledger/periods')).json[0].id}`)
       expect(entries.json).toHaveLength(0)
       await closeHarness(harness)
@@ -1744,7 +1847,7 @@ describe('xox TypeScript API', () => {
   it('uses OpenAI Agents SDK adapter for OpenAI provider planning', async () => {
     await withFakeOpenAICompatibleProvider((body) => {
       expect(body.tools.some((tool: any) => tool.function.name === 'ledger_create_member_income')).toBe(true)
-      expect(body.messages.some((message: any) => typeof message.content === 'string' && message.content.includes('只通过 tool_calls 表达意图'))).toBe(true)
+      expect(body.messages.some((message: any) => typeof message.content === 'string' && message.content.includes('需要操作系统能力时，通过 tool_calls 表达意图'))).toBe(true)
       const prompt = body.messages.map((message: any) => message.content).join('\n')
       if (prompt.includes('如果 4 月线上系数变成 0.3')) {
         return fakeOpenAIChatToolResponse('workspace_update_online_factor', {
@@ -1852,9 +1955,7 @@ describe('xox TypeScript API', () => {
     })
     expect(initial.statusCode).toBe(200)
 
-    await harness.app.listen({ port: 0, host: '127.0.0.1' })
-    const address = harness.app.server.address() as AddressInfo
-    const baseUrl = `http://127.0.0.1:${address.port}`
+    const baseUrl = await listenOnFetchSafePort(harness.app)
 
     try {
       const events = await collectSseEvents(
@@ -1941,24 +2042,30 @@ describe('xox TypeScript API', () => {
   })
 
   it('injects tenant-scoped memory into a new agent thread for real provider planning', async () => {
-    let callCount = 0
     const secretValue = ['sk', 'providersecretvalue123456'].join('-')
     await withFakeOpenAICompatibleProvider((body) => {
-      callCount += 1
       const prompt = body.messages.map((message: any) => message.content).join('\n')
-      if (callCount === 1) {
-        expect(prompt).toContain('记住')
+      const instruction = prompt.split('用户指令：').at(-1) ?? prompt
+      if (instruction.includes('默认成员线下')) {
+        expect(prompt).toContain('默认记账成员是 成员 A')
+        expect(prompt).toContain('tenantScopedMemory')
+        expect(prompt).not.toContain(secretValue)
         return {
           choices: [{
             message: {
               role: 'assistant',
               content: null,
               tool_calls: [{
-                id: 'call_memory_nav',
+                id: 'call_memory_ledger',
                 type: 'function',
                 function: {
-                  name: 'ui_navigate',
-                  arguments: JSON.stringify({ mainTab: 'dashboard', secondaryTab: 'overview' }),
+                  name: 'ledger_create_member_income',
+                  arguments: JSON.stringify({
+                    monthLabel: '3月',
+                    memberName: '成员 A',
+                    offlineUnits: 1,
+                    onlineUnits: 0,
+                  }),
                 },
               }],
             },
@@ -1966,7 +2073,7 @@ describe('xox TypeScript API', () => {
         }
       }
 
-      if (callCount === 2) {
+      if (instruction.includes('DeepSeek API key')) {
         expect(prompt).not.toContain(secretValue)
         expect(prompt).toContain('[redacted-api-key]')
         return {
@@ -1987,30 +2094,27 @@ describe('xox TypeScript API', () => {
         }
       }
 
-      expect(prompt).toContain('默认记账成员是 成员 A')
-      expect(prompt).toContain('tenantScopedMemory')
-      expect(prompt).not.toContain(secretValue)
-      return {
-        choices: [{
-          message: {
-            role: 'assistant',
-            content: null,
-            tool_calls: [{
-              id: 'call_memory_ledger',
-              type: 'function',
-              function: {
-                name: 'ledger_create_member_income',
-                arguments: JSON.stringify({
-                  monthLabel: '3月',
-                  memberName: '成员 A',
-                  offlineUnits: 1,
-                  onlineUnits: 0,
-                }),
-              },
-            }],
-          },
-        }],
+      if (instruction.includes('记住')) {
+        expect(prompt).toContain('记住')
+        return {
+          choices: [{
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: [{
+                id: 'call_memory_nav',
+                type: 'function',
+                function: {
+                  name: 'ui_navigate',
+                  arguments: JSON.stringify({ mainTab: 'dashboard', secondaryTab: 'overview' }),
+                },
+              }],
+            },
+          }],
+        }
       }
+
+      return fakeAssistantTextResponse('已处理。')
     }, async (baseUrl) => {
       const harness = await buildHarness('agent-memory-provider', { llmProvider: 'doubao', openaiCompatibleProvider: 'doubao', openaiCompatibleBaseUrl: baseUrl, openaiCompatibleApiKey: 'test-key' })
       const client = new Client(harness.app)
@@ -2271,6 +2375,327 @@ describe('xox TypeScript API', () => {
     })
   })
 
+  it('plans employee add/delete and workspace rename through model-selected tools', async () => {
+    await withFakeOpenAICompatibleProvider((body) => {
+      const prompt = body.messages.map((message: any) => message.content).join('\n')
+      const instruction = prompt.split('用户指令：').at(-1) ?? prompt
+      if (instruction.includes('新增员工')) {
+        return fakeToolResponse('employee_add', {
+          newEmployeeName: '场务 C',
+          role: '场务',
+          monthlyBasePay: 3200,
+          perEventCost: 180,
+        })
+      }
+      if (instruction.includes('删除员工')) return fakeToolResponse('employee_delete', { employeeName: '场务 C' })
+      if (instruction.includes('改名')) return fakeToolResponse('workspace_rename', { workspaceName: 'Agent 运营工作区' })
+      return fakeAssistantTextResponse('我是 xox-model Agent OS。')
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-employee-rename-tools', { llmProvider: 'openai-compatible', openaiCompatibleProvider: 'test-compatible', openaiCompatibleBaseUrl: baseUrl, openaiCompatibleApiKey: 'test-key' })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-employee-rename-tools@example.com')
+
+      async function confirm(action: any) {
+        const response = await client.post(`/api/v1/agent/action-requests/${action.id}/confirm`)
+        expect(response.statusCode).toBe(200)
+        expect(response.json.actionRequest.status).toBe('executed')
+        return response.json
+      }
+
+      const added = await client.post('/api/v1/agent/messages', { message: '新增员工，名字叫 场务 C，月薪 3200，每场 180' })
+      expect(added.statusCode).toBe(200)
+      expect(added.json.actionRequests[0].kind).toBe('workspace.update_draft')
+      expect(added.json.actionRequests[0].title).toContain('新增员工')
+      expect(added.json.actionRequests[0].navigation.route.secondaryTab).toBe('cost')
+      await confirm(added.json.actionRequests[0])
+      let draft = (await client.get('/api/v1/workspace/draft')).json
+      expect(draft.config.employees.find((employee: any) => employee.name === '场务 C')?.monthlyBasePay).toBe(3200)
+
+      const renamed = await client.post('/api/v1/agent/messages', { threadId: added.json.threadId, message: '把工作区改名为 Agent 运营工作区' })
+      expect(renamed.statusCode).toBe(200)
+      expect(renamed.json.actionRequests[0].kind).toBe('workspace.rename')
+      expect(renamed.json.actionRequests[0].payload.workspaceName).toBe('Agent 运营工作区')
+      await confirm(renamed.json.actionRequests[0])
+      draft = (await client.get('/api/v1/workspace/draft')).json
+      expect(draft.workspaceName).toBe('Agent 运营工作区')
+
+      const deleted = await client.post('/api/v1/agent/messages', { threadId: added.json.threadId, message: '删除员工 场务 C' })
+      expect(deleted.statusCode).toBe(200)
+      expect(deleted.json.actionRequests[0].title).toContain('删除员工')
+      expect(deleted.json.actionRequests[0].riskLevel).toBe('high')
+      await confirm(deleted.json.actionRequests[0])
+      draft = (await client.get('/api/v1/workspace/draft')).json
+      expect(draft.config.employees.some((employee: any) => employee.name === '场务 C')).toBe(false)
+
+      await closeHarness(harness)
+    })
+  })
+
+  it('plans generic income, generic expense, and per-person member/employee expenses', async () => {
+    await withFakeOpenAICompatibleProvider((body) => {
+      const prompt = body.messages.map((message: any) => message.content).join('\n')
+      const instruction = prompt.split('用户指令：').at(-1) ?? prompt
+      if (instruction.includes('其他收入')) {
+        return fakeToolResponse('ledger_create_entry', {
+          monthLabel: '3月',
+          direction: 'income',
+          subjectKey: 'cost.other.refund',
+          amount: 500,
+          occurredAt: '2026-03-08',
+          counterparty: '场地方退款',
+          description: '其他收入测试',
+        })
+      }
+      if (instruction.includes('普通支出')) {
+        return fakeToolResponse('ledger_create_entry', {
+          monthLabel: '3月',
+          direction: 'expense',
+          subjectKey: 'cost.training.rehearsal',
+          amount: 300,
+          occurredAt: '2026-03-09',
+          description: '排练普通支出',
+        })
+      }
+      if (instruction.includes('成员 A 底薪')) {
+        return fakeToolResponse('ledger_create_entry', {
+          monthLabel: '3月',
+          direction: 'expense',
+          subjectKey: 'cost.member.base_pay',
+          amount: 1000,
+          relatedEntityType: 'teamMember',
+          relatedEntityName: '成员 A',
+        })
+      }
+      if (instruction.includes('员工 A 月薪')) {
+        return fakeToolResponse('ledger_create_entry', {
+          monthLabel: '3月',
+          direction: 'expense',
+          subjectKey: 'cost.employee.base_pay',
+          amount: 2500,
+          relatedEntityType: 'employee',
+          relatedEntityName: '员工 A',
+        })
+      }
+      return fakeAssistantTextResponse('我是 xox-model Agent OS。')
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-generic-ledger-tools', { llmProvider: 'openai-compatible', openaiCompatibleProvider: 'test-compatible', openaiCompatibleBaseUrl: baseUrl, openaiCompatibleApiKey: 'test-key' })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-generic-ledger-tools@example.com')
+
+      async function sendAndConfirm(message: string) {
+        const planned = await client.post('/api/v1/agent/messages', { message })
+        expect(planned.statusCode).toBe(200)
+        expect(planned.json.actionRequests[0].kind).toBe('ledger.create_entry')
+        const confirmed = await client.post(`/api/v1/agent/action-requests/${planned.json.actionRequests[0].id}/confirm`)
+        expect(confirmed.statusCode).toBe(200)
+        expect(confirmed.json.actionRequest.status).toBe('executed')
+        return { planned: planned.json, confirmed: confirmed.json }
+      }
+
+      const otherIncome = await sendAndConfirm('3 月记一笔其他收入 500，场地方退款')
+      expect(otherIncome.planned.actionRequests[0].payload.direction).toBe('income')
+      expect(otherIncome.confirmed.result.amount).toBe(500)
+
+      const genericExpense = await sendAndConfirm('3 月记一笔普通支出 300，排练费')
+      expect(genericExpense.planned.actionRequests[0].payload.direction).toBe('expense')
+
+      const memberExpense = await sendAndConfirm('3 月给成员 A 底薪入账 1000')
+      expect(memberExpense.planned.actionRequests[0].payload.relatedEntityType).toBe('teamMember')
+      expect(memberExpense.confirmed.result.relatedEntityName).toBe('成员 A')
+
+      const employeeExpense = await sendAndConfirm('3 月给员工 A 月薪入账 2500')
+      expect(employeeExpense.planned.actionRequests[0].payload.relatedEntityType).toBe('employee')
+      expect(employeeExpense.confirmed.result.relatedEntityName).toBe('员工 A')
+
+      const periodId = otherIncome.planned.navigationEvents[0].route.selectedPeriodId
+      const entries = (await client.get(`/api/v1/ledger/entries?periodId=${periodId}`)).json
+      expect(entries.filter((entry: any) => entry.entryOrigin === 'manual')).toHaveLength(4)
+      await closeHarness(harness)
+    })
+  })
+
+  it('expands batch planned ledger tools into multiple editable confirmation cards', async () => {
+    await withFakeOpenAICompatibleProvider(() => fakeToolResponses([
+      { name: 'ledger_create_planned_member_income_batch', args: { monthLabel: '3月' } },
+      { name: 'ledger_create_planned_related_expense_batch', args: { monthLabel: '3月', subjectKey: 'cost.employee.per_event' } },
+    ]), async (baseUrl) => {
+      const harness = await buildHarness('agent-batch-ledger-tools', { llmProvider: 'openai-compatible', openaiCompatibleProvider: 'test-compatible', openaiCompatibleBaseUrl: baseUrl, openaiCompatibleApiKey: 'test-key' })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-batch-ledger-tools@example.com')
+
+      const planned = await client.post('/api/v1/agent/messages', {
+        message: '把 3 月所有成员计划收入一键入账，并把 3 月员工场次支出按计划一键入账',
+      })
+      expect(planned.statusCode).toBe(200)
+      expect(planned.json.actionRequests.length).toBeGreaterThan(3)
+      expect(planned.json.actionRequests.every((action: any) => action.kind === 'ledger.create_entry')).toBe(true)
+      expect(planned.json.planSteps).toHaveLength(planned.json.actionRequests.length)
+      expect(planned.json.actionRequests.some((action: any) => action.title.includes('成员收入'))).toBe(true)
+      expect(planned.json.actionRequests.some((action: any) => action.payload.relatedEntityType === 'employee')).toBe(true)
+
+      const edited = await client.patch(`/api/v1/agent/action-requests/${planned.json.actionRequests[0].id}`, {
+        summary: '编辑后：批量第一笔确认卡仍可修改金额。',
+        details: [{ label: '入账金额', value: '88' }],
+        payload: {
+          ...planned.json.actionRequests[0].payload,
+          amount: 88,
+          allocations: [{ ...planned.json.actionRequests[0].payload.allocations[0], amount: 88 }],
+        },
+      })
+      expect(edited.statusCode).toBe(200)
+      expect(edited.json.planSteps[0].description).toContain('批量第一笔')
+
+      await closeHarness(harness)
+    })
+  })
+
+  it('plans ledger update, precise void, and restore from model-selected locators', async () => {
+    await withFakeOpenAICompatibleProvider((body) => {
+      const prompt = body.messages.map((message: any) => message.content).join('\n')
+      const instruction = prompt.split('用户指令：').at(-1) ?? prompt
+      const entryId = instruction.match(/entry:([a-zA-Z0-9-]+)/)?.[1]
+      if (instruction.includes('修改')) return fakeToolResponse('ledger_update_entry', { monthLabel: '3月', entryId, newAmount: 456, description: 'Agent 修改历史分录' })
+      if (instruction.includes('精确作废')) return fakeToolResponse('ledger_void_entry', { monthLabel: '3月', entryId })
+      if (instruction.includes('恢复')) return fakeToolResponse('ledger_restore_entry', { monthLabel: '3月', entryId })
+      return fakeAssistantTextResponse('我是 xox-model Agent OS。')
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-ledger-edit-void-restore', { llmProvider: 'openai-compatible', openaiCompatibleProvider: 'test-compatible', openaiCompatibleBaseUrl: baseUrl, openaiCompatibleApiKey: 'test-key' })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-ledger-edit-void-restore@example.com')
+      const period = (await client.get('/api/v1/ledger/periods')).json.find((item: any) => item.monthLabel === '3月')
+      const subjects = (await client.get(`/api/v1/ledger/periods/${period.id}/subjects`)).json
+      const subjectMap = Object.fromEntries(subjects.map((item: any) => [item.subjectKey, item]))
+      const created = await client.post('/api/v1/ledger/entries', {
+        ledgerPeriodId: period.id,
+        direction: 'expense',
+        amount: 123,
+        occurredAt: '2026-03-11T12:00:00.000Z',
+        description: '待修改排练费',
+        allocations: [{ ...subjectMap['cost.training.rehearsal'], amount: 123 }],
+      })
+      expect(created.statusCode).toBe(200)
+
+      async function sendAndConfirm(message: string) {
+        const planned = await client.post('/api/v1/agent/messages', { message })
+        expect(planned.statusCode).toBe(200)
+        const confirmed = await client.post(`/api/v1/agent/action-requests/${planned.json.actionRequests[0].id}/confirm`)
+        expect(confirmed.statusCode).toBe(200)
+        expect(confirmed.json.actionRequest.status).toBe('executed')
+        return { planned: planned.json, confirmed: confirmed.json }
+      }
+
+      const updated = await sendAndConfirm(`修改 entry:${created.json.id} 金额为 456`)
+      expect(updated.planned.actionRequests[0].kind).toBe('ledger.update_entry')
+      expect(updated.confirmed.result.amount).toBe(456)
+      expect(updated.confirmed.result.description).toBe('Agent 修改历史分录')
+
+      const voided = await sendAndConfirm(`精确作废 entry:${created.json.id}`)
+      expect(voided.planned.actionRequests[0].kind).toBe('ledger.void_entry')
+      expect((await client.get(`/api/v1/ledger/entries?periodId=${period.id}`)).json.find((entry: any) => entry.id === created.json.id).status).toBe('voided')
+
+      const restored = await sendAndConfirm(`恢复 entry:${created.json.id}`)
+      expect(restored.planned.actionRequests[0].kind).toBe('ledger.restore_entry')
+      expect((await client.get(`/api/v1/ledger/entries?periodId=${period.id}`)).json.find((entry: any) => entry.id === created.json.id).status).toBe('posted')
+
+      await closeHarness(harness)
+    })
+  })
+
+  it('promotes a selected snapshot to a new release through an Agent confirmation', async () => {
+    await withFakeOpenAICompatibleProvider(() => fakeToolResponse('workspace_promote_version', { versionNo: 1 }), async (baseUrl) => {
+      const harness = await buildHarness('agent-promote-snapshot', { llmProvider: 'openai-compatible', openaiCompatibleProvider: 'test-compatible', openaiCompatibleBaseUrl: baseUrl, openaiCompatibleApiKey: 'test-key' })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-promote-snapshot@example.com')
+      let draft = (await client.get('/api/v1/workspace/draft')).json
+      draft.config.operating.offlineUnitPrice = 123
+      await client.patch('/api/v1/workspace/draft', { revision: draft.revision, workspaceName: draft.workspaceName, config: draft.config })
+      const snapshot = await client.post('/api/v1/workspace/versions', { kind: 'snapshot', name: '可发布快照' })
+      expect(snapshot.json.versionNo).toBe(1)
+      draft = (await client.get('/api/v1/workspace/draft')).json
+      draft.config.operating.offlineUnitPrice = 456
+      await client.patch('/api/v1/workspace/draft', { revision: draft.revision, workspaceName: draft.workspaceName, config: draft.config })
+
+      const planned = await client.post('/api/v1/agent/messages', { message: '把快照 1 发布为正式版' })
+      expect(planned.statusCode).toBe(200)
+      expect(planned.json.actionRequests[0].kind).toBe('workspace.promote_version')
+      expect(planned.json.actionRequests[0].navigation.panel).toBe('workspace')
+      const confirmed = await client.post(`/api/v1/agent/action-requests/${planned.json.actionRequests[0].id}/confirm`)
+      expect(confirmed.statusCode).toBe(200)
+      expect(confirmed.json.actionRequest.status).toBe('executed')
+      expect(confirmed.json.result.version.kind).toBe('release')
+
+      const versions = (await client.get('/api/v1/workspace/versions')).json
+      const promotedRelease = versions.find((version: any) => version.versionNo === 2)
+      expect(promotedRelease.kind).toBe('release')
+      const publicDraft = (await client.get('/api/v1/workspace/draft')).json
+      expect(publicDraft.config.operating.offlineUnitPrice).toBe(123)
+
+      await closeHarness(harness)
+    })
+  })
+
+  it('answers variance deep questions and ledger history filters with visible navigation filters', async () => {
+    await withFakeOpenAICompatibleProvider((body) => {
+      const prompt = body.messages.map((message: any) => message.content).join('\n')
+      const instruction = prompt.split('用户指令：').at(-1) ?? prompt
+      if (instruction.includes('排练费差异')) {
+        return fakeToolResponse('data_query_workspace', {
+          question: '3 月排练费差异为什么这么大',
+          scope: 'variance_detail',
+          monthLabel: '3月',
+          subjectKey: 'cost.training.rehearsal',
+          keyword: '排练',
+        })
+      }
+      return fakeToolResponse('data_query_workspace', {
+        question: '筛选 3 月 2026-03-12 已作废 排练',
+        scope: 'ledger_history',
+        monthLabel: '3月',
+        entryStatus: 'voided',
+        dateMode: 'day',
+        day: '2026-03-12',
+        keyword: '排练',
+      })
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-data-deep-filter', { llmProvider: 'openai-compatible', openaiCompatibleProvider: 'test-compatible', openaiCompatibleBaseUrl: baseUrl, openaiCompatibleApiKey: 'test-key' })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-data-deep-filter@example.com')
+      const period = (await client.get('/api/v1/ledger/periods')).json.find((item: any) => item.monthLabel === '3月')
+      const subjects = (await client.get(`/api/v1/ledger/periods/${period.id}/subjects`)).json
+      const subjectMap = Object.fromEntries(subjects.map((item: any) => [item.subjectKey, item]))
+      const created = await client.post('/api/v1/ledger/entries', {
+        ledgerPeriodId: period.id,
+        direction: 'expense',
+        amount: 777,
+        occurredAt: '2026-03-12T12:00:00.000Z',
+        description: '排练异常支出',
+        allocations: [{ ...subjectMap['cost.training.rehearsal'], amount: 777 }],
+      })
+      expect(created.statusCode).toBe(200)
+      await client.post(`/api/v1/ledger/entries/${created.json.id}/void`)
+
+      const variance = await client.post('/api/v1/agent/messages', { message: '3 月排练费差异为什么这么大？' })
+      expect(variance.statusCode).toBe(200)
+      expect(variance.json.actionRequests).toHaveLength(0)
+      expect(variance.json.navigationEvents[0].route.mainTab).toBe('variance')
+      expect(variance.json.messages.at(-1).content).toContain('排练')
+
+      const history = await client.post('/api/v1/agent/messages', { threadId: variance.json.threadId, message: '账本历史筛选 3 月 2026-03-12 已作废 排练' })
+      expect(history.statusCode).toBe(200)
+      expect(history.json.actionRequests).toHaveLength(0)
+      expect(history.json.navigationEvents[0].route.mainTab).toBe('bookkeeping')
+      expect(history.json.navigationEvents[0].ledgerFilters).toEqual(expect.objectContaining({
+        status: 'voided',
+        dateMode: 'day',
+        day: '2026-03-12',
+        keyword: '排练',
+      }))
+      expect(history.json.messages.at(-1).content).toContain('命中 1 笔')
+
+      await closeHarness(harness)
+    })
+  })
+
   it('validates a broad Agent OS capability matrix through backend APIs', async () => {
     await withFakeOpenAICompatibleProvider((body) => {
       const prompt = body.messages.map((message: any) => message.content).join('\n')
@@ -2514,7 +2939,7 @@ describe('xox TypeScript API', () => {
 
       await closeHarness(harness)
     })
-  })
+  }, 15_000)
 
   it('keeps agent read-only forecasts non-mutating and refuses account actions', async () => {
     const harness = await buildHarness('agent-read')
@@ -2673,6 +3098,9 @@ describe('xox TypeScript API', () => {
       'teamMembers.add',
       'teamMembers.delete',
       'teamMembers[n].unitsPerEvent.optimistic',
+      'employees.add',
+      'employees.delete',
+      'workspace.name',
       'stageCostItems.add',
       'stageCostItems.delete',
       'months[n].specialCosts[m].count',
@@ -2684,12 +3112,22 @@ describe('xox TypeScript API', () => {
     for (const name of [
       'team_member_add',
       'team_member_delete',
+      'employee_add',
+      'employee_delete',
       'shareholder_add',
       'shareholder_delete',
       'cost_item_add',
       'cost_item_delete',
       'stage_cost_type_add',
       'stage_cost_type_delete',
+      'ledger_create_entry',
+      'ledger_create_planned_member_income_batch',
+      'ledger_create_planned_related_expense_batch',
+      'ledger_update_entry',
+      'ledger_restore_entry',
+      'workspace_rename',
+      'workspace_promote_version',
+      'data_query_workspace',
     ]) {
       expect(toolNames.has(name), name).toBe(true)
     }
@@ -2702,6 +3140,8 @@ describe('xox TypeScript API', () => {
       'cost_structure',
       'employees',
       'bookkeeping_entries',
+      'bookkeeping_history_filters',
+      'variance_deep_questions',
       'versions_and_shares',
     ]))
     expect(AGENT_MANUAL_CAPABILITY_COVERAGE.find((item) => item.capability === 'account_actions')?.status).toBe('manual_only')

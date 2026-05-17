@@ -20,7 +20,7 @@
 - 记账：基于当前草稿的预测科目录入实际收入与成本分录，无需先发布正式版
 - 预实分析：按期间与科目对比当前草稿计划和实际结果
 - 分享：为不可变发布版生成只读公开链接，并支持撤销
-- Agent OS：底部对话台可驱动页面切换、只读数据问答、试算、记账、草稿修改、团队成员/股东/成本项/成本类型新增删除、工作区 bundle 导入/导出、发布、恢复、分享和锁账；支持后台 run、取消运行、多步骤计划、缺信息时澄清提问、历史对话恢复、新建对话、工作区记忆查看/删除、执行前编辑确认卡，写入动作必须先确认
+- Agent OS：底部对话台可驱动页面切换、只读数据问答、试算、记账、批量入账确认卡、历史分录修改/作废/恢复、草稿修改、团队成员/员工/股东/成本项/成本类型新增删除、工作区改名、工作区 bundle 导入/导出、快照发布为正式版、发布、恢复、分享和锁账；支持后台 run、取消运行、多步骤计划、缺信息时澄清提问、历史对话恢复、新建对话、工作区记忆查看/删除、执行前编辑确认卡，写入动作必须先确认
 
 ## 本地开发
 
@@ -81,7 +81,7 @@ npm.cmd run test
 npm.cmd run smoke:agent
 ```
 
-该命令会连续调用真实 OpenAI-compatible provider 覆盖 37 个 Agent 方向，并包含 provider setting、background run 恢复和运行轨迹验收；默认用 DeepSeek，也可通过 `OPENAI_COMPATIBLE_PROVIDER / BASE_URL / MODEL / API_KEY` 切到豆包、Qwen 等兼容服务，耗时会明显长于单元测试。
+该命令会连续调用真实 OpenAI-compatible provider 覆盖 50 个 Agent 方向，并包含 provider setting、background run 恢复、运行轨迹、记忆注入、多步骤确认卡、员工/账本/版本新增工具验收；默认用 DeepSeek `deepseek-v4-pro`，也可通过 `OPENAI_COMPATIBLE_PROVIDER / BASE_URL / MODEL / API_KEY` 切到豆包、Qwen 等兼容服务，耗时会明显长于单元测试。
 
 ## 文档索引
 

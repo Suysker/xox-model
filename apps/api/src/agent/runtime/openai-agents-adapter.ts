@@ -59,7 +59,7 @@ export class OpenAIAgentsAdapter implements RuntimeAdapter {
         traceIncludeSensitiveData: false,
       })
 
-      await runner.run(
+      const result = await runner.run(
         planner,
         `上下文：${JSON.stringify(input.context)}\n用户指令：${input.message}`,
         {
@@ -71,11 +71,9 @@ export class OpenAIAgentsAdapter implements RuntimeAdapter {
 
       return collectedSteps.length > 0
         ? { source: SOURCE, steps: collectedSteps }
-        : {
-            source: SOURCE,
-            steps: [],
-            error: { kind: 'no_tool_calls' },
-          }
+        : typeof (result as any)?.finalOutput === 'string' && (result as any).finalOutput.trim()
+          ? { source: SOURCE, steps: [], assistantText: (result as any).finalOutput.trim() }
+          : { source: SOURCE, steps: [] }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       return {

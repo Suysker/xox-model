@@ -4,11 +4,72 @@ import type { AgentActionRequest, AgentActionUpdatePayload, AgentMemoryRecord, A
 import { AgentActionCard } from './AgentActionCard'
 import { AgentPlanTimeline } from './AgentPlanTimeline'
 
+export type ProviderStreamPreview = {
+  content: string
+  tools: Array<{ index: number; name: string; argumentsPreview: string }>
+  completed: boolean
+}
+
 function formatThreadTime(value: string | null) {
   if (!value) return '暂无'
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
   return date.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
+
+function dataString(data: Record<string, unknown> | null, key: string) {
+  const value = data?.[key]
+  return typeof value === 'string' ? value : ''
+}
+
+function dataNumber(data: Record<string, unknown> | null, key: string) {
+  const value = data?.[key]
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+export function buildProviderStreamPreview(runEvents: AgentRunEvent[]): ProviderStreamPreview | null {
+  let content = ''
+  let sawStream = false
+  let completed = false
+  const tools = new Map<number, { index: number; name: string; argumentsPreview: string }>()
+
+  for (const event of [...runEvents].sort((left, right) => left.sequence - right.sequence)) {
+    if (event.type === 'provider_stream_started') {
+      sawStream = true
+      completed = false
+      continue
+    }
+    if (event.type === 'provider_stream_completed') {
+      sawStream = true
+      completed = true
+      continue
+    }
+    if (event.type !== 'provider_stream_delta') continue
+
+    const kind = dataString(event.data, 'kind')
+    if (kind === 'content_delta') {
+      sawStream = true
+      const preview = dataString(event.data, 'preview')
+      const delta = dataString(event.data, 'delta')
+      content = preview || `${content}${delta}`
+      continue
+    }
+    if (kind === 'tool_call_delta') {
+      sawStream = true
+      const index = dataNumber(event.data, 'toolCallIndex') ?? tools.size
+      const current = tools.get(index)
+      const name = dataString(event.data, 'toolName') || current?.name || `工具 ${index + 1}`
+      const argumentsPreview = dataString(event.data, 'argumentsPreview') || `${current?.argumentsPreview ?? ''}${dataString(event.data, 'argumentsDelta')}`
+      tools.set(index, { index, name, argumentsPreview })
+    }
+  }
+
+  if (!sawStream) return null
+  return {
+    content,
+    tools: [...tools.values()].sort((left, right) => left.index - right.index),
+    completed,
+  }
 }
 
 export function AgentConsole(props: {
@@ -52,6 +113,7 @@ export function AgentConsole(props: {
   })
   const pendingActions = props.actionRequests.filter((action) => action.status === 'pending')
   const recentMessages = props.messages.slice(-6)
+  const streamPreview = buildProviderStreamPreview(props.runEvents)
   const plannerLabel =
     props.planner === 'openai_agents'
       ? 'OpenAI Agents'
@@ -350,6 +412,32 @@ export function AgentConsole(props: {
               <p className="text-stone-500">输入命令，例如：把 3 月成员 A 线下 10 张、线上 2 张入账。</p>
             )}
           </div>
+
+          {streamPreview ? (
+            <div className="mt-2 rounded-md border border-emerald-900/10 bg-emerald-50/80 px-3 py-2 text-xs text-stone-700">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-semibold text-stone-800">模型实时输出</span>
+                <span className={streamPreview.completed ? 'text-stone-500' : 'font-semibold text-emerald-700'}>
+                  {streamPreview.completed ? '已完成' : '接收中'}
+                </span>
+              </div>
+              {streamPreview.content ? (
+                <p className="mt-1 max-h-14 overflow-y-auto whitespace-pre-wrap text-stone-700">{streamPreview.content}</p>
+              ) : null}
+              {streamPreview.tools.length > 0 ? (
+                <div className="mt-1 grid max-h-20 gap-1 overflow-y-auto">
+                  {streamPreview.tools.map((tool) => (
+                    <div key={tool.index} className="grid gap-0.5 rounded-md bg-white/80 px-2 py-1">
+                      <span className="truncate font-semibold text-stone-800">{tool.name}</span>
+                      {tool.argumentsPreview ? (
+                        <code className="whitespace-pre-wrap break-words text-[10px] leading-4 text-stone-600">{tool.argumentsPreview}</code>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
 
           <AgentPlanTimeline
             planSteps={props.planSteps}

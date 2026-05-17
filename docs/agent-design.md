@@ -8,6 +8,33 @@
 
 用户仍可手动操作页面；原则上页面上能手动修改的业务能力，都必须能通过 Agent 对话完成。账号登录、退出、注册、注销、删除账号和改密码不开放给 Agent 自动执行。
 
+## 当前全量覆盖设计
+
+本轮目标是补齐网页手动能力和 Agent 工具层之间的断层。设计要求如下：
+
+- 模块划分：`tool-catalog.ts` 只描述 provider-native tool schema；`planner.ts` 把 tool call 转成只读步骤或确认卡草稿；`tool-policy.ts` 只做权限、导航、风险和租户校验；`tool-executor.ts` 只调用现有 `workspace / ledger / share` 领域模块；React 只消费 `AgentNavigationEvent` 和确认卡状态。
+- 依赖方向：`web -> contracts -> api agent planner -> domain/workspace/ledger/share -> db`。Agent 工具不得直接写 DB，不得越过确认卡调用执行模块。
+- 复用策略：员工、成员、股东、成本项等结构性草稿变更继续复用 `@xox/domain` 的 `create*` 和 `hydrateModelConfig`；账本动作复用 `createActualEntry / updateActualEntry / voidEntry / restoreEntry`；版本提升复用 `rollbackToVersion + publishVersion`。
+- 命名一致性：模型工具采用 provider 友好的蛇形名，例如 `employee_add`、`ledger_create_entry`、`ledger_update_entry`；内部 intent 使用点分名，例如 `employee.add`、`ledger.create_entry`；确认卡 action kind 复用稳定业务动作，例如 `workspace.update_draft`、`ledger.create_entry`，只有非草稿/非账本语义新增 action kind。
+- 确认卡协议：所有写入都必须有 `navigation / riskLevel / details / payload`，并且确认卡可编辑。编辑后仍通过 `assertActionExecutionAllowed` 和领域服务二次校验。
+- 多步骤协议：模型可以一次返回多个 tool call；服务端也可以把一个 batch tool 展开为多张确认卡。前端运行图按 plan step 顺序展示，用户可逐项编辑/确认/取消。
+- 只读筛选协议：账本历史筛选和预实深度追问不写业务数据，走 `data_query_workspace`。返回的 `AgentNavigationEvent` 可携带页面过滤状态，React 显式切到对应页面并应用筛选。
+
+新增覆盖点：
+
+| 网页能力 | Agent 设计 |
+| --- | --- |
+| 新增/删除员工 | `employee_add / employee_delete`，执行为 `workspace.update_draft`，导航到 `调模型 / 成本` |
+| 工作区改名 | `workspace_rename`，新增 `workspace.rename` action kind，执行时保存当前草稿和新工作区名 |
+| 其他收入/普通支出/按人支出入账 | `ledger_create_entry`，按科目名或 subjectKey 解析科目，按成员/员工名解析归属对象 |
+| 一键入账多笔 | `ledger_create_planned_member_income_batch` 和 `ledger_create_planned_related_expense_batch` 展开为多张 `ledger.create_entry` 确认卡 |
+| 修改历史分录 | `ledger_update_entry`，按 entryId 或筛选条件定位分录，生成 `ledger.update_entry` 确认卡 |
+| 取消作废/恢复分录 | `ledger_restore_entry`，定位已作废手工分录，生成 `ledger.restore_entry` 确认卡 |
+| 精确作废某一笔 | 增强 `ledger_void_entry`，支持 entryId、金额、日期、科目、对象、关键词过滤，无法唯一定位时澄清 |
+| 把快照发布为正式版 | `workspace_promote_version`，新增 `workspace.promote_version` action kind，执行 rollback 后 publish release |
+| 预实分析深度追问 | `data_query_workspace` 新增 `variance_detail` scope，返回科目级计划/实际/差异 |
+| 账本历史筛选 | `data_query_workspace` 新增 `ledger_history` scope，支持月份、方向、状态、日/周、关键词筛选，并驱动页面筛选状态 |
+
 ## 架构决策摘要
 
 | 方案 | 决策 | 边界 |
@@ -374,10 +401,16 @@ Smoke harness 不直接调用业务模块，不跳过 HTTP 路由，不直接写
 - 确认卡载荷编辑后执行
 - 团队成员新增确认卡
 - 团队成员删除确认卡
+- 运营员工新增/删除确认卡
+- 工作区改名确认卡
 - 股东新增/删除确认卡
 - 基础成本项新增/删除确认卡
 - 专项成本类型新增/删除确认卡
-- 作废账本分录
+- 通用其他收入、普通支出、员工按人支出
+- 批量计划入账展开多张确认卡
+- 历史账本分录修改、精确作废和恢复作废
+- 预实科目差异深度追问
+- 账本历史按日期/状态/关键词筛选
 - 草稿专用字段保存
 - 通用草稿 patch
 - 工作区 bundle 导出
@@ -385,6 +418,7 @@ Smoke harness 不直接调用业务模块，不跳过 HTTP 路由，不直接写
 - 锁账
 - 解锁
 - 保存快照
+- 把指定快照发布为正式版
 - 发布并创建分享链接
 - 撤销分享链接
 - 恢复版本
@@ -421,9 +455,9 @@ provider-neutral source 当前固定为：
 ### 模型规划不可伪造
 
 - 业务工具规划必须来自 provider-native tool calls：OpenAI Agents SDK 的 function tool 执行，或 OpenAI-compatible Chat Completions 的 `message.tool_calls`。
-- 兼容 provider 不再接受 assistant 文本里的 JSON steps 作为工具计划。模型如果没有返回 `tool_calls`，后端只记录失败型只读步骤，不生成确认卡。
+- 兼容 provider 不再接受 assistant 文本里的 JSON steps 作为工具计划。模型如果只返回 assistant 文本，后端把它作为普通回复持久化，不生成确认卡、不触发本地规则、不产生任何业务副作用。
 - 当 `LLM_PROVIDER` 不是 `rules` 时，`POST /api/v1/agent/messages` 不允许静默回退到本地规则/正则生成业务动作。这样可以防止“模型没调用工具，但页面仍靠代码猜测生成确认卡”的假 Agent。
-- 普通对话、问候、身份说明和能力说明也必须通过只读 `agent_reply` tool_call 返回，避免真实模型输出普通文本时被误判为业务规划失败。
+- 普通对话、问候、身份说明和能力说明直接使用 assistant 文本返回；不保留 `agent_reply` 这类把普通回复包装成工具调用的废弃路径。
 - `rules` 只保留给明确配置的本地/CI 降级路径；真实 smoke 和产品验收必须使用 provider key，并验证 planner source 为 `openai_agents` 或 `openai_compatible_tool_calls`。
 - Tool catalog 的 `description` 要把常见中文业务动词映射到目标工具和关键参数，例如锁定/锁账/封账/关闭账期必须对应 `ledger_set_period_lock` 且 `locked=true`。这不是规则兜底，而是提供给不同 OpenAI-compatible 模型做 provider-native tool selection 的语义说明。
 
@@ -553,9 +587,16 @@ apps/api/src/db/schema.ts + migrations.ts
 apps/api/src/agent/run-events.ts
   -> addRunEvent / serializeRunEvent
 
+apps/api/src/agent/runtime/*
+  -> provider-native stream chunks
+  -> sanitized provider_stream_* run events
+
 apps/api/src/modules/agent.ts
   -> buildThreadState loads latest run events
   -> queue / claim / model planning / tool result / confirmation / completion / failure publish events
+
+apps/web/src/components/agent/AgentConsole.tsx
+  -> render live provider content/tool argument preview from runEvents
 
 apps/web/src/components/agent/AgentPlanTimeline.tsx
   -> render runEvents above planSteps
@@ -579,6 +620,30 @@ Agent worker lifecycle
 - 前端只展示 `AgentThreadState.runEvents`，不根据 loading spinner 自行补“模型正在思考”等状态，避免刷新后状态不一致。
 - 同步 run、background worker、restart recovery 和取消路径都必须写 trace，历史对话恢复时能看到完整轨迹。
 
+### Provider Chunk Streaming
+
+Provider token / chunk streaming 复用服务端 thread state SSE，而不是前端本地伪造打字机效果。runtime adapter 在真实 provider 返回 `text/event-stream` 时把 chunk 转成 provider-neutral `RuntimeStreamEvent`，planner 只持久化脱敏、截断后的摘要事件：
+
+```text
+OpenAI-compatible Chat Completions
+  -> stream: true
+  -> SSE data chunks
+  -> RuntimeStreamEvent(content_delta | tool_call_delta)
+  -> agent_run_events(provider_stream_started | provider_stream_delta | provider_stream_completed)
+  -> agentThreadEvents.publish(threadId)
+  -> SSE thread_state
+  -> React AgentConsole live preview + AgentPlanTimeline trace
+```
+
+事件约束：
+
+- `provider_stream_started` 只记录 provider、model 和 adapter source。
+- `provider_stream_delta` 只记录短 `delta`、累计 `preview`、tool call index、tool name 和 arguments preview；所有字段先经过 secret-like redaction，并有长度上限。
+- `provider_stream_completed` 只记录内容长度和 tool call 数量。
+- 不保存 provider 原始 SSE 行、完整 prompt、API key、HTTP headers、完整 tool arguments 或 provider 原始 JSON。
+- OpenAI-compatible / DeepSeek / Qwen / Doubao 等兼容 Chat Completions `stream + tools + tool_calls` 的 provider 走这条路径；如果 provider 返回普通 JSON，adapter 仍用非流式 tool_calls 解析，但不会伪造 provider stream delta。
+- OpenAI Agents SDK adapter 的 SDK tracing / human-in-the-loop event 映射仍是独立 maturity gate；业务默认 DeepSeek/OpenAI-compatible 路径已经通过 provider chunk run event 接入前端实时预览。
+
 ### 恢复语义
 
 - `GET /api/v1/agent/threads` 返回当前登录用户、当前工作区内的线程摘要，包含最近消息、最新 run 状态、planner source 和待确认动作数量。
@@ -594,7 +659,7 @@ Agent worker lifecycle
 - API 启动和周期 worker 会扫描 `status=running` 的 run：如果该 run 还没有 `planSteps/actionRequests` 产物，则重新调用同一套 planner/tool/confirmation 流程并落库为 completed/failed；如果已有部分产物，则 fail-closed 标记为 failed 并写 assistant 提示，避免重复创建确认卡或让用户确认半成品动作。
 - 用户可取消当前 running run：`POST /api/v1/agent/runs/:runId/cancel` 会把 run 标记为 `cancelled`、取消该 run 下尚未执行的确认卡和计划步骤、写入 assistant 提示，并中止当前进程里的 provider 请求（OpenAI-compatible adapter 通过 `AbortSignal`）。
 - 取消是服务端状态，不是前端假按钮；即使模型响应晚于取消请求，后台任务在回写前会重新检查 run 状态，不能把 cancelled run 改回 completed，也不能留下 pending 确认卡。
-- 该恢复/取消机制覆盖单实例 API 进程重启和临时崩溃后的安全续跑；多实例并发抢占通过 run lease gate 管理。当前 SSE 是 thread state 级实时事件，provider token streaming / tracing 仍是下一阶段 maturity gate。
+- 该恢复/取消机制覆盖单实例 API 进程重启和临时崩溃后的安全续跑；多实例并发抢占通过 run lease gate 管理。当前 OpenAI-compatible provider chunk 已作为持久 run event 进入 thread state SSE；跨实例强实时和 OpenAI Agents SDK tracing 仍是下一阶段 maturity gate。
 
 ### 多实例后台 Run 租约
 
@@ -713,7 +778,7 @@ Agent: workspace_import_bundle
 - `apps/api/src/modules/agent.ts` 已不再承载 provider/tool_call planner，但仍承载 routes、SSE、run queue/recovery/cancel 和 worker lifecycle；后续继续拆到 routes 与 kernel/worker 边界。
 - `apps/api/src/agent/planner.ts` 当前承载业务预览和 tool_call 归一，是下一阶段拆分 `agent/tools/*` 和 `agent/kernel` 的中间边界。
 - OpenAI Agents SDK adapter 已形成最小可验证路径，但还没有把 SDK streaming/tracing/human-in-the-loop events 映射为前端实时事件。
-- 前端已有后端状态刷新式 action graph / memory panel，仍缺真正 token/tool progress 流式事件。
+- 前端已有后端状态刷新式 action graph / memory panel，OpenAI-compatible provider chunk 已进入实时预览；后续要继续做跨实例 pubsub 和 SDK tracing。
 - 文档验收需要区分当前可验证能力和下一阶段 runtime maturity gate。
 
 ## 迁移顺序
@@ -721,9 +786,9 @@ Agent: workspace_import_bundle
 1. 固化 ADR 和设计文档。
 2. 把 contracts 改为 provider-neutral Agent Protocol。
 3. 拆分 `modules/agent.ts` 到 `runtime / kernel / tools / routes`。
-4. 把兼容 Chat Completions provider 迁入 `openai-compatible-chat-adapter.ts`。（已完成第一步，仍需继续补 tracing / provider-neutral events）
+4. 把兼容 Chat Completions provider 迁入 `openai-compatible-chat-adapter.ts`。（已完成 provider-native tool_calls 与 chunk streaming，仍需继续补 tracing）
 5. 实现 OpenAI Agents SDK adapter。（已完成最小可验证路径，仍需 streaming/tracing/human-in-the-loop events）
-6. 增强 React Agent OS 的 action graph、event timeline、memory 管理。（已完成后端状态刷新式 action graph，仍需流式事件）
+6. 增强 React Agent OS 的 action graph、event timeline、memory 管理。（已完成后端状态刷新式 action graph 与 provider chunk 预览，仍需跨实例实时成熟化）
 7. 用真实 provider 分别跑只读、确认写入、多步骤、拒绝账号动作、memory 隔离测试。
 
 ## 验收标准

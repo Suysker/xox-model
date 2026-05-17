@@ -1,6 +1,7 @@
 import type { Kysely } from 'kysely'
 import {
   createCostItem,
+  createEmployee,
   createMember,
   createShareholder,
   createStageCostItem,
@@ -9,6 +10,7 @@ import {
   projectModel,
   type CostCategory,
   type CostItem,
+  type Employee,
   type EmploymentType,
   type ModelConfig,
   type Shareholder,
@@ -27,7 +29,7 @@ import { exportWorkspaceBundle, getWorkspaceDraft, listVersions } from '../modul
 import { listEntries, listPeriods, listSubjectsForPeriod } from '../modules/ledger.js'
 import { loadAgentRuntimeContext, redactSecretLikeContent } from './memory.js'
 import { planWithRuntimeAdapter } from './runtime/adapter-router.js'
-import type { RuntimePlanError, RuntimePlanResult } from './runtime/runtime-adapter.js'
+import type { RuntimePlanError, RuntimePlanResult, RuntimeStreamEvent } from './runtime/runtime-adapter.js'
 import { assertAgentRunLease } from './run-lease.js'
 import { agentThreadEvents } from './thread-events.js'
 import { buildAgentWritableConfigContext } from './tool-coverage.js'
@@ -59,6 +61,8 @@ type ReadDraft = {
 type PlannedItem = AgentActionDraft | ReadDraft
 
 type RuntimePlannerStep = RuntimePlanResult['steps'][number]
+const PROVIDER_STREAM_DELTA_LIMIT = 240
+const PROVIDER_STREAM_PREVIEW_LIMIT = 700
 
 function accountActionRequested(message: string) {
   return /(注销|删除账号|退出登录|登录|注册|改密码|密码)/.test(message)
@@ -101,10 +105,109 @@ function modelToolCallRequiredRead(error?: RuntimePlanError | null): ReadDraft {
   }
 
   return {
-    title: '模型未返回工具调用',
-    message: '已配置真实模型规划，但本轮没有返回可执行 tool_call。为避免用本地规则或正则冒充模型调用，我没有生成写入动作；请补充指令或重试。',
-    status: 'failed',
+    title: '模型没有返回内容',
+    message: '模型这轮没有返回可展示内容，也没有调用工具。系统没有生成任何写入动作；请换一种说法重试。',
+    status: 'info',
   }
+}
+
+function providerAssistantTextRead(text: string): ReadDraft {
+  const message = redactSecretLikeContent(text).trim().slice(0, 4000)
+  return {
+    title: '模型回复',
+    message: message || '模型这轮没有返回可展示内容。',
+    status: 'executed',
+  }
+}
+
+function safeProviderStreamValue(value: string, maxLength: number) {
+  return redactSecretLikeContent(value).slice(0, maxLength)
+}
+
+function providerStreamEventPayload(event: RuntimeStreamEvent): Record<string, unknown> {
+  if (event.kind === 'stream_started') {
+    return {
+      kind: event.kind,
+      provider: safeProviderStreamValue(event.provider, 80),
+      model: safeProviderStreamValue(event.model, 120),
+      source: event.source,
+    }
+  }
+  if (event.kind === 'content_delta') {
+    return {
+      kind: event.kind,
+      delta: safeProviderStreamValue(event.delta, PROVIDER_STREAM_DELTA_LIMIT),
+      preview: safeProviderStreamValue(event.preview, PROVIDER_STREAM_PREVIEW_LIMIT),
+    }
+  }
+  if (event.kind === 'tool_call_delta') {
+    return {
+      kind: event.kind,
+      toolCallIndex: event.toolCallIndex,
+      ...(event.toolName ? { toolName: safeProviderStreamValue(event.toolName, 120) } : {}),
+      ...(event.argumentsDelta ? { argumentsDelta: safeProviderStreamValue(event.argumentsDelta, PROVIDER_STREAM_DELTA_LIMIT) } : {}),
+      ...(event.argumentsPreview ? { argumentsPreview: safeProviderStreamValue(event.argumentsPreview, PROVIDER_STREAM_PREVIEW_LIMIT) } : {}),
+    }
+  }
+  return {
+    kind: event.kind,
+    contentLength: event.contentLength,
+    toolCallCount: event.toolCallCount,
+  }
+}
+
+async function addProviderStreamRunEvent(ctx: PlannerContext, event: RuntimeStreamEvent) {
+  const data = providerStreamEventPayload(event)
+  if (event.kind === 'stream_started') {
+    await addRunEvent(ctx.db, {
+      threadId: ctx.threadId,
+      runId: ctx.runId,
+      type: 'provider_stream_started',
+      title: 'Provider 流已打开',
+      message: `正在接收 ${data.provider} / ${data.model} 的流式输出。`,
+      status: 'running',
+      data,
+    })
+    return
+  }
+  if (event.kind === 'content_delta') {
+    const delta = typeof data.delta === 'string' && data.delta.trim().length > 0 ? data.delta : '正在输出回答内容。'
+    await addRunEvent(ctx.db, {
+      threadId: ctx.threadId,
+      runId: ctx.runId,
+      type: 'provider_stream_delta',
+      title: '模型输出片段',
+      message: delta,
+      status: 'running',
+      data,
+    })
+    return
+  }
+  if (event.kind === 'tool_call_delta') {
+    const toolName = typeof data.toolName === 'string' ? data.toolName : '工具调用'
+    const preview = typeof data.argumentsPreview === 'string' && data.argumentsPreview.trim().length > 0
+      ? data.argumentsPreview
+      : '正在组装工具参数。'
+    await addRunEvent(ctx.db, {
+      threadId: ctx.threadId,
+      runId: ctx.runId,
+      type: 'provider_stream_delta',
+      title: '工具调用片段',
+      message: `${toolName}: ${preview}`,
+      status: 'running',
+      data,
+    })
+    return
+  }
+  await addRunEvent(ctx.db, {
+    threadId: ctx.threadId,
+    runId: ctx.runId,
+    type: 'provider_stream_completed',
+    title: 'Provider 流已结束',
+    message: `模型流已结束，累计内容 ${event.contentLength} 字符，工具调用 ${event.toolCallCount} 个。`,
+    status: 'completed',
+    data,
+  })
 }
 
 function configuredModelPlannerSource(settings: Settings): Extract<AgentPlannerSource, 'openai_agents' | 'openai_compatible_tool_calls'> | null {
@@ -292,6 +395,509 @@ async function planLedgerCreateFromFields(
       relatedEntityName: member.name,
       occurredAt,
       allocations,
+    },
+  } satisfies AgentActionDraft
+}
+
+type LedgerSubject = Awaited<ReturnType<typeof listSubjectsForPeriod>>[number]
+type LedgerEntry = Awaited<ReturnType<typeof listEntries>>[number]
+
+type SubjectLookup =
+  | { status: 'found'; subject: LedgerSubject }
+  | { status: 'missing' | 'ambiguous'; message: string }
+
+type EntryLookup =
+  | { status: 'found'; entry: LedgerEntry; period: Awaited<ReturnType<typeof periodForMonth>> }
+  | { status: 'missing' | 'ambiguous'; message: string; period: Awaited<ReturnType<typeof periodForMonth>> | null }
+
+function normalizedLookup(value: string) {
+  return value.trim().replace(/\s+/g, '').toLocaleLowerCase()
+}
+
+function asNonEmptyString(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+function moneyAmount(value: unknown) {
+  const number = finiteNumber(value)
+  return number === null ? null : Math.round(number * 100) / 100
+}
+
+function isoFromDateLike(value: unknown) {
+  const raw = asNonEmptyString(value)
+  if (!raw) return null
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return new Date(`${raw}T12:00:00.000Z`).toISOString()
+  const date = new Date(raw)
+  return Number.isNaN(date.getTime()) ? null : date.toISOString()
+}
+
+function subjectMatches(subject: LedgerSubject, key?: unknown, name?: unknown) {
+  const subjectKey = asNonEmptyString(key)
+  if (subjectKey && subject.subjectKey === subjectKey) return true
+  const subjectName = asNonEmptyString(name)
+  if (!subjectName) return false
+  const normalized = normalizedLookup(subjectName)
+  return normalizedLookup(subject.subjectName) === normalized || normalizedLookup(subject.subjectName).includes(normalized)
+}
+
+async function resolveLedgerSubject(ctx: PlannerContext, periodId: string, step: RuntimePlannerStep, direction?: 'income' | 'expense'): Promise<SubjectLookup> {
+  const subjects = await listSubjectsForPeriod(ctx.db, ctx.workspace, periodId)
+  const expectedType = direction === 'income' ? 'revenue' : direction === 'expense' ? 'cost' : null
+  const matches = subjects.filter((subject) => {
+    if (expectedType && subject.subjectType !== expectedType) return false
+    return subjectMatches(subject, step.subjectKey ?? step.newSubjectKey, step.subjectName ?? step.newSubjectName)
+  })
+  if (matches.length === 1) return { status: 'found', subject: matches[0]! }
+  if (matches.length > 1) {
+    return {
+      status: 'ambiguous',
+      message: `找到多个匹配科目：${matches.map((subject) => `${subject.subjectName}(${subject.subjectKey})`).join('、')}。请补充更精确的科目名或 subjectKey。`,
+    }
+  }
+  return {
+    status: 'missing',
+    message: `没有找到匹配科目。当前可用科目有：${subjects.filter((subject) => !expectedType || subject.subjectType === expectedType).map((subject) => subject.subjectName).join('、')}。`,
+  }
+}
+
+function resolveRelatedEntity(config: ModelConfig, step: RuntimePlannerStep, preferredType?: 'teamMember' | 'employee' | null) {
+  const relatedEntityId = asNonEmptyString(step.relatedEntityId)
+  const relatedEntityName = asNonEmptyString(step.relatedEntityName) ?? asNonEmptyString(step.newRelatedEntityName)
+  const requestedType = step.relatedEntityType === 'teamMember' || step.relatedEntityType === 'employee' ? step.relatedEntityType : preferredType ?? null
+
+  if (requestedType === 'teamMember') {
+    const member = findTeamMember(config, { memberId: relatedEntityId, memberName: relatedEntityName })
+    return member ? { type: 'teamMember' as const, id: member.id, name: member.name } : null
+  }
+  if (requestedType === 'employee') {
+    const employee = findEmployee(config, { employeeId: relatedEntityId, employeeName: relatedEntityName })
+    return employee ? { type: 'employee' as const, id: employee.id, name: employee.name } : null
+  }
+
+  if (relatedEntityId || relatedEntityName) {
+    const member = findTeamMember(config, { memberId: relatedEntityId, memberName: relatedEntityName })
+    if (member) return { type: 'teamMember' as const, id: member.id, name: member.name }
+    const employee = findEmployee(config, { employeeId: relatedEntityId, employeeName: relatedEntityName })
+    if (employee) return { type: 'employee' as const, id: employee.id, name: employee.name }
+  }
+  return null
+}
+
+function requiredRelatedType(subject: LedgerSubject) {
+  if (subject.subjectKey === 'cost.member.base_pay' || subject.subjectKey === 'cost.member.travel') return 'teamMember' as const
+  if (subject.subjectKey === 'cost.employee.base_pay' || subject.subjectKey === 'cost.employee.per_event') return 'employee' as const
+  return null
+}
+
+function ledgerNavigation(periodId: string, reason: string, focusRecordId?: string | null): AgentNavigationEvent {
+  return {
+    type: 'navigation',
+    route: { mainTab: 'bookkeeping', secondaryTab: 'entries', selectedPeriodId: periodId },
+    ...(focusRecordId ? { focusRecordId } : {}),
+    reason,
+  }
+}
+
+async function planGenericLedgerCreateFromStep(ctx: PlannerContext, step: RuntimePlannerStep) {
+  const monthLabel = asNonEmptyString(step.monthLabel)
+  const direction = step.direction === 'income' || step.direction === 'expense' ? step.direction : null
+  const amount = moneyAmount(step.amount)
+  if (!monthLabel || !direction || amount === null || amount <= 0) {
+    return {
+      title: '需要补充入账信息',
+      message: '通用入账需要月份、收入/支出方向、金额和科目。请补充缺失信息。',
+      status: 'info',
+      navigation: { type: 'navigation', route: { mainTab: 'bookkeeping', secondaryTab: 'entries' }, reason: '入账动作需要打开记账工作台。' },
+    } satisfies ReadDraft
+  }
+  const period = await periodForMonth(ctx, monthLabel)
+  if (!period) return null
+  const subjectLookup = await resolveLedgerSubject(ctx, period.id, step, direction)
+  if (subjectLookup.status !== 'found') {
+    return {
+      title: subjectLookup.status === 'ambiguous' ? '需要指定唯一科目' : '没有找到科目',
+      message: subjectLookup.message,
+      status: subjectLookup.status === 'ambiguous' ? 'info' : 'failed',
+      navigation: ledgerNavigation(period.id, '入账动作需要打开本期账本并选中目标账期。'),
+    } satisfies ReadDraft
+  }
+
+  const { config } = await currentDraftConfig(ctx)
+  const requiredType = requiredRelatedType(subjectLookup.subject)
+  const related = resolveRelatedEntity(config, step, requiredType)
+  if (requiredType && !related) {
+    return {
+      title: '需要指定归属对象',
+      message: `“${subjectLookup.subject.subjectName}”需要指定${requiredType === 'teamMember' ? '成员' : '员工'}。`,
+      status: 'info',
+      navigation: ledgerNavigation(period.id, '按人支出需要打开本期账本并选中目标账期。'),
+    } satisfies ReadDraft
+  }
+  if ((step.relatedEntityName || step.relatedEntityId) && !related) {
+    return {
+      title: '没有找到归属对象',
+      message: `没有找到匹配“${step.relatedEntityName ?? step.relatedEntityId}”的成员或员工。`,
+      status: 'failed',
+      navigation: ledgerNavigation(period.id, '入账动作需要打开本期账本并选中目标账期。'),
+    } satisfies ReadDraft
+  }
+
+  const occurredAt = isoFromDateLike(step.occurredAt) ?? periodOccurrenceDate(config, period)
+  const details = [
+    { label: '期间', value: period.monthLabel },
+    { label: '方向', value: direction === 'income' ? '收入' : '支出' },
+    { label: '科目', value: subjectLookup.subject.subjectName },
+    { label: '金额', value: `${amount}` },
+    { label: '发生日', value: occurredAt.slice(0, 10) },
+    ...(related ? [{ label: '归属对象', value: related.name }] : []),
+    ...(step.counterparty ? [{ label: '对方单位', value: String(step.counterparty) }] : []),
+    ...(step.description ? [{ label: '备注', value: String(step.description) }] : []),
+  ]
+
+  return {
+    kind: 'ledger.create_entry',
+    title: direction === 'income' ? '确认收入入账' : '确认支出入账',
+    summary: `${period.monthLabel}${related ? ` ${related.name}` : ''} ${subjectLookup.subject.subjectName} ${amount} 元入账。`,
+    targetLabel: `${period.monthLabel} / ${subjectLookup.subject.subjectName}`,
+    riskLevel: 'medium',
+    details,
+    navigation: ledgerNavigation(period.id, '入账动作需要打开本期账本并选中目标账期。'),
+    payload: {
+      ledgerPeriodId: period.id,
+      direction,
+      amount,
+      occurredAt,
+      ...(step.counterparty ? { counterparty: String(step.counterparty) } : {}),
+      ...(step.description ? { description: String(step.description) } : {}),
+      ...(related ? { relatedEntityType: related.type, relatedEntityId: related.id, relatedEntityName: related.name } : {}),
+      allocations: [{
+        subjectKey: subjectLookup.subject.subjectKey,
+        subjectName: subjectLookup.subject.subjectName,
+        subjectType: subjectLookup.subject.subjectType,
+        amount,
+      }],
+    },
+  } satisfies AgentActionDraft
+}
+
+async function postedAmountBySubjectAndEntity(ctx: PlannerContext, periodId: string) {
+  const entries = await listEntries(ctx.db, ctx.workspace, periodId)
+  const totals = new Map<string, number>()
+  for (const entry of entries) {
+    if (entry.status !== 'posted') continue
+    for (const allocation of entry.allocations) {
+      const key = `${allocation.subjectKey}:${entry.relatedEntityId ?? ''}`
+      totals.set(key, Math.round(((totals.get(key) ?? 0) + allocation.amount) * 100) / 100)
+    }
+  }
+  return totals
+}
+
+async function planPlannedMemberIncomeBatch(ctx: PlannerContext, step: RuntimePlannerStep) {
+  const monthLabel = asNonEmptyString(step.monthLabel)
+  if (!monthLabel) return null
+  const period = await periodForMonth(ctx, monthLabel)
+  if (!period) return null
+  const { config } = await currentDraftConfig(ctx)
+  const month = projectModel(config).scenarios.find((scenario) => scenario.key === 'base')?.months.find((item) => item.monthIndex === period.monthIndex)
+  if (!month) return null
+  const posted = await postedAmountBySubjectAndEntity(ctx, period.id)
+  const actions: PlannedItem[] = []
+  for (const member of month.members) {
+    const postedOffline = posted.get(`revenue.offline_sales:${member.memberId}`) ?? 0
+    const postedOnline = posted.get(`revenue.online_sales:${member.memberId}`) ?? 0
+    const plannedOfflineUnits = Math.max(0, member.monthlyUnits - postedOffline / Math.max(config.operating.offlineUnitPrice, 1))
+    const plannedOnlineUnits = Math.max(0, member.monthlyUnits * month.onlineSalesFactor - postedOnline / Math.max(config.operating.onlineUnitPrice, 1))
+    const action = await planLedgerCreateFromFields(ctx, {
+      monthLabel,
+      memberName: member.name,
+      offlineUnits: Math.round(plannedOfflineUnits * 100) / 100,
+      onlineUnits: Math.round(plannedOnlineUnits * 100) / 100,
+    })
+    if (action) actions.push(action)
+  }
+  return actions.length > 0 ? actions : [{
+    title: '没有待入账成员收入',
+    message: `${monthLabel}没有可按计划补入的成员收入。`,
+    status: 'info',
+    navigation: ledgerNavigation(period.id, '一键入账需要打开本期账本并选中目标账期。'),
+  } satisfies ReadDraft]
+}
+
+function relatedExpenseRowsForMonth(config: ModelConfig, monthIndex: number, subject: LedgerSubject) {
+  const month = projectModel(config).scenarios.find((scenario) => scenario.key === 'base')?.months.find((item) => item.monthIndex === monthIndex)
+  if (!month) return []
+  if (subject.subjectKey === 'cost.member.base_pay') return month.members.map((member) => ({ type: 'teamMember' as const, id: member.memberId, name: member.name, amount: member.basePayCost }))
+  if (subject.subjectKey === 'cost.member.travel') return month.members.map((member) => ({ type: 'teamMember' as const, id: member.memberId, name: member.name, amount: member.travelCost }))
+  if (subject.subjectKey === 'cost.employee.base_pay') return month.employees.map((employee) => ({ type: 'employee' as const, id: employee.employeeId, name: employee.name, amount: employee.basePayCost }))
+  if (subject.subjectKey === 'cost.employee.per_event') return month.employees.map((employee) => ({ type: 'employee' as const, id: employee.employeeId, name: employee.name, amount: employee.perEventCost }))
+  return []
+}
+
+async function planPlannedRelatedExpenseBatch(ctx: PlannerContext, step: RuntimePlannerStep) {
+  const monthLabel = asNonEmptyString(step.monthLabel)
+  if (!monthLabel) return null
+  const period = await periodForMonth(ctx, monthLabel)
+  if (!period) return null
+  const subjectLookup = await resolveLedgerSubject(ctx, period.id, step, 'expense')
+  if (subjectLookup.status !== 'found') {
+    return {
+      title: subjectLookup.status === 'ambiguous' ? '需要指定唯一科目' : '没有找到科目',
+      message: subjectLookup.message,
+      status: subjectLookup.status === 'ambiguous' ? 'info' : 'failed',
+      navigation: ledgerNavigation(period.id, '按人支出一键入账需要打开本期账本。'),
+    } satisfies ReadDraft
+  }
+  const { config } = await currentDraftConfig(ctx)
+  const rows = relatedExpenseRowsForMonth(config, period.monthIndex, subjectLookup.subject)
+  const posted = await postedAmountBySubjectAndEntity(ctx, period.id)
+  const actions: PlannedItem[] = []
+  for (const row of rows) {
+    const amount = Math.round(Math.max(0, row.amount - (posted.get(`${subjectLookup.subject.subjectKey}:${row.id}`) ?? 0)) * 100) / 100
+    if (amount <= 0) continue
+    const action = await planGenericLedgerCreateFromStep(ctx, {
+      intent: 'ledger.create_entry',
+      monthLabel,
+      direction: 'expense',
+      subjectKey: subjectLookup.subject.subjectKey,
+      amount,
+      relatedEntityType: row.type,
+      relatedEntityId: row.id,
+    } as RuntimePlannerStep)
+    if (action) actions.push(action)
+  }
+  return actions.length > 0 ? actions : [{
+    title: '没有待入账按人支出',
+    message: `${monthLabel}${subjectLookup.subject.subjectName}没有可按计划补入的支出。`,
+    status: 'info',
+    navigation: ledgerNavigation(period.id, '按人支出一键入账需要打开本期账本。'),
+  } satisfies ReadDraft]
+}
+
+function entryIncludesKeyword(entry: LedgerEntry, keyword: string) {
+  const normalized = normalizedLookup(keyword)
+  const haystack = [
+    entry.counterparty,
+    entry.description,
+    entry.relatedEntityName,
+    entry.direction === 'income' ? '收入' : '支出',
+    entry.status === 'voided' ? '已作废' : '已过账',
+    ...entry.allocations.flatMap((allocation) => [allocation.subjectKey, allocation.subjectName]),
+  ]
+  return haystack.some((item) => item && normalizedLookup(item).includes(normalized))
+}
+
+async function findLedgerEntryForStep(
+  ctx: PlannerContext,
+  step: RuntimePlannerStep,
+  desiredStatus: 'posted' | 'voided',
+): Promise<EntryLookup> {
+  const monthLabel = asNonEmptyString(step.monthLabel)
+  const period = monthLabel ? await periodForMonth(ctx, monthLabel) : null
+  if (!period) return { status: 'missing', message: '需要指定账本月份。', period: null }
+  const entries = await listEntries(ctx.db, ctx.workspace, period.id)
+  const entryId = asNonEmptyString(step.entryId)
+  if (entryId) {
+    const entry = entries.find((item) => item.id === entryId)
+    if (!entry) return { status: 'missing', message: `没有找到分录 ${entryId}。`, period }
+    if (entry.status !== desiredStatus) return { status: 'missing', message: `分录状态不是${desiredStatus === 'posted' ? '已过账' : '已作废'}。`, period }
+    return { status: 'found', entry, period }
+  }
+
+  const amount = moneyAmount(step.amount)
+  const occurredOn = asNonEmptyString(step.occurredOn)
+  const subjectKey = asNonEmptyString(step.subjectKey)
+  const subjectName = asNonEmptyString(step.subjectName)
+  const relatedEntityName = asNonEmptyString(step.relatedEntityName) ?? asNonEmptyString(step.memberName) ?? asNonEmptyString(step.employeeName)
+  const keyword = asNonEmptyString(step.keyword)
+  const direction = step.direction === 'income' || step.direction === 'expense' ? step.direction : null
+
+  const candidates = entries.filter((entry) => {
+    if (entry.entryOrigin === 'derived') return false
+    if (entry.status !== desiredStatus) return false
+    if (direction && entry.direction !== direction) return false
+    if (amount !== null && Math.abs(entry.amount - amount) >= 0.005) return false
+    if (occurredOn && entry.occurredAt.slice(0, 10) !== occurredOn) return false
+    if (relatedEntityName && normalizedLookup(entry.relatedEntityName ?? '') !== normalizedLookup(relatedEntityName)) return false
+    if (subjectKey && !entry.allocations.some((allocation) => allocation.subjectKey === subjectKey)) return false
+    if (subjectName && !entry.allocations.some((allocation) => normalizedLookup(allocation.subjectName).includes(normalizedLookup(subjectName)))) return false
+    if (keyword && !entryIncludesKeyword(entry, keyword)) return false
+    return true
+  })
+
+  if (candidates.length === 1) return { status: 'found', entry: candidates[0]!, period }
+  if (candidates.length > 1) {
+    return {
+      status: 'ambiguous',
+      message: `找到 ${candidates.length} 笔匹配分录：${candidates.slice(0, 5).map((entry) => `${entry.occurredAt.slice(0, 10)} ${entry.relatedEntityName ?? entry.allocations[0]?.subjectName ?? '分录'} ${entry.amount}元`).join('；')}。请补充 entryId、金额、日期、科目或对象。`,
+      period,
+    }
+  }
+  return { status: 'missing', message: '没有找到匹配的账本分录。请补充更精确的金额、日期、科目、对象或 entryId。', period }
+}
+
+async function planLedgerVoidFromStep(ctx: PlannerContext, step: RuntimePlannerStep) {
+  const lookup = await findLedgerEntryForStep(ctx, step, 'posted')
+  if (lookup.status !== 'found') {
+    return {
+      title: lookup.status === 'ambiguous' ? '需要唯一定位分录' : '没有找到可作废分录',
+      message: lookup.message,
+      status: lookup.status === 'ambiguous' ? 'info' : 'failed',
+      navigation: lookup.period ? ledgerNavigation(lookup.period.id, '作废分录需要打开本期账本。') : { type: 'navigation', route: { mainTab: 'bookkeeping', secondaryTab: 'entries' }, reason: '作废分录需要打开账本。' },
+    } satisfies ReadDraft
+  }
+  const { entry, period } = lookup
+  if (!period) return null
+  return {
+    kind: 'ledger.void_entry',
+    title: '确认作废分录',
+    summary: `作废${period.monthLabel} ${entry.relatedEntityName ?? entry.allocations[0]?.subjectName ?? '账本分录'} 的 ${entry.amount} 元分录，关联派生分录会同步作废。`,
+    targetLabel: `${period.monthLabel} / ${entry.relatedEntityName ?? entry.allocations[0]?.subjectName ?? '账本分录'}`,
+    riskLevel: 'high',
+    details: [
+      { label: '期间', value: period.monthLabel },
+      { label: '发生日', value: entry.occurredAt.slice(0, 10) },
+      { label: '金额', value: `${entry.amount}` },
+      { label: '对象', value: entry.relatedEntityName ?? '-' },
+      { label: '科目', value: entry.allocations.map((allocation) => allocation.subjectName).join(' / ') },
+    ],
+    navigation: ledgerNavigation(period.id, '作废分录需要打开本期账本并定位记录。', entry.id),
+    payload: { entryId: entry.id },
+  } satisfies AgentActionDraft
+}
+
+async function planLedgerRestoreFromStep(ctx: PlannerContext, step: RuntimePlannerStep) {
+  const lookup = await findLedgerEntryForStep(ctx, step, 'voided')
+  if (lookup.status !== 'found') {
+    return {
+      title: lookup.status === 'ambiguous' ? '需要唯一定位分录' : '没有找到已作废分录',
+      message: lookup.message,
+      status: lookup.status === 'ambiguous' ? 'info' : 'failed',
+      navigation: lookup.period ? ledgerNavigation(lookup.period.id, '恢复分录需要打开本期账本。') : { type: 'navigation', route: { mainTab: 'bookkeeping', secondaryTab: 'entries' }, reason: '恢复分录需要打开账本。' },
+    } satisfies ReadDraft
+  }
+  const { entry, period } = lookup
+  if (!period) return null
+  return {
+    kind: 'ledger.restore_entry',
+    title: '确认取消作废分录',
+    summary: `恢复${period.monthLabel} ${entry.relatedEntityName ?? entry.allocations[0]?.subjectName ?? '账本分录'} 的 ${entry.amount} 元分录，关联派生分录会同步恢复。`,
+    targetLabel: `${period.monthLabel} / ${entry.relatedEntityName ?? entry.allocations[0]?.subjectName ?? '账本分录'}`,
+    riskLevel: 'high',
+    details: [
+      { label: '期间', value: period.monthLabel },
+      { label: '发生日', value: entry.occurredAt.slice(0, 10) },
+      { label: '金额', value: `${entry.amount}` },
+      { label: '对象', value: entry.relatedEntityName ?? '-' },
+    ],
+    navigation: ledgerNavigation(period.id, '恢复分录需要打开本期账本并定位记录。', entry.id),
+    payload: { entryId: entry.id },
+  } satisfies AgentActionDraft
+}
+
+async function allocationInputsForUpdate(ctx: PlannerContext, periodId: string, entry: LedgerEntry, step: RuntimePlannerStep, amount: number) {
+  if (Array.isArray(step.allocations) && step.allocations.length > 0) {
+    const allocations = []
+    for (const raw of step.allocations) {
+      const allocationAmount = moneyAmount(raw.amount)
+      if (allocationAmount === null || allocationAmount <= 0) continue
+      const subjectLookup = await resolveLedgerSubject(ctx, periodId, {
+        ...step,
+        subjectKey: raw.subjectKey,
+        subjectName: raw.subjectName,
+      } as RuntimePlannerStep, entry.direction)
+      if (subjectLookup.status !== 'found') return subjectLookup
+      allocations.push({ ...subjectLookup.subject, amount: allocationAmount })
+    }
+    return { status: 'found' as const, allocations }
+  }
+
+  if (step.newSubjectKey || step.newSubjectName) {
+    const subjectLookup = await resolveLedgerSubject(ctx, periodId, {
+      ...step,
+      subjectKey: step.newSubjectKey,
+      subjectName: step.newSubjectName,
+    } as RuntimePlannerStep, entry.direction)
+    if (subjectLookup.status !== 'found') return subjectLookup
+    return { status: 'found' as const, allocations: [{ ...subjectLookup.subject, amount }] }
+  }
+
+  if (entry.allocations.length === 1) {
+    return { status: 'found' as const, allocations: [{ ...entry.allocations[0]!, amount }] }
+  }
+
+  const originalTotal = Math.max(entry.amount, 0.01)
+  return {
+    status: 'found' as const,
+    allocations: entry.allocations.map((allocation) => ({
+      ...allocation,
+      amount: Math.round((allocation.amount / originalTotal) * amount * 100) / 100,
+    })),
+  }
+}
+
+async function planLedgerUpdateFromStep(ctx: PlannerContext, step: RuntimePlannerStep) {
+  const lookup = await findLedgerEntryForStep(ctx, step, 'posted')
+  if (lookup.status !== 'found') {
+    return {
+      title: lookup.status === 'ambiguous' ? '需要唯一定位分录' : '没有找到可修改分录',
+      message: lookup.message,
+      status: lookup.status === 'ambiguous' ? 'info' : 'failed',
+      navigation: lookup.period ? ledgerNavigation(lookup.period.id, '修改分录需要打开本期账本。') : { type: 'navigation', route: { mainTab: 'bookkeeping', secondaryTab: 'entries' }, reason: '修改分录需要打开账本。' },
+    } satisfies ReadDraft
+  }
+  const { entry, period } = lookup
+  if (!period) return null
+  const amount = moneyAmount(step.newAmount) ?? moneyAmount(step.amount) ?? entry.amount
+  if (amount <= 0) return null
+  const allocations = await allocationInputsForUpdate(ctx, period.id, entry, step, amount)
+  if (allocations.status !== 'found') {
+    return {
+      title: allocations.status === 'ambiguous' ? '需要指定唯一科目' : '没有找到科目',
+      message: allocations.message,
+      status: allocations.status === 'ambiguous' ? 'info' : 'failed',
+      navigation: ledgerNavigation(period.id, '修改分录需要打开本期账本。', entry.id),
+    } satisfies ReadDraft
+  }
+  const { config } = await currentDraftConfig(ctx)
+  const related = resolveRelatedEntity(config, {
+    ...step,
+    relatedEntityName: step.newRelatedEntityName ?? step.relatedEntityName ?? entry.relatedEntityName ?? undefined,
+    relatedEntityId: step.relatedEntityId ?? entry.relatedEntityId ?? undefined,
+    relatedEntityType: step.relatedEntityType ?? entry.relatedEntityType ?? undefined,
+  } as RuntimePlannerStep)
+  const occurredAt = isoFromDateLike(step.newOccurredAt) ?? entry.occurredAt
+  const counterparty = step.counterparty === undefined ? entry.counterparty ?? undefined : asNonEmptyString(step.counterparty) ?? undefined
+  const description = step.description === undefined ? entry.description ?? undefined : asNonEmptyString(step.description) ?? undefined
+
+  return {
+    kind: 'ledger.update_entry',
+    title: '确认修改历史分录',
+    summary: `修改${period.monthLabel} ${entry.relatedEntityName ?? entry.allocations[0]?.subjectName ?? '账本分录'}，金额 ${entry.amount} -> ${amount} 元。`,
+    targetLabel: `${period.monthLabel} / ${entry.relatedEntityName ?? entry.allocations[0]?.subjectName ?? '账本分录'}`,
+    riskLevel: 'medium',
+    details: [
+      { label: '期间', value: period.monthLabel },
+      { label: '分录 ID', value: entry.id },
+      { label: '金额', value: `${entry.amount} -> ${amount}` },
+      { label: '科目', value: allocations.allocations.map((allocation) => allocation.subjectName).join(' / ') },
+      { label: '发生日', value: occurredAt.slice(0, 10) },
+      { label: '归属对象', value: related?.name ?? '-' },
+    ],
+    navigation: ledgerNavigation(period.id, '修改分录需要打开本期账本并定位记录。', entry.id),
+    payload: {
+      entryId: entry.id,
+      amount,
+      occurredAt,
+      ...(counterparty ? { counterparty } : {}),
+      ...(description ? { description } : {}),
+      ...(related ? { relatedEntityType: related.type, relatedEntityId: related.id, relatedEntityName: related.name } : {}),
+      allocations: allocations.allocations.map((allocation) => ({
+        subjectKey: allocation.subjectKey,
+        subjectName: allocation.subjectName,
+        subjectType: allocation.subjectType,
+        amount: allocation.amount,
+      })),
     },
   } satisfies AgentActionDraft
 }
@@ -539,6 +1145,134 @@ async function planDeleteTeamMemberFromStep(ctx: PlannerContext, step: RuntimePl
       workspaceName: ctx.workspace.name,
       config: normalized,
       patches: [{ path: 'teamMembers', value: normalized.teamMembers, label: '团队成员列表' }],
+    },
+  } satisfies AgentActionDraft
+}
+
+function defaultEmployeeName(config: ModelConfig) {
+  const existing = new Set(config.employees.map((employee) => normalizedMemberKey(employee.name)))
+  let index = config.employees.length + 1
+  while (existing.has(normalizedMemberKey(`员工 ${index}`))) index += 1
+  return `员工 ${index}`
+}
+
+function findEmployee(config: ModelConfig, input: { employeeId?: string | null | undefined; employeeName?: string | null | undefined }) {
+  const employeeId = typeof input.employeeId === 'string' ? input.employeeId.trim() : ''
+  if (employeeId) {
+    const byId = config.employees.find((employee) => employee.id === employeeId)
+    if (byId) return byId
+  }
+
+  const employeeName = typeof input.employeeName === 'string' ? input.employeeName.trim() : ''
+  if (!employeeName) return null
+  const normalized = normalizedMemberKey(employeeName)
+  return config.employees.find((employee) => employee.id === employeeName || normalizedMemberKey(employee.name) === normalized) ?? null
+}
+
+function applyEmployeeToolFields(employee: Employee, step: RuntimePlannerStep) {
+  const next: Employee = { ...employee }
+  if (typeof step.role === 'string' && step.role.trim()) next.role = step.role.trim()
+  const monthlyBasePay = finiteNumber(step.monthlyBasePay)
+  if (monthlyBasePay !== null) next.monthlyBasePay = monthlyBasePay
+  const perEventCost = finiteNumber(step.perEventCost)
+  if (perEventCost !== null) next.perEventCost = perEventCost
+  return next
+}
+
+async function planAddEmployeeFromStep(ctx: PlannerContext, step: RuntimePlannerStep) {
+  const { draft, config } = await currentDraftConfig(ctx)
+  const requestedName = typeof step.newEmployeeName === 'string' && step.newEmployeeName.trim()
+    ? step.newEmployeeName.trim()
+    : typeof step.employeeName === 'string' && step.employeeName.trim()
+      ? step.employeeName.trim()
+      : ''
+  const name = requestedName || defaultEmployeeName(config)
+  if (config.employees.some((employee) => normalizedMemberKey(employee.name) === normalizedMemberKey(name))) {
+    return {
+      title: '员工已存在',
+      message: `当前员工列表里已经有“${name}”。如果要新增同名员工，请先给出一个可区分的名称。`,
+      status: 'failed',
+      navigation: costWorkbenchNavigation('新增员工需要打开运营员工配置供核对。'),
+    } satisfies ReadDraft
+  }
+
+  const employee = applyEmployeeToolFields(createEmployee(newId(), { name }), step)
+  const normalized = hydrateModelConfig({
+    ...cloneModelConfig(config),
+    employees: [...config.employees, employee],
+  })
+
+  return {
+    kind: 'workspace.update_draft',
+    title: '确认新增员工',
+    summary: `新增运营员工“${employee.name}”，保存后员工月薪和场次成本会进入后续测算。`,
+    targetLabel: employee.name,
+    riskLevel: 'medium',
+    details: [
+      { label: '动作', value: '新增员工' },
+      { label: '员工名称', value: employee.name },
+      { label: '岗位', value: employee.role },
+      { label: '员工数变化', value: `${config.employees.length} -> ${normalized.employees.length}` },
+      { label: '月固定薪酬', value: `${employee.monthlyBasePay}` },
+      { label: '每场补贴', value: `${employee.perEventCost}` },
+    ],
+    navigation: costWorkbenchNavigation('新增员工属于运营员工配置，先打开调模型页面供核对。'),
+    payload: {
+      revision: draft.revision,
+      workspaceName: ctx.workspace.name,
+      config: normalized,
+      patches: [{ path: 'employees', value: normalized.employees, label: '运营员工列表' }],
+    },
+  } satisfies AgentActionDraft
+}
+
+async function planDeleteEmployeeFromStep(ctx: PlannerContext, step: RuntimePlannerStep) {
+  const { draft, config } = await currentDraftConfig(ctx)
+  const navigation = costWorkbenchNavigation('删除员工需要打开运营员工配置供核对。')
+  const target = findEmployee(config, { employeeId: step.employeeId, employeeName: step.employeeName })
+
+  if (!step.employeeId && !step.employeeName) {
+    return {
+      title: '需要指定要删除的员工',
+      message: `请告诉我要删除哪位员工。当前员工有：${config.employees.map((employee) => employee.name).join('、') || '暂无员工'}。`,
+      status: 'info',
+      navigation,
+    } satisfies ReadDraft
+  }
+
+  if (!target) {
+    return {
+      title: '没有找到要删除的员工',
+      message: `当前工作区没有匹配“${step.employeeName ?? step.employeeId}”的员工。当前员工有：${config.employees.map((employee) => employee.name).join('、') || '暂无员工'}。`,
+      status: 'failed',
+      navigation,
+    } satisfies ReadDraft
+  }
+
+  const normalized = hydrateModelConfig({
+    ...cloneModelConfig(config),
+    employees: config.employees.filter((employee) => employee.id !== target.id),
+  })
+
+  return {
+    kind: 'workspace.update_draft',
+    title: '确认删除员工',
+    summary: `删除运营员工“${target.name}”。历史账本分录不会被删除，但后续测算不再包含该员工。`,
+    targetLabel: target.name,
+    riskLevel: 'high',
+    details: [
+      { label: '动作', value: '删除员工' },
+      { label: '员工名称', value: target.name },
+      { label: '员工 ID', value: target.id },
+      { label: '员工数变化', value: `${config.employees.length} -> ${normalized.employees.length}` },
+      { label: '审计说明', value: '仅覆盖当前草稿；历史版本和账本分录不被删除。' },
+    ],
+    navigation,
+    payload: {
+      revision: draft.revision,
+      workspaceName: ctx.workspace.name,
+      config: normalized,
+      patches: [{ path: 'employees', value: normalized.employees, label: '运营员工列表' }],
     },
   } satisfies AgentActionDraft
 }
@@ -1078,6 +1812,42 @@ async function planWorkspacePatch(
   } satisfies AgentActionDraft
 }
 
+async function planWorkspaceRename(ctx: PlannerContext, workspaceName: unknown) {
+  const nextName = typeof workspaceName === 'string' ? workspaceName.trim() : ''
+  if (!nextName) return null
+  if (nextName === ctx.workspace.name) {
+    return {
+      title: '工作区名称未变化',
+      message: `当前工作区已经叫“${nextName}”。`,
+      status: 'info',
+      navigation: {
+        type: 'navigation',
+        route: { mainTab: 'dashboard', secondaryTab: 'overview' },
+        panel: 'workspace',
+        reason: '工作区改名需要打开版本管理面板供核对。',
+      },
+    } satisfies ReadDraft
+  }
+  return {
+    kind: 'workspace.rename',
+    title: '确认修改工作区名称',
+    summary: `将工作区从“${ctx.workspace.name}”改名为“${nextName}”。`,
+    targetLabel: nextName,
+    riskLevel: 'medium',
+    details: [
+      { label: '原名称', value: ctx.workspace.name },
+      { label: '新名称', value: nextName },
+    ],
+    navigation: {
+      type: 'navigation',
+      route: { mainTab: 'dashboard', secondaryTab: 'overview' },
+      panel: 'workspace',
+      reason: '工作区改名需要打开版本管理面板供核对。',
+    },
+    payload: { workspaceName: nextName },
+  } satisfies AgentActionDraft
+}
+
 async function planSnapshot(ctx: PlannerContext) {
   if (!/保存.*快照|快照|保存当前版本/.test(ctx.message)) return null
   return {
@@ -1143,6 +1913,30 @@ async function planRollback(ctx: PlannerContext) {
       route: { mainTab: 'dashboard', secondaryTab: 'overview' },
       panel: 'workspace',
       reason: '恢复版本会覆盖当前草稿，需要打开版本管理面板。',
+    },
+    payload: { versionId: version.id },
+  } satisfies AgentActionDraft
+}
+
+async function planPromoteVersion(ctx: PlannerContext, input?: { versionNo?: number; versionName?: string }) {
+  const version = await versionFromMessage(ctx, ctx.message, input?.versionNo, input?.versionName)
+  if (!version) return null
+  return {
+    kind: 'workspace.promote_version',
+    title: '确认将快照发布为正式版',
+    summary: `先用“${version.name}”覆盖当前草稿，再发布为新的不可变正式版本。历史版本不会被改写。`,
+    targetLabel: version.name,
+    riskLevel: 'high',
+    details: [
+      { label: '来源版本', value: version.name },
+      { label: '版本号', value: `${version.version_no}` },
+      { label: '审计说明', value: '执行会产生一次恢复草稿和一次发布版本记录。' },
+    ],
+    navigation: {
+      type: 'navigation',
+      route: { mainTab: 'dashboard', secondaryTab: 'overview' },
+      panel: 'workspace',
+      reason: '快照发布属于版本管理动作，需要打开版本管理面板。',
     },
     payload: { versionId: version.id },
   } satisfies AgentActionDraft
@@ -1359,8 +2153,17 @@ async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePlanResul
   const context = {
     months: config.months.map((month, index) => ({ label: month.label, index, id: month.id })),
     teamMembers: config.teamMembers.map((member) => ({ id: member.id, name: member.name })),
+    employees: config.employees.map((employee) => ({ id: employee.id, name: employee.name, role: employee.role })),
     versions: versions.map((version) => ({ versionNo: version.version_no, name: version.name, kind: version.kind })),
     periods: periods.map((period) => ({ id: period.id, monthLabel: period.monthLabel })),
+    ledgerSubjects: periods[0]
+      ? (await listSubjectsForPeriod(ctx.db, ctx.workspace, periods[0].id)).map((subject) => ({
+          key: subject.subjectKey,
+          name: subject.subjectName,
+          type: subject.subjectType,
+          group: subject.subjectGroup,
+        }))
+      : [],
     tenantScopedMemory: runtimeContext.memories.map((memory) => ({
       kind: memory.kind,
       key: memory.key,
@@ -1386,20 +2189,11 @@ async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePlanResul
     message: redactSecretLikeContent(ctx.message),
     context,
     ...(ctx.abortSignal ? { abortSignal: ctx.abortSignal } : {}),
+    onStreamEvent: (event) => addProviderStreamRunEvent(ctx, event),
   })
 }
 
-async function plannedItemFromRuntimeStep(ctx: PlannerContext, step: RuntimePlannerStep): Promise<PlannedItem | null> {
-  if (step.intent === 'agent.reply') {
-    const message = typeof step.reply === 'string' && step.reply.trim()
-      ? step.reply.trim()
-      : '我是 xox-model Agent OS，可以通过对话驱动测算、调模型、记账、预实分析、版本、分享和锁账；写入动作会先生成可编辑确认卡。'
-    return {
-      title: 'Agent 回复',
-      message,
-      status: 'executed',
-    } satisfies ReadDraft
-  }
+async function plannedItemFromRuntimeStep(ctx: PlannerContext, step: RuntimePlannerStep): Promise<PlannedItem | PlannedItem[] | null> {
   if (step.intent === 'agent.ask_clarification') {
     const question = typeof step.question === 'string' && step.question.trim()
       ? step.question.trim()
@@ -1431,6 +2225,9 @@ async function plannedItemFromRuntimeStep(ctx: PlannerContext, step: RuntimePlan
       onlineUnits: step.onlineUnits ?? 0,
     })
   }
+  if (step.intent === 'ledger.create_entry') return planGenericLedgerCreateFromStep(ctx, step)
+  if (step.intent === 'ledger.create_planned_member_income_batch') return planPlannedMemberIncomeBatch(ctx, step)
+  if (step.intent === 'ledger.create_planned_related_expense_batch') return planPlannedRelatedExpenseBatch(ctx, step)
   if (step.intent === 'workspace.update_online_factor' && step.monthLabel && typeof step.onlineSalesFactor === 'number') {
     return planOnlineFactorFromFields(ctx, {
       monthLabel: step.monthLabel,
@@ -1440,6 +2237,8 @@ async function plannedItemFromRuntimeStep(ctx: PlannerContext, step: RuntimePlan
   }
   if (step.intent === 'team_member.add') return planAddTeamMemberFromStep(ctx, step)
   if (step.intent === 'team_member.delete') return planDeleteTeamMemberFromStep(ctx, step)
+  if (step.intent === 'employee.add') return planAddEmployeeFromStep(ctx, step)
+  if (step.intent === 'employee.delete') return planDeleteEmployeeFromStep(ctx, step)
   if (step.intent === 'shareholder.add') return planAddShareholderFromStep(ctx, step)
   if (step.intent === 'shareholder.delete') return planDeleteShareholderFromStep(ctx, step)
   if (step.intent === 'cost_item.add') return planAddCostItemFromStep(ctx, step)
@@ -1448,6 +2247,7 @@ async function plannedItemFromRuntimeStep(ctx: PlannerContext, step: RuntimePlan
   if (step.intent === 'stage_cost_type.delete') return planDeleteStageCostTypeFromStep(ctx, step)
   if (step.intent === 'workspace.patch_config' && readOnlyForecastRequested(ctx.message)) return null
   if (step.intent === 'workspace.patch_config' && step.patches) return planWorkspacePatch(ctx, step.patches)
+  if (step.intent === 'workspace.rename') return planWorkspaceRename(ctx, step.workspaceName)
   if (step.intent === 'workspace.save_snapshot') return planSnapshot(ctx)
   if (step.intent === 'workspace.publish_release') {
     return {
@@ -1490,6 +2290,12 @@ async function plannedItemFromRuntimeStep(ctx: PlannerContext, step: RuntimePlan
       },
       payload: { versionId: version.id },
     } satisfies AgentActionDraft
+  }
+  if (step.intent === 'workspace.promote_version') {
+    return planPromoteVersion(ctx, {
+      ...(step.versionNo !== undefined ? { versionNo: step.versionNo } : {}),
+      ...(step.versionName !== undefined ? { versionName: step.versionName } : {}),
+    })
   }
   if (step.intent === 'workspace.delete_version') return planDeleteVersion(ctx)
   if (step.intent === 'workspace.reset_draft') return planResetDraft(ctx)
@@ -1537,7 +2343,9 @@ async function plannedItemFromRuntimeStep(ctx: PlannerContext, step: RuntimePlan
       payload: { periodId: period.id },
     } satisfies AgentActionDraft
   }
-  if (step.intent === 'ledger.void_entry') return planLedgerVoid(ctx)
+  if (step.intent === 'ledger.update_entry') return planLedgerUpdateFromStep(ctx, step)
+  if (step.intent === 'ledger.restore_entry') return planLedgerRestoreFromStep(ctx, step)
+  if (step.intent === 'ledger.void_entry') return planLedgerVoidFromStep(ctx, step)
   if (step.intent === 'data.query_workspace') return answerWorkspaceDataQuestion(ctx, step)
   if (step.intent === 'ui.navigate' && step.mainTab) {
     return {
@@ -1570,6 +2378,7 @@ async function localPlannedItems(ctx: PlannerContext): Promise<PlannedItem[]> {
       await planImportBundle(scopedCtx),
       await planExportBundle(scopedCtx),
       await planSnapshot(scopedCtx),
+      /快照.*发布|发布.*快照|升为.*发布版|发布为正式版/.test(scopedCtx.message) ? await planPromoteVersion(scopedCtx) : null,
       await planPublish(scopedCtx),
       await planRollback(scopedCtx),
       await planDeleteVersion(scopedCtx),
@@ -1602,7 +2411,11 @@ async function modelPlannedItems(ctx: PlannerContext): Promise<{ source: AgentPl
     if (!result || result.steps.length === 0) {
       if (!requiredSource) return null
       source = source ?? result?.source ?? requiredSource
-      items.push(modelToolCallRequiredRead(result?.error))
+      if (result?.assistantText) {
+        items.push(providerAssistantTextRead(result.assistantText))
+      } else {
+        items.push(modelToolCallRequiredRead(result?.error))
+      }
       continue
     }
     source =
@@ -1612,7 +2425,11 @@ async function modelPlannedItems(ctx: PlannerContext): Promise<{ source: AgentPl
     const partItems: PlannedItem[] = []
     for (const step of result.steps) {
       const item = await plannedItemFromRuntimeStep(planningCtx, step)
-      if (item) partItems.push(item)
+      if (Array.isArray(item)) {
+        partItems.push(...item)
+      } else if (item) {
+        partItems.push(item)
+      }
     }
     if (partItems.length > 0) {
       items.push(...partItems)
@@ -1672,7 +2489,7 @@ export async function planResponse(ctx: PlannerContext) {
     threadId: ctx.threadId,
     runId: ctx.runId,
     type: 'tool_plan_ready',
-    title: failedCount > 0 ? '模型规划需要处理' : '模型工具调用已解析',
+    title: failedCount > 0 ? '模型规划需要处理' : actionCount > 0 ? '模型工具调用已解析' : '模型回复已生成',
     message:
       items.length > 0
         ? `模型规划生成 ${items.length} 个步骤，其中 ${actionCount} 个写入动作需要确认。`

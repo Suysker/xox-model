@@ -1,10 +1,14 @@
 export type AgentToolCallStep = {
   intent?: string
-  reply?: string
   monthLabel?: string
   memberId?: string
   memberName?: string
   newMemberName?: string
+  employeeId?: string
+  employeeName?: string
+  newEmployeeName?: string
+  role?: string
+  perEventCost?: number
   shareholderId?: string
   shareholderName?: string
   newShareholderName?: string
@@ -30,8 +34,31 @@ export type AgentToolCallStep = {
   optimisticUnitsPerEvent?: number
   offlineUnits?: number
   onlineUnits?: number
+  direction?: 'income' | 'expense'
+  subjectKey?: string
+  subjectName?: string
+  entryId?: string
+  entryStatus?: 'posted' | 'voided'
+  occurredAt?: string
+  occurredOn?: string
+  counterparty?: string
+  description?: string
+  relatedEntityType?: 'teamMember' | 'employee'
+  relatedEntityId?: string
+  relatedEntityName?: string
+  allocations?: Array<{ subjectKey?: string; subjectName?: string; amount: number }>
+  keyword?: string
+  dateMode?: 'all' | 'day' | 'week'
+  day?: string
+  week?: string
+  newAmount?: number
+  newSubjectKey?: string
+  newSubjectName?: string
+  newOccurredAt?: string
+  newRelatedEntityName?: string
   onlineSalesFactor?: number
   mode?: 'forecast' | 'write'
+  workspaceName?: string
   versionNo?: number
   versionName?: string
   createShare?: boolean
@@ -41,7 +68,7 @@ export type AgentToolCallStep = {
   question?: string
   missingFields?: string[]
   suggestions?: string[]
-  scope?: 'workspace_summary' | 'period_summary' | 'member_summary' | 'team_summary' | 'top_months'
+  scope?: 'workspace_summary' | 'period_summary' | 'member_summary' | 'team_summary' | 'top_months' | 'variance_detail' | 'ledger_history'
   metrics?: string[]
   order?: 'asc' | 'desc'
   limit?: number
@@ -84,26 +111,38 @@ const versionName: JsonSchema = {
   description: '版本或快照名称。',
 }
 
+const ledgerDirection: JsonSchema = {
+  type: 'string',
+  enum: ['income', 'expense'],
+  description: '账本方向：income=收入，expense=支出。',
+}
+
+const ledgerSubjectKey: JsonSchema = {
+  type: 'string',
+  description: '账本科目 key，例如 revenue.offline_sales、cost.member.base_pay；不确定时用 subjectName。',
+}
+
+const ledgerSubjectName: JsonSchema = {
+  type: 'string',
+  description: '账本科目名称，例如 线下营收、成员底薪、员工月薪、排练、某个自定义成本项。',
+}
+
+const ledgerEntryLocator = {
+  entryId: { type: 'string', description: '分录 id；已知时优先填写，能唯一定位。' } satisfies JsonSchema,
+  amount: { type: 'number', description: '用于定位或更新的金额。' } satisfies JsonSchema,
+  subjectKey: ledgerSubjectKey,
+  subjectName: ledgerSubjectName,
+  relatedEntityName: { type: 'string', description: '用于定位或设置归属对象的成员/员工名称。' } satisfies JsonSchema,
+  relatedEntityId: { type: 'string', description: '用于定位或设置归属对象的成员/员工 id。' } satisfies JsonSchema,
+  occurredOn: { type: 'string', description: '业务发生日期，YYYY-MM-DD。' } satisfies JsonSchema,
+  keyword: { type: 'string', description: '描述、对方单位、科目或归属对象关键词。' } satisfies JsonSchema,
+}
+
 function objectSchema(properties: Record<string, JsonSchema>, required: string[] = []): JsonSchema {
   return { type: 'object', properties, required, additionalProperties: false }
 }
 
 export const AGENT_TOOL_CATALOG: ChatTool[] = [
-  {
-    type: 'function',
-    function: {
-      name: 'agent_reply',
-      description:
-        '普通对话、问候、身份说明或能力说明的只读回复工具。用户说“你好”“你是谁”“你能做什么”等非业务写入请求时必须调用本工具；不要输出普通文本。回复中必须自称 xox-model Agent OS，不要自称 DeepSeek、Qwen、阿渠或其他名字。',
-      parameters: objectSchema({
-        message: {
-          type: 'string',
-          description:
-            '要展示给用户的中文回复。应简短、诚实说明你是 xox-model Agent OS，可通过对话驱动测算、调模型、记账、预实分析、版本、分享和锁账；写入前会生成确认卡。',
-        },
-      }, ['message']),
-    },
-  },
   {
     type: 'function',
     function: {
@@ -120,11 +159,107 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
   {
     type: 'function',
     function: {
+      name: 'ledger_create_entry',
+      description:
+        '规划一笔通用账本收入或支出确认卡。用于其他收入、普通支出、员工/成员支出按人入账。成员销售张数收入优先用 ledger_create_member_income；任意科目金额入账用本工具。',
+      parameters: objectSchema({
+        monthLabel,
+        direction: ledgerDirection,
+        subjectKey: ledgerSubjectKey,
+        subjectName: ledgerSubjectName,
+        amount: { type: 'number', description: '入账金额。' },
+        occurredAt: { type: 'string', description: '业务发生时间 ISO 字符串；只有用户明确日期时填写。' },
+        counterparty: { type: 'string', description: '对方单位或收付款方。' },
+        description: { type: 'string', description: '分录备注。' },
+        relatedEntityType: { type: 'string', enum: ['teamMember', 'employee'], description: '归属对象类型。成员/员工支出或成员收入需要填写。' },
+        relatedEntityName: { type: 'string', description: '归属成员或员工名称。' },
+        relatedEntityId: { type: 'string', description: '归属成员或员工 id。' },
+      }, ['monthLabel', 'direction', 'amount']),
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'ledger_create_planned_member_income_batch',
+      description:
+        '按当前基准计划为某个月所有成员生成多张成员收入入账确认卡。用户说“按计划一键入账所有成员收入 / 所有成员收入一键入账”时调用；不要直接执行。',
+      parameters: objectSchema({
+        monthLabel,
+      }, ['monthLabel']),
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'ledger_create_planned_related_expense_batch',
+      description:
+        '按当前基准计划为某个月某个成员/员工类支出科目生成多张按人支出确认卡。用于成员底薪、成员路费、员工月薪、员工场次的一键入账。',
+      parameters: objectSchema({
+        monthLabel,
+        subjectKey: ledgerSubjectKey,
+        subjectName: ledgerSubjectName,
+      }, ['monthLabel']),
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'ledger_void_entry',
-      description: '规划作废某个月符合条件的一笔账本分录。',
+      description: '规划作废/撤销某个月符合条件的一笔账本分录。用户说“作废某人这笔入账/撤销某笔支出/精确作废 entryId”时调用。支持 entryId、金额、日期、科目、对象、关键词精确定位；如果无法唯一定位，调用 ask_user_clarification。',
       parameters: objectSchema({
         monthLabel,
         memberName: { type: 'string', description: '可选成员名称，用于缩小分录候选范围。' },
+        direction: ledgerDirection,
+        ...ledgerEntryLocator,
+      }, ['monthLabel']),
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'ledger_restore_entry',
+      description: '规划取消作废/恢复某个月一笔已作废账本分录。支持 entryId、金额、日期、科目、对象、关键词精确定位。',
+      parameters: objectSchema({
+        monthLabel,
+        direction: ledgerDirection,
+        entryStatus: { type: 'string', enum: ['voided'], description: '恢复分录时固定为 voided。' },
+        ...ledgerEntryLocator,
+      }, ['monthLabel']),
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'ledger_update_entry',
+      description:
+        '规划修改历史账本分录确认卡。先用 entryId 或金额/日期/科目/对象/关键词定位一笔已过账手工分录，再按新金额、科目、日期、对方、备注或归属对象更新。',
+      parameters: objectSchema({
+        monthLabel,
+        direction: ledgerDirection,
+        entryId: ledgerEntryLocator.entryId,
+        amount: ledgerEntryLocator.amount,
+        subjectKey: ledgerSubjectKey,
+        subjectName: ledgerSubjectName,
+        occurredOn: ledgerEntryLocator.occurredOn,
+        keyword: ledgerEntryLocator.keyword,
+        relatedEntityName: ledgerEntryLocator.relatedEntityName,
+        newAmount: { type: 'number', description: '更新后的总金额；未提供时沿用原金额。' },
+        newSubjectKey: { ...ledgerSubjectKey, description: '更新后的科目 key。' },
+        newSubjectName: { ...ledgerSubjectName, description: '更新后的科目名称。' },
+        newOccurredAt: { type: 'string', description: '更新后的业务发生时间 ISO 字符串或 YYYY-MM-DD。' },
+        counterparty: { type: 'string', description: '更新后的对方单位。' },
+        description: { type: 'string', description: '更新后的备注。' },
+        relatedEntityType: { type: 'string', enum: ['teamMember', 'employee'], description: '更新后的归属对象类型。' },
+        newRelatedEntityName: { type: 'string', description: '更新后的归属对象名称。' },
+        allocations: {
+          type: 'array',
+          description: '更新后的分摊明细；不填时服务端用新科目/新金额或原科目生成。',
+          items: objectSchema({
+            subjectKey: ledgerSubjectKey,
+            subjectName: ledgerSubjectName,
+            amount: { type: 'number', description: '分摊金额。' },
+          }, ['amount']),
+        },
       }, ['monthLabel']),
     },
   },
@@ -180,6 +315,32 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
       parameters: objectSchema({
         memberName: { type: 'string', description: '要删除的成员名称，例如 成员 A。' },
         memberId: { type: 'string', description: '要删除的成员 id；如果已经知道 id，可用 id 精确定位。' },
+      }),
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'employee_add',
+      description:
+        '规划在当前模型草稿里新增一个运营员工。用户说“新增员工 / 添加员工 / 加一个员工 / 新建员工”时必须调用本工具；本工具只生成确认卡，不直接保存。',
+      parameters: objectSchema({
+        newEmployeeName: { type: 'string', description: '新增员工名称；用户未指定时可省略，由服务端生成默认名称。' },
+        role: { type: 'string', description: '岗位，例如 场务、助理、执行。' },
+        monthlyBasePay: { type: 'number', description: '月固定薪酬，未提及时省略。' },
+        perEventCost: { type: 'number', description: '每场补贴或场次成本，未提及时省略。' },
+      }),
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'employee_delete',
+      description:
+        '规划从当前模型草稿里删除一个运营员工。用户说“删除员工 / 移除员工 / 删掉员工”时必须调用本工具；必须提供 employeeName 或 employeeId。若用户没有指定删除谁，调用 ask_user_clarification，不要猜测。',
+      parameters: objectSchema({
+        employeeName: { type: 'string', description: '要删除的员工名称，例如 员工 1、场务 A。' },
+        employeeId: { type: 'string', description: '要删除的员工 id；如果已经知道 id，可用 id 精确定位。' },
       }),
     },
   },
@@ -288,6 +449,16 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
   {
     type: 'function',
     function: {
+      name: 'workspace_rename',
+      description: '规划修改当前工作区名称。用户说“把工作区改名为 / 重命名工作区”时调用本工具；只生成确认卡。',
+      parameters: objectSchema({
+        workspaceName: { type: 'string', description: '新的工作区名称。' },
+      }, ['workspaceName']),
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'workspace_save_snapshot',
       description: '规划保存当前草稿快照。',
       parameters: objectSchema({}),
@@ -301,6 +472,14 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
       parameters: objectSchema({
         createShare: { type: 'boolean', description: '发布后是否继续创建分享链接。' },
       }),
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'workspace_promote_version',
+      description: '规划把某个快照或版本先恢复为当前草稿，再发布为新的正式版本。用户说“把某快照发布为正式版 / 将快照升为发布版”时调用。',
+      parameters: objectSchema({ versionNo, versionName }),
     },
   },
   {
@@ -382,8 +561,8 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
         question: { type: 'string', description: '用户原始问题的简短复述。' },
         scope: {
           type: 'string',
-          enum: ['workspace_summary', 'period_summary', 'member_summary', 'team_summary', 'top_months'],
-          description: '查询范围：整体工作区、单月汇总、指定成员汇总、团队成员数量/名单、月份排行。用户问“几个成员/有哪些成员/团队构成”时用 team_summary。',
+          enum: ['workspace_summary', 'period_summary', 'member_summary', 'team_summary', 'top_months', 'variance_detail', 'ledger_history'],
+          description: '查询范围：整体工作区、单月汇总、指定成员汇总、团队成员数量/名单、月份排行、预实科目差异、账本历史筛选。用户问“几个成员/有哪些成员/团队构成”时用 team_summary。',
         },
         monthLabel: { ...monthLabel, description: '可选目标月份，例如 3月；scope=period_summary 时优先提供。' },
         memberName: { type: 'string', description: '可选成员名称；scope=member_summary 时优先提供。' },
@@ -397,6 +576,14 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
         },
         order: { type: 'string', enum: ['asc', 'desc'], description: '排行方向，仅 scope=top_months 使用。' },
         limit: { type: 'number', description: '返回排行数量，仅 scope=top_months 使用。' },
+        subjectKey: ledgerSubjectKey,
+        subjectName: ledgerSubjectName,
+        direction: ledgerDirection,
+        entryStatus: { type: 'string', enum: ['posted', 'voided'], description: '账本筛选状态。' },
+        dateMode: { type: 'string', enum: ['all', 'day', 'week'], description: '账本历史日期筛选模式。' },
+        day: { type: 'string', description: '账本历史某天筛选，YYYY-MM-DD。' },
+        week: { type: 'string', description: '账本历史某周筛选，YYYY-Www。' },
+        keyword: { type: 'string', description: '账本历史或预实科目关键词。' },
       }, ['question', 'scope']),
     },
   },
@@ -432,12 +619,20 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
 
 export function toolCallToPlannerStep(toolName: string, args: Record<string, unknown>): AgentToolCallStep | null {
   switch (toolName) {
-    case 'agent_reply':
-      return { intent: 'agent.reply', reply: typeof args.message === 'string' ? args.message : '' }
     case 'ledger_create_member_income':
       return { intent: 'ledger.create_member_income', ...args }
+    case 'ledger_create_entry':
+      return { intent: 'ledger.create_entry', ...args }
+    case 'ledger_create_planned_member_income_batch':
+      return { intent: 'ledger.create_planned_member_income_batch', ...args }
+    case 'ledger_create_planned_related_expense_batch':
+      return { intent: 'ledger.create_planned_related_expense_batch', ...args }
     case 'ledger_void_entry':
       return { intent: 'ledger.void_entry', ...args }
+    case 'ledger_restore_entry':
+      return { intent: 'ledger.restore_entry', ...args }
+    case 'ledger_update_entry':
+      return { intent: 'ledger.update_entry', ...args }
     case 'ledger_set_period_lock':
       return { intent: 'ledger.set_period_lock', ...args }
     case 'workspace_update_online_factor':
@@ -446,6 +641,10 @@ export function toolCallToPlannerStep(toolName: string, args: Record<string, unk
       return { intent: 'team_member.add', ...args }
     case 'team_member_delete':
       return { intent: 'team_member.delete', ...args }
+    case 'employee_add':
+      return { intent: 'employee.add', ...args }
+    case 'employee_delete':
+      return { intent: 'employee.delete', ...args }
     case 'shareholder_add':
       return { intent: 'shareholder.add', ...args }
     case 'shareholder_delete':
@@ -460,10 +659,14 @@ export function toolCallToPlannerStep(toolName: string, args: Record<string, unk
       return { intent: 'stage_cost_type.delete', ...args }
     case 'workspace_patch_config':
       return { intent: 'workspace.patch_config', ...args }
+    case 'workspace_rename':
+      return { intent: 'workspace.rename', ...args }
     case 'workspace_save_snapshot':
       return { intent: 'workspace.save_snapshot', ...args }
     case 'workspace_publish_release':
       return { intent: 'workspace.publish_release', ...args }
+    case 'workspace_promote_version':
+      return { intent: 'workspace.promote_version', ...args }
     case 'workspace_rollback_version':
       return { intent: 'workspace.rollback_version', ...args }
     case 'workspace_delete_version':

@@ -2,6 +2,7 @@ import { Building2, Lock, LockOpen, ReceiptText, WalletCards } from 'lucide-reac
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { RefObject } from 'react'
 import type { EntryAllocation, EntryResponse, PeriodResponse, SubjectResponse } from '../../lib/api'
+import type { AgentLedgerHistoryFilters } from '../../lib/api'
 import { findPeriodIdForDateValue, getTodayInputDate, syncInputDateForPeriodChange } from '../../lib/bookkeeping'
 import { cx, formatCurrency } from '../../lib/format'
 import type { MonthlyScenarioResult } from '../../types'
@@ -122,6 +123,7 @@ export function BookkeepingPanel(props: {
   plannedMonthResult: MonthlyScenarioResult | null
   offlineUnitPrice: number
   onlineUnitPrice: number
+  historyFilters?: AgentLedgerHistoryFilters | null
   onSelectPeriod: (id: string) => void
   onSubmit: (payload: BookkeepingSubmitPayload) => Promise<boolean | void>
   onUpdate: (entryId: string, payload: BookkeepingUpdatePayload) => Promise<boolean | void>
@@ -827,6 +829,7 @@ export function BookkeepingPanel(props: {
         plannedMonthResult={props.plannedMonthResult}
         offlineUnitPrice={props.offlineUnitPrice}
         onlineUnitPrice={props.onlineUnitPrice}
+        initialFilters={props.historyFilters ?? null}
         onUpdate={props.onUpdate}
         onVoid={props.onVoid}
         onRestore={props.onRestore}

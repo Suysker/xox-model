@@ -24,7 +24,7 @@ import { SharedVersionScreen } from './components/share/SharedVersionScreen'
 import { VariancePanel } from './components/variance/VariancePanel'
 import { WorkspacePanel } from './components/workspace/WorkspacePanel'
 import { useWorkspace } from './hooks/useWorkspace'
-import { api, type AgentActionRequest, type AgentNavigationEvent, type AuthUser, type EntryResponse, type PeriodResponse, type SubjectResponse, type VarianceResponse } from './lib/api'
+import { api, type AgentActionRequest, type AgentLedgerHistoryFilters, type AgentNavigationEvent, type AuthUser, type EntryResponse, type PeriodResponse, type SubjectResponse, type VarianceResponse } from './lib/api'
 import { findMonthIdForPeriod, findPeriodIdForDateValue, findPeriodIdForSelectedMonth, getTodayInputDate } from './lib/bookkeeping'
 import {
   createCostItem,
@@ -269,6 +269,7 @@ export default function App() {
   const [subjects, setSubjects] = useState<SubjectResponse[]>([])
   const [entries, setEntries] = useState<EntryResponse[]>([])
   const [variance, setVariance] = useState<VarianceResponse | null>(null)
+  const [agentLedgerHistoryFilters, setAgentLedgerHistoryFilters] = useState<AgentLedgerHistoryFilters | null>(null)
   const [ledgerBusy, setLedgerBusy] = useState(false)
   const [workspaceOpen, setWorkspaceOpen] = useState(false)
   const [banner, setBanner] = useState<BannerState | null>(null)
@@ -685,6 +686,10 @@ export default function App() {
 
     if (route.selectedPeriodId) {
       handleSelectPeriod(route.selectedPeriodId)
+    }
+
+    if (event.ledgerFilters) {
+      setAgentLedgerHistoryFilters(event.ledgerFilters)
     }
 
     if (event.panel === 'workspace') {
@@ -1524,6 +1529,7 @@ export default function App() {
                 plannedMonthResult={selectedPlannedMonthResult}
                 offlineUnitPrice={config.operating.offlineUnitPrice}
                 onlineUnitPrice={config.operating.onlineUnitPrice}
+                historyFilters={agentLedgerHistoryFilters}
                 onSelectPeriod={handleSelectPeriod}
                 onSubmit={handleSubmitEntry}
                 onUpdate={handleUpdateEntry}

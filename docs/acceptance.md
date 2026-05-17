@@ -68,17 +68,23 @@
 - [x] Provider 调用错误不会再伪装成“模型未返回工具调用”；API 测试覆盖 HTTP 401 认证失败会提示重新保存当前 provider 的 API key
 - [x] 配置 `AGENT_PROVIDER_KEY_ENCRYPTION_SECRET` 后，用户 provider key 以 `enc:v1` ciphertext 入库；API 测试覆盖密文存储、运行时解密调用 provider、旧明文记录升级后仍可读取
 - [x] Agent prompts、tool catalog、memory/context 模块有独立代码边界，不把系统提示词散在路由代码里
-- [x] 普通对话、问候、身份说明和能力说明通过 `agent_reply` 只读 tool_call 返回；真实 DeepSeek smoke 覆盖“你好，告诉我你是谁”，不会再把基础对话误判为“模型未返回工具调用”
+- [x] 普通对话、问候、身份说明和能力说明通过 provider assistant 文本直接返回；`agent_reply` 废弃工具已删除，真实 DeepSeek smoke 覆盖“你好，告诉我你是谁”，不会把基础对话误判为规划失败
 - [x] Agent memory 按用户和工作区隔离，支持查询和删除；长对话会生成同租户上下文摘要
 - [x] 新建对话后，真实 provider 请求会注入同用户 / 同工作区 memory
 - [x] 记账类命令会生成确认卡，确认后过账并刷新工作台
 - [x] 线上系数试算类命令只读执行，不修改草稿
 - [x] 团队成员新增/删除通过 `team_member_add / team_member_delete` 专用 tool call 生成可编辑草稿确认卡；删除最后一个成员会被服务端拒绝，不生成破坏模型可计算性的确认卡
+- [x] 员工新增/删除通过 `employee_add / employee_delete` 专用 tool call 生成可编辑草稿确认卡，进入成本工作台，确认后更新当前草稿
 - [x] 股东新增/删除、基础成本项新增/删除、专项成本类型新增/删除通过专用 tool call 生成可编辑草稿确认卡；股东已有字段编辑继续走 `workspace_patch_config`，删除最后一个股东会被服务端拒绝
+- [x] 工作区改名通过 `workspace_rename` 生成版本管理面板确认卡，确认后只修改当前工作区名称，不暴露账号动作
+- [x] 其他收入、普通支出、成员/员工按人支出通过 `ledger_create_entry` 覆盖；一键入账多笔通过 `ledger_create_planned_member_income_batch / ledger_create_planned_related_expense_batch` 展开为多张可编辑确认卡
+- [x] 历史分录修改、精确作废、取消作废/恢复通过 `ledger_update_entry / ledger_void_entry / ledger_restore_entry` 覆盖；定位不唯一时返回只读澄清/失败步骤，不猜测执行
+- [x] “把某快照发布为正式版”通过 `workspace_promote_version` 覆盖：先恢复该快照到草稿，再发布新的不可变正式版本，历史版本不改写
+- [x] 预实分析深度追问和账本历史按日/周/状态/关键词筛选通过 `data_query_workspace` 只读工具覆盖，并把 React 页面切到偏差页或账本页且带入筛选条件
 - [x] 草稿修改、发布、恢复、分享、锁账等写入动作采用确认卡协议
 - [x] 账号登录、退出、注销、删除账号和密码类动作不允许 Agent 自动执行
 - [x] Agent 写入动作会记录 `agent_action_requests` 和 `audit_logs`
-- [x] `npm.cmd run smoke:agent` 提供受控真实 OpenAI-compatible provider smoke：默认使用 DeepSeek，但通过 `OPENAI_COMPATIBLE_*` 可切换豆包、Qwen 等兼容服务；不允许无 key 回退，覆盖 37 个真实模型方向：provider setting、普通对话只读回复、只读预测、Data agent 单月问题、Data agent 团队成员数量、团队成员新增确认卡、团队成员删除确认卡、股东新增确认卡、股东删除确认卡、基础成本项新增确认卡、基础成本项删除确认卡、专项成本类型新增确认卡、专项成本类型删除确认卡、background run 恢复、持久运行轨迹、缺信息澄清提问、memory 写入、新对话记忆注入、多步骤、账号动作拒绝、记账确认卡、确认卡载荷编辑、作废分录、草稿专用字段保存、通用草稿 patch、工作区 bundle 导出、工作区 bundle 导入、锁账、解锁、保存快照、发布、创建分享、撤销分享、恢复版本、删除版本、重置草稿和审计
+- [x] `npm.cmd run smoke:agent` 提供受控真实 OpenAI-compatible provider smoke：默认使用 DeepSeek，但通过 `OPENAI_COMPATIBLE_*` 可切换豆包、Qwen 等兼容服务；不允许无 key 回退，本轮真实 DeepSeek `deepseek-v4-pro` 覆盖 50 个方向，包括 provider setting、普通对话、只读预测、Data agent 单月/团队问题、团队成员/员工/股东/成本/专项成本新增删除、工作区改名、缺信息澄清、memory 写入、新对话记忆注入、多步骤、账号动作拒绝、可编辑确认卡、通用收入/支出/员工支出、批量确认卡、历史分录修改/精确作废/恢复、预实深度追问、账本历史筛选、草稿保存/patch、bundle 导入导出、锁账/解锁、快照、快照发布、发布分享、撤销分享、恢复版本、删除版本、重置草稿和审计
 - [x] 真实 DeepSeek smoke 已验证锁账/解锁不是后端规则推断：planner source 为 `openai_compatible_tool_calls`，模型会根据 tool catalog 和 planner prompt 调用 `ledger_set_period_lock` 并生成确认卡
 - [x] 后端接口级 Agent capability matrix 覆盖超过 10 个不同方向的复杂任务，并全部通过：
   - 记忆写入
@@ -88,10 +94,17 @@
   - 草稿参数保存
   - 通用模型 patch
   - 新增 / 删除团队成员
+  - 新增 / 删除运营员工
+  - 工作区改名
   - 新增 / 编辑 / 删除股东
   - 新增 / 删除基础成本项
   - 新增 / 删除专项成本类型
   - 确认卡编辑后执行
+  - 通用收入 / 支出 / 按人支出
+  - 批量入账确认卡
+  - 修改历史分录 / 精确作废 / 恢复作废分录
+  - 快照发布为正式版
+  - 预实深度追问和账本历史筛选
   - 锁账 / 解锁
   - 工作区 bundle 导出 / 导入
   - 保存快照
@@ -113,7 +126,7 @@
 - [x] Confirmation service 已从 `modules/agent.ts` 抽到 `apps/api/src/agent/action-requests.ts`，统一处理确认卡创建、编辑、确认、取消、执行状态、assistant message、run event 和审计；routes 只做 HTTP 编排与 thread publish
 - [x] Server tool execution 已从 confirmation service 抽到 `apps/api/src/agent/tool-executor.ts`，确认执行时先走 tool policy，再由 executor 调用 workspace / ledger / share 领域服务；provider/runtime 仍不能直接写业务数据
 - [x] `packages/contracts` 的 planner source 已改为 `openai_agents / openai_compatible_tool_calls / rules`，不再把 DeepSeek planner source 作为唯一主语义，也不再接受 assistant JSON 文本冒充 tool call
-- [x] 常规 Agent 请求在 `LLM_PROVIDER != rules` 时不会用本地正则/规则替模型生成业务动作；API 测试覆盖“provider 有 key 但未返回 tool_calls”和“provider 被选择但无 key”两种情况，均不生成确认卡
+- [x] 常规 Agent 请求在 `LLM_PROVIDER != rules` 时不会用本地正则/规则替模型生成业务动作；API 测试覆盖“provider 有 key 但只返回 assistant 文本”和“provider 被选择但无 key”两种情况，均不生成确认卡
 - [x] Data agent 只读问答必须由模型调用 `data_query_workspace`，API 测试和真实 smoke 覆盖“3 月计划收入和计划成本是多少”这类问题；该路径不生成确认卡、不写业务数据，并打开对应分析页面
 - [x] Data Agent 只读回答生成已从 `modules/agent.ts` 抽到 `apps/api/src/agent/data-agent.ts`，只读取当前 workspace projection / ledger period summary，返回回答和导航事件，不创建确认卡、不写业务数据
 - [x] `LLM_PROVIDER=openai` 时可通过 OpenAI Agents SDK adapter 跑通只读 tool call 和确认卡写入预览；API 测试用本地 fake OpenAI Chat Completions server 验证 SDK `Agent / Runner / tool / OpenAIProvider` 路径
@@ -138,5 +151,5 @@
 - [x] 用户可取消 running run；取消后 run 进入 `cancelled`，当前 provider 请求会被中止，迟到的模型结果不能把 run 改回 completed，也不能留下 pending 确认卡
 - [x] 缺少必要业务信息时，模型可通过 `ask_user_clarification` tool_call 生成只读澄清步骤；API 测试和真实 smoke 覆盖“不知道月份/成员/张数时先问用户”，不生成确认卡、不用规则猜参数
 - [x] 浏览器刷新时 `/api/v1/auth/me` 并发恢复保持幂等，不会因 token 旋转竞态把用户踢回登录页，从而保证 Agent thread 恢复能发生
-- [ ] React Agent OS 支持 provider token 级流式输出；当前已经支持服务端 thread state SSE，但 provider streaming chunk 还未接入
-- [ ] 页面可手动修改的业务能力全部映射到 tool registry，或在工具矩阵中列出明确禁止原因；当前剩余缺口是 Agent 模块拆分、独立队列进程/跨实例 pubsub 和 provider token 级流式输出
+- [x] React Agent OS 支持 OpenAI-compatible provider token/tool-call chunk 级流式输出；服务端以 `stream: true` 调用兼容 Chat Completions provider，把脱敏截断后的 `provider_stream_*` 持久 run event 通过既有 thread state SSE 投影到前端实时预览；API 测试覆盖 fake SSE provider 的 chunk 聚合和确认卡生成，web 测试覆盖前端聚合展示
+- [x] 页面手动可修改的业务能力已映射到语义 tool 或 `workspace_patch_config` 覆盖矩阵；账号动作是明确手动项

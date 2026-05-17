@@ -2,6 +2,7 @@ import type { ModelConfig, ModelResult } from '../types'
 import type {
   AgentActionRequest,
   AgentActionUpdatePayload,
+  AgentLedgerHistoryFilters,
   AgentMemoryRecord,
   AgentMessage,
   AgentNavigationEvent,
@@ -155,6 +156,7 @@ export type PublicShareResponse = {
 export type {
   AgentActionRequest,
   AgentActionUpdatePayload,
+  AgentLedgerHistoryFilters,
   AgentMemoryRecord,
   AgentMessage,
   AgentNavigationEvent,

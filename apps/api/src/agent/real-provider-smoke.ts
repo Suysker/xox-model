@@ -457,6 +457,47 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     await confirmAction(client, deleteStageCostTypeAction, 'confirm delete stage cost type', actionKinds)
     rememberCoverage(coveredDirections, 'stage_cost_type_delete_confirmation')
 
+    const addEmployee = await sendAgentMessage(client, plannerSources, {
+      label: 'add employee',
+      threadId: forecast.json.threadId,
+      message: '新增员工，名字叫 场务 C，岗位 场务，月固定薪酬 3200，每场补贴 180，只生成确认卡',
+    })
+    const addEmployeeAction = findAction(addEmployee, 'workspace.update_draft', 'add employee')
+    assertSmoke(String(addEmployeeAction.title).includes('新增员工'), `employee add did not use dedicated employee planner: ${String(addEmployeeAction.title)}`)
+    assertSmoke(addEmployeeAction.navigation?.route?.secondaryTab === 'cost', 'employee add did not navigate to cost inputs')
+    await confirmAction(client, addEmployeeAction, 'confirm add employee', actionKinds)
+    const draftAfterAddEmployee = await client.get('/api/v1/workspace/draft')
+    assertOk(draftAfterAddEmployee, 'draft after add employee')
+    assertSmoke(
+      draftAfterAddEmployee.json.config.employees.some((employee: any) => employee.name === '场务 C'),
+      'confirmed add employee did not persist 场务 C',
+    )
+    rememberCoverage(coveredDirections, 'employee_add_confirmation')
+
+    const deleteEmployee = await sendAgentMessage(client, plannerSources, {
+      label: 'delete employee',
+      threadId: forecast.json.threadId,
+      message: '删除员工 场务 C',
+    })
+    const deleteEmployeeAction = findAction(deleteEmployee, 'workspace.update_draft', 'delete employee')
+    assertSmoke(String(deleteEmployeeAction.title).includes('删除员工'), `employee delete did not use dedicated employee planner: ${String(deleteEmployeeAction.title)}`)
+    assertSmoke(deleteEmployeeAction.riskLevel === 'high', 'employee delete should be a high-risk confirmation')
+    await confirmAction(client, deleteEmployeeAction, 'confirm delete employee', actionKinds)
+    rememberCoverage(coveredDirections, 'employee_delete_confirmation')
+
+    const renameWorkspace = await sendAgentMessage(client, plannerSources, {
+      label: 'rename workspace',
+      threadId: forecast.json.threadId,
+      message: '把当前工作区改名为 Agent Smoke 工作区，只生成确认卡',
+    })
+    const renameWorkspaceAction = findAction(renameWorkspace, 'workspace.rename', 'rename workspace')
+    assertSmoke(renameWorkspaceAction.navigation?.panel === 'workspace', 'workspace rename did not open workspace panel')
+    await confirmAction(client, renameWorkspaceAction, 'confirm rename workspace', actionKinds)
+    const draftAfterRename = await client.get('/api/v1/workspace/draft')
+    assertOk(draftAfterRename, 'draft after workspace rename')
+    assertSmoke(draftAfterRename.json.workspaceName === 'Agent Smoke 工作区', 'workspace rename did not persist')
+    rememberCoverage(coveredDirections, 'workspace_rename')
+
     const clarification = await sendAgentMessage(client, plannerSources, {
       label: 'clarification for missing ledger fields',
       threadId: forecast.json.threadId,
@@ -520,11 +561,113 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     const confirmedLedger = await confirmAction(client, ledgerAction, 'confirm ledger', actionKinds)
     assertSmoke(Number(confirmedLedger.json.result.amount) === Number(editedPayload.amount), 'confirmed ledger did not use edited payload')
     editableActionExecutedAmount = Number(confirmedLedger.json.result.amount)
+    const editedLedgerEntryId = String(confirmedLedger.json.result.id)
+    assertSmoke(editedLedgerEntryId.length > 0, 'confirmed ledger did not return an entry id')
+
+    const genericIncome = await sendAgentMessage(client, plannerSources, {
+      label: 'generic other income ledger entry',
+      threadId: multi.json.threadId,
+      message: '3 月记一笔其他收入 500 元，科目用其他收入或退款，发生日 2026-03-10，对方是场地方退款，只生成确认卡',
+    })
+    const genericIncomeAction = findAction(genericIncome, 'ledger.create_entry', 'generic other income ledger entry')
+    assertSmoke(genericIncomeAction.payload?.direction === 'income', 'generic income did not create an income ledger action')
+    await confirmAction(client, genericIncomeAction, 'confirm generic other income ledger entry', actionKinds)
+    rememberCoverage(coveredDirections, 'ledger_generic_income')
+
+    const genericExpense = await sendAgentMessage(client, plannerSources, {
+      label: 'generic expense ledger entry',
+      threadId: multi.json.threadId,
+      message: '3 月记一笔普通支出 300 元，科目是排练费，发生日 2026-03-12，备注 Agent smoke 排练支出，只生成确认卡',
+    })
+    const genericExpenseAction = findAction(genericExpense, 'ledger.create_entry', 'generic expense ledger entry')
+    assertSmoke(genericExpenseAction.payload?.direction === 'expense', 'generic expense did not create an expense ledger action')
+    const confirmedGenericExpense = await confirmAction(client, genericExpenseAction, 'confirm generic expense ledger entry', actionKinds)
+    const genericExpenseEntryId = String(confirmedGenericExpense.json.result.id)
+    assertSmoke(genericExpenseEntryId.length > 0, 'generic expense did not return an entry id')
+    rememberCoverage(coveredDirections, 'ledger_generic_expense')
+
+    const employeeExpense = await sendAgentMessage(client, plannerSources, {
+      label: 'employee related expense ledger entry',
+      threadId: multi.json.threadId,
+      message: '3 月给员工 A 记一笔员工场次支出 200 元，只生成确认卡',
+    })
+    const employeeExpenseAction = findAction(employeeExpense, 'ledger.create_entry', 'employee related expense ledger entry')
+    assertSmoke(employeeExpenseAction.payload?.relatedEntityType === 'employee', 'employee expense did not bind an employee related entity')
+    await confirmAction(client, employeeExpenseAction, 'confirm employee related expense ledger entry', actionKinds)
+    rememberCoverage(coveredDirections, 'ledger_employee_related_expense')
+
+    const batchLedger = await sendAgentMessage(client, plannerSources, {
+      label: 'batch planned ledger confirmations',
+      threadId: multi.json.threadId,
+      message: '按当前计划，把 3 月所有成员计划收入一键入账；再把 3 月所有员工场次支出按计划一键入账，只生成多张确认卡，不要直接执行',
+    })
+    assertSmoke(batchLedger.json.actionRequests.length > 3, `batch ledger did not create multiple confirmation cards: ${JSON.stringify(batchLedger.json.actionRequests)}`)
+    assertSmoke(
+      batchLedger.json.actionRequests.every((action: any) => action.kind === 'ledger.create_entry'),
+      'batch ledger produced a non-ledger confirmation card',
+    )
+    maxMultiStepCount = Math.max(maxMultiStepCount, batchLedger.json.planSteps.length)
+    rememberCoverage(coveredDirections, 'ledger_batch_confirmation_cards')
+
+    const updateEntry = await sendAgentMessage(client, plannerSources, {
+      label: 'update ledger entry',
+      threadId: multi.json.threadId,
+      message: `把 entryId 为 ${genericExpenseEntryId} 的 3 月排练支出金额改成 456 元，备注改成 Agent smoke 已修改，只生成确认卡`,
+    })
+    const updateEntryAction = findAction(updateEntry, 'ledger.update_entry', 'update ledger entry')
+    const confirmedUpdateEntry = await confirmAction(client, updateEntryAction, 'confirm update ledger entry', actionKinds)
+    assertSmoke(Number(confirmedUpdateEntry.json.result.amount) === 456, 'ledger update did not persist the edited amount')
+    rememberCoverage(coveredDirections, 'ledger_update_entry')
+
+    const preciseVoidEntry = await sendAgentMessage(client, plannerSources, {
+      label: 'precise void ledger entry',
+      threadId: multi.json.threadId,
+      message: `精确作废 entryId 为 ${genericExpenseEntryId} 的 3 月排练支出，只生成确认卡`,
+    })
+    const preciseVoidAction = findAction(preciseVoidEntry, 'ledger.void_entry', 'precise void ledger entry')
+    await confirmAction(client, preciseVoidAction, 'confirm precise void ledger entry', actionKinds)
+    rememberCoverage(coveredDirections, 'ledger_precise_void_entry')
+
+    const restoreEntry = await sendAgentMessage(client, plannerSources, {
+      label: 'restore voided ledger entry',
+      threadId: multi.json.threadId,
+      message: `取消作废并恢复 entryId 为 ${genericExpenseEntryId} 的 3 月排练支出，只生成确认卡`,
+    })
+    const restoreAction = findAction(restoreEntry, 'ledger.restore_entry', 'restore voided ledger entry')
+    await confirmAction(client, restoreAction, 'confirm restore voided ledger entry', actionKinds)
+    rememberCoverage(coveredDirections, 'ledger_restore_entry')
+
+    const varianceDetail = await sendAgentMessage(client, plannerSources, {
+      label: 'variance detail question',
+      threadId: multi.json.threadId,
+      message: '3 月排练费预实差异明细是什么？请只读回答并打开偏差页，不要修改数据',
+    })
+    assertSmoke(varianceDetail.json.actionRequests.length === 0, 'variance detail created a write confirmation')
+    assertSmoke(varianceDetail.json.navigationEvents.some((event: any) => event.route?.mainTab === 'variance'), 'variance detail did not open variance page')
+    assertSmoke(String(varianceDetail.json.messages.at(-1)?.content ?? '').includes('排练'), 'variance detail did not mention the requested subject')
+    rememberCoverage(coveredDirections, 'variance_detail_question')
+
+    const ledgerHistory = await sendAgentMessage(client, plannerSources, {
+      label: 'ledger history filter question',
+      threadId: multi.json.threadId,
+      message: '帮我筛选 3 月账本历史：日期 2026-03-12，状态已过账，关键词排练，只读打开账本历史过滤器',
+    })
+    assertSmoke(ledgerHistory.json.actionRequests.length === 0, 'ledger history filter created a write confirmation')
+    assertSmoke(
+      ledgerHistory.json.navigationEvents.some((event: any) =>
+        event.route?.mainTab === 'bookkeeping' &&
+        event.ledgerFilters?.dateMode === 'day' &&
+        event.ledgerFilters?.day === '2026-03-12' &&
+        event.ledgerFilters?.keyword,
+      ),
+      `ledger history filter did not carry visible filters: ${JSON.stringify(ledgerHistory.json.navigationEvents)}`,
+    )
+    rememberCoverage(coveredDirections, 'ledger_history_filters')
 
     const voidEntry = await sendAgentMessage(client, plannerSources, {
       label: 'void ledger entry',
       threadId: multi.json.threadId,
-      message: '作废 3 月成员 A 这笔入账',
+      message: `作废 entryId 为 ${editedLedgerEntryId} 的 3 月成员 A 入账，只生成确认卡`,
     })
     const voidAction = findAction(voidEntry, 'ledger.void_entry', 'void ledger entry')
     await confirmAction(client, voidAction, 'confirm void ledger entry', actionKinds)
@@ -614,6 +757,16 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     const confirmedSnapshot = await confirmAction(client, snapshotAction, 'confirm save snapshot', actionKinds)
     const snapshotVersionNo = versionNoFromResult(confirmedSnapshot.json.result)
     rememberCoverage(coveredDirections, 'workspace_save_snapshot')
+
+    const promoteSnapshot = await sendAgentMessage(client, plannerSources, {
+      label: 'promote snapshot to release',
+      threadId: multi.json.threadId,
+      message: `把快照 ${snapshotVersionNo} 发布为正式版，只生成确认卡`,
+    })
+    const promoteAction = findAction(promoteSnapshot, 'workspace.promote_version', 'promote snapshot to release')
+    const confirmedPromote = await confirmAction(client, promoteAction, 'confirm promote snapshot to release', actionKinds)
+    assertSmoke(confirmedPromote.json.result.version?.kind === 'release', 'promote snapshot did not create a release')
+    rememberCoverage(coveredDirections, 'workspace_promote_version')
 
     const publish = await sendAgentMessage(client, plannerSources, {
       label: 'publish and share',
