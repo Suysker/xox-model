@@ -101,6 +101,7 @@
 - Keep the Approval Executor boundary focused on editable confirmation cards, policy re-checks, confirmed execution, audit, and action status. Action graph step persistence belongs in `action-graph-store`, otherwise the harness boundary drifts back into a generic action-request utility.
 - Keep Agent API routes inside the Agent boundary, not under generic business `modules`. `agent/routes.ts` should own auth/DTO/SSE transport and delegate run lifecycle to `run-submission`/`run-worker`, preserving the ADR split between API Boundary and Lean Kernel services.
 - Keep worker lifecycle separate from the Lean Agent Kernel. Worker code should own leases, cancellation, recovery, and final run status; kernel code should own the single-run planning/action-graph/message/memory loop behind a small callable boundary.
+- Add architecture guard tests for Agent harness boundaries after refactors. Runtime adapters, routes, kernel, approval executor, and tool executor should have import-level tests so future edits cannot quietly reintroduce DB access, provider coupling, or old route modules.
 
 ## Testing
 
