@@ -99,6 +99,7 @@
 - Manual SaaS operations need a coverage matrix that includes ledger history and read-only filters, not just writes. If the page lets users add/delete employees, rename workspaces, edit/void/restore entries, batch-post actuals, or filter history, those actions need semantic Agent tools or `data_query_workspace` scopes plus API tests and real-provider smoke coverage.
 - Batch Agent tools should expand into multiple stored confirmation cards instead of one opaque "batch execute" payload. This keeps every pending write editable, auditable, and visibly tied to a page navigation event.
 - Keep the Approval Executor boundary focused on editable confirmation cards, policy re-checks, confirmed execution, audit, and action status. Action graph step persistence belongs in `action-graph-store`, otherwise the harness boundary drifts back into a generic action-request utility.
+- Keep Agent API routes inside the Agent boundary, not under generic business `modules`. `agent/routes.ts` should own auth/DTO/SSE transport and delegate run lifecycle to `run-submission`/`run-worker`, preserving the ADR split between API Boundary and Lean Kernel services.
 
 ## Testing
 

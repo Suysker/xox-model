@@ -120,8 +120,8 @@
 ## Agent Runtime 成熟化
 
 - [ ] `docs/adr/0001-agent-runtime-architecture.md` 中的 runtime 采用策略完成代码落地
-- [ ] `apps/api/src/modules/agent.ts` 拆分为 routes、kernel、runtime adapters、tools、memory/context、approval executor
-- [x] Agent planner 已从 `modules/agent.ts` 抽到 `apps/api/src/agent/planner.ts`，并继续下沉为 `planning-session / runtime-plan-reader / action-draft-builder / action-graph-store` 等边界；route module 只调用 `planResponse`
+- [x] `apps/api/src/modules/agent.ts` 已移除；Agent API Boundary 迁到 `apps/api/src/agent/routes.ts`，runtime adapters、tools、memory/context、approval executor、thread store、run submission 和 run worker 均在 `apps/api/src/agent/*` 独立边界内
+- [x] Agent planner 已从 `modules/agent.ts` 抽到 `apps/api/src/agent/planner.ts`，并继续下沉为 `planning-session / runtime-plan-reader / action-draft-builder / action-graph-store` 等边界；routes 不再直接调用 planner，run lifecycle 通过 `run-submission.ts` / `run-worker.ts` 进入 planner
 - [x] OpenAI-compatible Chat Completions provider 调用已从 `modules/agent.ts` 抽到 `apps/api/src/agent/runtime/openai-compatible-chat-adapter.ts`，通过 `adapter-router.ts` 输出统一 runtime plan result
 - [x] Approval Executor 已从 `modules/agent.ts` 抽到 `apps/api/src/agent/approval-executor.ts`，统一处理确认卡创建、编辑、确认、取消、执行状态、assistant message、run event 和审计；routes 只做 HTTP 编排与 thread publish，plan step 持久化由 `action-graph-store.ts` 负责
 - [x] Server tool execution 已从 Approval Executor 抽到 `apps/api/src/agent/tool-executor.ts`，确认执行时先走 tool policy，再由 executor 调用 workspace / ledger / share 领域服务；provider/runtime 仍不能直接写业务数据

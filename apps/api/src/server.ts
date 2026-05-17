@@ -42,7 +42,7 @@ import {
   varianceForPeriod,
   voidEntry,
 } from './modules/ledger.js'
-import { registerAgentRoutes } from './modules/agent.js'
+import { registerAgentRoutes } from './agent/routes.js'
 
 const registerSchema = z.object({
   email: z.email(),

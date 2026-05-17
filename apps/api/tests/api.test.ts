@@ -13,7 +13,7 @@ import { AGENT_MANUAL_CAPABILITY_COVERAGE, agentWritableConfigPatterns, buildAge
 import { AGENT_TOOL_CATALOG, AGENT_TOOL_REGISTRY } from '../src/agent/tool-catalog.js'
 import { buildRuntimeToolCatalogProjection } from '../src/agent/tool-gateway.js'
 import { createProductDefaultModel } from '@xox/domain'
-import { recoverRunningAgentRuns } from '../src/modules/agent.js'
+import { recoverRunningAgentRuns } from '../src/agent/run-worker.js'
 
 type JsonResponse = {
   statusCode: number

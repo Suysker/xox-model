@@ -5,26 +5,26 @@ import type { AgentActionUpdatePayload } from '@xox/contracts'
 import type { Database } from '../db/schema.js'
 import { forbidden, notFound, unprocessable } from '../core/http.js'
 import type { Settings } from '../core/settings.js'
-import { recordAudit } from './audit.js'
-import { requireCurrentUser } from './auth.js'
-import { getWorkspaceForUser } from './workspace.js'
+import { recordAudit } from '../modules/audit.js'
+import { requireCurrentUser } from '../modules/auth.js'
+import { getWorkspaceForUser } from '../modules/workspace.js'
 import {
   archiveAgentMemory,
   listAgentMemories,
   serializeMemory,
-} from '../agent/memory.js'
-import { agentThreadEvents } from '../agent/thread-events.js'
+} from './memory.js'
+import { agentThreadEvents } from './thread-events.js'
 import {
   cancelAgentActionRequest,
   confirmAgentActionRequest,
   updateAgentActionRequest,
-} from '../agent/approval-executor.js'
+} from './approval-executor.js'
 import {
   deleteAgentProviderSetting,
   getAgentProviderSetting,
   serializeAgentProviderSetting,
   upsertAgentProviderSetting,
-} from '../agent/provider-settings.js'
+} from './provider-settings.js'
 import {
   buildThreadState,
   buildThreadSummary,
@@ -32,16 +32,13 @@ import {
   serializeAction,
   serializeMessage,
   serializePlanStep,
-} from '../agent/thread-store.js'
+} from './thread-store.js'
 import {
   cancelRunningAgentRun,
-  recoverRunningAgentRuns,
   startAgentRunQueueWorker,
-} from '../agent/run-worker.js'
-import { openAgentThreadStateStream } from '../agent/thread-state-stream.js'
-import { submitAgentMessageRun } from '../agent/run-submission.js'
-
-export { recoverRunningAgentRuns } from '../agent/run-worker.js'
+} from './run-worker.js'
+import { openAgentThreadStateStream } from './thread-state-stream.js'
+import { submitAgentMessageRun } from './run-submission.js'
 
 const providerSettingSchema = z.object({
   provider: z.string().min(2).max(64),
