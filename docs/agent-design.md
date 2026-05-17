@@ -122,7 +122,7 @@ modules/agent.ts
 - OpenAI Agents SDK adapter 使用 SDK 的 `Agent / Runner / tool / OpenAIChatCompletionsModel` 做 orchestration；SDK tool 的 `execute` 只把工具参数收集为内部 `AgentToolCallStep`，返回 model-visible preview receipt，不执行领域服务。
 - `LLM_PROVIDER=openai` 只选择 OpenAI Agents SDK adapter；`LLM_PROVIDER=openai-compatible / deepseek / doubao / qwen` 继续走通用 Chat Completions adapter。两条路径都输出同一个 `RuntimePlanResult`。
 - `planner.ts` 负责 tenant/workspace planning context、provider-native tool_call 结果归一、多步骤拆分、只读步骤和待确认动作草稿；它不处理 HTTP DTO、不执行已确认写入。
-- `modules/agent.ts` 继续负责 HTTP routes、SSE、run queue/recovery/cancel 和 worker lease 回写；它只调用 `planResponse` 获取后端持久化的 plan/actions。
+- `modules/agent.ts` 继续负责 HTTP routes、SSE 和 DTO 序列化；run queue/recovery/cancel 和 worker lease 回写逐步下沉到 `agent/run-worker.ts`。
 - 确认卡创建、编辑、确认、取消、执行状态更新、assistant message、run event 和审计已下沉到 `apps/api/src/agent/action-requests.ts`；route 只负责认证、HTTP DTO 序列化和 thread publish。
 - 已确认 action 的业务执行已下沉到 `apps/api/src/agent/tool-executor.ts`；confirmation service 先做 policy，再把当前 workspace/user 和 action payload 交给 executor 调用 workspace / ledger / share 模块。
 - 后续再把业务预览下沉到 `agent/kernel` 与 `agent/tools`。
@@ -140,6 +140,27 @@ Agent OS 内核，和具体 provider 解耦：
 - `context-compactor.ts`：长对话压缩。
 - `prompt-registry.ts`：系统提示词、工具说明和 skills 说明文件读取。
 - `event-stream.ts`：向前端输出 streaming event。
+
+当前增量拆分先落在 `apps/api/src/agent/run-worker.ts`：
+
+- 模块职责：持有后台 run controller、worker lease heartbeat、run completion、run cancellation、进程重启恢复和队列 sweep；它只处理 server-owned run lifecycle，不注册 HTTP routes。
+- 依赖方向：
+
+```text
+modules/agent routes
+  -> agent/run-worker
+    -> agent/planner
+    -> agent/run-lease
+    -> agent/run-events
+    -> agent/thread-store
+    -> agent/memory
+    -> agent/provider-settings
+    -> db
+```
+
+- 复用计划：继续复用现有 `planResponse`、`claimAgentRunLease`、`addRunEvent`、`buildThreadState`、`compactThreadContextIfNeeded` 和 `agentThreadEvents`；不新增并行业务执行路径。
+- 命名风格：保持现有 `AgentRun*` / `run_*` 命名，导出 `completeAgentRun`、`recoverRunningAgentRuns`、`scheduleAgentRunQueueDrain`、`startAgentRunQueueWorker`、`cancelRunningAgentRun` 和 `safeRunErrorMessage`。
+- 验收：现有 API 测试中的 background run、取消、lease 恢复、worker sweep、迟到模型结果防护和 SSE thread state 必须继续通过。
 
 ### `apps/api/src/agent/tools`
 
