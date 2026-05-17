@@ -121,6 +121,7 @@ modules/agent.ts
 - runtime adapter 不读取数据库、不写数据库、不创建确认卡、不执行业务工具。
 - OpenAI Agents SDK adapter 使用 SDK 的 `Agent / Runner / tool / OpenAIChatCompletionsModel` 做 orchestration；SDK tool 的 `execute` 只把工具参数收集为内部 `AgentToolCallStep`，返回 model-visible preview receipt，不执行领域服务。
 - `LLM_PROVIDER=openai` 只选择 OpenAI Agents SDK adapter；`LLM_PROVIDER=openai-compatible / deepseek / doubao / qwen` 继续走通用 Chat Completions adapter。两条路径都输出同一个 `RuntimePlanResult`。
+- Runtime 当前直接使用 `tool-catalog.ts` 的 provider-neutral tool catalog，不再保留 `tool-projector.ts` 这种误导性边界。模型负责语义 tool selection；服务端负责确认卡、policy、租户隔离、审计和领域服务执行。未来如果工具目录增长到必须缩小时，只能引入模型选择的 capability router 或更高层工具设计，不能在后端写关键词路由器。
 - `planner.ts` 负责 tenant/workspace planning context、provider-native tool_call 结果归一、多步骤拆分、只读步骤和待确认动作草稿；它不处理 HTTP DTO、不执行已确认写入。
 - `modules/agent.ts` 继续负责 HTTP routes、SSE 和 DTO 序列化；run queue/recovery/cancel 和 worker lease 回写逐步下沉到 `agent/run-worker.ts`。
 - 确认卡创建、编辑、确认、取消、执行状态更新、assistant message、run event 和审计已下沉到 `apps/api/src/agent/action-requests.ts`；route 只负责认证、HTTP DTO 序列化和 thread publish。

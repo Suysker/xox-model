@@ -24,7 +24,7 @@ React Agent Surface
   -> Conversation Store
   -> Lean Agent Kernel
       -> Context Pack
-      -> Tool Projector
+      -> Tool Catalog Gateway
       -> Runtime Adapter
       -> Action Draft Builder
       -> Approval Executor
@@ -45,7 +45,7 @@ React Agent Surface
 
 - 模型只规划和解释，不拥有执行权。
 - 后端拥有 thread/run/action state。
-- 工具按任务投影，不全量暴露。
+- 工具选择由模型的原生 tool_call 语义完成；后端不使用关键词或正则伪装语义路由。
 - 写入动作是可编辑 action draft，确认后才执行。
 - 所有执行复用同一套 domain services。
 - memory/context 按 user/workspace/thread 隔离。
@@ -58,7 +58,7 @@ React Agent Surface
 | --- | --- | --- |
 | Conversation Store | 保存 messages、runs、events、action requests | 刷新、断网、历史对话、确认卡未执行时必须能恢复 |
 | Context Pack | 组装当前用户、workspace、页面、memory、summary | SaaS 多用户隔离和长对话稳定性不能靠 prompt 即兴处理 |
-| Tool Projector | 从完整工具注册表中选择本轮小工具集 | 工具增长后，全量注入会降低准确率并扩大误调用面 |
+| Tool Catalog Gateway | 提供 provider-neutral 工具目录和 schema | 当前先让模型直接做语义 tool selection，避免后端关键词路由；工具增长后只能引入模型选择的 capability router 或更高层工具设计 |
 | Runtime Adapter | 连接 OpenAI Agents SDK 或 OpenAI-compatible provider | provider 可替换，业务协议不被模型供应商绑定 |
 | Approval Executor | 生成可编辑确认卡，确认后调用 domain services | 财务写入有真实后果，必须 preview、edit、confirm、audit |
 
@@ -83,7 +83,7 @@ flowchart TB
 
   subgraph Kernel[Lean Agent Kernel]
     Context[Context Pack<br/>workspace snapshot / page state / memory / summary]
-    Projector[Tool Projector<br/>task-relevant tool subset]
+    Projector[Tool Catalog Gateway<br/>provider-neutral tool catalog]
     Runtime[Runtime Adapter<br/>OpenAI Agents SDK or compatible chat]
     Drafts[Action Draft Builder<br/>read result or write preview]
     Approval[Approval Executor<br/>policy re-check / execute / audit]
@@ -181,7 +181,7 @@ sequenceDiagram
 
 OpenClaw 的价值是告诉我们：模型外面必须有 harness。Claude Code 的价值是告诉我们：agent loop 可以很简单，复杂度在工具、权限、上下文和恢复边界里。
 
-但 `xox-model` 不需要复制它们的外壳体量。我们只做产品内部需要的最小 harness：一次用户消息、一次 run、一个上下文包、一组投影工具、一批 action drafts。
+但 `xox-model` 不需要复制它们的外壳体量。我们只做产品内部需要的最小 harness：一次用户消息、一次 run、一个上下文包、一组 provider-native 工具、一批 action drafts。
 
 ### 2. Conversation Store 是事实源，不是 control plane
 
@@ -196,9 +196,9 @@ OpenClaw 的价值是告诉我们：模型外面必须有 harness。Claude Code 
 
 它解决恢复和审计，不承担 gateway、multi-channel routing 或分布式编排。
 
-### 3. Tool Projector 是优雅架构的中心
+### 3. Tool Catalog Gateway 保持语义归属清晰
 
-Agent 架构是否能扩展，关键不在于有多少模块，而在于工具增长时是否仍然可控。
+Agent 架构是否能扩展，关键不在于有多少模块，而在于工具增长时语义归属是否仍然清晰。
 
 `xox-model` 的优雅点应该是一个 metadata-driven tool registry：
 
@@ -215,7 +215,7 @@ tool = {
 }
 ```
 
-Tool Projector 根据用户指令、当前页面、workspace 状态和权限，只把相关工具交给 runtime。这样工具从 10 个增长到 100 个时，架构仍然稳定。
+当前阶段不在后端用关键词或正则选择工具。Runtime 接收 provider-neutral tool catalog，由模型通过原生 tool_call 做语义选择；服务端只负责 policy、确认卡、审计和执行前重新校验。工具从 10 个增长到 100 个时，如果完整目录开始影响准确率，应引入模型选择的 capability router 或重构更高层工具，而不是写代码关键词路由器。
 
 ### 4. Action draft 是业务交易对象
 
@@ -341,13 +341,13 @@ MCP 或 connector 只作为外部系统接入：
 - 不让模型直接写 DB。
 - 不让 skills 执行业务动作。
 - 不把 memory 当权限来源。
-- 不默认全量暴露工具。
+- 不用后端关键词/正则决定业务语义；如需缩小工具目录，必须由模型选择 capability。
 - 不把 subagents 作为当前架构前置条件。
 
 ## 落地优先级
 
-1. 把现有 flat `tool-catalog.ts` 收敛为带 metadata 的 tool registry。
-2. 实现 tool projector，让 runtime 每轮只看到任务相关工具。
+1. 把现有 flat `tool-catalog.ts` 收敛为 provider-neutral tool catalog。
+2. 保持 tool selection 属于模型 tool_call；禁止用后端关键词或正则做业务意图路由。
 3. 把 planner 中的上下文拼装收敛为 Context Pack。
 4. 把写入 preview、editable action、confirm execution 收敛到 Approval Executor。
 5. 保持 Runtime Adapter 薄层化，禁止它访问 DB 或 domain services。
@@ -355,11 +355,11 @@ MCP 或 connector 只作为外部系统接入：
 
 ## 验收标准
 
-- 任意用户请求只暴露任务相关工具子集，而不是完整工具目录。
+- 任意用户请求不得由后端关键词/正则选择业务工具；模型必须通过 provider-native tool_call 表达语义选择。
 - 多步骤请求在前端显示多个 timeline steps 和 action cards。
 - 所有写入 action draft 都可编辑，确认后执行前重新校验。
 - Memory 注入可证明不会跨用户、跨 workspace。
-- 账号影响类动作不会进入工具投影。
+- 账号影响类动作即使进入工具目录，也只能生成 `account_forbidden` 只读步骤，不能执行账号写入。
 - Runtime adapter 不读取 DB，不创建确认卡，不执行 domain service。
 - Tool executor 不依赖 provider SDK。
 - 前端刷新后仍能恢复 thread messages、run events 和 pending action drafts。
@@ -380,12 +380,12 @@ MCP 或 connector 只作为外部系统接入：
 收益：
 
 - 架构从大平台收敛为产品内核，更适合当前迭代速度。
-- 保留 Harness Agent 的关键先进性：tool projection、editable approval、provider-neutral、server-owned state。
+- 保留 Harness Agent 的关键先进性：model-owned tool selection、editable approval、provider-neutral、server-owned state。
 - 后续扩展 runtime、memory、工具、外部集成时不需要推翻核心。
 - 业务执行仍统一在 domain services，减少 Agent 和手动页面漂移。
 
 代价：
 
 - 需要尽快把 flat tool catalog 改成 metadata registry。
-- 需要为 tool projection 和 action draft lifecycle 增加测试。
+- 需要为 tool catalog gateway 和 action draft lifecycle 增加测试。
 - 不追求一开始就支持通用 agent platform 能力。

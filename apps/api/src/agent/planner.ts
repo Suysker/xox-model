@@ -29,7 +29,7 @@ import { planWithRuntimeAdapter } from './runtime/adapter-router.js'
 import type { RuntimePlanError, RuntimePlanResult, RuntimeStreamEvent } from './runtime/runtime-adapter.js'
 import { assertAgentRunLease } from './run-lease.js'
 import { agentThreadEvents } from './thread-events.js'
-import { projectAgentTools } from './tool-projector.js'
+import { AGENT_TOOL_CATALOG } from './tool-catalog.js'
 import { extractWorkspaceBundleArtifact, type ParsedWorkspaceBundleArtifact } from './workspace-bundle-artifact.js'
 import { addRunEvent } from './run-events.js'
 import { addAgentActionRequest, addAgentPlanStep, type AgentActionDraft } from './action-requests.js'
@@ -1263,13 +1263,13 @@ async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePlanResul
     ...(ctx.providedWorkspaceBundle ? { providedWorkspaceBundle: ctx.providedWorkspaceBundle } : {}),
   })
 
-  const tools = projectAgentTools({ message: ctx.message })
+  const tools = AGENT_TOOL_CATALOG
   await addRunEvent(ctx.db, {
     threadId: ctx.threadId,
     runId: ctx.runId,
-    type: 'tool_projection_ready',
-    title: '工具投影已生成',
-    message: `本轮向模型暴露 ${tools.length} 个任务相关工具。`,
+    type: 'tool_catalog_ready',
+    title: '工具目录已提供',
+    message: `本轮向模型提供 ${tools.length} 个 provider-native 工具，由模型通过 tool_calls 选择。`,
     status: 'running',
     data: {
       toolCount: tools.length,
