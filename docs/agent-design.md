@@ -169,6 +169,13 @@ modules/agent routes
 - 复用计划：继续使用 `buildThreadState` 作为唯一状态序列化来源，避免 React 与 REST/SSE 出现两套 action graph 视图。
 - 验收：`streams server-owned thread state through SSE and keeps events tenant scoped` 这类 API 测试必须继续通过。
 
+消息提交边界落在 `apps/api/src/agent/run-submission.ts`：
+
+- 模块职责：处理 `POST /agent/messages` 背后的 server-owned run 创建、user message 持久化、queued event、memory capture、background run 入队和同步 run completion 返回；它不做认证、不解析 HTTP request、不暴露 provider 细节。
+- 依赖方向：`modules/agent routes -> agent/run-submission -> agent/run-worker + agent/thread-store + agent/run-events + agent/memory`。
+- 复用计划：继续复用 `getOrCreateThread`、`addMessage`、`rememberFromUserMessage`、`addRunEvent`、`completeAgentRun` 和 `scheduleAgentRunQueueDrain`；不新增第二套 run 创建或 action graph 序列化。
+- 验收：前台消息、后台消息、thread history、memory、run event、确认卡和 action graph 相关 API 测试必须继续通过。
+
 ### `apps/api/src/agent/tools`
 
 受控业务工具层。工具只调用现有领域服务或模块服务，不直接写数据库，也不依赖 provider SDK。

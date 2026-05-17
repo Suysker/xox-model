@@ -1,28 +1,19 @@
 import type { FastifyInstance } from 'fastify'
 import type { Kysely } from 'kysely'
 import { z } from 'zod'
-import type {
-  AgentActionRequest,
-  AgentActionUpdatePayload,
-  AgentNavigationEvent,
-  AgentPlanStep,
-} from '@xox/contracts'
-import type { Database, Row } from '../db/schema.js'
+import type { AgentActionUpdatePayload } from '@xox/contracts'
+import type { Database } from '../db/schema.js'
 import { forbidden, notFound, unprocessable } from '../core/http.js'
 import type { Settings } from '../core/settings.js'
-import { newId } from '../core/security.js'
-import { utcNow } from '../core/time.js'
 import { recordAudit } from './audit.js'
 import { requireCurrentUser } from './auth.js'
 import { getWorkspaceForUser } from './workspace.js'
 import {
   archiveAgentMemory,
   listAgentMemories,
-  rememberFromUserMessage,
   serializeMemory,
 } from '../agent/memory.js'
 import { agentThreadEvents } from '../agent/thread-events.js'
-import { addRunEvent, listSerializedRunEvents, serializeRunEvent } from '../agent/run-events.js'
 import {
   cancelAgentActionRequest,
   confirmAgentActionRequest,
@@ -35,25 +26,20 @@ import {
   upsertAgentProviderSetting,
 } from '../agent/provider-settings.js'
 import {
-  addMessage,
   buildThreadState,
   buildThreadSummary,
-  getOrCreateThread,
   getThreadForUser,
   serializeAction,
   serializeMessage,
   serializePlanStep,
-  touchThreadAfterRun,
 } from '../agent/thread-store.js'
 import {
   cancelRunningAgentRun,
-  completeAgentRun,
-  createAgentRunController,
   recoverRunningAgentRuns,
-  scheduleAgentRunQueueDrain,
   startAgentRunQueueWorker,
 } from '../agent/run-worker.js'
 import { openAgentThreadStateStream } from '../agent/thread-state-stream.js'
+import { submitAgentMessageRun } from '../agent/run-submission.js'
 
 export { recoverRunningAgentRuns } from '../agent/run-worker.js'
 
@@ -157,85 +143,14 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
   })
 
   app.post('/api/v1/agent/messages', async (request, reply) => {
-    let runId: string | null = null
-    let activeThread: Row<'agent_threads'> | null = null
     try {
       const body = request.body as { threadId?: string | null; message?: string; background?: boolean }
       const message = body.message?.trim()
       if (!message) throw unprocessable('Message is required')
       const user = await requireCurrentUser(db, settings, request)
       const workspace = await getWorkspaceForUser(db, user)
-      const thread = await getOrCreateThread(db, workspace, user, body.threadId)
-      activeThread = thread
-      runId = newId()
-      const now = utcNow()
-      await db
-        .insertInto('agent_runs')
-        .values({
-          id: runId,
-          thread_id: thread.id,
-          user_id: user.id,
-          status: 'running',
-          input_message_id: null,
-          input_message: message,
-          planner_source: null,
-          worker_id: null,
-          lease_expires_at: null,
-          heartbeat_at: null,
-          created_at: now,
-          completed_at: null,
-        })
-        .execute()
-      const userMessage = await addMessage(db, thread.id, 'user', message)
-      await db.updateTable('agent_runs').set({ input_message_id: userMessage.id }).where('id', '=', runId).execute()
-      const queuedEvent = await addRunEvent(db, {
-        threadId: thread.id,
-        runId,
-        type: 'run_queued',
-        title: 'Run 已入队',
-        message: body.background === true ? '用户指令已持久化，等待 Agent worker 认领执行。' : '用户指令已持久化，将在当前请求中同步执行。',
-        status: 'queued',
-        data: { background: body.background === true },
-      })
-      await rememberFromUserMessage({ db, workspace, user, threadId: thread.id, messageId: userMessage.id, message })
-
-      if (body.background === true) {
-        await touchThreadAfterRun(db, thread, message)
-        agentThreadEvents.publish(thread.id, 'thread_started')
-        scheduleAgentRunQueueDrain(db, settings)
-        return {
-          threadId: thread.id,
-          runId,
-          status: 'running' as const,
-          planner: null,
-          messages: [serializeMessage(userMessage)],
-          navigationEvents: [] as AgentNavigationEvent[],
-          runEvents: [serializeRunEvent(queuedEvent)],
-          planSteps: [] as AgentPlanStep[],
-          actionRequests: [] as AgentActionRequest[],
-        }
-      }
-
-      const controller = createAgentRunController(runId)
-      const completed = await completeAgentRun({ db, settings, user, workspace, thread, threadId: thread.id, runId, message, abortSignal: controller.signal })
-      if (!completed) return buildThreadState(db, workspace, user, thread.id)
-      return {
-        threadId: thread.id,
-        runId,
-        status: 'completed' as const,
-        planner: completed.plannerSource,
-        messages: [serializeMessage(userMessage), serializeMessage(completed.assistantMessage)],
-        navigationEvents: completed.navigationEvents,
-        runEvents: await listSerializedRunEvents(db, runId),
-        planSteps: completed.planRows.map(serializePlanStep),
-        actionRequests: completed.actionRows.map(serializeAction),
-      }
+      return submitAgentMessageRun({ db, settings, user, workspace, threadId: body.threadId, message, background: body.background })
     } catch (error) {
-      if (runId && activeThread) {
-        await db.updateTable('agent_runs').set({ status: 'failed', completed_at: utcNow(), lease_expires_at: null }).where('id', '=', runId).execute().catch(() => undefined)
-        await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', activeThread.id).execute().catch(() => undefined)
-        agentThreadEvents.publish(activeThread.id, 'run_failed')
-      }
       return reply.send(error)
     }
   })
