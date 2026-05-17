@@ -1,5 +1,4 @@
 import type { FastifyInstance } from 'fastify'
-import type { ServerResponse } from 'node:http'
 import type { Kysely } from 'kysely'
 import { z } from 'zod'
 import type {
@@ -7,7 +6,6 @@ import type {
   AgentActionUpdatePayload,
   AgentNavigationEvent,
   AgentPlanStep,
-  AgentThreadEvent,
 } from '@xox/contracts'
 import type { Database, Row } from '../db/schema.js'
 import { forbidden, notFound, unprocessable } from '../core/http.js'
@@ -15,7 +13,7 @@ import type { Settings } from '../core/settings.js'
 import { newId } from '../core/security.js'
 import { utcNow } from '../core/time.js'
 import { recordAudit } from './audit.js'
-import { requireCurrentUser, type CurrentUser } from './auth.js'
+import { requireCurrentUser } from './auth.js'
 import { getWorkspaceForUser } from './workspace.js'
 import {
   archiveAgentMemory,
@@ -23,7 +21,7 @@ import {
   rememberFromUserMessage,
   serializeMemory,
 } from '../agent/memory.js'
-import { agentThreadEvents, type AgentThreadEventSignal } from '../agent/thread-events.js'
+import { agentThreadEvents } from '../agent/thread-events.js'
 import { addRunEvent, listSerializedRunEvents, serializeRunEvent } from '../agent/run-events.js'
 import {
   cancelAgentActionRequest,
@@ -52,10 +50,10 @@ import {
   completeAgentRun,
   createAgentRunController,
   recoverRunningAgentRuns,
-  safeRunErrorMessage,
   scheduleAgentRunQueueDrain,
   startAgentRunQueueWorker,
 } from '../agent/run-worker.js'
+import { openAgentThreadStateStream } from '../agent/thread-state-stream.js'
 
 export { recoverRunningAgentRuns } from '../agent/run-worker.js'
 
@@ -72,36 +70,6 @@ function parseAgentBody<T>(schema: z.ZodType<T>, body: unknown) {
     throw unprocessable(parsed.error.issues.map((issue) => issue.message).join('; '))
   }
   return parsed.data
-}
-
-function writeSseEvent(response: ServerResponse, event: string, data: unknown) {
-  if (response.destroyed || response.writableEnded) return
-  response.write(`event: ${event}\n`)
-  response.write(`data: ${JSON.stringify(data)}\n\n`)
-}
-
-function writeSseComment(response: ServerResponse, comment: string) {
-  if (response.destroyed || response.writableEnded) return
-  response.write(`: ${comment}\n\n`)
-}
-
-async function writeAgentThreadStateEvent(
-  response: ServerResponse,
-  db: Kysely<Database>,
-  workspace: Row<'workspaces'>,
-  user: CurrentUser,
-  threadId: string,
-  signal: AgentThreadEventSignal,
-) {
-  const state = await buildThreadState(db, workspace, user, threadId)
-  const event: AgentThreadEvent = {
-    type: 'thread_state',
-    threadId,
-    sequence: signal.sequence,
-    reason: signal.reason,
-    state,
-  }
-  writeSseEvent(response, 'thread_state', event)
 }
 
 export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, settings: Settings) {
@@ -144,36 +112,7 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
       await getThreadForUser(db, workspace, user, threadId)
 
       reply.hijack()
-      reply.raw.writeHead(200, {
-        'Content-Type': 'text/event-stream; charset=utf-8',
-        'Cache-Control': 'no-cache, no-transform',
-        Connection: 'keep-alive',
-        'X-Accel-Buffering': 'no',
-      })
-      reply.raw.flushHeaders?.()
-
-      let closed = false
-      let unsubscribe: () => void = () => undefined
-      let heartbeat: NodeJS.Timeout | null = null
-      const close = () => {
-        if (closed) return
-        closed = true
-        if (heartbeat) clearInterval(heartbeat)
-        unsubscribe()
-      }
-      const sendState = (signal: AgentThreadEventSignal) => {
-        void writeAgentThreadStateEvent(reply.raw, db, workspace, user, threadId, signal).catch((error) => {
-          writeSseEvent(reply.raw, 'error', { message: safeRunErrorMessage(error) })
-          close()
-        })
-      }
-      unsubscribe = agentThreadEvents.subscribe(threadId, sendState)
-      heartbeat = setInterval(() => writeSseComment(reply.raw, 'heartbeat'), 15_000)
-      heartbeat.unref?.()
-
-      request.raw.on('close', close)
-      request.raw.on('aborted', close)
-      sendState({ threadId, sequence: 0, reason: 'thread_restored' })
+      openAgentThreadStateStream({ request: request.raw, response: reply.raw, db, workspace, user, threadId })
     } catch (error) {
       const { sendError } = await import('../core/http.js')
       return sendError(reply, error)

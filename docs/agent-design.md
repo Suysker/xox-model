@@ -162,6 +162,13 @@ modules/agent routes
 - 命名风格：保持现有 `AgentRun*` / `run_*` 命名，导出 `completeAgentRun`、`recoverRunningAgentRuns`、`scheduleAgentRunQueueDrain`、`startAgentRunQueueWorker`、`cancelRunningAgentRun` 和 `safeRunErrorMessage`。
 - 验收：现有 API 测试中的 background run、取消、lease 恢复、worker sweep、迟到模型结果防护和 SSE thread state 必须继续通过。
 
+下一步流式状态边界落在 `apps/api/src/agent/thread-state-stream.ts`：
+
+- 模块职责：把 `AgentThreadEventBroker` 的信号投影成 SSE `thread_state` event，统一 heartbeat、close/abort cleanup 和错误事件写入。
+- 依赖方向：`modules/agent routes -> agent/thread-state-stream -> agent/thread-store + agent/thread-events`。
+- 复用计划：继续使用 `buildThreadState` 作为唯一状态序列化来源，避免 React 与 REST/SSE 出现两套 action graph 视图。
+- 验收：`streams server-owned thread state through SSE and keeps events tenant scoped` 这类 API 测试必须继续通过。
+
 ### `apps/api/src/agent/tools`
 
 受控业务工具层。工具只调用现有领域服务或模块服务，不直接写数据库，也不依赖 provider SDK。

@@ -146,6 +146,7 @@
 - [x] Agent thread store 已从 `apps/api/src/modules/agent.ts` 拆到 `apps/api/src/agent/thread-store.ts`，集中处理 thread ownership、message 写入、ThreadState 恢复和 DTO 序列化，避免 routes 自己拼恢复状态
 - [x] React 默认使用 background run 发送 Agent 消息；`POST /api/v1/agent/messages` 会先返回 `status=running`，后台 run 由持久化 `agent_runs` 队列和 worker lease 认领执行，刷新后通过 SSE thread state 或 REST polling 恢复 completed/failed run、assistant message、计划步骤和确认卡；API 测试和真实 provider smoke 已覆盖后台启动与恢复
 - [x] React Agent OS 优先通过 `/api/v1/agent/threads/{threadId}/events` SSE 接收服务端 `thread_state`，连接失败时回退到 REST polling；API 测试覆盖 SSE 初始状态、后续动作事件和跨用户隔离，web 测试覆盖事件 URL 编码
+- [x] SSE thread state stream 已从 `apps/api/src/modules/agent.ts` 拆到 `apps/api/src/agent/thread-state-stream.ts`，集中处理 `thread_state` event 投影、heartbeat、close/abort cleanup 和错误事件写入；REST 与 SSE 继续共用 `buildThreadState`
 - [x] `agent_runs` 持久化输入消息，API 启动时会恢复可安全重跑的 `running` run；如果重启前已经产生部分 `planSteps/actionRequests`，系统 fail-closed 标记 run failed 并取消未执行确认卡，防止重复确认或重复执行
 - [x] 后台 run 支持 worker lease：API 测试覆盖未租约/过期租约可恢复、其他 worker 的未过期租约不会被抢占、旧 worker 在失去租约后收到迟到模型结果也不能写 assistant message、plan step 或 pending confirmation card
 - [x] 后台 run 支持周期 worker sweep：background 请求只入队，API 测试覆盖未显式调用 recovery 时，worker 也会按队列扫描认领 unleased running run 并完成真实 provider-compatible tool call 规划
