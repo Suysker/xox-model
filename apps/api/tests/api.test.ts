@@ -10,6 +10,7 @@ import { createDatabase } from '../src/db/database.js'
 import type { Database } from '../src/db/schema.js'
 import type { Settings } from '../src/core/settings.js'
 import { AGENT_MANUAL_CAPABILITY_COVERAGE, agentWritableConfigPatterns, buildAgentWritableConfigCatalog } from '../src/agent/tool-coverage.js'
+import { AGENT_TOOL_CATALOG } from '../src/agent/tool-catalog.js'
 import { createProductDefaultModel } from '@xox/domain'
 import { recoverRunningAgentRuns } from '../src/modules/agent.js'
 
@@ -2039,6 +2040,101 @@ describe('xox TypeScript API', () => {
     })
   })
 
+  it('plans team member add and delete through dedicated editable Agent confirmations', async () => {
+    await withFakeOpenAICompatibleProvider((body) => {
+      const prompt = body.messages.map((message: any) => message.content).join('\n')
+      const instruction = prompt.split('用户指令：').at(-1) ?? prompt
+      const toolNames = new Set(body.tools.map((tool: any) => tool.function.name))
+      expect(toolNames.has('team_member_add')).toBe(true)
+      expect(toolNames.has('team_member_delete')).toBe(true)
+
+      if (instruction.includes('新增成员')) {
+        return fakeToolResponse('team_member_add', {
+          newMemberName: '成员 G',
+          commissionRate: 0.3,
+          baseUnitsPerEvent: 18,
+        })
+      }
+      if (instruction.includes('删除成员 G')) {
+        return fakeToolResponse('team_member_delete', { memberName: '成员 G' })
+      }
+      if (instruction.includes('删除成员 文臣')) {
+        return fakeToolResponse('team_member_delete', { memberName: '文臣' })
+      }
+      return fakeToolResponse('ui_navigate', { mainTab: 'inputs', secondaryTab: 'revenue' })
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-team-member-tools', { llmProvider: 'openai-compatible', openaiCompatibleProvider: 'test-compatible', openaiCompatibleBaseUrl: baseUrl, openaiCompatibleApiKey: 'test-key' })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-team-member-tools@example.com')
+
+      const added = await client.post('/api/v1/agent/messages', { message: '新增成员，名字叫 成员 G，提成 30%，基准场均 18 张' })
+      expect(added.statusCode).toBe(200)
+      expect(added.json.planner).toBe('openai_compatible_tool_calls')
+      expect(added.json.actionRequests).toHaveLength(1)
+      const addAction = added.json.actionRequests[0]
+      expect(addAction.kind).toBe('workspace.update_draft')
+      expect(addAction.title).toContain('新增')
+      expect(addAction.navigation.route.mainTab).toBe('inputs')
+      expect(addAction.navigation.route.secondaryTab).toBe('revenue')
+      expect(addAction.payload.config.teamMembers).toHaveLength(8)
+      expect(addAction.payload.config.teamMembers.some((member: any) => member.name === '成员 G')).toBe(true)
+
+      const editedAddPayload = {
+        ...addAction.payload,
+        config: {
+          ...addAction.payload.config,
+          teamMembers: addAction.payload.config.teamMembers.map((member: any) =>
+            member.name === '成员 G' ? { ...member, commissionRate: 0.31 } : member,
+          ),
+        },
+      }
+      const editedAdd = await client.patch(`/api/v1/agent/action-requests/${addAction.id}`, {
+        summary: '编辑后：新增成员 G，提成改为 31%。',
+        payload: editedAddPayload,
+      })
+      expect(editedAdd.statusCode).toBe(200)
+      expect(editedAdd.json.actionRequest.payload.config.teamMembers.find((member: any) => member.name === '成员 G').commissionRate).toBe(0.31)
+
+      const confirmedAdd = await client.post(`/api/v1/agent/action-requests/${addAction.id}/confirm`)
+      expect(confirmedAdd.statusCode).toBe(200)
+      let draft = (await client.get('/api/v1/workspace/draft')).json
+      expect(draft.config.teamMembers).toHaveLength(8)
+      expect(draft.config.teamMembers.find((member: any) => member.name === '成员 G').commissionRate).toBe(0.31)
+
+      const deleted = await client.post('/api/v1/agent/messages', { threadId: added.json.threadId, message: '删除成员 G' })
+      expect(deleted.statusCode).toBe(200)
+      expect(deleted.json.actionRequests).toHaveLength(1)
+      const deleteAction = deleted.json.actionRequests[0]
+      expect(deleteAction.kind).toBe('workspace.update_draft')
+      expect(deleteAction.title).toContain('删除')
+      expect(deleteAction.riskLevel).toBe('high')
+      expect(deleteAction.payload.config.teamMembers).toHaveLength(7)
+      expect(deleteAction.payload.config.teamMembers.some((member: any) => member.name === '成员 G')).toBe(false)
+      const confirmedDelete = await client.post(`/api/v1/agent/action-requests/${deleteAction.id}/confirm`)
+      expect(confirmedDelete.statusCode).toBe(200)
+      draft = (await client.get('/api/v1/workspace/draft')).json
+      expect(draft.config.teamMembers).toHaveLength(7)
+      expect(draft.config.teamMembers.some((member: any) => member.name === '成员 G')).toBe(false)
+
+      const oneMemberConfig = {
+        ...draft.config,
+        teamMembers: [draft.config.teamMembers[0]],
+      }
+      const collapsedDraft = await client.patch('/api/v1/workspace/draft', {
+        revision: draft.revision,
+        workspaceName: draft.workspaceName,
+        config: oneMemberConfig,
+      })
+      expect(collapsedDraft.statusCode).toBe(200)
+      const lastMemberDelete = await client.post('/api/v1/agent/messages', { threadId: added.json.threadId, message: '删除成员 文臣' })
+      expect(lastMemberDelete.statusCode).toBe(200)
+      expect(lastMemberDelete.json.actionRequests).toHaveLength(0)
+      expect(lastMemberDelete.json.messages.at(-1).content).toContain('不能删除最后一个成员')
+
+      await closeHarness(harness)
+    })
+  })
+
   it('validates a broad Agent OS capability matrix through backend APIs', async () => {
     await withFakeOpenAICompatibleProvider((body) => {
       const prompt = body.messages.map((message: any) => message.content).join('\n')
@@ -2083,6 +2179,12 @@ describe('xox TypeScript API', () => {
         return fakeToolResponse('workspace_patch_config', {
           patches: [{ path: 'operating.offlineUnitPrice', value: 111, label: '线下单价' }],
         })
+      }
+      if (instruction.includes('新增一个成员')) {
+        return fakeToolResponse('team_member_add', { newMemberName: '成员 G' })
+      }
+      if (instruction.includes('删除成员 G')) {
+        return fakeToolResponse('team_member_delete', { memberName: '成员 G' })
       }
       if (instruction.includes('成员 B 线下 1 张')) {
         return fakeToolResponse('ledger_create_member_income', {
@@ -2177,6 +2279,20 @@ describe('xox TypeScript API', () => {
       await confirm(patchPrice111.actionRequests[0])
       draft = (await client.get('/api/v1/workspace/draft')).json
       expect(draft.config.operating.offlineUnitPrice).toBe(111)
+
+      const addMember = await send('新增一个成员，名字叫 成员 G')
+      expect(addMember.actionRequests[0].kind).toBe('workspace.update_draft')
+      expect(addMember.actionRequests[0].title).toContain('新增')
+      await confirm(addMember.actionRequests[0])
+      draft = (await client.get('/api/v1/workspace/draft')).json
+      expect(draft.config.teamMembers.some((member: any) => member.name === '成员 G')).toBe(true)
+
+      const deleteMember = await send('删除成员 G')
+      expect(deleteMember.actionRequests[0].kind).toBe('workspace.update_draft')
+      expect(deleteMember.actionRequests[0].title).toContain('删除')
+      await confirm(deleteMember.actionRequests[0])
+      draft = (await client.get('/api/v1/workspace/draft')).json
+      expect(draft.config.teamMembers.some((member: any) => member.name === '成员 G')).toBe(false)
 
       const editableLedger = await send('把 3 月成员 B 线下 1 张、线上 0 张入账')
       const editedPayload = {
@@ -2410,11 +2526,17 @@ describe('xox TypeScript API', () => {
       'operating.monthlyFixedCosts[n].amount',
       'operating.perEventCosts[n].amount',
       'operating.perUnitCosts[n].amount',
+      'teamMembers.add',
+      'teamMembers.delete',
       'teamMembers[n].unitsPerEvent.optimistic',
       'months[n].specialCosts[m].count',
     ]) {
       expect(patterns.has(pattern), pattern).toBe(true)
     }
+
+    const toolNames = new Set(AGENT_TOOL_CATALOG.map((tool) => tool.function.name))
+    expect(toolNames.has('team_member_add')).toBe(true)
+    expect(toolNames.has('team_member_delete')).toBe(true)
 
     const supported = AGENT_MANUAL_CAPABILITY_COVERAGE.filter((item) => item.status === 'supported').map((item) => item.capability)
     expect(supported).toEqual(expect.arrayContaining([

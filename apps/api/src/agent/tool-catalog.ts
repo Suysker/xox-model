@@ -2,7 +2,17 @@ export type AgentToolCallStep = {
   intent?: string
   reply?: string
   monthLabel?: string
+  memberId?: string
   memberName?: string
+  newMemberName?: string
+  employmentType?: 'salary' | 'partTime'
+  monthlyBasePay?: number
+  perEventTravelCost?: number
+  departureMonthIndex?: number | null
+  commissionRate?: number
+  pessimisticUnitsPerEvent?: number
+  baseUnitsPerEvent?: number
+  optimisticUnitsPerEvent?: number
   offlineUnits?: number
   onlineUnits?: number
   onlineSalesFactor?: number
@@ -125,6 +135,37 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
         onlineSalesFactor: { type: 'number', description: '新的线上销售系数。' },
         mode: { type: 'string', enum: ['forecast', 'write'], description: 'forecast 表示只读试算，write 表示保存草稿。' },
       }, ['monthLabel', 'onlineSalesFactor', 'mode']),
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'team_member_add',
+      description:
+        '规划在当前模型草稿里新增一个团队成员。用户说“新增成员 / 添加成员 / 加一个成员 / 新建成员”时必须调用本工具；本工具只生成确认卡，不直接保存。若用户没有提供姓名，可以省略 newMemberName，服务端会按当前人数生成类似“成员 8”的默认名称。',
+      parameters: objectSchema({
+        newMemberName: { type: 'string', description: '新增成员名称；用户未指定时可省略，由服务端生成默认名称。' },
+        employmentType: { type: 'string', enum: ['salary', 'partTime'], description: '合作类型：salary=底薪制，partTime=兼职/分成制。' },
+        monthlyBasePay: { type: 'number', description: '月固定底薪，未提及时省略。' },
+        perEventTravelCost: { type: 'number', description: '每场路费，未提及时省略。' },
+        departureMonthIndex: { type: ['number', 'null'], description: '离队月份序号；没有离队计划时省略或传 null。' },
+        commissionRate: { type: 'number', description: '提成比例，使用小数，例如 35% 填 0.35。' },
+        pessimisticUnitsPerEvent: { type: 'number', description: '保守场均销售张数。' },
+        baseUnitsPerEvent: { type: 'number', description: '基准场均销售张数。' },
+        optimisticUnitsPerEvent: { type: 'number', description: '乐观场均销售张数。' },
+      }),
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'team_member_delete',
+      description:
+        '规划从当前模型草稿里删除一个团队成员。用户说“删除成员 / 移除成员 / 删掉成员”时必须调用本工具；必须提供明确 memberName 或 memberId。若用户没有指定删除谁，调用 ask_user_clarification，不要猜测。',
+      parameters: objectSchema({
+        memberName: { type: 'string', description: '要删除的成员名称，例如 成员 A。' },
+        memberId: { type: 'string', description: '要删除的成员 id；如果已经知道 id，可用 id 精确定位。' },
+      }),
     },
   },
   {
@@ -301,6 +342,10 @@ export function toolCallToPlannerStep(toolName: string, args: Record<string, unk
       return { intent: 'ledger.set_period_lock', ...args }
     case 'workspace_update_online_factor':
       return { intent: 'workspace.update_online_factor', ...args }
+    case 'team_member_add':
+      return { intent: 'team_member.add', ...args }
+    case 'team_member_delete':
+      return { intent: 'team_member.delete', ...args }
     case 'workspace_patch_config':
       return { intent: 'workspace.patch_config', ...args }
     case 'workspace_save_snapshot':

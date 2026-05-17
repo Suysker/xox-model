@@ -63,6 +63,18 @@ function parsePayload(value: string) {
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+function assertDraftConfigPayload(payload: Record<string, unknown>) {
+  const config = payload.config
+  if (!isRecord(config)) throw unprocessable('Workspace draft update requires config')
+  if (!Array.isArray(config.teamMembers) || config.teamMembers.length < 1) {
+    throw conflict('Workspace draft must keep at least one team member')
+  }
+}
+
 function assertRisk(kind: AgentActionKind, riskLevel: string) {
   const policy = actionPolicy(kind)
   if (!(riskLevel in riskRank)) throw unprocessable('Agent action risk level is invalid')
@@ -154,6 +166,8 @@ export async function assertActionExecutionAllowed(
       await assertVersionAllowed(db, workspace, payload.versionId)
       return
     case 'workspace.update_draft':
+      assertDraftConfigPayload(payload)
+      return
     case 'workspace.save_snapshot':
     case 'workspace.publish_release':
     case 'workspace.reset_draft':

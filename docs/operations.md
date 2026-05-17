@@ -85,6 +85,7 @@ sudo systemctl status xox-model-web
 - Agent 普通对话、问候、身份说明和能力说明通过 `agent_reply` 只读工具完成。provider 模式下如果模型只返回普通文本而没有 tool call，系统仍不会用规则伪造业务动作；真实 provider 应被 prompt/tool catalog 引导为 `agent_reply`。
 - Agent provider 调用错误会按缺少 API key、HTTP 认证/请求失败、网络/base URL 失败、真实无 tool_call 分开展示。切换 provider 时如果 API key 留空会保留旧 key；从 qwen 切到 DeepSeek 时必须重新填写 DeepSeek key，否则会显示 HTTP 401/403 认证失败。
 - Agent 可写模型字段矩阵维护在 `apps/api/src/agent/tool-coverage.ts`。新增前端手动输入字段时，必须同步补该矩阵和 API 覆盖测试，否则模型可能不知道对应 patch path。真实 provider prompt 只注入 patterns 和少量样例字段，完整矩阵留在代码和测试里，避免每次请求携带所有月份/成本项导致延迟过高。
+- 团队成员新增/删除是结构性草稿变更，必须走 `team_member_add` / `team_member_delete` 专用 tool call，再由服务端生成 `workspace.update_draft` 确认卡；不要让模型通过 `workspace_patch_config` 直接重写整个 `teamMembers` 数组。确认执行前会拒绝把团队成员编辑到 0 个，防止用户编辑确认卡载荷后破坏模型可计算性。
 - 工作区 JSON 导入 / 导出已经走 server-side bundle：`GET /api/v1/workspace/bundle` 只读导出，`POST /api/v1/workspace/bundle/import` 覆盖当前草稿。Agent 工具为 `workspace_export_bundle` / `workspace_import_bundle`；导入时用户粘贴的大块 JSON 会先由服务端 artifact parser 解析，模型只选择工具，不负责原样复制 bundle。
 - Agent 写入安全策略集中在 `apps/api/src/agent/tool-policy.ts`。确认卡创建、确认卡编辑和确认执行都会校验 action kind、风险等级、必需导航、payload 所属工作区、账期锁定和派生分录限制；用户可以编辑未执行动作，但不能通过编辑确认卡绕过这些策略。
 

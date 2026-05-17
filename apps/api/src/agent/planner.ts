@@ -1,9 +1,10 @@
 import type { Kysely } from 'kysely'
-import { hydrateModelConfig, projectModel, type ModelConfig } from '@xox/domain'
+import { createMember, hydrateModelConfig, projectModel, type EmploymentType, type ModelConfig, type TeamMember } from '@xox/domain'
 import type { AgentNavigationEvent, AgentPlannerSource, AgentPlanStepStatus } from '@xox/contracts'
 import type { Database, Row } from '../db/schema.js'
 import { parseJson } from '../db/database.js'
 import type { Settings } from '../core/settings.js'
+import { newId } from '../core/security.js'
 import { utcNow } from '../core/time.js'
 import type { CurrentUser } from '../modules/auth.js'
 import { exportWorkspaceBundle, getWorkspaceDraft, listVersions } from '../modules/workspace.js'
@@ -332,6 +333,196 @@ async function planOnlineFactorFromFields(
       revision: draft.revision,
       workspaceName: ctx.workspace.name,
       config: nextConfig,
+    },
+  } satisfies AgentActionDraft
+}
+
+function memberWorkbenchNavigation(reason: string): AgentNavigationEvent {
+  return {
+    type: 'navigation',
+    route: { mainTab: 'inputs', secondaryTab: 'revenue' },
+    reason,
+  }
+}
+
+function finiteNumber(value: unknown) {
+  if (value === null || value === '') return null
+  const number = Number(value)
+  return Number.isFinite(number) ? number : null
+}
+
+function normalizedCommissionRate(value: unknown) {
+  const number = finiteNumber(value)
+  if (number === null) return null
+  return number > 1 && number <= 100 ? Math.round((number / 100) * 10000) / 10000 : number
+}
+
+function isEmploymentType(value: unknown): value is EmploymentType {
+  return value === 'salary' || value === 'partTime'
+}
+
+function normalizedMemberKey(value: string) {
+  return value.trim().replace(/\s+/g, '').toLocaleLowerCase()
+}
+
+function defaultTeamMemberName(config: ModelConfig) {
+  const existing = new Set(config.teamMembers.map((member) => normalizedMemberKey(member.name)))
+  let index = config.teamMembers.length + 1
+  while (existing.has(normalizedMemberKey(`成员 ${index}`))) index += 1
+  return `成员 ${index}`
+}
+
+function findTeamMember(config: ModelConfig, input: { memberId?: string | null | undefined; memberName?: string | null | undefined }) {
+  const memberId = typeof input.memberId === 'string' ? input.memberId.trim() : ''
+  if (memberId) {
+    const byId = config.teamMembers.find((member) => member.id === memberId)
+    if (byId) return byId
+  }
+
+  const memberName = typeof input.memberName === 'string' ? input.memberName.trim() : ''
+  if (!memberName) return null
+  const normalized = normalizedMemberKey(memberName)
+  return config.teamMembers.find((member) => member.id === memberName || normalizedMemberKey(member.name) === normalized) ?? null
+}
+
+function applyTeamMemberToolFields(member: TeamMember, step: RuntimePlannerStep) {
+  const next: TeamMember = {
+    ...member,
+    unitsPerEvent: { ...member.unitsPerEvent },
+  }
+  if (isEmploymentType(step.employmentType)) next.employmentType = step.employmentType
+
+  const monthlyBasePay = finiteNumber(step.monthlyBasePay)
+  if (monthlyBasePay !== null) next.monthlyBasePay = monthlyBasePay
+
+  const perEventTravelCost = finiteNumber(step.perEventTravelCost)
+  if (perEventTravelCost !== null) next.perEventTravelCost = perEventTravelCost
+
+  if (step.departureMonthIndex === null) {
+    next.departureMonthIndex = null
+  } else {
+    const departureMonthIndex = finiteNumber(step.departureMonthIndex)
+    if (departureMonthIndex !== null) next.departureMonthIndex = departureMonthIndex
+  }
+
+  const commissionRate = normalizedCommissionRate(step.commissionRate)
+  if (commissionRate !== null) next.commissionRate = commissionRate
+
+  const pessimisticUnits = finiteNumber(step.pessimisticUnitsPerEvent)
+  if (pessimisticUnits !== null) next.unitsPerEvent.pessimistic = pessimisticUnits
+
+  const baseUnits = finiteNumber(step.baseUnitsPerEvent)
+  if (baseUnits !== null) next.unitsPerEvent.base = baseUnits
+
+  const optimisticUnits = finiteNumber(step.optimisticUnitsPerEvent)
+  if (optimisticUnits !== null) next.unitsPerEvent.optimistic = optimisticUnits
+
+  return next
+}
+
+async function planAddTeamMemberFromStep(ctx: PlannerContext, step: RuntimePlannerStep) {
+  const { draft, config } = await currentDraftConfig(ctx)
+  const requestedName = typeof step.newMemberName === 'string' && step.newMemberName.trim()
+    ? step.newMemberName.trim()
+    : typeof step.memberName === 'string' && step.memberName.trim()
+      ? step.memberName.trim()
+      : ''
+  const name = requestedName || defaultTeamMemberName(config)
+  if (config.teamMembers.some((member) => normalizedMemberKey(member.name) === normalizedMemberKey(name))) {
+    return {
+      title: '成员已存在',
+      message: `当前团队里已经有“${name}”。如果要新增同名成员，请先给出一个可区分的姓名或编号。`,
+      status: 'failed',
+      navigation: memberWorkbenchNavigation('新增成员需要打开团队成员假设供核对。'),
+    } satisfies ReadDraft
+  }
+
+  const member = applyTeamMemberToolFields(createMember(newId(), { name }), step)
+  const nextConfig = cloneModelConfig(config)
+  nextConfig.teamMembers = [...nextConfig.teamMembers, member]
+  const normalized = hydrateModelConfig(nextConfig)
+
+  return {
+    kind: 'workspace.update_draft',
+    title: '确认新增团队成员',
+    summary: `新增团队成员“${member.name}”，保存后后续测算会把该成员纳入收入、提成和成本计算。`,
+    targetLabel: member.name,
+    riskLevel: 'medium',
+    details: [
+      { label: '动作', value: '新增团队成员' },
+      { label: '成员名称', value: member.name },
+      { label: '成员数变化', value: `${config.teamMembers.length} -> ${normalized.teamMembers.length}` },
+      { label: '合作类型', value: member.employmentType === 'salary' ? '底薪制' : '兼职/分成制' },
+      { label: '底薪', value: `${member.monthlyBasePay}` },
+      { label: '每场路费', value: `${member.perEventTravelCost}` },
+      { label: '提成比例', value: `${member.commissionRate}` },
+      { label: '基准场均销量', value: `${member.unitsPerEvent.base}` },
+    ],
+    navigation: memberWorkbenchNavigation('新增成员属于团队成员假设，先打开调模型页面供核对。'),
+    payload: {
+      revision: draft.revision,
+      workspaceName: ctx.workspace.name,
+      config: normalized,
+      patches: [{ path: 'teamMembers', value: normalized.teamMembers, label: '团队成员列表' }],
+    },
+  } satisfies AgentActionDraft
+}
+
+async function planDeleteTeamMemberFromStep(ctx: PlannerContext, step: RuntimePlannerStep) {
+  const { draft, config } = await currentDraftConfig(ctx)
+  const target = findTeamMember(config, { memberId: step.memberId, memberName: step.memberName })
+  const navigation = memberWorkbenchNavigation('删除成员需要打开团队成员假设供核对。')
+
+  if (!step.memberId && !step.memberName) {
+    return {
+      title: '需要指定要删除的成员',
+      message: `请告诉我要删除哪位成员。当前成员有：${config.teamMembers.map((member) => member.name).join('、')}。`,
+      status: 'info',
+      navigation,
+    } satisfies ReadDraft
+  }
+
+  if (!target) {
+    return {
+      title: '没有找到要删除的成员',
+      message: `当前工作区没有匹配“${step.memberName ?? step.memberId}”的成员。当前成员有：${config.teamMembers.map((member) => member.name).join('、')}。`,
+      status: 'failed',
+      navigation,
+    } satisfies ReadDraft
+  }
+
+  if (config.teamMembers.length <= 1) {
+    return {
+      title: '不能删除最后一个成员',
+      message: '不能删除最后一个成员：当前团队只剩 1 个成员。为了保持模型可计算，Agent 不会生成删除最后一个成员的确认卡。',
+      status: 'failed',
+      navigation,
+    } satisfies ReadDraft
+  }
+
+  const nextConfig = cloneModelConfig(config)
+  nextConfig.teamMembers = nextConfig.teamMembers.filter((member) => member.id !== target.id)
+  const normalized = hydrateModelConfig(nextConfig)
+
+  return {
+    kind: 'workspace.update_draft',
+    title: '确认删除团队成员',
+    summary: `删除团队成员“${target.name}”。历史账本分录不会被删除，但后续测算不再包含该成员。`,
+    targetLabel: target.name,
+    riskLevel: 'high',
+    details: [
+      { label: '动作', value: '删除团队成员' },
+      { label: '成员名称', value: target.name },
+      { label: '成员 ID', value: target.id },
+      { label: '成员数变化', value: `${config.teamMembers.length} -> ${normalized.teamMembers.length}` },
+      { label: '审计说明', value: '仅覆盖当前草稿；历史版本和账本分录不被删除。' },
+    ],
+    navigation,
+    payload: {
+      revision: draft.revision,
+      workspaceName: ctx.workspace.name,
+      config: normalized,
+      patches: [{ path: 'teamMembers', value: normalized.teamMembers, label: '团队成员列表' }],
     },
   } satisfies AgentActionDraft
 }
@@ -759,6 +950,8 @@ async function plannedItemFromRuntimeStep(ctx: PlannerContext, step: RuntimePlan
       mode: step.mode === 'forecast' || readOnlyForecastRequested(ctx.message) ? 'forecast' : 'write',
     })
   }
+  if (step.intent === 'team_member.add') return planAddTeamMemberFromStep(ctx, step)
+  if (step.intent === 'team_member.delete') return planDeleteTeamMemberFromStep(ctx, step)
   if (step.intent === 'workspace.patch_config' && readOnlyForecastRequested(ctx.message)) return null
   if (step.intent === 'workspace.patch_config' && step.patches) return planWorkspacePatch(ctx, step.patches)
   if (step.intent === 'workspace.save_snapshot') return planSnapshot(ctx)

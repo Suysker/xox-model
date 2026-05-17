@@ -19,7 +19,7 @@ export type AgentManualCapabilityDescriptor = {
 export const AGENT_MANUAL_CAPABILITY_COVERAGE: AgentManualCapabilityDescriptor[] = [
   { capability: 'capital_planning', surface: '调模型 / 股东投资', agentTool: 'workspace_patch_config', status: 'supported' },
   { capability: 'revenue_engine', surface: '调模型 / 收入引擎', agentTool: 'workspace_patch_config + workspace_update_online_factor', status: 'supported' },
-  { capability: 'team_members', surface: '调模型 / 团队成员假设', agentTool: 'workspace_patch_config', status: 'supported' },
+  { capability: 'team_members', surface: '调模型 / 团队成员假设', agentTool: 'team_member_add + team_member_delete + workspace_patch_config', status: 'supported' },
   { capability: 'cost_structure', surface: '调模型 / 成本编辑', agentTool: 'workspace_patch_config', status: 'supported' },
   { capability: 'employees', surface: '调模型 / 运营员工配置', agentTool: 'workspace_patch_config', status: 'supported' },
   { capability: 'bookkeeping_entries', surface: '记实际 / 账本', agentTool: 'ledger_create_member_income + ledger_void_entry + ledger_set_period_lock', status: 'supported' },
@@ -66,6 +66,8 @@ const STATIC_EDITABLE_PATTERNS = [
   'teamMembers[n].unitsPerEvent.pessimistic',
   'teamMembers[n].unitsPerEvent.base',
   'teamMembers[n].unitsPerEvent.optimistic',
+  'teamMembers.add',
+  'teamMembers.delete',
   'employees[n].name',
   'employees[n].role',
   'employees[n].monthlyBasePay',

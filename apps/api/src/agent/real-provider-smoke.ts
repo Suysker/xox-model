@@ -342,6 +342,40 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     )
     rememberCoverage(coveredDirections, 'data_agent_team_member_count')
 
+    const addMember = await sendAgentMessage(client, plannerSources, {
+      label: 'add team member',
+      threadId: forecast.json.threadId,
+      message: '新增一个成员，名字叫 成员 G，使用默认团队成员参数，只生成确认卡',
+    })
+    const addMemberAction = findAction(addMember, 'workspace.update_draft', 'add team member')
+    assertSmoke(String(addMemberAction.title).includes('新增'), `team member add did not use dedicated add planner: ${String(addMemberAction.title)}`)
+    assertSmoke(addMemberAction.navigation?.route?.mainTab === 'inputs', 'team member add did not navigate to model inputs')
+    await confirmAction(client, addMemberAction, 'confirm add team member', actionKinds)
+    const draftAfterAddMember = await client.get('/api/v1/workspace/draft')
+    assertOk(draftAfterAddMember, 'draft after add team member')
+    assertSmoke(
+      draftAfterAddMember.json.config.teamMembers.some((member: any) => member.name === '成员 G'),
+      'confirmed add team member did not persist 成员 G',
+    )
+    rememberCoverage(coveredDirections, 'team_member_add_confirmation')
+
+    const deleteMember = await sendAgentMessage(client, plannerSources, {
+      label: 'delete team member',
+      threadId: forecast.json.threadId,
+      message: '删除成员 G',
+    })
+    const deleteMemberAction = findAction(deleteMember, 'workspace.update_draft', 'delete team member')
+    assertSmoke(String(deleteMemberAction.title).includes('删除'), `team member delete did not use dedicated delete planner: ${String(deleteMemberAction.title)}`)
+    assertSmoke(deleteMemberAction.riskLevel === 'high', 'team member delete should be a high-risk confirmation')
+    await confirmAction(client, deleteMemberAction, 'confirm delete team member', actionKinds)
+    const draftAfterDeleteMember = await client.get('/api/v1/workspace/draft')
+    assertOk(draftAfterDeleteMember, 'draft after delete team member')
+    assertSmoke(
+      !draftAfterDeleteMember.json.config.teamMembers.some((member: any) => member.name === '成员 G'),
+      'confirmed delete team member did not remove 成员 G',
+    )
+    rememberCoverage(coveredDirections, 'team_member_delete_confirmation')
+
     const clarification = await sendAgentMessage(client, plannerSources, {
       label: 'clarification for missing ledger fields',
       threadId: forecast.json.threadId,
