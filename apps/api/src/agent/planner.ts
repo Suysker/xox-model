@@ -684,6 +684,16 @@ async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePlanResul
 }
 
 async function plannedItemFromRuntimeStep(ctx: PlannerContext, step: RuntimePlannerStep): Promise<PlannedItem | null> {
+  if (step.intent === 'agent.reply') {
+    const message = typeof step.reply === 'string' && step.reply.trim()
+      ? step.reply.trim()
+      : '我是 xox-model Agent OS，可以通过对话驱动测算、调模型、记账、预实分析、版本、分享和锁账；写入动作会先生成可编辑确认卡。'
+    return {
+      title: 'Agent 回复',
+      message,
+      status: 'executed',
+    } satisfies ReadDraft
+  }
   if (step.intent === 'agent.ask_clarification') {
     const question = typeof step.question === 'string' && step.question.trim()
       ? step.question.trim()

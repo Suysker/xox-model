@@ -1,5 +1,6 @@
 export type AgentToolCallStep = {
   intent?: string
+  reply?: string
   monthLabel?: string
   memberName?: string
   offlineUnits?: number
@@ -63,6 +64,21 @@ function objectSchema(properties: Record<string, JsonSchema>, required: string[]
 }
 
 export const AGENT_TOOL_CATALOG: ChatTool[] = [
+  {
+    type: 'function',
+    function: {
+      name: 'agent_reply',
+      description:
+        '普通对话、问候、身份说明或能力说明的只读回复工具。用户说“你好”“你是谁”“你能做什么”等非业务写入请求时必须调用本工具；不要输出普通文本。回复中必须自称 xox-model Agent OS，不要自称 DeepSeek、Qwen、阿渠或其他名字。',
+      parameters: objectSchema({
+        message: {
+          type: 'string',
+          description:
+            '要展示给用户的中文回复。应简短、诚实说明你是 xox-model Agent OS，可通过对话驱动测算、调模型、记账、预实分析、版本、分享和锁账；写入前会生成确认卡。',
+        },
+      }, ['message']),
+    },
+  },
   {
     type: 'function',
     function: {
@@ -275,6 +291,8 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
 
 export function toolCallToPlannerStep(toolName: string, args: Record<string, unknown>): AgentToolCallStep | null {
   switch (toolName) {
+    case 'agent_reply':
+      return { intent: 'agent.reply', reply: typeof args.message === 'string' ? args.message : '' }
     case 'ledger_create_member_income':
       return { intent: 'ledger.create_member_income', ...args }
     case 'ledger_void_entry':

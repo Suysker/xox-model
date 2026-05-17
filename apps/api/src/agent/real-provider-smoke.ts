@@ -272,6 +272,22 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     assertSmoke(!JSON.stringify(fetchedProviderSetting.json).includes(apiKey), 'provider setting fetch leaked API key')
     rememberCoverage(coveredDirections, 'tenant_provider_settings')
 
+    const greeting = await sendAgentMessage(client, plannerSources, {
+      label: 'basic conversational reply',
+      message: '你好，告诉我你是谁',
+    })
+    assertSmoke(Array.isArray(greeting.json.actionRequests) && greeting.json.actionRequests.length === 0, 'basic reply created a write confirmation')
+    assertSmoke(
+      String(greeting.json.messages.at(-1)?.content ?? '').includes('xox-model') ||
+        String(greeting.json.messages.at(-1)?.content ?? '').includes('Agent OS'),
+      `basic reply did not identify the product agent: ${String(greeting.json.messages.at(-1)?.content ?? '')}`,
+    )
+    assertSmoke(
+      Array.isArray(greeting.json.planSteps) && greeting.json.planSteps.some((step: any) => step.status === 'executed'),
+      `basic reply did not produce an executed read-only step: ${JSON.stringify(greeting.json.planSteps)}`,
+    )
+    rememberCoverage(coveredDirections, 'basic_conversational_reply')
+
     const forecast = await sendAgentMessage(client, plannerSources, {
       label: 'forecast',
       message: '如果 4 月线上系数变成 0.3，利润会怎样',

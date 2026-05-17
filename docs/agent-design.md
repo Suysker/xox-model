@@ -406,6 +406,7 @@ provider-neutral source 当前固定为：
 - 业务工具规划必须来自 provider-native tool calls：OpenAI Agents SDK 的 function tool 执行，或 OpenAI-compatible Chat Completions 的 `message.tool_calls`。
 - 兼容 provider 不再接受 assistant 文本里的 JSON steps 作为工具计划。模型如果没有返回 `tool_calls`，后端只记录失败型只读步骤，不生成确认卡。
 - 当 `LLM_PROVIDER` 不是 `rules` 时，`POST /api/v1/agent/messages` 不允许静默回退到本地规则/正则生成业务动作。这样可以防止“模型没调用工具，但页面仍靠代码猜测生成确认卡”的假 Agent。
+- 普通对话、问候、身份说明和能力说明也必须通过只读 `agent_reply` tool_call 返回，避免真实模型输出普通文本时被误判为业务规划失败。
 - `rules` 只保留给明确配置的本地/CI 降级路径；真实 smoke 和产品验收必须使用 provider key，并验证 planner source 为 `openai_agents` 或 `openai_compatible_tool_calls`。
 - Tool catalog 的 `description` 要把常见中文业务动词映射到目标工具和关键参数，例如锁定/锁账/封账/关闭账期必须对应 `ledger_set_period_lock` 且 `locked=true`。这不是规则兜底，而是提供给不同 OpenAI-compatible 模型做 provider-native tool selection 的语义说明。
 

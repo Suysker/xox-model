@@ -873,6 +873,7 @@ describe('xox TypeScript API', () => {
   it('uses OpenAI-compatible tool calls as the primary model planning protocol', async () => {
     await withFakeOpenAICompatibleProvider((body) => {
       expect(body.tool_choice).toBe('auto')
+      expect(body.tools.some((tool: any) => tool.function.name === 'agent_reply')).toBe(true)
       expect(body.tools.some((tool: any) => tool.function.name === 'ledger_create_member_income')).toBe(true)
       expect(body.messages[0].content).toContain('tool_calls')
       return {
@@ -908,6 +909,38 @@ describe('xox TypeScript API', () => {
       expect(planned.json.planner).toBe('openai_compatible_tool_calls')
       expect(planned.json.actionRequests[0].kind).toBe('ledger.create_entry')
       expect(planned.json.actionRequests[0].payload.amount).toBe(176)
+      await closeHarness(harness)
+    })
+  })
+
+  it('answers basic conversation through a model-selected read-only reply tool', async () => {
+    let callCount = 0
+    await withFakeOpenAICompatibleProvider((body) => {
+      callCount += 1
+      expect(body.tools.some((tool: any) => tool.function.name === 'agent_reply')).toBe(true)
+      expect(body.messages[0].content).toContain('agent_reply')
+      return fakeToolResponse('agent_reply', {
+        message: '我是 xox-model Agent OS，可以通过对话驱动测算、调模型、记账、预实分析、版本、分享和锁账；写入前会先给确认卡。',
+      })
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-basic-reply-tool', {
+        llmProvider: 'openai-compatible',
+        openaiCompatibleProvider: 'test-compatible',
+        openaiCompatibleBaseUrl: baseUrl,
+        openaiCompatibleApiKey: 'test-key',
+      })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-basic-reply-tool@example.com')
+
+      const planned = await client.post('/api/v1/agent/messages', {
+        message: '告诉我你是谁',
+      })
+      expect(planned.statusCode).toBe(200)
+      expect(callCount).toBe(1)
+      expect(planned.json.planner).toBe('openai_compatible_tool_calls')
+      expect(planned.json.actionRequests).toHaveLength(0)
+      expect(planned.json.planSteps[0].status).toBe('executed')
+      expect(planned.json.messages.at(-1).content).toContain('xox-model Agent OS')
       await closeHarness(harness)
     })
   })
