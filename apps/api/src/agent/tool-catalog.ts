@@ -5,6 +5,7 @@ export type AgentToolCapability =
   | 'draft'
   | 'import_export'
   | 'ledger'
+  | 'memory'
   | 'navigation'
   | 'share'
   | 'version'
@@ -89,6 +90,10 @@ export type AgentToolCallStep = {
   question?: string
   missingFields?: string[]
   suggestions?: string[]
+  kind?: 'preference' | 'fact' | 'business_rule' | 'workflow'
+  key?: string
+  value?: string
+  confidence?: number
   scope?: 'workspace_summary' | 'period_summary' | 'member_summary' | 'team_summary' | 'top_months' | 'variance_detail' | 'ledger_history'
   metrics?: string[]
   order?: 'asc' | 'desc'
@@ -659,6 +664,33 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
   {
     type: 'function',
     function: {
+      name: 'memory_remember',
+      description:
+        '保存当前用户在当前工作区内的长期记忆。仅当用户明确要求“记住/以后默认/以后都”某个稳定偏好、默认业务习惯或长期规则时调用。不要保存 API key、token、密码、验证码、账号凭据或一次性秘密；普通业务执行不要调用本工具。',
+      parameters: objectSchema({
+        value: {
+          type: 'string',
+          description: '要保存的简短记忆内容，例如“默认记账成员是 成员 A”。必须是用户明确要求长期记住的内容，不要包含密钥或密码。',
+        },
+        kind: {
+          type: 'string',
+          enum: ['preference', 'fact', 'business_rule', 'workflow'],
+          description: '记忆类型：preference=用户偏好，fact=稳定事实，business_rule=业务规则，workflow=默认操作习惯。',
+        },
+        key: {
+          type: 'string',
+          description: '可选稳定 key，例如 user.preference.defaultLedgerMember；不确定可省略，由服务端生成。',
+        },
+        confidence: {
+          type: 'number',
+          description: '0 到 1 的置信度；用户明确要求记住时通常为 0.85 到 1。',
+        },
+      }, ['value']),
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'ask_user_clarification',
       description: '当用户目标可执行但缺少必要业务信息时，向用户提出一个简短澄清问题。只读，不生成确认卡，不修改业务数据。',
       parameters: objectSchema({
@@ -776,6 +808,12 @@ const TOOL_METADATA: Record<string, Omit<AgentToolMetadata, 'name'>> = {
     riskLevel: 'high',
     confirmationMode: 'always',
     navigationTarget: 'bookkeeping',
+  },
+  memory_remember: {
+    capability: 'memory',
+    riskLevel: 'low',
+    confirmationMode: 'never',
+    navigationTarget: null,
   },
   share_create: {
     capability: 'share',
@@ -978,6 +1016,8 @@ export function toolCallToPlannerStep(toolName: string, args: Record<string, unk
       return { intent: 'ui.navigate', ...args }
     case 'data_query_workspace':
       return { intent: 'data.query_workspace', ...args }
+    case 'memory_remember':
+      return { intent: 'memory.remember', ...args }
     case 'ask_user_clarification':
       return { intent: 'agent.ask_clarification', ...args }
     case 'account_forbidden':

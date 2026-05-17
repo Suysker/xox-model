@@ -5,7 +5,6 @@ import type { Settings } from '../core/settings.js'
 import { newId } from '../core/security.js'
 import { utcNow } from '../core/time.js'
 import type { CurrentUser } from '../modules/auth.js'
-import { rememberFromUserMessage } from './memory.js'
 import { addRunEvent, listSerializedRunEvents, serializeRunEvent } from './run-events.js'
 import { agentThreadEvents } from './thread-events.js'
 import {
@@ -68,7 +67,6 @@ export async function submitAgentMessageRun(input: SubmitAgentMessageRunInput): 
       status: 'queued',
       data: { background: input.background === true },
     })
-    await rememberFromUserMessage({ db: input.db, workspace: input.workspace, user: input.user, threadId: thread.id, messageId: userMessage.id, message: input.message })
 
     if (input.background === true) {
       await touchThreadAfterRun(input.db, thread, input.message)

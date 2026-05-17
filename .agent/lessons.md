@@ -102,6 +102,7 @@
 - Keep Agent API routes inside the Agent boundary, not under generic business `modules`. `agent/routes.ts` should own auth/DTO/SSE transport and delegate run lifecycle to `run-submission`/`run-worker`, preserving the ADR split between API Boundary and Lean Kernel services.
 - Keep worker lifecycle separate from the Lean Agent Kernel. Worker code should own leases, cancellation, recovery, and final run status; kernel code should own the single-run planning/action-graph/message/memory loop behind a small callable boundary.
 - Add architecture guard tests for Agent harness boundaries after refactors. Runtime adapters, routes, kernel, approval executor, and tool executor should have import-level tests so future edits cannot quietly reintroduce DB access, provider coupling, or old route modules.
+- Long-term memory writes should be model-selected tool calls, not submission-time text capture. Use a `memory_remember` provider-native tool for explicit “remember/default” requests, then let the server enforce tenant scope, redaction, and secret rejection.
 
 ## Testing
 

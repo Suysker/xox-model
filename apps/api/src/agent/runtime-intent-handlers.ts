@@ -39,6 +39,8 @@ import {
   planWorkspacePatchFromStep,
   planWorkspaceRename,
 } from './workspace-action-drafts.js'
+import { rememberAgentMemory, redactSecretLikeContent } from './memory.js'
+import type { ReadDraft, RuntimePlannerStep } from './action-draft-builder.js'
 
 function numericAlias(...values: unknown[]) {
   for (const value of values) {
@@ -46,6 +48,35 @@ function numericAlias(...values: unknown[]) {
     if (Number.isFinite(value)) return value
   }
   return null
+}
+
+async function rememberFromToolCall(ctx: PlannerContext, step: RuntimePlannerStep): Promise<ReadDraft> {
+  const value = typeof step.value === 'string' ? step.value : ''
+  const input = {
+    db: ctx.db,
+    workspace: ctx.workspace,
+    user: ctx.user,
+    threadId: ctx.threadId,
+    value,
+    ...(typeof step.kind === 'string' ? { kind: step.kind } : {}),
+    ...(typeof step.key === 'string' ? { key: step.key } : {}),
+    ...(typeof step.confidence === 'number' ? { confidence: step.confidence } : {}),
+  }
+  const result = await rememberAgentMemory(input)
+  if (result.memory) {
+    return {
+      title: '已保存记忆',
+      message: `已保存当前工作区记忆：${redactSecretLikeContent(result.memory.value)}`,
+      status: 'executed',
+    }
+  }
+  return {
+    title: '未保存记忆',
+    message: result.rejectedReason === 'secret'
+      ? '这条内容看起来包含 API key、token、密码或验证码，已拒绝写入长期记忆。'
+      : '没有识别到可保存的长期记忆内容。',
+    status: 'info',
+  }
 }
 
 export const runtimeIntentHandlers: ActionDraftBuilderHandlers<PlannerContext> = {
@@ -118,5 +149,6 @@ export const runtimeIntentHandlers: ActionDraftBuilderHandlers<PlannerContext> =
     ...(step.versionName !== undefined ? { versionName: step.versionName } : {}),
     revoke: true,
   }),
+  'memory.remember': rememberFromToolCall,
   'data.query_workspace': answerWorkspaceDataQuestion,
 }

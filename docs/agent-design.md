@@ -197,7 +197,7 @@ Agent OS 内核，和具体 provider 解耦：
 - `confirmation-service.ts`：创建、编辑、确认、取消 action request。
 - `run-events.ts`：持久化 run 级 trace，并发布 thread state 刷新信号。
 - `tool-policy.ts`：风险等级、权限、账号动作拒绝、写入确认规则。
-- `memory-manager.ts`：租户内记忆的 list/delete/注入。
+- `memory.ts`：租户内记忆的 list/delete/注入，以及 `memory_remember` tool_call 的服务端存储边界。
 - `context-compactor.ts`：长对话压缩。
 - `prompt-registry.ts`：系统提示词、工具说明和 skills 说明文件读取。
 - `event-stream.ts`：向前端输出 streaming event。
@@ -234,9 +234,9 @@ agent/routes.ts
 
 消息提交边界落在 `apps/api/src/agent/run-submission.ts`：
 
-- 模块职责：处理 `POST /agent/messages` 背后的 server-owned run 创建、user message 持久化、queued event、memory capture、background run 入队和同步 run completion 返回；它不做认证、不解析 HTTP request、不暴露 provider 细节。
-- 依赖方向：`agent/routes.ts -> agent/run-submission -> agent/run-worker + agent/thread-store + agent/run-events + agent/memory`。
-- 复用计划：继续复用 `getOrCreateThread`、`addMessage`、`rememberFromUserMessage`、`addRunEvent`、`completeAgentRun` 和 `scheduleAgentRunQueueDrain`；不新增第二套 run 创建或 action graph 序列化。
+- 模块职责：处理 `POST /agent/messages` 背后的 server-owned run 创建、user message 持久化、queued event、background run 入队和同步 run completion 返回；它不做认证、不解析 HTTP request、不暴露 provider 细节，也不从用户文本中正则提取业务或记忆意图。
+- 依赖方向：`agent/routes.ts -> agent/run-submission -> agent/run-worker + agent/thread-store + agent/run-events`。
+- 复用计划：继续复用 `getOrCreateThread`、`addMessage`、`addRunEvent`、`completeAgentRun` 和 `scheduleAgentRunQueueDrain`；不新增第二套 run 创建、memory 写入路径或 action graph 序列化。
 - 验收：前台消息、后台消息、thread history、memory、run event、确认卡和 action graph 相关 API 测试必须继续通过。
 
 版本 / 分享确认卡边界落在 `apps/api/src/agent/version-action-drafts.ts`：
@@ -468,6 +468,7 @@ SaaS memory 必须分层隔离：
 要求：
 
 - memory 查询、删除、prompt 注入都必须按当前登录用户和当前工作区过滤。
+- memory 写入必须由模型显式调用 `memory_remember`；服务端不在 message submission 阶段用关键词、正则或穷举从用户文本中猜测“应该记住什么”。
 - secrets、API key、token、密码、验证码等不得写入 memory。
 - context summary 只来自同一 thread、同一 user、同一 workspace。
 - context summary 和后续 provider prompt 注入的 recent messages 必须经过 secret redaction；即使用户在旧消息里粘贴过 key/token，也不能进入长期摘要或下一轮运行上下文。

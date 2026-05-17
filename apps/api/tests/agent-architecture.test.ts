@@ -22,6 +22,7 @@ describe('Agent ADR architecture boundaries', () => {
   it('keeps the Agent API boundary under apps/api/src/agent instead of modules', () => {
     expect(existsSync(join(srcRoot, 'modules', 'agent.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'routes.ts'))).toBe(true)
+    expect(existsSync(join(srcRoot, 'agent', 'tool-projector.ts'))).toBe(false)
   })
 
   it('keeps runtime adapters provider-only and free of DB, routes, approvals, and domain execution', () => {
@@ -77,5 +78,15 @@ describe('Agent ADR architecture boundaries', () => {
     const apiTest = source(relative(srcRoot, join(apiRoot, 'tests', 'api.test.ts')))
     expect(apiTest).toContain("../src/agent/run-worker.js")
     expect(apiTest).not.toContain("../src/modules/agent.js")
+  })
+
+  it('keeps memory writes model-selected instead of submission-time regex capture', () => {
+    expectNoImports('agent/run-submission.ts', [
+      /rememberFromUserMessage/,
+    ])
+    const memory = source('agent/memory.ts')
+    expect(memory).not.toContain('memoryCandidateFromMessage')
+    expect(memory).not.toContain('rememberFromUserMessage')
+    expect(memory).not.toContain('message.match')
   })
 })

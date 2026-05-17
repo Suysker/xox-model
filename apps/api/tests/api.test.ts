@@ -20,14 +20,14 @@ type JsonResponse = {
   json: any
 }
 
-type FakeCapability = 'data' | 'draft' | 'import_export' | 'ledger' | 'navigation' | 'share' | 'version'
+type FakeCapability = 'data' | 'draft' | 'import_export' | 'ledger' | 'memory' | 'navigation' | 'share' | 'version'
 
 type FakeProviderOptions = {
   autoSelectCapabilities?: boolean
   capabilities?: FakeCapability[]
 }
 
-const DEFAULT_FAKE_CAPABILITIES: FakeCapability[] = ['data', 'draft', 'import_export', 'ledger', 'navigation', 'share', 'version']
+const DEFAULT_FAKE_CAPABILITIES: FakeCapability[] = ['data', 'draft', 'import_export', 'ledger', 'memory', 'navigation', 'share', 'version']
 
 function testSettings(databasePath: string): Settings {
   return {
@@ -1074,6 +1074,7 @@ describe('xox TypeScript API', () => {
     expect(names).toContain('data_query_workspace')
     expect(names).toContain('ledger_create_entry')
     expect(names).toContain('workspace_rename')
+    expect(names).toContain('memory_remember')
     expect(names).toContain('account_forbidden')
     expect(names).not.toContain('agent_reply')
 
@@ -1103,13 +1104,20 @@ describe('xox TypeScript API', () => {
     expect(dataProjection.toolNames).toContain('workspace_update_online_factor')
     expect(dataProjection.toolNames).not.toContain('workspace_patch_config')
 
+    const memoryProjection = buildRuntimeToolCatalogProjection({ selectedCapabilities: ['memory'] })
+    expect(memoryProjection.toolNames).toContain('memory_remember')
+    expect(memoryProjection.toolNames).toContain('account_forbidden')
+    expect(memoryProjection.toolNames).toContain('ask_user_clarification')
+    expect(memoryProjection.toolNames).not.toContain('ledger_create_entry')
+
     const fallbackProjection = buildRuntimeToolCatalogProjection({
       strategy: 'router_fallback_business_core',
-      selectedCapabilities: ['data', 'draft', 'import_export', 'ledger', 'share', 'version'],
+      selectedCapabilities: ['data', 'draft', 'import_export', 'ledger', 'memory', 'share', 'version'],
     })
     expect(fallbackProjection.strategy).toBe('router_fallback_business_core')
     expect(fallbackProjection.toolNames).toContain('data_query_workspace')
     expect(fallbackProjection.toolNames).toContain('ledger_create_entry')
+    expect(fallbackProjection.toolNames).toContain('memory_remember')
     expect(fallbackProjection.toolNames).toContain('workspace_publish_release')
     expect(fallbackProjection.toolNames).not.toContain('ui_navigate')
   })
@@ -2280,51 +2288,73 @@ describe('xox TypeScript API', () => {
   })
 
   it('keeps agent memory scoped by user and workspace and compacts long thread context', async () => {
-    const harness = await buildHarness('agent-memory')
-    const firstClient = new Client(harness.app)
-    const secondClient = new Client(harness.app)
-    const firstUser = await registerUser(firstClient, 'agent-memory-a@example.com')
-    await registerUser(secondClient, 'agent-memory-b@example.com')
-
-    const remembered = await firstClient.post('/api/v1/agent/messages', {
-      message: '记住：默认记账成员是 成员 A',
-    })
-    expect(remembered.statusCode).toBe(200)
-    const threadId = remembered.json.threadId
-    const firstMemories = await firstClient.get('/api/v1/agent/memories')
-    expect(firstMemories.json.memories).toHaveLength(1)
-    expect(firstMemories.json.memories[0].value).toContain('成员 A')
-    expect((await secondClient.get('/api/v1/agent/memories')).json.memories).toHaveLength(0)
-    expect((await secondClient.delete(`/api/v1/agent/memories/${firstMemories.json.memories[0].id}`)).statusCode).toBe(403)
-
     const secretValue = ['sk', 'memorysecretvalue123456'].join('-')
-    const secretRemember = await firstClient.post('/api/v1/agent/messages', {
-      threadId,
-      message: `记住：DeepSeek API key 是 ${secretValue}`,
+    await withFakeOpenAICompatibleProvider((body) => {
+      const instruction = fakeCurrentInstruction(body)
+      if (instruction.includes('默认记账成员')) {
+        return fakeToolResponse('memory_remember', {
+          value: '默认记账成员是 成员 A',
+          kind: 'preference',
+          key: 'user.preference.defaultLedgerMember',
+          confidence: 0.95,
+        })
+      }
+      if (instruction.includes('DeepSeek API key')) {
+        return fakeToolResponse('memory_remember', {
+          value: `DeepSeek API key 是 ${secretValue}`,
+          kind: 'preference',
+        })
+      }
+      return fakeAssistantTextResponse('已处理。')
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-memory', { llmProvider: 'openai-compatible', openaiCompatibleBaseUrl: baseUrl, openaiCompatibleApiKey: 'test-key' })
+      const firstClient = new Client(harness.app)
+      const secondClient = new Client(harness.app)
+      const firstUser = await registerUser(firstClient, 'agent-memory-a@example.com')
+      await registerUser(secondClient, 'agent-memory-b@example.com')
+
+      const remembered = await firstClient.post('/api/v1/agent/messages', {
+        message: '记住：默认记账成员是 成员 A',
+      })
+      expect(remembered.statusCode).toBe(200)
+      expect(remembered.json.planner).toBe('openai_compatible_tool_calls')
+      expect(remembered.json.planSteps.some((step: any) => step.title === '已保存记忆')).toBe(true)
+      const threadId = remembered.json.threadId
+      const firstMemories = await firstClient.get('/api/v1/agent/memories')
+      expect(firstMemories.json.memories).toHaveLength(1)
+      expect(firstMemories.json.memories[0].value).toContain('成员 A')
+      expect((await secondClient.get('/api/v1/agent/memories')).json.memories).toHaveLength(0)
+      expect((await secondClient.delete(`/api/v1/agent/memories/${firstMemories.json.memories[0].id}`)).statusCode).toBe(403)
+
+      const secretRemember = await firstClient.post('/api/v1/agent/messages', {
+        threadId,
+        message: `记住：DeepSeek API key 是 ${secretValue}`,
+      })
+      expect(secretRemember.statusCode).toBe(200)
+      expect(secretRemember.json.planSteps.some((step: any) => step.title === '未保存记忆')).toBe(true)
+      const memoriesAfterSecret = await firstClient.get('/api/v1/agent/memories')
+      expect(memoriesAfterSecret.json.memories).toHaveLength(1)
+      expect(JSON.stringify(memoriesAfterSecret.json.memories)).not.toContain(secretValue)
+
+      for (let index = 0; index < 5; index += 1) {
+        const response = await firstClient.post('/api/v1/agent/messages', { threadId, message: `看测算 ${index}` })
+        expect(response.statusCode).toBe(200)
+      }
+      const snapshots = await harness.db
+        .selectFrom('agent_context_snapshots')
+        .selectAll()
+        .where('thread_id', '=', threadId)
+        .where('user_id', '=', firstUser.id)
+        .execute()
+      expect(snapshots.length).toBeGreaterThan(0)
+      expect(snapshots[0]?.summary).toContain('user:')
+      expect(snapshots[0]?.summary).not.toContain(secretValue)
+      expect(snapshots[0]?.summary).toContain('[redacted-api-key]')
+
+      expect((await firstClient.delete(`/api/v1/agent/memories/${firstMemories.json.memories[0].id}`)).statusCode).toBe(200)
+      expect((await firstClient.get('/api/v1/agent/memories')).json.memories).toHaveLength(0)
+      await closeHarness(harness)
     })
-    expect(secretRemember.statusCode).toBe(200)
-    const memoriesAfterSecret = await firstClient.get('/api/v1/agent/memories')
-    expect(memoriesAfterSecret.json.memories).toHaveLength(1)
-    expect(JSON.stringify(memoriesAfterSecret.json.memories)).not.toContain(secretValue)
-
-    for (let index = 0; index < 5; index += 1) {
-      const response = await firstClient.post('/api/v1/agent/messages', { threadId, message: `看测算 ${index}` })
-      expect(response.statusCode).toBe(200)
-    }
-    const snapshots = await harness.db
-      .selectFrom('agent_context_snapshots')
-      .selectAll()
-      .where('thread_id', '=', threadId)
-      .where('user_id', '=', firstUser.id)
-      .execute()
-    expect(snapshots.length).toBeGreaterThan(0)
-    expect(snapshots[0]?.summary).toContain('user:')
-    expect(snapshots[0]?.summary).not.toContain(secretValue)
-    expect(snapshots[0]?.summary).toContain('[redacted-api-key]')
-
-    expect((await firstClient.delete(`/api/v1/agent/memories/${firstMemories.json.memories[0].id}`)).statusCode).toBe(200)
-    expect((await firstClient.get('/api/v1/agent/memories')).json.memories).toHaveLength(0)
-    await closeHarness(harness)
   })
 
   it('injects tenant-scoped memory into a new agent thread for real provider planning', async () => {
@@ -2362,42 +2392,19 @@ describe('xox TypeScript API', () => {
       if (instruction.includes('DeepSeek API key')) {
         expect(prompt).not.toContain(secretValue)
         expect(prompt).toContain('[redacted-api-key]')
-        return {
-          choices: [{
-            message: {
-              role: 'assistant',
-              content: null,
-              tool_calls: [{
-                id: 'call_secret_nav',
-                type: 'function',
-                function: {
-                  name: 'ui_navigate',
-                  arguments: JSON.stringify({ mainTab: 'dashboard', secondaryTab: 'overview' }),
-                },
-              }],
-            },
-          }],
-        }
+        return fakeToolResponse('memory_remember', {
+          value: `DeepSeek API key 是 ${secretValue}`,
+          kind: 'preference',
+        })
       }
 
       if (instruction.includes('记住')) {
         expect(prompt).toContain('记住')
-        return {
-          choices: [{
-            message: {
-              role: 'assistant',
-              content: null,
-              tool_calls: [{
-                id: 'call_memory_nav',
-                type: 'function',
-                function: {
-                  name: 'ui_navigate',
-                  arguments: JSON.stringify({ mainTab: 'dashboard', secondaryTab: 'overview' }),
-                },
-              }],
-            },
-          }],
-        }
+        return fakeToolResponse('memory_remember', {
+          value: '默认记账成员是 成员 A',
+          kind: 'preference',
+          key: 'user.preference.defaultLedgerMember',
+        })
       }
 
       return fakeAssistantTextResponse('已处理。')
@@ -2988,7 +2995,11 @@ describe('xox TypeScript API', () => {
       const instruction = prompt.split('用户指令：').at(-1) ?? prompt
 
       if (instruction.includes('记住：默认记账成员是 成员 A')) {
-        return fakeToolResponse('ui_navigate', { mainTab: 'dashboard', secondaryTab: 'overview' })
+        return fakeToolResponse('memory_remember', {
+          value: '默认记账成员是 成员 A',
+          kind: 'preference',
+          key: 'user.preference.defaultLedgerMember',
+        })
       }
       if (instruction.includes('默认成员线下 1 张')) {
         expect(prompt).toContain('默认记账成员是 成员 A')
@@ -3425,6 +3436,7 @@ describe('xox TypeScript API', () => {
       'workspace_rename',
       'workspace_promote_version',
       'data_query_workspace',
+      'memory_remember',
     ]) {
       expect(toolNames.has(name), name).toBe(true)
     }

@@ -155,12 +155,12 @@
 - [x] 通用工作区 / 草稿 / bundle preview 已从 `planner.ts` 抽到 `apps/api/src/agent/workspace-action-drafts.ts`，覆盖线上系数试算/写入、通用草稿 patch、工作区改名、bundle 导入导出；planner 不再直接引用 `@xox/domain` 投影/水合、`config-patch.ts` 或 `modules/workspace.ts` 的业务 draft 依赖
 - [x] Tool policy / permission hooks 覆盖账号动作拒绝、写入确认、确认卡编辑后的必需导航、跨租户 payload 禁止、锁账禁止、派生提成禁止直接编辑
 - [x] 多步骤消息中如果同时包含合法业务动作和账号禁用动作，合法业务动作仍会生成确认卡，账号动作只作为该步骤的只读拒绝项展示
-- [x] Memory list/delete/context injection 有测试证明不会跨用户或跨工作区，并且不会保存 secrets；当前 secret-like 消息会在 provider prompt 中 redaction，后续新线程不再注入
+- [x] Memory list/delete/context injection 有测试证明不会跨用户或跨工作区，并且不会保存 secrets；memory 写入由模型显式调用 `memory_remember`，message submission 不再用正则捕获“记住”意图；当前 secret-like 消息会在 provider prompt 中 redaction，后续新线程不再注入
 - [x] Context compaction 有测试证明 summary 只来自同一 thread / user / workspace，并且 summary 不包含 API key/token 原文
 - [x] React Agent OS 展示 action graph、导航事件、确认卡状态、确认卡编辑、取消、失败和执行后刷新；当前为后端状态刷新式 timeline
 - [x] Agent 历史对话和当前线程恢复已由 `/api/v1/agent/threads` 与 `/api/v1/agent/threads/{threadId}` 提供；API 测试覆盖 messages、runs、planSteps、actionRequests、navigationEvents、跨用户隔离和确认后状态恢复，React hook 会用本地 threadId 指针恢复服务端状态
 - [x] Agent thread store 已从 `apps/api/src/modules/agent.ts` 拆到 `apps/api/src/agent/thread-store.ts`，集中处理 thread ownership、message 写入、ThreadState 恢复和 DTO 序列化，避免 routes 自己拼恢复状态
-- [x] Agent message run submission 已从 `apps/api/src/modules/agent.ts` 拆到 `apps/api/src/agent/run-submission.ts`，集中处理 run 创建、user message 持久化、queued event、memory capture、background enqueue 和同步 completion 返回；route module 不再直接拼 run/action graph 响应
+- [x] Agent message run submission 已从 `apps/api/src/modules/agent.ts` 拆到 `apps/api/src/agent/run-submission.ts`，集中处理 run 创建、user message 持久化、queued event、background enqueue 和同步 completion 返回；route module 不再直接拼 run/action graph 响应，也不在提交阶段做本地语义捕获
 - [x] React 默认使用 background run 发送 Agent 消息；`POST /api/v1/agent/messages` 会先返回 `status=running`，后台 run 由持久化 `agent_runs` 队列和 worker lease 认领执行，刷新后通过 SSE thread state 或 REST polling 恢复 completed/failed run、assistant message、计划步骤和确认卡；API 测试和真实 provider smoke 已覆盖后台启动与恢复
 - [x] React Agent OS 优先通过 `/api/v1/agent/threads/{threadId}/events` SSE 接收服务端 `thread_state`，连接失败时回退到 REST polling；API 测试覆盖 SSE 初始状态、后续动作事件和跨用户隔离，web 测试覆盖事件 URL 编码
 - [x] SSE thread state stream 已从 `apps/api/src/modules/agent.ts` 拆到 `apps/api/src/agent/thread-state-stream.ts`，集中处理 `thread_state` event 投影、heartbeat、close/abort cleanup 和错误事件写入；REST 与 SSE 继续共用 `buildThreadState`

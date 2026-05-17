@@ -34,7 +34,7 @@ export type RuntimeToolCatalogProjection = {
 }
 
 const ESSENTIAL_CAPABILITIES: AgentToolCapability[] = ['account', 'clarification']
-const ROUTABLE_CAPABILITIES: AgentToolCapability[] = ['data', 'draft', 'import_export', 'ledger', 'navigation', 'share', 'version']
+const ROUTABLE_CAPABILITIES: AgentToolCapability[] = ['data', 'draft', 'import_export', 'ledger', 'memory', 'navigation', 'share', 'version']
 const BUSINESS_CORE_CAPABILITIES: AgentToolCapability[] = ROUTABLE_CAPABILITIES.filter((capability) => capability !== 'navigation')
 const ALL_CAPABILITIES = new Set<AgentToolCapability>([...ESSENTIAL_CAPABILITIES, ...ROUTABLE_CAPABILITIES])
 const CAPABILITY_TOOL_EXPANSIONS: Partial<Record<AgentToolCapability, string[]>> = {
@@ -45,6 +45,7 @@ const CAPABILITY_ROUTER_SYSTEM_PROMPT = [
   '你是 xox-model 的 Tool Catalog Gateway capability router。',
   '你的任务不是执行业务，也不是选择具体业务工具，而是为本轮用户指令选择需要暴露给主 Agent 的能力域。',
   '必须调用 tool_catalog_select_capabilities。可以选择多个能力域；普通问候、身份说明或闲聊可以传空数组。',
+  '用户明确要求“记住/以后默认/以后都”某个稳定偏好或默认业务习惯时选择 memory。',
   '用户做模型参数假设、试算或问“如果某参数变成 X 会怎样”时选择 draft；普通当前数据查询才选择 data。',
   '不要臆造能力域，不要输出 JSON 文本替代 tool_call。',
 ].join('\n')
@@ -52,6 +53,7 @@ const CAPABILITY_ROUTER_SYSTEM_PROMPT = [
 const CAPABILITY_ROUTER_RETRY_SYSTEM_PROMPT = [
   CAPABILITY_ROUTER_SYSTEM_PROMPT,
   '上一次 capability 选择为空。本轮如果用户要求记账、调模型、新增/删除业务对象、版本、分享、导入导出、数据查询或账本筛选，必须选择至少一个非空能力域。',
+  '如果用户明确要求保存长期记忆或默认偏好，必须选择 memory。',
   '只有纯问候、身份询问、闲聊或完全无业务意图时，capabilities 才能为空数组。',
 ].join('\n')
 
@@ -62,6 +64,7 @@ const CAPABILITY_SELECTION_TOOL: ChatTool = {
     description: [
       '选择本轮主 Agent planning 需要暴露的工具能力域。',
       'ledger=记账、实际分录、批量入账、历史分录修改/作废/恢复、锁账/解锁。',
+      'memory=保存当前用户在当前工作区内的长期记忆、默认偏好或默认业务习惯。',
       'draft=调模型、预测试算、如果某模型参数变成某值会怎样、团队成员/员工/股东/成本结构/工作区名称等草稿变更。',
       'version=保存快照、发布正式版、恢复版本、快照发布为正式版、删除版本、重置草稿。',
       'share=创建或撤销分享链接。',

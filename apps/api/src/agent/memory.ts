@@ -11,6 +11,9 @@ const SECRET_PATTERNS = [
   /sk-[A-Za-z0-9_-]{8,}/g,
   /((?:api\s*key|apikey|token|secret|密码|验证码)\s*[:：=]?\s*)[^\s,，。；;]{4,}/gi,
 ]
+const MEMORY_VALUE_LIMIT = 500
+const MEMORY_KEY_LIMIT = 120
+const MEMORY_KINDS = new Set(['preference', 'fact', 'business_rule', 'workflow'])
 
 export type AgentRuntimeContext = {
   memories: Row<'agent_memories'>[]
@@ -29,30 +32,47 @@ function containsSecretLikeContent(value: string) {
   return redactSecretLikeContent(value) !== value || /(api\s*key|apikey|token|密码|验证码|secret)/i.test(value)
 }
 
-function memoryCandidateFromMessage(message: string) {
-  const explicit = message.match(/(?:请)?记住[:：]?\s*(.+)$/)
-  const futureDefault = message.match(/以后(?:默认|都)?\s*(.+)$/)
-  const value = (explicit?.[1] ?? futureDefault?.[1] ?? '').trim()
-  if (!value || value.length < 3 || containsSecretLikeContent(value)) return null
-  const normalized = value.replace(/\s+/g, ' ').slice(0, 500)
-  return {
-    kind: 'preference',
-    key: `user.preference.${normalized.slice(0, 32)}`,
-    value: normalized,
-    confidence: 0.85,
-  }
+function normalizeMemoryValue(value: string) {
+  return value.replace(/\s+/g, ' ').trim().slice(0, MEMORY_VALUE_LIMIT)
 }
 
-export async function rememberFromUserMessage(input: {
+function normalizeMemoryKind(value: string | null | undefined) {
+  const kind = typeof value === 'string' ? value.trim() : ''
+  return MEMORY_KINDS.has(kind) ? kind : 'preference'
+}
+
+function normalizeMemoryKey(value: string | null | undefined, fallbackValue: string, kind: string) {
+  const key = typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, MEMORY_KEY_LIMIT) : ''
+  if (key && !containsSecretLikeContent(key)) return key
+  return `user.${kind}.${fallbackValue.slice(0, 32)}`
+}
+
+function normalizeConfidence(value: number | null | undefined) {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.min(1, Math.max(0, value))
+    : 0.85
+}
+
+export type RememberAgentMemoryResult =
+  | { memory: Row<'agent_memories'>; rejectedReason: null }
+  | { memory: null; rejectedReason: 'empty' | 'secret' }
+
+export async function rememberAgentMemory(input: {
   db: Kysely<Database>
   workspace: Row<'workspaces'>
   user: CurrentUser
   threadId: string
-  messageId: string
-  message: string
-}) {
-  const candidate = memoryCandidateFromMessage(input.message)
-  if (!candidate) return null
+  messageId?: string | null
+  kind?: string | null
+  key?: string | null
+  value: string
+  confidence?: number | null
+}): Promise<RememberAgentMemoryResult> {
+  const value = normalizeMemoryValue(input.value)
+  if (!value || value.length < 3) return { memory: null, rejectedReason: 'empty' }
+  if (containsSecretLikeContent(value)) return { memory: null, rejectedReason: 'secret' }
+  const kind = normalizeMemoryKind(input.kind)
+  const key = normalizeMemoryKey(input.key, value, kind)
   const now = utcNow()
   const id = newId()
   await input.db
@@ -62,17 +82,20 @@ export async function rememberFromUserMessage(input: {
       workspace_id: input.workspace.id,
       user_id: input.user.id,
       thread_id: input.threadId,
-      kind: candidate.kind,
-      key: candidate.key,
-      value: candidate.value,
-      confidence: candidate.confidence,
-      source_message_id: input.messageId,
+      kind,
+      key,
+      value,
+      confidence: normalizeConfidence(input.confidence),
+      source_message_id: input.messageId ?? null,
       created_at: now,
       updated_at: now,
       archived_at: null,
     })
     .execute()
-  return input.db.selectFrom('agent_memories').selectAll().where('id', '=', id).executeTakeFirstOrThrow()
+  return {
+    memory: await input.db.selectFrom('agent_memories').selectAll().where('id', '=', id).executeTakeFirstOrThrow(),
+    rejectedReason: null,
+  }
 }
 
 export async function listAgentMemories(db: Kysely<Database>, workspace: Row<'workspaces'>, user: CurrentUser) {
