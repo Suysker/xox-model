@@ -123,6 +123,7 @@ modules/agent.ts
 - `LLM_PROVIDER=openai` 只选择 OpenAI Agents SDK adapter；`LLM_PROVIDER=openai-compatible / deepseek / doubao / qwen` 继续走通用 Chat Completions adapter。两条路径都输出同一个 `RuntimePlanResult`。
 - Runtime 当前通过 `tool-gateway.ts` 暴露 provider-neutral runtime tool catalog。`tool-catalog.ts` 只维护 `AGENT_TOOL_REGISTRY` 源数据：每个工具同时带有 Chat Completions schema、capability、risk level、confirmation mode 和 navigation target。不再保留 `tool-projector.ts` 这种误导性边界。模型负责语义 tool selection；服务端负责确认卡、policy、租户隔离、审计和领域服务执行。未来如果工具目录增长到必须缩小时，只能在 Tool Catalog Gateway 内引入模型选择的 capability router 或更高层工具设计，不能在后端写关键词路由器。
 - `planner.ts` 负责 tenant/workspace planning context、provider-native tool_call 结果归一、多步骤拆分、只读步骤和待确认动作草稿；它不处理 HTTP DTO、不执行已确认写入。
+- `runtime-plan-reader.ts` 负责把 provider `RuntimePlanResult` 中的 assistant text、空响应和 provider 错误转成只读 `ReadDraft`，并提供 provider-neutral planner source 判定；planner 不再拼认证失败、网络失败或普通 assistant 回复文案。
 - `modules/agent.ts` 继续负责 HTTP routes、SSE 和 DTO 序列化；run queue/recovery/cancel 和 worker lease 回写逐步下沉到 `agent/run-worker.ts`。
 - 确认卡创建、编辑、确认、取消、执行状态更新、assistant message、run event 和审计已下沉到 `apps/api/src/agent/action-requests.ts`；route 只负责认证、HTTP DTO 序列化和 thread publish。
 - 已确认 action 的业务执行已下沉到 `apps/api/src/agent/tool-executor.ts`；confirmation service 先做 policy，再把当前 workspace/user 和 action payload 交给 executor 调用 workspace / ledger / share 模块。
@@ -871,6 +872,7 @@ API startup / recovery
 - `memory.ts`。
 - `runtime/openai-agents-adapter.ts`，`LLM_PROVIDER=openai` 时通过 OpenAI Agents SDK 的 `Agent / Runner / tool / OpenAIProvider` 收集 tool call plan，并规范化为内部 `RuntimePlanResult`。
 - `runtime/openai-compatible-chat-adapter.ts` 和 `adapter-router.ts`，OpenAI-compatible `tool_calls` 不再写在 route module 内，也不与 DeepSeek 绑定。
+- `runtime-plan-reader.ts`，负责把 provider `RuntimePlanResult` 的 assistant text、空结果和 provider error 转成只读 planned item，并统一 planner source 判定；planner 只消费这个边界。
 - `runtime-trace-events.ts`，负责 provider-neutral stream event 的脱敏、截断和 `provider_stream_*` run event 持久化；runtime adapter 不写库，planner 不拼 trace payload。
 - `tool-coverage.ts`，把资本、收入、成员、成本、员工、月份模板和工作区 bundle 导入导出等手动可编辑能力注册为 Agent 覆盖矩阵，并把账号动作列为明确手动项。
 - `config-patch.ts`，集中处理 `workspace_patch_config` 的 dot/array path 解析、旧值读取、写入和模型克隆，通用草稿修改不再在 route/planner 文件里手写路径遍历。

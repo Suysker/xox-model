@@ -5,18 +5,18 @@ import type { Settings } from '../core/settings.js'
 import type { CurrentUser } from '../modules/auth.js'
 import { redactSecretLikeContent } from './memory.js'
 import { planWithRuntimeAdapter } from './runtime/adapter-router.js'
-import type { RuntimePlanError, RuntimePlanResult } from './runtime/runtime-adapter.js'
+import type { RuntimePlanResult } from './runtime/runtime-adapter.js'
 import { extractWorkspaceBundleArtifact, type ParsedWorkspaceBundleArtifact } from './workspace-bundle-artifact.js'
 import { answerWorkspaceDataQuestion } from './data-agent.js'
 import { buildAgentContextPack } from './context-pack.js'
 import { provideRuntimeToolCatalog } from './tool-gateway.js'
 import { addRuntimeStreamRunEvent } from './runtime-trace-events.js'
 import { storePlannedActionGraph } from './action-graph-store.js'
+import { configuredRuntimePlannerSource, readDraftFromRuntimeResult } from './runtime-plan-reader.js'
 import {
   buildPlannedItemFromRuntimeStep,
   type ActionDraftBuilderHandlers,
   type PlannedItem,
-  type ReadDraft,
   type RuntimePlannerStep,
 } from './action-draft-builder.js'
 import {
@@ -68,55 +68,6 @@ export type PlannerContext = {
   message: string
   abortSignal?: AbortSignal
   providedWorkspaceBundle?: ParsedWorkspaceBundleArtifact
-}
-
-function modelToolCallRequiredRead(error?: RuntimePlanError | null): ReadDraft {
-  if (error?.kind === 'missing_api_key') {
-    return {
-      title: '模型 API key 未配置',
-      message: '当前已选择真实模型 provider，但没有可用 API key。请在模型配置里重新填写该 provider 的 API key；如果刚从 qwen 切到 DeepSeek，不要留空沿用旧 key。',
-      status: 'failed',
-    }
-  }
-
-  if (error?.kind === 'provider_http_error') {
-    const authFailed = error.statusCode === 401 || error.statusCode === 403
-    return {
-      title: authFailed ? '模型服务认证失败' : '模型服务请求失败',
-      message: authFailed
-        ? `模型服务认证失败：模型服务返回 HTTP ${error.statusCode}，当前保存的 API key 可能不是这个 provider 的 key，或已经失效。请重新保存 DeepSeek/Qwen/Doubao 对应的 API key。${error.message ? ` Provider 提示：${error.message}` : ''}`
-        : `模型服务返回 HTTP ${error.statusCode ?? '错误'}。请检查 base URL、model 名称和 provider 配置。${error.message ? ` Provider 提示：${error.message}` : ''}`,
-      status: 'failed',
-    }
-  }
-
-  if (error?.kind === 'provider_network_error') {
-    return {
-      title: '无法连接模型服务',
-      message: `无法连接当前 provider 的 Chat Completions 接口。请检查 base URL 是否可访问，以及本地代理/网络设置。${error.message ? ` 错误：${error.message}` : ''}`,
-      status: 'failed',
-    }
-  }
-
-  return {
-    title: '模型没有返回内容',
-    message: '模型这轮没有返回可展示内容，也没有调用工具。系统没有生成任何写入动作；请换一种说法重试。',
-    status: 'info',
-  }
-}
-
-function providerAssistantTextRead(text: string): ReadDraft {
-  const message = redactSecretLikeContent(text).trim().slice(0, 4000)
-  return {
-    title: '模型回复',
-    message: message || '模型这轮没有返回可展示内容。',
-    status: 'executed',
-  }
-}
-
-function configuredModelPlannerSource(settings: Settings): Extract<AgentPlannerSource, 'openai_agents' | 'openai_compatible_tool_calls'> | null {
-  if (settings.llmProvider === 'rules') return null
-  return settings.llmProvider === 'openai' ? 'openai_agents' : 'openai_compatible_tool_calls'
 }
 
 function splitRequestedSteps(message: string) {
@@ -261,7 +212,7 @@ const runtimeStepHandlers: ActionDraftBuilderHandlers<PlannerContext> = {
 }
 
 async function modelPlannedItems(ctx: PlannerContext): Promise<{ source: AgentPlannerSource; items: PlannedItem[] } | null> {
-  const requiredSource = configuredModelPlannerSource(ctx.settings)
+  const requiredSource = configuredRuntimePlannerSource(ctx.settings)
   const items: PlannedItem[] = []
   let source: AgentPlannerSource | null = null
   for (const part of splitRequestedSteps(ctx.message)) {
@@ -273,11 +224,7 @@ async function modelPlannedItems(ctx: PlannerContext): Promise<{ source: AgentPl
     if (!result || result.steps.length === 0) {
       if (!requiredSource) return null
       source = source ?? result?.source ?? requiredSource
-      if (result?.assistantText) {
-        items.push(providerAssistantTextRead(result.assistantText))
-      } else {
-        items.push(modelToolCallRequiredRead(result?.error))
-      }
+      items.push(readDraftFromRuntimeResult(result))
       continue
     }
     source =
@@ -296,7 +243,7 @@ async function modelPlannedItems(ctx: PlannerContext): Promise<{ source: AgentPl
     if (partItems.length > 0) {
       items.push(...partItems)
     } else if (requiredSource) {
-      items.push(modelToolCallRequiredRead(result.error))
+      items.push(readDraftFromRuntimeResult(result))
     }
   }
   return items.length > 0 ? { source: source ?? requiredSource ?? 'openai_compatible_tool_calls', items } : null
@@ -305,6 +252,6 @@ async function modelPlannedItems(ctx: PlannerContext): Promise<{ source: AgentPl
 export async function planResponse(ctx: PlannerContext) {
   const modelPlan = await modelPlannedItems(ctx)
   const items = modelPlan?.items ?? []
-  const plannerSource: AgentPlannerSource = modelPlan?.source ?? configuredModelPlannerSource(ctx.settings) ?? 'rules'
+  const plannerSource: AgentPlannerSource = modelPlan?.source ?? configuredRuntimePlannerSource(ctx.settings) ?? 'rules'
   return storePlannedActionGraph(ctx, { items, plannerSource })
 }
