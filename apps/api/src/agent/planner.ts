@@ -33,6 +33,7 @@ import type { RuntimePlanError, RuntimePlanResult, RuntimeStreamEvent } from './
 import { assertAgentRunLease } from './run-lease.js'
 import { agentThreadEvents } from './thread-events.js'
 import { buildAgentWritableConfigContext } from './tool-coverage.js'
+import { projectAgentTools } from './tool-projector.js'
 import { extractWorkspaceBundleArtifact, type ParsedWorkspaceBundleArtifact } from './workspace-bundle-artifact.js'
 import { addRunEvent } from './run-events.js'
 import { addAgentActionRequest, addAgentPlanStep, type AgentActionDraft } from './action-requests.js'
@@ -2184,10 +2185,25 @@ async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePlanResul
       : {}),
   }
 
+  const tools = projectAgentTools({ message: ctx.message })
+  await addRunEvent(ctx.db, {
+    threadId: ctx.threadId,
+    runId: ctx.runId,
+    type: 'tool_projection_ready',
+    title: '工具投影已生成',
+    message: `本轮向模型暴露 ${tools.length} 个任务相关工具。`,
+    status: 'running',
+    data: {
+      toolCount: tools.length,
+      toolNames: tools.map((tool) => tool.function.name),
+    },
+  })
+
   return planWithRuntimeAdapter({
     settings: ctx.settings,
     message: redactSecretLikeContent(ctx.message),
     context,
+    tools,
     ...(ctx.abortSignal ? { abortSignal: ctx.abortSignal } : {}),
     onStreamEvent: (event) => addProviderStreamRunEvent(ctx, event),
   })

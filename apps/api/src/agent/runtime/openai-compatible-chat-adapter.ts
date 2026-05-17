@@ -1,5 +1,5 @@
 import { plannerSystemPrompt } from '../prompt-registry.js'
-import { AGENT_TOOL_CATALOG, toolCallToPlannerStep, type AgentToolCallStep } from '../tool-catalog.js'
+import { toolCallToPlannerStep, type AgentToolCallStep } from '../tool-catalog.js'
 import type { RuntimeAdapter, RuntimePlanningInput, RuntimePlanResult } from './runtime-adapter.js'
 
 const SOURCE = 'openai_compatible_tool_calls' as const
@@ -213,7 +213,7 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
             { role: 'system', content: plannerSystemPrompt() },
             { role: 'user', content: `上下文：${JSON.stringify(input.context)}\n用户指令：${input.message}` },
           ],
-          tools: AGENT_TOOL_CATALOG,
+          tools: input.tools,
           tool_choice: 'auto',
           temperature: 0,
           max_tokens: 1600,

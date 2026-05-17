@@ -87,7 +87,7 @@ type JsonSchema = {
   additionalProperties?: boolean
 }
 
-type ChatTool = {
+export type ChatTool = {
   type: 'function'
   function: {
     name: string

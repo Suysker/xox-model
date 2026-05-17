@@ -11,6 +11,7 @@ import type { Database } from '../src/db/schema.js'
 import type { Settings } from '../src/core/settings.js'
 import { AGENT_MANUAL_CAPABILITY_COVERAGE, agentWritableConfigPatterns, buildAgentWritableConfigCatalog } from '../src/agent/tool-coverage.js'
 import { AGENT_TOOL_CATALOG } from '../src/agent/tool-catalog.js'
+import { projectedToolNames } from '../src/agent/tool-projector.js'
 import { createProductDefaultModel } from '@xox/domain'
 import { recoverRunningAgentRuns } from '../src/modules/agent.js'
 
@@ -927,9 +928,12 @@ describe('xox TypeScript API', () => {
 
   it('uses OpenAI-compatible tool calls as the primary model planning protocol', async () => {
     await withFakeOpenAICompatibleProvider((body) => {
+      const toolNames = new Set(body.tools.map((tool: any) => tool.function.name))
       expect(body.tool_choice).toBe('auto')
-      expect(body.tools.some((tool: any) => tool.function.name === 'agent_reply')).toBe(false)
-      expect(body.tools.some((tool: any) => tool.function.name === 'ledger_create_member_income')).toBe(true)
+      expect(toolNames.has('agent_reply')).toBe(false)
+      expect(toolNames.has('ledger_create_member_income')).toBe(true)
+      expect(toolNames.has('workspace_publish_release')).toBe(false)
+      expect(body.tools.length).toBeLessThan(AGENT_TOOL_CATALOG.length)
       expect(body.messages[0].content).toContain('tool_calls')
       return {
         choices: [{
@@ -964,8 +968,35 @@ describe('xox TypeScript API', () => {
       expect(planned.json.planner).toBe('openai_compatible_tool_calls')
       expect(planned.json.actionRequests[0].kind).toBe('ledger.create_entry')
       expect(planned.json.actionRequests[0].payload.amount).toBe(176)
+      expect(planned.json.runEvents.some((event: any) => event.type === 'tool_projection_ready' && event.data.toolNames.includes('ledger_create_member_income'))).toBe(true)
       await closeHarness(harness)
     })
+  })
+
+  it('projects task-relevant provider tools instead of exposing the full catalog', async () => {
+    const fullCount = AGENT_TOOL_CATALOG.length
+
+    const memberQuestion = projectedToolNames({ message: '我们有几个成员？' })
+    expect(memberQuestion).toContain('data_query_workspace')
+    expect(memberQuestion).not.toContain('team_member_add')
+    expect(memberQuestion).not.toContain('workspace_publish_release')
+    expect(memberQuestion.length).toBeLessThan(fullCount)
+
+    const complexPlan = projectedToolNames({
+      message: '请帮我设计 4 月多个成员的收入预测和成本，再把 3 月成员 A 线下 10 张、线上 2 张入账',
+    })
+    expect(complexPlan).toContain('ledger_create_member_income')
+    expect(complexPlan).toContain('ledger_create_entry')
+    expect(complexPlan).toContain('workspace_patch_config')
+    expect(complexPlan).toContain('cost_item_add')
+    expect(complexPlan).toContain('data_query_workspace')
+    expect(complexPlan).not.toContain('workspace_publish_release')
+    expect(complexPlan).not.toContain('share_create')
+    expect(complexPlan).not.toContain('account_forbidden')
+    expect(complexPlan.length).toBeLessThan(fullCount)
+
+    const accountAction = projectedToolNames({ message: '帮我注销账号' })
+    expect(accountAction).toEqual(['account_forbidden', 'ask_user_clarification'])
   })
 
   it('streams OpenAI-compatible tool-call chunks into durable run events', async () => {
@@ -1846,16 +1877,18 @@ describe('xox TypeScript API', () => {
 
   it('uses OpenAI Agents SDK adapter for OpenAI provider planning', async () => {
     await withFakeOpenAICompatibleProvider((body) => {
-      expect(body.tools.some((tool: any) => tool.function.name === 'ledger_create_member_income')).toBe(true)
       expect(body.messages.some((message: any) => typeof message.content === 'string' && message.content.includes('需要操作系统能力时，通过 tool_calls 表达意图'))).toBe(true)
       const prompt = body.messages.map((message: any) => message.content).join('\n')
       if (prompt.includes('如果 4 月线上系数变成 0.3')) {
+        expect(body.tools.some((tool: any) => tool.function.name === 'workspace_update_online_factor')).toBe(true)
+        expect(body.tools.some((tool: any) => tool.function.name === 'ledger_create_member_income')).toBe(false)
         return fakeOpenAIChatToolResponse('workspace_update_online_factor', {
           monthLabel: '4月',
           onlineSalesFactor: 0.3,
           mode: 'forecast',
         })
       }
+      expect(body.tools.some((tool: any) => tool.function.name === 'ledger_create_member_income')).toBe(true)
       return fakeOpenAIChatToolResponse('ledger_create_member_income', {
         monthLabel: '3月',
         memberName: '成员 A',
@@ -1961,7 +1994,7 @@ describe('xox TypeScript API', () => {
       const events = await collectSseEvents(
         `${baseUrl}/api/v1/agent/threads/${initial.json.threadId}/events`,
         client.cookieHeader(),
-        5,
+        7,
         async () => {
           const next = await client.post('/api/v1/agent/messages', {
             threadId: initial.json.threadId,

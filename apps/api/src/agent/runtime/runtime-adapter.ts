@@ -1,6 +1,6 @@
 import type { AgentPlannerSource } from '@xox/contracts'
 import type { Settings } from '../../core/settings.js'
-import type { AgentToolCallStep } from '../tool-catalog.js'
+import type { AgentToolCallStep, ChatTool } from '../tool-catalog.js'
 
 export type RuntimePlannerSource = Extract<AgentPlannerSource, 'openai_agents' | 'openai_compatible_tool_calls'>
 
@@ -46,6 +46,7 @@ export type RuntimePlanningInput = {
   settings: Settings
   message: string
   context: unknown
+  tools: ChatTool[]
   abortSignal?: AbortSignal
   onStreamEvent?: (event: RuntimeStreamEvent) => void | Promise<void>
 }

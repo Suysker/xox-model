@@ -1,12 +1,12 @@
 import { Agent, OpenAIProvider, Runner, tool } from '@openai/agents'
 import { plannerSystemPrompt } from '../prompt-registry.js'
-import { AGENT_TOOL_CATALOG, toolCallToPlannerStep, type AgentToolCallStep } from '../tool-catalog.js'
+import { toolCallToPlannerStep, type AgentToolCallStep, type ChatTool } from '../tool-catalog.js'
 import type { RuntimeAdapter, RuntimePlanningInput, RuntimePlanResult } from './runtime-adapter.js'
 
 const SOURCE = 'openai_agents' as const
 
-function buildPlannerTools(collectedSteps: AgentToolCallStep[]) {
-  return AGENT_TOOL_CATALOG.map((descriptor) => {
+function buildPlannerTools(tools: ChatTool[], collectedSteps: AgentToolCallStep[]) {
+  return tools.map((descriptor) => {
     const name = descriptor.function.name
     return tool({
       name,
@@ -46,7 +46,7 @@ export class OpenAIAgentsAdapter implements RuntimeAdapter {
         name: 'XOX Agent Planner',
         instructions: plannerSystemPrompt(),
         model: input.settings.openaiModel,
-        tools: buildPlannerTools(collectedSteps),
+        tools: buildPlannerTools(input.tools, collectedSteps),
         toolUseBehavior: () => ({
           isFinalOutput: true,
           isInterrupted: undefined,
