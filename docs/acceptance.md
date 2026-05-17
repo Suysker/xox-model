@@ -159,6 +159,7 @@
 - [x] 后台 run 支持周期 worker sweep：background 请求只入队，API 测试覆盖未显式调用 recovery 时，worker 也会按队列扫描认领 unleased running run 并完成真实 provider-compatible tool call 规划
 - [x] 后台 run 有持久化 `agent_run_events` 运行轨迹：API、SSE、React 运行图和真实 provider smoke 均覆盖 run 入队、worker 认领、模型规划、工具计划、确认卡生成、确认卡编辑、执行、取消和失败等用户可见步骤
 - [x] Run trace 写入和序列化已从 `apps/api/src/modules/agent.ts` 拆到 `apps/api/src/agent/run-events.ts`，作为后续 routes/kernel/confirmation service 继续切分的独立服务边界
+- [x] Provider stream trace 投影已从 `planner.ts` 抽到 `apps/api/src/agent/runtime-trace-events.ts`：runtime adapter 只输出 provider-neutral `RuntimeStreamEvent`，trace service 负责脱敏、截断并写入 `provider_stream_*` run events，planner 不再拼 raw stream payload
 - [x] Agent run worker lifecycle 已从 `apps/api/src/modules/agent.ts` 拆到 `apps/api/src/agent/run-worker.ts`，集中处理 run controller、worker lease heartbeat、completion、cancellation、进程重启恢复和 queue sweep；route module 不再直接持有后台 run 队列状态
 - [x] 用户可取消 running run；取消后 run 进入 `cancelled`，当前 provider 请求会被中止，迟到的模型结果不能把 run 改回 completed，也不能留下 pending 确认卡
 - [x] 缺少必要业务信息时，模型可通过 `ask_user_clarification` tool_call 生成只读澄清步骤；API 测试和真实 smoke 覆盖“不知道月份/成员/张数时先问用户”，不生成确认卡、不用规则猜参数

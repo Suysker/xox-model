@@ -719,13 +719,14 @@ Agent worker lifecycle
 
 ### Provider Chunk Streaming
 
-Provider token / chunk streaming 复用服务端 thread state SSE，而不是前端本地伪造打字机效果。runtime adapter 在真实 provider 返回 `text/event-stream` 时把 chunk 转成 provider-neutral `RuntimeStreamEvent`，planner 只持久化脱敏、截断后的摘要事件：
+Provider token / chunk streaming 复用服务端 thread state SSE，而不是前端本地伪造打字机效果。runtime adapter 在真实 provider 返回 `text/event-stream` 时把 chunk 转成 provider-neutral `RuntimeStreamEvent`，`runtime-trace-events.ts` 只持久化脱敏、截断后的摘要事件：
 
 ```text
 OpenAI-compatible Chat Completions
   -> stream: true
   -> SSE data chunks
   -> RuntimeStreamEvent(content_delta | tool_call_delta)
+  -> runtime-trace-events.ts
   -> agent_run_events(provider_stream_started | provider_stream_delta | provider_stream_completed)
   -> agentThreadEvents.publish(threadId)
   -> SSE thread_state
@@ -740,6 +741,7 @@ OpenAI-compatible Chat Completions
 - 不保存 provider 原始 SSE 行、完整 prompt、API key、HTTP headers、完整 tool arguments 或 provider 原始 JSON。
 - OpenAI-compatible / DeepSeek / Qwen / Doubao 等兼容 Chat Completions `stream + tools + tool_calls` 的 provider 走这条路径；如果 provider 返回普通 JSON，adapter 仍用非流式 tool_calls 解析，但不会伪造 provider stream delta。
 - OpenAI Agents SDK adapter 的 SDK tracing / human-in-the-loop event 映射仍是独立 maturity gate；业务默认 DeepSeek/OpenAI-compatible 路径已经通过 provider chunk run event 接入前端实时预览。
+- `planner.ts` 只把 runtime adapter 的 `onStreamEvent` 连接到 runtime trace service，不直接拼 `provider_stream_*` payload。
 
 ### 恢复语义
 
@@ -845,6 +847,7 @@ API startup / recovery
 - `memory.ts`。
 - `runtime/openai-agents-adapter.ts`，`LLM_PROVIDER=openai` 时通过 OpenAI Agents SDK 的 `Agent / Runner / tool / OpenAIProvider` 收集 tool call plan，并规范化为内部 `RuntimePlanResult`。
 - `runtime/openai-compatible-chat-adapter.ts` 和 `adapter-router.ts`，OpenAI-compatible `tool_calls` 不再写在 route module 内，也不与 DeepSeek 绑定。
+- `runtime-trace-events.ts`，负责 provider-neutral stream event 的脱敏、截断和 `provider_stream_*` run event 持久化；runtime adapter 不写库，planner 不拼 trace payload。
 - `tool-coverage.ts`，把资本、收入、成员、成本、员工、月份模板和工作区 bundle 导入导出等手动可编辑能力注册为 Agent 覆盖矩阵，并把账号动作列为明确手动项。
 - `config-patch.ts`，集中处理 `workspace_patch_config` 的 dot/array path 解析、旧值读取、写入和模型克隆，通用草稿修改不再在 route/planner 文件里手写路径遍历。
 - `team_member_add` / `team_member_delete`、`shareholder_add` / `shareholder_delete`、`cost_item_add` / `cost_item_delete`、`stage_cost_type_add` / `stage_cost_type_delete` 已作为结构性草稿变更专用工具接入 tool catalog；服务端负责创建完整领域对象、删除目标校验、依赖数组同步、最后成员/股东保护和确认卡预览。
