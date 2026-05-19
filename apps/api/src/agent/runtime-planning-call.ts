@@ -12,6 +12,26 @@ function plannerTokenBudget(message: string) {
   return message.length >= 600 || structuredLineCount >= 8 ? 6000 : 1600
 }
 
+function shouldRetryRuntimePlan(result: RuntimePlanResult | null | undefined) {
+  return result?.error?.kind === 'provider_network_error' || result?.error?.kind === 'provider_response_error'
+}
+
+function retryRuntimeInput(input: RuntimePlanningInput, result: RuntimePlanResult | null | undefined): RuntimePlanningInput {
+  if (result?.error?.kind !== 'provider_response_error') return input
+  const selectedToolName = result.error.toolNames?.find((name) =>
+    input.tools.some((tool) => tool.function.name === name),
+  )
+  if (!selectedToolName) return { ...input, stream: false }
+  const selectedTool = input.tools.find((tool) => tool.function.name === selectedToolName)
+  return {
+    ...input,
+    stream: false,
+    tools: selectedTool ? [selectedTool] : input.tools,
+    toolChoice: { type: 'function', function: { name: selectedToolName } },
+    maxTokens: Math.max(input.maxTokens ?? 1600, 12000),
+  }
+}
+
 export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePlanResult | null> {
   const context = await buildAgentContextPack({
     db: ctx.db,
@@ -42,17 +62,27 @@ export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePl
   }
 
   const first = await planWithRuntimeAdapter(runtimeInput)
-  if (first?.error?.kind === 'provider_network_error' && !ctx.abortSignal?.aborted) {
+  if (shouldRetryRuntimePlan(first) && !ctx.abortSignal?.aborted) {
+    const retryInput = retryRuntimeInput(runtimeInput, first)
     await addRunEvent(ctx.db, {
       threadId: ctx.threadId,
       runId: ctx.runId,
       type: 'provider_retrying',
       title: '模型服务请求重试',
-      message: '模型服务连接中断，正在对同一轮规划重试一次。',
+      message: first?.error?.kind === 'provider_response_error'
+        ? '模型服务返回的流式工具调用不可解析，正在改用非流式请求对同一轮规划重试一次。'
+        : '模型服务连接中断，正在对同一轮规划重试一次。',
       status: 'running',
-      data: { provider: ctx.settings.openaiCompatibleProvider, errorKind: first.error.kind },
+      data: {
+        provider: ctx.settings.openaiCompatibleProvider,
+        errorKind: first?.error?.kind,
+        retryStream: retryInput.stream ?? true,
+        retryTool: retryInput.toolChoice && typeof retryInput.toolChoice === 'object'
+          ? retryInput.toolChoice.function.name
+          : null,
+      },
     })
-    return planWithRuntimeAdapter(runtimeInput)
+    return planWithRuntimeAdapter(retryInput)
   }
   return first
 }

@@ -737,13 +737,13 @@ export async function planOperatingModelFromStep(ctx: PlannerContext, step: Runt
   const read: ReadDraft = summary
     ? {
         title: '经营模型预测预览',
-        message: `已生成待确认草稿预览，尚未保存。基准场景总收入 ${money(summary.base.grossSales)}，总成本 ${money(summary.base.totalCost)}，总利润 ${money(summary.base.totalProfit)}，期末现金 ${money(summary.base.netCashAfterInvestment)}，回本月份 ${summary.base.paybackMonthLabel ?? '未回本'}，最亏月份 ${summary.worst.label} ${money(summary.worst.monthlyProfit)}，最赚钱月份 ${summary.best.label} ${money(summary.best.monthlyProfit)}。`,
+        message: `经营模型配置预览：基准场景总收入 ${money(summary.base.grossSales)}，总成本 ${money(summary.base.totalCost)}，总利润 ${money(summary.base.totalProfit)}，期末现金 ${money(summary.base.netCashAfterInvestment)}，回本月份 ${summary.base.paybackMonthLabel ?? '未回本'}，最亏月份 ${summary.worst.label} ${money(summary.worst.monthlyProfit)}，最赚钱月份 ${summary.best.label} ${money(summary.best.monthlyProfit)}。写入动作会通过确认卡保存，本步骤不发布版本。`,
         navigation,
         status: 'executed',
       }
     : {
         title: '经营模型预测预览',
-        message: '已生成待确认草稿预览，尚未保存。当前模型无法生成基准预测摘要，请在确认卡里核对配置。',
+        message: '经营模型配置预览已生成，但当前模型无法生成基准预测摘要；请在确认卡里核对配置。写入动作会通过确认卡保存，本步骤不发布版本。',
         navigation,
         status: 'info',
       }

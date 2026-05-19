@@ -16,6 +16,16 @@ type StreamingToolCall = {
   arguments: string
 }
 
+class ProviderToolCallParseError extends Error {
+  constructor(
+    message: string,
+    readonly toolNames: string[],
+  ) {
+    super(message)
+    this.name = 'ProviderToolCallParseError'
+  }
+}
+
 function parseToolArguments(raw: unknown) {
   if (raw && typeof raw === 'object') return raw as Record<string, unknown>
   if (typeof raw !== 'string' || !raw.trim()) return {}
@@ -39,7 +49,11 @@ function safeProviderStreamText(value: string, maxLength: number) {
 }
 
 function isProviderResponseParseError(error: unknown) {
-  return error instanceof SyntaxError
+  return error instanceof SyntaxError || error instanceof ProviderToolCallParseError
+}
+
+function providerToolNamesFromError(error: unknown) {
+  return error instanceof ProviderToolCallParseError ? error.toolNames : undefined
 }
 
 function plannerStepsFromToolCalls(toolCalls: unknown): AgentToolCallStep[] {
@@ -246,7 +260,19 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
       toolCallCount: toolCalls.size,
     })
 
-    const toolSteps = plannerStepsFromToolCalls(normalizeStreamingToolCalls(toolCalls))
+    const normalizedToolCalls = normalizeStreamingToolCalls(toolCalls)
+    let toolSteps: AgentToolCallStep[]
+    try {
+      toolSteps = plannerStepsFromToolCalls(normalizedToolCalls)
+    } catch (error) {
+      const toolNames = normalizedToolCalls
+        .map((toolCall) => toolCall.function.name)
+        .filter((name): name is string => typeof name === 'string' && name.length > 0)
+      throw new ProviderToolCallParseError(
+        error instanceof Error ? error.message : String(error),
+        [...new Set(toolNames)],
+      )
+    }
     if (toolSteps.length > 0) return { source: SOURCE, steps: toolSteps }
     const assistantText = content.trim()
     return assistantText
@@ -320,12 +346,14 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
       const message = providerTimedOut
         ? `Provider request timed out after ${input.settings.agentProviderRequestTimeoutMs}ms`
         : error instanceof Error ? error.message : String(error)
+      const toolNames = providerToolNamesFromError(error)
       return {
         source: SOURCE,
         steps: [],
         error: {
           kind: isProviderResponseParseError(error) ? 'provider_response_error' : 'provider_network_error',
           message: safeProviderErrorMessage(message),
+          ...(toolNames && toolNames.length > 0 ? { toolNames } : {}),
         },
       }
     } finally {

@@ -8,6 +8,7 @@ export type RuntimePlanError = {
   kind: 'missing_api_key' | 'provider_http_error' | 'provider_network_error' | 'provider_response_error'
   statusCode?: number
   message?: string
+  toolNames?: string[]
 }
 
 export type RuntimePlanResult = {
