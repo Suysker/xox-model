@@ -3236,6 +3236,160 @@ describe('xox TypeScript API', () => {
     })
   })
 
+  it('recovers a long operating-model tool call when a preceding rename streamed successfully', async () => {
+    const months = Array.from({ length: 12 }, (_, index) => ({
+      monthIndex: index + 1,
+      events: index === 0 ? 0 : index < 3 ? 4 : 8,
+      salesMultiplier: index === 0 ? 0 : index < 3 ? 0.45 : 1,
+      onlineSalesFactor: 0.35,
+    }))
+    const operatingPlan = {
+      workspaceName: '星河 50 期启动测算',
+      planning: { startMonth: 3, horizonMonths: 12 },
+      operating: { offlineUnitPrice: 88, onlineUnitPrice: 68, polaroidLossRate: 0.06 },
+      shareholders: [
+        { name: '股东 A', investmentAmount: 300000, dividendRate: 0.35 },
+        { name: '股东 B', investmentAmount: 200000, dividendRate: 0.25 },
+      ],
+      memberSegments: [
+        { label: '核心成员', namePrefix: '成员', count: 10, monthlyBasePay: 2500, commissionRate: 0.12, perEventTravelCost: 35, offlineUnitsPerEvent: 18, onlineUnitsPerEvent: 6 },
+        { label: '普通成员', namePrefix: '成员', count: 25, monthlyBasePay: 1200, commissionRate: 0.1, perEventTravelCost: 35, offlineUnitsPerEvent: 8, onlineUnitsPerEvent: 3 },
+        { label: '练习成员', namePrefix: '成员', count: 15, monthlyBasePayAfterMonth: 800, firstBasePayFreeMonths: 3, commissionRate: 0.08, perEventTravelCost: 35, offlineUnitsPerEvent: 3, onlineUnitsPerEvent: 1 },
+      ],
+      employees: [
+        { role: '运营负责人', count: 1, monthlyBasePay: 18000 },
+        { role: '现场执行兼职', count: 1, perEventCost: 2000 },
+      ],
+      monthlyFixedCosts: [{ name: '排练室和办公场地', amount: 45000 }],
+      perEventCosts: [{ name: '场地执行成本', amount: 6000 }],
+      perUnitCosts: [{ name: '物料消耗', amount: 6 }],
+      months,
+    }
+
+    let planningCalls = 0
+    await withFakeOpenAICompatibleProvider((body) => {
+      planningCalls += 1
+      if (planningCalls === 1) {
+        return {
+          __stream: [
+            {
+              choices: [{
+                delta: {
+                  tool_calls: [{
+                    index: 0,
+                    id: 'call_rename',
+                    type: 'function',
+                    function: {
+                      name: 'workspace_rename',
+                      arguments: '{"workspaceName":"星河 50 期启动测算"}',
+                    },
+                  }],
+                },
+              }],
+            },
+            {
+              choices: [{
+                delta: {
+                  tool_calls: [{
+                    index: 1,
+                    id: 'call_operating_model',
+                    type: 'function',
+                    function: {
+                      name: 'workspace_configure_operating_model',
+                      arguments: '{"plan":{"workspaceName":"星河 50 期启动测算"',
+                    },
+                  }],
+                },
+              }],
+            },
+          ],
+        }
+      }
+      expect(body.stream).toBe(false)
+      expect(body.tools.map((tool: any) => tool.function.name)).toEqual(['workspace_configure_operating_model'])
+      return fakeToolResponse('workspace_configure_operating_model', { plan: operatingPlan })
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-operating-model-retry-after-rename', {
+        llmProvider: 'openai-compatible',
+        openaiCompatibleProvider: 'test-compatible',
+        openaiCompatibleBaseUrl: baseUrl,
+        openaiCompatibleApiKey: 'test-key',
+      })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-operating-model-retry-after-rename@example.com')
+
+      const planned = await client.post('/api/v1/agent/messages', {
+        message: '先把项目改名为星河 50 期启动测算，然后生成 50 个成员和 12 个月经营模型。',
+        automationLevel: 'high',
+      })
+      expect(planned.statusCode).toBe(200)
+      expect(planningCalls).toBe(2)
+      expect(planned.json.actionRequests.map((action: any) => action.kind)).toEqual(['workspace.update_draft'])
+      expect(planned.json.actionRequests[0].status).toBe('executed')
+      expect(planned.json.actionRequests[0].payload.source).toBe('workspace_configure_operating_model')
+      expect(planned.json.runEvents.some((event: any) =>
+        event.type === 'provider_retrying' &&
+        event.data?.retryTool === 'workspace_configure_operating_model',
+      )).toBe(true)
+      expect(planned.json.evaluations?.[0]?.status ?? planned.json.goals?.[0]?.status).not.toBe('failed')
+      const draft = (await client.get('/api/v1/workspace/draft')).json
+      expect(draft.workspaceName).toBe('星河 50 期启动测算')
+      expect(draft.config.teamMembers).toHaveLength(50)
+      expect(draft.config.months).toHaveLength(12)
+      await closeHarness(harness)
+    }, { capabilities: ['draft'] })
+  }, 10_000)
+
+  it('deduplicates a redundant workspace rename when the operating-model action owns the same name', async () => {
+    const operatingPlan = {
+      workspaceName: '星河 50 期启动测算',
+      planning: { startMonth: 3, horizonMonths: 12 },
+      operating: { offlineUnitPrice: 88, onlineUnitPrice: 68 },
+      shareholders: [{ name: '股东 A', investmentAmount: 300000, dividendRate: 1 }],
+      memberSegments: [{ label: '成员', namePrefix: '成员', count: 50, monthlyBasePay: 1000, commissionRate: 0.1, offlineUnitsPerEvent: 5, onlineUnitsPerEvent: 2 }],
+      employees: [{ role: '运营', count: 1, monthlyBasePay: 10000 }],
+      monthlyFixedCosts: [{ name: '房租', amount: 10000 }],
+      perEventCosts: [{ name: '场地', amount: 1000 }],
+      perUnitCosts: [{ name: '物料', amount: 6 }],
+      months: Array.from({ length: 12 }, (_, index) => ({
+        monthIndex: index + 1,
+        events: index === 0 ? 0 : 4,
+        salesMultiplier: index === 0 ? 0 : 1,
+        onlineSalesFactor: 0.35,
+      })),
+    }
+
+    await withFakeOpenAICompatibleProvider(() => fakeToolResponses([
+      { name: 'workspace_rename', args: { workspaceName: '星河 50 期启动测算' } },
+      { name: 'workspace_configure_operating_model', args: { plan: operatingPlan } },
+    ]), async (baseUrl) => {
+      const harness = await buildHarness('agent-operating-model-dedup-rename', {
+        llmProvider: 'openai-compatible',
+        openaiCompatibleProvider: 'test-compatible',
+        openaiCompatibleBaseUrl: baseUrl,
+        openaiCompatibleApiKey: 'test-key',
+      })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-operating-model-dedup-rename@example.com')
+
+      const planned = await client.post('/api/v1/agent/messages', {
+        message: '先改名为星河 50 期启动测算，再生成完整经营模型。',
+        automationLevel: 'high',
+      })
+      expect(planned.statusCode).toBe(200)
+      expect(planned.json.actionRequests).toHaveLength(1)
+      expect(planned.json.actionRequests[0].kind).toBe('workspace.update_draft')
+      expect(planned.json.actionRequests[0].status).toBe('executed')
+      expect(planned.json.runEvents.some((event: any) =>
+        event.type === 'action_auto_execution_failed',
+      )).toBe(false)
+      const draft = (await client.get('/api/v1/workspace/draft')).json
+      expect(draft.workspaceName).toBe('星河 50 期启动测算')
+      expect(draft.config.teamMembers).toHaveLength(50)
+      await closeHarness(harness)
+    }, { capabilities: ['draft'] })
+  })
+
   it('iterates through the Goal Run Engine until the Completion Evaluator verifies the repaired operating model', async () => {
     const months = Array.from({ length: 12 }, (_, index) => ({
       monthIndex: index + 1,

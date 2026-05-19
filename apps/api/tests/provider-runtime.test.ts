@@ -11,6 +11,7 @@ import { normalizeProviderToolSchemas } from '../src/agent/runtime/provider-tool
 import {
   parseToolArguments,
   plannerStepsFromProviderToolCalls,
+  ProviderToolCallParseError,
   repairToolName,
 } from '../src/agent/runtime/tool-call-repair.js'
 
@@ -213,6 +214,35 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
         offlineUnits: 1,
       }),
     ])
+
+    try {
+      plannerStepsFromProviderToolCalls({
+        allowedToolNames: ['workspace_rename', 'workspace_configure_operating_model'],
+        toolCalls: [
+          {
+            id: 'call_0_workspace_rename',
+            type: 'function',
+            function: {
+              name: 'workspace_rename',
+              arguments: '{"workspaceName":"星河 50 期启动测算"}',
+            },
+          },
+          {
+            id: 'call_1_workspace_configure_operating_model',
+            type: 'function',
+            function: {
+              name: 'workspace_configure_operating_model',
+              arguments: '{"plan":{"workspaceName":"星河 50 期启动测算"',
+            },
+          },
+        ],
+      })
+      throw new Error('Expected malformed second tool call to fail')
+    } catch (error) {
+      expect(error).toBeInstanceOf(ProviderToolCallParseError)
+      expect((error as ProviderToolCallParseError).failedToolName).toBe('workspace_configure_operating_model')
+      expect((error as ProviderToolCallParseError).toolNames[0]).toBe('workspace_configure_operating_model')
+    }
   })
 
   it('classifies provider errors and retries only recoverable provider failures', () => {

@@ -6,6 +6,7 @@ export class ProviderToolCallParseError extends Error {
   constructor(
     message: string,
     readonly toolNames: string[],
+    readonly failedToolName?: string,
   ) {
     super(message)
     this.name = 'ProviderToolCallParseError'
@@ -108,15 +109,20 @@ export function plannerStepsFromProviderToolCalls(input: {
       toolCall?.id,
     )
     if (!repairedName) continue
-    observedNames.push(repairedName)
     try {
       const args = parseToolArguments(toolCall?.function?.arguments)
       const step = toolCallToPlannerStep(repairedName, args)
       if (step) steps.push(step)
+      observedNames.push(repairedName)
     } catch (error) {
+      const toolNames = [
+        repairedName,
+        ...observedNames.filter((name) => name !== repairedName),
+      ]
       throw new ProviderToolCallParseError(
         error instanceof Error ? error.message : String(error),
-        [...new Set(observedNames)],
+        [...new Set(toolNames)],
+        repairedName,
       )
     }
   }

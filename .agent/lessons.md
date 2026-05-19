@@ -123,6 +123,8 @@
 - When reusing external agent runtime code, check the license first and prefer small MIT-attributed pure-module ports over importing another product's control plane, auth store, plugin registry, or runner state into the SaaS business harness.
 - Provider compatibility fixes should live below the runtime adapter, not in prompts or business tools. Put model ids in a ref resolver, capability facts in a profile registry, payload decisions in a request shaper, output cleanup in provider-output repair, and retry decisions in a failover policy so switching DeepSeek/Qwen/Doubao/Kimi/GLM/vLLM does not fork the Agent OS.
 - Provider probes are capability checks, not configuration writes. A probe may reuse an explicit or saved tenant-scoped key, but it must return only redacted auth/model/chat/tools/stream status and must not persist form values or raw provider responses.
+- When streamed multi-tool planning partially fails, retry the failed provider-selected tool, not the first observed tool. For long operating-model arguments, a successful leading `workspace_rename` can otherwise mask a damaged `workspace_configure_operating_model` and make high automation appear complete after only renaming.
+- If a high-level operating-model action already contains the target workspace name, drop a same-name `workspace_rename` from the same planning turn. This avoids duplicate confirmation cards and same-run draft revision conflicts while preserving the higher-level editable model card.
 
 ## Testing
 

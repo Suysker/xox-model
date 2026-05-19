@@ -2,6 +2,7 @@ import type { AgentPlannerSource } from '@xox/contracts'
 import type { PlannerContext } from './planning-context.js'
 import {
   buildPlannedItemFromRuntimeStep,
+  isActionDraft,
   type ActionDraftBuilderHandlers,
   type PlannedItem,
 } from './action-draft-builder.js'
@@ -89,6 +90,36 @@ export function splitRequestedSteps(message: string) {
   return parts.length > 0 ? parts : [message]
 }
 
+function actionPayload(item: PlannedItem) {
+  return isActionDraft(item) && item.payload && typeof item.payload === 'object'
+    ? item.payload as Record<string, unknown>
+    : null
+}
+
+function configureOperatingModelWorkspaceNames(items: PlannedItem[]) {
+  return new Set(items.flatMap((item) => {
+    const payload = actionPayload(item)
+    return isActionDraft(item) &&
+      item.kind === 'workspace.update_draft' &&
+      payload?.source === 'workspace_configure_operating_model' &&
+      typeof payload.workspaceName === 'string' &&
+      payload.workspaceName.trim()
+      ? [payload.workspaceName.trim()]
+      : []
+  }))
+}
+
+function removeRedundantWorkspaceRename(items: PlannedItem[]) {
+  const configuredWorkspaceNames = configureOperatingModelWorkspaceNames(items)
+  if (configuredWorkspaceNames.size === 0) return items
+  return items.filter((item) => {
+    if (!isActionDraft(item) || item.kind !== 'workspace.rename') return true
+    const payload = actionPayload(item)
+    const workspaceName = typeof payload?.workspaceName === 'string' ? payload.workspaceName.trim() : ''
+    return !configuredWorkspaceNames.has(workspaceName)
+  })
+}
+
 export async function runPlanningSession(
   ctx: PlannerContext,
   input: { handlers: ActionDraftBuilderHandlers<PlannerContext>; callRuntimePlanner: RuntimePlanner },
@@ -133,5 +164,8 @@ export async function runPlanningSession(
     }
   }
 
-  return items.length > 0 ? { source: source ?? requiredSource ?? 'openai_compatible_tool_calls', items } : null
+  const normalizedItems = removeRedundantWorkspaceRename(items)
+  return normalizedItems.length > 0
+    ? { source: source ?? requiredSource ?? 'openai_compatible_tool_calls', items: normalizedItems }
+    : null
 }

@@ -44,9 +44,12 @@ function isProviderResponseParseError(error: unknown) {
 }
 
 function providerToolNamesFromError(error: unknown) {
-  return error instanceof ProviderToolCallParseError || error instanceof ProviderTimeoutError
-    ? error.toolNames
-    : undefined
+  if (error instanceof ProviderToolCallParseError) {
+    return error.failedToolName
+      ? [error.failedToolName, ...error.toolNames.filter((name) => name !== error.failedToolName)]
+      : error.toolNames
+  }
+  return error instanceof ProviderTimeoutError ? error.toolNames : undefined
 }
 
 function isProviderTimeoutError(error: unknown) {
@@ -280,6 +283,7 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
         allowedToolNames: allowedToolNames(input),
       })
     } catch (error) {
+      if (error instanceof ProviderToolCallParseError) throw error
       const toolNames = normalizedToolCalls
         .map((toolCall) => toolCall.function?.name)
         .filter((name): name is string => typeof name === 'string' && name.length > 0)
