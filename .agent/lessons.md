@@ -125,6 +125,8 @@
 - Provider probes are capability checks, not configuration writes. A probe may reuse an explicit or saved tenant-scoped key, but it must return only redacted auth/model/chat/tools/stream status and must not persist form values or raw provider responses.
 - When streamed multi-tool planning partially fails, retry the failed provider-selected tool, not the first observed tool. For long operating-model arguments, a successful leading `workspace_rename` can otherwise mask a damaged `workspace_configure_operating_model` and make high automation appear complete after only renaming.
 - If a high-level operating-model action already contains the target workspace name, drop a same-name `workspace_rename` from the same planning turn. This avoids duplicate confirmation cards and same-run draft revision conflicts while preserving the higher-level editable model card.
+- Treat streamed tool-call arguments as progress, not executable state. Before Action Graph persistence, assemble per tool-call index/id, apply provider-gated bounded repair, validate schema, and preserve failed-tool identity for retry.
+- When porting OpenClaw runtime code, reuse only small MIT-licensed pure modules with attribution. Do not import OpenClaw's control plane, runner, plugin registry, filesystem auth/session store, or channel delivery into xox-model's SaaS harness.
 
 ## Testing
 
