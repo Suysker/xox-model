@@ -1461,6 +1461,102 @@ describe('xox TypeScript API', () => {
     }, { capabilities: ['ledger'] })
   })
 
+  it('omits tool_choice when an OpenAI-compatible provider rejects that parameter', async () => {
+    const planningRequests: Array<{ stream: unknown; toolChoice: unknown; toolNames: string[] }> = []
+    await withFakeOpenAICompatibleProvider((body) => {
+      planningRequests.push({
+        stream: body.stream,
+        toolChoice: body.tool_choice,
+        toolNames: body.tools.map((tool: any) => tool.function.name),
+      })
+      if (planningRequests.length === 1) {
+        return {
+          __stream: [
+            {
+              choices: [{
+                delta: {
+                  tool_calls: [{
+                    index: 0,
+                    id: 'call_malformed',
+                    type: 'function',
+                    function: {
+                      name: 'workspace_configure_operating_model',
+                      arguments: '{"plan":{"workspaceName":"星河"',
+                    },
+                  }],
+                },
+              }],
+            },
+          ],
+        }
+      }
+      if (planningRequests.length === 2) {
+        expect(body.stream).toBe(false)
+        expect(body.tool_choice).toEqual({ type: 'function', function: { name: 'workspace_configure_operating_model' } })
+        return {
+          __statusCode: 400,
+          body: {
+            error: {
+              message: 'deepseek-reasoner does not support this tool_choice',
+              type: 'invalid_request_error',
+            },
+          },
+        }
+      }
+      expect(body.stream).toBe(false)
+      expect(body.tool_choice).toBeUndefined()
+      expect(body.tools.map((tool: any) => tool.function.name)).toEqual(['workspace_configure_operating_model'])
+      return fakeToolResponse('workspace_configure_operating_model', {
+        plan: {
+          workspaceName: '星河 50 期启动测算',
+          planning: { startMonth: 3, horizonMonths: 12 },
+          operating: { offlineUnitPrice: 88, onlineUnitPrice: 68, polaroidLossRate: 0.06 },
+          shareholders: [
+            { name: '股东 A', investmentAmount: 300000, dividendRate: 0.35 },
+            { name: '股东 B', investmentAmount: 200000, dividendRate: 0.25 },
+          ],
+          memberSegments: [
+            { label: '核心成员', namePrefix: '成员', count: 2, monthlyBasePay: 2500, commissionRate: 0.12, perEventTravelCost: 35, offlineUnitsPerEvent: 18, onlineUnitsPerEvent: 6 },
+          ],
+          employees: [{ role: '运营', count: 1, monthlyBasePay: 18000 }],
+          monthlyFixedCosts: [{ name: '排练室和办公场地', amount: 45000 }],
+          perEventCosts: [{ name: '场地执行成本', amount: 6000 }],
+          perUnitCosts: [{ name: '物料消耗', amount: 6 }],
+          months: Array.from({ length: 12 }, (_, index) => ({
+            monthIndex: index + 1,
+            events: index === 0 ? 0 : 4,
+            salesMultiplier: index === 0 ? 0 : 1,
+            onlineSalesFactor: 0.35,
+          })),
+        },
+      })
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-tool-choice-unsupported-retry', {
+        llmProvider: 'openai-compatible',
+        openaiCompatibleProvider: 'deepseek',
+        openaiCompatibleBaseUrl: baseUrl,
+        openaiCompatibleApiKey: 'test-key',
+      })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-tool-choice-unsupported-retry@example.com')
+
+      const planned = await client.post('/api/v1/agent/messages', {
+        message: '按 12 个月经营简报生成模型。',
+      })
+
+      expect(planned.statusCode).toBe(200)
+      expect(planningRequests.map((request) => request.stream)).toEqual([true, false, false])
+      expect(planningRequests.at(-1)?.toolChoice).toBeUndefined()
+      expect(planned.json.actionRequests[0].kind).toBe('workspace.update_draft')
+      expect(planned.json.actionRequests[0].payload.workspaceName).toBe('星河 50 期启动测算')
+      expect(planned.json.runEvents.some((event: any) =>
+        event.type === 'provider_retrying' &&
+        event.data?.retryTool === 'workspace_configure_operating_model',
+      )).toBe(true)
+      await closeHarness(harness)
+    }, { capabilities: ['draft'] })
+  })
+
   it('answers basic conversation through direct provider assistant text', async () => {
     let callCount = 0
     await withFakeOpenAICompatibleProvider((body) => {

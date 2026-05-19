@@ -84,7 +84,7 @@ sudo systemctl status xox-model-web
 - Agent 数据问答通过 `data_query_workspace` 只读工具完成。模型只负责选择查询 scope 和指标，服务端用当前工作区的测算、账本和预实汇总计算答案；不要暴露自由 SQL，也不要在 provider 模式下用本地正则替模型选择工具。
 - 团队成员数量、成员名单和团队构成问题使用 `data_query_workspace` 的 `scope=team_summary`；服务端从当前草稿 `teamMembers` 读取人数和名称，不返回工作区财务总览替代答案。
 - Agent 普通对话、问候、身份说明和能力说明直接使用 assistant 文本完成。provider 模式下如果模型只返回普通文本而没有 tool call，系统只持久化文本回复，不会用规则伪造业务动作；不保留 `agent_reply` 这类废弃回复工具。
-- Agent provider 调用错误会按缺少 API key、HTTP 认证/请求失败、网络/base URL 失败、响应超时、真实无 tool_call 分开展示。切换 provider 时如果 API key 留空会保留旧 key；从 qwen 切到 DeepSeek 时必须重新填写 DeepSeek key，否则会显示 HTTP 401/403 认证失败。复杂 tool-call stream 如果已暴露工具名但超时，系统会记录 `provider_retrying`，改用同一工具的非流式请求重试一次。
+- Agent provider 调用错误会按缺少 API key、HTTP 认证/请求失败、网络/base URL 失败、响应超时、真实无 tool_call 分开展示。切换 provider 时如果 API key 留空会保留旧 key；从 qwen 切到 DeepSeek 时必须重新填写 DeepSeek key，否则会显示 HTTP 401/403 认证失败。复杂 tool-call stream 如果已暴露工具名但超时或参数损坏，系统会记录 `provider_retrying`，改用同一工具的非流式请求重试一次；若兼容 provider 返回 `tool_choice` 不支持，adapter 会保留工具列表并去掉 `tool_choice` 再试一次。
 - Agent 可写模型字段矩阵维护在 `apps/api/src/agent/tool-coverage.ts`。新增前端手动输入字段时，必须同步补该矩阵和 API 覆盖测试，否则模型可能不知道对应 patch path。真实 provider prompt 只注入 patterns 和少量样例字段，完整矩阵留在代码和测试里，避免每次请求携带所有月份/成本项导致延迟过高。
 - 团队成员新增/删除是结构性草稿变更，必须走 `team_member_add` / `team_member_delete` 专用 tool call，再由服务端生成 `workspace.update_draft` 确认卡；不要让模型通过 `workspace_patch_config` 直接重写整个 `teamMembers` 数组。确认执行前会拒绝把团队成员编辑到 0 个，防止用户编辑确认卡载荷后破坏模型可计算性。
 - 股东、基础成本项和专项成本类型新增/删除同样是结构性草稿变更，必须走 `shareholder_*`、`cost_item_*`、`stage_cost_type_*` 专用 tool call。专项成本类型变更会同步 `stageCostItems`、模板 `specialCosts` 和每个月的 `specialCosts`，避免只改类型表但月份表残留旧值。

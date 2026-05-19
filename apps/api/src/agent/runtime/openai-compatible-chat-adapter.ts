@@ -51,6 +51,13 @@ function safeProviderErrorMessage(value: unknown) {
     .slice(0, 300)
 }
 
+function providerRejectsToolChoice(statusCode: number, providerMessage: string) {
+  const normalized = providerMessage.toLowerCase()
+  return statusCode === 400 &&
+    normalized.includes('tool_choice') &&
+    (normalized.includes('does not support') || normalized.includes('not support') || normalized.includes('unsupported'))
+}
+
 function safeProviderStreamText(value: string, maxLength: number) {
   return value
     .replace(/sk-[A-Za-z0-9_-]{8,}/g, 'sk-***')
@@ -163,6 +170,24 @@ async function readProviderStreamChunk(reader: ReadableStreamDefaultReader<Uint8
 
 export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
   readonly name = 'openai-compatible-chat'
+
+  private requestBody(input: RuntimePlanningInput, options: { omitToolChoice?: boolean } = {}) {
+    const body: Record<string, unknown> = {
+      model: input.settings.openaiCompatibleModel,
+      messages: [
+        { role: 'system', content: input.systemPrompt ?? plannerSystemPrompt() },
+        { role: 'user', content: `上下文：${JSON.stringify(input.context)}\n用户指令：${input.message}` },
+      ],
+      tools: input.tools,
+      temperature: 0,
+      max_tokens: input.maxTokens ?? 1600,
+      stream: input.stream ?? true,
+    }
+    if (!options.omitToolChoice) {
+      body.tool_choice = input.toolChoice ?? 'auto'
+    }
+    return body
+  }
 
   private async planFromStream(response: Response, input: RuntimePlanningInput): Promise<RuntimePlanResult> {
     const reader = response.body?.getReader()
@@ -345,30 +370,29 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
         abortController.abort(new Error(`Provider request timed out after ${requestTimeoutMs}ms`))
       }, requestTimeoutMs + 1_000)
       timeout.unref?.()
-      const init: RequestInit = {
+      const endpoint = `${input.settings.openaiCompatibleBaseUrl.replace(/\/$/, '')}/chat/completions`
+      const init = (omitToolChoice = false): RequestInit => ({
         method: 'POST',
         headers: {
           Authorization: `Bearer ${input.settings.openaiCompatibleApiKey}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          model: input.settings.openaiCompatibleModel,
-          messages: [
-            { role: 'system', content: input.systemPrompt ?? plannerSystemPrompt() },
-            { role: 'user', content: `上下文：${JSON.stringify(input.context)}\n用户指令：${input.message}` },
-          ],
-          tools: input.tools,
-          tool_choice: input.toolChoice ?? 'auto',
-          temperature: 0,
-          max_tokens: input.maxTokens ?? 1600,
-          stream: input.stream ?? true,
-        }),
+        body: JSON.stringify(this.requestBody(input, { omitToolChoice })),
         signal: abortController.signal,
-      }
-      const response = await fetch(`${input.settings.openaiCompatibleBaseUrl.replace(/\/$/, '')}/chat/completions`, init)
+      })
+      let response = await fetch(endpoint, init(false))
 
       if (!response.ok) {
-        const providerMessage = await response.text().catch(() => '')
+        let providerMessage = await response.text().catch(() => '')
+        if (providerRejectsToolChoice(response.status, providerMessage) && input.tools.length > 0 && !abortController.signal.aborted) {
+          response = await fetch(endpoint, init(true))
+          if (response.ok) {
+            const contentType = response.headers.get('content-type') ?? ''
+            if (contentType.toLowerCase().includes('text/event-stream')) return await this.planFromStream(response, input)
+            return jsonPlanResult(await response.json())
+          }
+          providerMessage = await response.text().catch(() => '')
+        }
         return {
           source: SOURCE,
           steps: [],
