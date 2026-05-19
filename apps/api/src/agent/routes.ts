@@ -22,6 +22,7 @@ import {
 import {
   deleteAgentProviderSetting,
   getAgentProviderSetting,
+  probeAgentProviderSetting,
   serializeAgentProviderSetting,
   upsertAgentProviderSetting,
 } from './provider-settings.js'
@@ -44,6 +45,12 @@ const providerSettingSchema = z.object({
   provider: z.string().min(2).max(64),
   baseUrl: z.string().min(1).max(500),
   model: z.string().min(1).max(128),
+  apiKey: z.string().min(1).max(4096).optional(),
+})
+const providerProbeSchema = z.object({
+  provider: z.string().min(2).max(64).optional(),
+  baseUrl: z.string().min(1).max(500).optional(),
+  model: z.string().min(1).max(128).optional(),
   apiKey: z.string().min(1).max(4096).optional(),
 })
 
@@ -133,6 +140,19 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
       const workspace = await getWorkspaceForUser(db, user)
       await deleteAgentProviderSetting(db, workspace, user)
       return { ok: true }
+    } catch (error) {
+      const { sendError } = await import('../core/http.js')
+      return sendError(reply, error)
+    }
+  })
+
+  app.post('/api/v1/agent/provider-settings/probe', async (request, reply) => {
+    try {
+      const user = await requireCurrentUser(db, settings, request)
+      const workspace = await getWorkspaceForUser(db, user)
+      const body = parseAgentBody(providerProbeSchema, request.body ?? {})
+      const probe = await probeAgentProviderSetting(db, settings, workspace, user, body)
+      return { probe }
     } catch (error) {
       const { sendError } = await import('../core/http.js')
       return sendError(reply, error)

@@ -1755,6 +1755,61 @@ describe('xox TypeScript API', () => {
     })
   })
 
+  it('probes tenant provider settings with redacted auth and provider-shaped tool calls', async () => {
+    const seenRequests: any[] = []
+    let lastAuthorization = ''
+    await withFakeOpenAICompatibleProvider((body, request) => {
+      seenRequests.push(body)
+      lastAuthorization = String(request.headers.authorization ?? '')
+      expect(body.model).toBe('fake-probe-model')
+      expect(body.stream).toBe(false)
+      expect(body.tool_choice).toBe('auto')
+      expect(body.enable_thinking).toBe(false)
+      expect(body.tools.map((item: any) => item.function.name)).toEqual(['xox_provider_probe'])
+      return fakeToolResponse('xox_provider_probe', { ok: true })
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-provider-probe', {
+        llmProvider: 'deepseek',
+        openaiCompatibleApiKey: null,
+      })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-provider-probe@example.com')
+
+      const explicitProbe = await client.post('/api/v1/agent/provider-settings/probe', {
+        provider: 'qwen',
+        baseUrl,
+        model: 'fake-probe-model',
+        apiKey: 'test-probe-key',
+      })
+      expect(explicitProbe.statusCode).toBe(200)
+      expect(explicitProbe.json.probe.status).toBe('passed')
+      expect(explicitProbe.json.probe.checks.find((check: any) => check.name === 'tools').status).toBe('passed')
+      expect(JSON.stringify(explicitProbe.json)).not.toContain('test-probe-key')
+      expect(lastAuthorization).toBe('Bearer test-probe-key')
+
+      const saved = await client.put('/api/v1/agent/provider-settings', {
+        provider: 'qwen',
+        baseUrl,
+        model: 'fake-probe-model',
+        apiKey: 'saved-probe-key',
+      })
+      expect(saved.statusCode).toBe(200)
+
+      const savedKeyProbe = await client.post('/api/v1/agent/provider-settings/probe', {
+        provider: 'qwen',
+        baseUrl,
+        model: 'fake-probe-model',
+      })
+      expect(savedKeyProbe.statusCode).toBe(200)
+      expect(savedKeyProbe.json.probe.status).toBe('passed')
+      expect(JSON.stringify(savedKeyProbe.json)).not.toContain('saved-probe-key')
+      expect(lastAuthorization).toBe('Bearer saved-probe-key')
+      expect(seenRequests).toHaveLength(2)
+
+      await closeHarness(harness)
+    })
+  })
+
   it('encrypts tenant provider API keys at rest while preserving runtime tool calls', async () => {
     let lastAuthorization = ''
     await withFakeOpenAICompatibleProvider((body, request) => {

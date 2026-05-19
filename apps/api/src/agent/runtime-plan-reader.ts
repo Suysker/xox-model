@@ -19,7 +19,28 @@ function modelToolCallRequiredRead(error?: RuntimePlanError | null): ReadDraft {
   }
 
   if (error?.kind === 'provider_http_error') {
-    const authFailed = error.statusCode === 401 || error.statusCode === 403
+    const authFailed = error.classification === 'auth' || error.statusCode === 401 || error.statusCode === 403
+    if (error.classification === 'unsupported_parameter') {
+      return {
+        title: '模型参数不兼容',
+        message: `当前 provider 拒绝了本轮 Chat Completions 参数。系统会按 provider profile 省略不兼容参数；如果仍失败，请检查 model 是否支持 tools/tool_calls。${error.message ? ` Provider 提示：${error.message}` : ''}`,
+        status: 'failed',
+      }
+    }
+    if (error.classification === 'billing' || error.classification === 'rate_limit') {
+      return {
+        title: error.classification === 'billing' ? '模型服务额度不足' : '模型服务限流',
+        message: `模型服务返回 HTTP ${error.statusCode ?? '错误'}。请检查该 provider 的余额、额度或请求频率。${error.message ? ` Provider 提示：${error.message}` : ''}`,
+        status: 'failed',
+      }
+    }
+    if (error.classification === 'context_overflow') {
+      return {
+        title: '模型上下文超限',
+        message: `当前上下文超过了 provider/model 可接受长度。请缩短输入或切换更大上下文模型。${error.message ? ` Provider 提示：${error.message}` : ''}`,
+        status: 'failed',
+      }
+    }
     return {
       title: authFailed ? '模型服务认证失败' : '模型服务请求失败',
       message: authFailed

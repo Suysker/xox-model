@@ -37,6 +37,7 @@ export function AgentShell(props: {
         navigationEvents={agent.navigationEvents}
         memories={agent.memories}
         providerSetting={agent.providerSetting}
+        providerProbe={agent.providerProbe}
         threadSummaries={agent.threadSummaries}
         runningRunId={agent.runningRunId}
         eventConnectionMode={agent.eventConnectionMode}
@@ -56,6 +57,7 @@ export function AgentShell(props: {
         onRefreshProviderSetting={() => void agent.refreshProviderSetting()}
         onAutomationLevelChange={agent.setAutomationLevel}
         onSaveProviderSetting={(payload) => agent.saveProviderSetting(payload)}
+        onProbeProviderSetting={(payload) => agent.probeProviderSetting(payload)}
         onDeleteProviderSetting={() => void agent.deleteProviderSetting()}
       />
     </div>

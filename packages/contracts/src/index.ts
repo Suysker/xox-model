@@ -411,12 +411,26 @@ export type AgentProviderSettingRecord = {
   updatedAt: string
 }
 
+export type AgentProviderProbeResult = {
+  status: 'passed' | 'failed' | 'warning'
+  provider: string
+  model: string
+  checks: Array<{
+    name: 'auth' | 'model' | 'chat' | 'tools' | 'stream'
+    status: 'passed' | 'failed' | 'warning' | 'skipped'
+    message: string
+  }>
+  message: string
+}
+
 export type AgentProviderSettingUpdatePayload = {
   provider: string
   baseUrl: string
   model: string
   apiKey?: string
 }
+
+export type AgentProviderProbePayload = Partial<AgentProviderSettingUpdatePayload>
 
 export type AgentSendResponse = {
   threadId: string

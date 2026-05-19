@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { AlertTriangle, Bot, CheckCircle2, Database, History, KeyRound, Plus, RefreshCw, Save, SendHorizontal, Target, Trash2, XCircle } from 'lucide-react'
-import type { AgentActionRequest, AgentActionUpdatePayload, AgentAutomationLevel, AgentEvaluationResult, AgentGoalRecord, AgentMemoryRecord, AgentMessage, AgentNavigationEvent, AgentPlanStep, AgentProviderSettingRecord, AgentProviderSettingUpdatePayload, AgentRunEvent, AgentSendResponse, AgentThreadSummary } from '../../lib/api'
+import type { AgentActionRequest, AgentActionUpdatePayload, AgentAutomationLevel, AgentEvaluationResult, AgentGoalRecord, AgentMemoryRecord, AgentMessage, AgentNavigationEvent, AgentPlanStep, AgentProviderProbePayload, AgentProviderProbeResult, AgentProviderSettingRecord, AgentProviderSettingUpdatePayload, AgentRunEvent, AgentSendResponse, AgentThreadSummary } from '../../lib/api'
 import { AgentActionCard } from './AgentActionCard'
 import { AgentPlanTimeline } from './AgentPlanTimeline'
 
@@ -84,6 +84,7 @@ export function AgentConsole(props: {
   navigationEvents: AgentNavigationEvent[]
   memories: AgentMemoryRecord[]
   providerSetting: AgentProviderSettingRecord | null
+  providerProbe: AgentProviderProbeResult | null
   threadSummaries: AgentThreadSummary[]
   runningRunId: string | null
   eventConnectionMode: 'idle' | 'connecting' | 'sse' | 'polling'
@@ -103,6 +104,7 @@ export function AgentConsole(props: {
   onRefreshProviderSetting: () => void
   onAutomationLevelChange: (level: AgentAutomationLevel) => void
   onSaveProviderSetting: (payload: AgentProviderSettingUpdatePayload) => Promise<void> | void
+  onProbeProviderSetting: (payload: AgentProviderProbePayload) => Promise<AgentProviderProbeResult> | void
   onDeleteProviderSetting: () => void
 }) {
   const [draft, setDraft] = useState('')
@@ -179,6 +181,20 @@ export function AgentConsole(props: {
     } catch {
       // The hook owns the visible error message; keep the typed key for correction.
     }
+  }
+
+  async function handleProviderProbe() {
+    const provider = providerDraft.provider.trim()
+    const baseUrl = providerDraft.baseUrl.trim()
+    const model = providerDraft.model.trim()
+    const apiKey = providerDraft.apiKey.trim()
+    if (!provider || !baseUrl || !model || props.busy) return
+    await props.onProbeProviderSetting({
+      provider,
+      baseUrl,
+      model,
+      ...(apiKey ? { apiKey } : {}),
+    })
   }
 
   return (
@@ -427,7 +443,43 @@ export function AgentConsole(props: {
                   <Save className="h-3.5 w-3.5" />
                   保存
                 </button>
+                <button
+                  type="button"
+                  onClick={() => void handleProviderProbe()}
+                  disabled={props.busy || !providerDraft.provider.trim() || !providerDraft.baseUrl.trim() || !providerDraft.model.trim()}
+                  className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-stone-900/10 bg-white px-3 text-xs font-semibold text-stone-700 transition hover:bg-stone-100 disabled:opacity-50"
+                  title="测试当前 provider 的认证、模型和 tool_calls"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  测试
+                </button>
               </div>
+              {props.providerProbe ? (
+                <div className="mt-2 rounded-md border border-stone-900/10 bg-stone-50 px-2 py-1.5">
+                  <p className={[
+                    'text-[11px] font-semibold',
+                    props.providerProbe.status === 'passed'
+                      ? 'text-emerald-700'
+                      : props.providerProbe.status === 'warning'
+                        ? 'text-amber-700'
+                        : 'text-red-700',
+                  ].join(' ')}
+                  >
+                    Probe {props.providerProbe.status} / {props.providerProbe.provider}/{props.providerProbe.model}
+                  </p>
+                  <div className="mt-1 grid gap-0.5">
+                    {props.providerProbe.checks.map((check) => (
+                      <p key={check.name} className="truncate text-[10px] text-stone-500">
+                        <span className="font-semibold text-stone-700">{check.name}</span>
+                        {' '}
+                        {check.status}
+                        {' - '}
+                        {check.message}
+                      </p>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </form>
           ) : null}
 

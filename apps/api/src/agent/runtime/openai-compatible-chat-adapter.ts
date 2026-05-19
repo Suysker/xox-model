@@ -1,6 +1,12 @@
-import { plannerSystemPrompt } from '../prompt-registry.js'
-import { toolCallToPlannerStep, type AgentToolCallStep } from '../tool-catalog.js'
 import type { RuntimeAdapter, RuntimePlanningInput, RuntimePlanResult } from './runtime-adapter.js'
+import type { AgentToolCallStep } from '../tool-catalog.js'
+import { classifyProviderHttpError, providerRejectsToolChoice, safeProviderErrorMessage } from './provider-error-classifier.js'
+import { shapeOpenAICompatibleChatRequest } from './provider-request-shaper.js'
+import {
+  plannerStepsFromProviderToolCalls,
+  ProviderToolCallParseError,
+  type ProviderToolCall,
+} from './tool-call-repair.js'
 
 const SOURCE = 'openai_compatible_tool_calls' as const
 const STREAM_DELTA_LIMIT = 240
@@ -16,16 +22,6 @@ type StreamingToolCall = {
   arguments: string
 }
 
-class ProviderToolCallParseError extends Error {
-  constructor(
-    message: string,
-    readonly toolNames: string[],
-  ) {
-    super(message)
-    this.name = 'ProviderToolCallParseError'
-  }
-}
-
 class ProviderTimeoutError extends Error {
   constructor(
     message: string,
@@ -34,28 +30,6 @@ class ProviderTimeoutError extends Error {
     super(message)
     this.name = 'ProviderTimeoutError'
   }
-}
-
-function parseToolArguments(raw: unknown) {
-  if (raw && typeof raw === 'object') return raw as Record<string, unknown>
-  if (typeof raw !== 'string' || !raw.trim()) return {}
-  const parsed = JSON.parse(raw) as unknown
-  return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : {}
-}
-
-function safeProviderErrorMessage(value: unknown) {
-  const text = typeof value === 'string' ? value : JSON.stringify(value)
-  return text
-    .replace(/sk-[A-Za-z0-9_-]{8,}/g, 'sk-***')
-    .replace(/Bearer\s+[A-Za-z0-9._~+/-]+/gi, 'Bearer ***')
-    .slice(0, 300)
-}
-
-function providerRejectsToolChoice(statusCode: number, providerMessage: string) {
-  const normalized = providerMessage.toLowerCase()
-  return statusCode === 400 &&
-    normalized.includes('tool_choice') &&
-    (normalized.includes('does not support') || normalized.includes('not support') || normalized.includes('unsupported'))
 }
 
 function safeProviderStreamText(value: string, maxLength: number) {
@@ -83,20 +57,6 @@ function effectiveProviderRequestTimeoutMs(input: RuntimePlanningInput) {
   return Math.max(100, input.requestTimeoutMs ?? input.settings.agentProviderRequestTimeoutMs)
 }
 
-function plannerStepsFromToolCalls(toolCalls: unknown): AgentToolCallStep[] {
-  if (!Array.isArray(toolCalls)) return []
-  const steps: AgentToolCallStep[] = []
-  for (const toolCall of toolCalls) {
-    const fn = (toolCall as any)?.function
-    const name = fn?.name
-    if (typeof name !== 'string') continue
-    const args = parseToolArguments(fn?.arguments)
-    const step = toolCallToPlannerStep(name, args)
-    if (step) steps.push(step)
-  }
-  return steps
-}
-
 function textContentFromMessage(message: any) {
   const content = message?.content
   if (typeof content === 'string') return content.trim()
@@ -111,9 +71,16 @@ function textContentFromMessage(message: any) {
     .trim()
 }
 
-function jsonPlanResult(body: any): RuntimePlanResult {
+function allowedToolNames(input: RuntimePlanningInput) {
+  return input.tools.map((tool) => tool.function.name)
+}
+
+function jsonPlanResult(body: any, input: RuntimePlanningInput): RuntimePlanResult {
   const message = body?.choices?.[0]?.message
-  const toolSteps = plannerStepsFromToolCalls(message?.tool_calls)
+  const toolSteps = plannerStepsFromProviderToolCalls({
+    toolCalls: message?.tool_calls,
+    allowedToolNames: allowedToolNames(input),
+  })
   if (toolSteps.length > 0) return { source: SOURCE, steps: toolSteps }
   const assistantText = textContentFromMessage(message)
   return assistantText
@@ -124,12 +91,11 @@ function jsonPlanResult(body: any): RuntimePlanResult {
 function normalizeStreamingToolCalls(toolCalls: Map<number, StreamingToolCall>) {
   return [...toolCalls.entries()]
     .sort(([left], [right]) => left - right)
-    .filter(([, toolCall]) => typeof toolCall.name === 'string' && toolCall.name.trim().length > 0)
-    .map(([index, toolCall]) => ({
-      id: toolCall.id ?? `call_${index}`,
+    .map(([index, toolCall]): ProviderToolCall => ({
+      id: toolCall.id ?? `call_${index}${toolCall.name ? `_${toolCall.name}` : ''}`,
       type: toolCall.type ?? 'function',
       function: {
-        name: toolCall.name,
+        ...(toolCall.name ? { name: toolCall.name } : {}),
         arguments: toolCall.arguments,
       },
     }))
@@ -171,27 +137,9 @@ async function readProviderStreamChunk(reader: ReadableStreamDefaultReader<Uint8
 export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
   readonly name = 'openai-compatible-chat'
 
-  private requestBody(input: RuntimePlanningInput, options: { omitToolChoice?: boolean } = {}) {
-    const body: Record<string, unknown> = {
-      model: input.settings.openaiCompatibleModel,
-      messages: [
-        { role: 'system', content: input.systemPrompt ?? plannerSystemPrompt() },
-        { role: 'user', content: `上下文：${JSON.stringify(input.context)}\n用户指令：${input.message}` },
-      ],
-      tools: input.tools,
-      temperature: 0,
-      max_tokens: input.maxTokens ?? 1600,
-      stream: input.stream ?? true,
-    }
-    if (!options.omitToolChoice) {
-      body.tool_choice = 'auto'
-    }
-    return body
-  }
-
   private async planFromStream(response: Response, input: RuntimePlanningInput): Promise<RuntimePlanResult> {
     const reader = response.body?.getReader()
-    if (!reader) return jsonPlanResult(await response.json())
+    if (!reader) return jsonPlanResult(await response.json(), input)
 
     await input.onStreamEvent?.({
       kind: 'stream_started',
@@ -327,10 +275,13 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
     const normalizedToolCalls = normalizeStreamingToolCalls(toolCalls)
     let toolSteps: AgentToolCallStep[]
     try {
-      toolSteps = plannerStepsFromToolCalls(normalizedToolCalls)
+      toolSteps = plannerStepsFromProviderToolCalls({
+        toolCalls: normalizedToolCalls,
+        allowedToolNames: allowedToolNames(input),
+      })
     } catch (error) {
       const toolNames = normalizedToolCalls
-        .map((toolCall) => toolCall.function.name)
+        .map((toolCall) => toolCall.function?.name)
         .filter((name): name is string => typeof name === 'string' && name.length > 0)
       throw new ProviderToolCallParseError(
         error instanceof Error ? error.message : String(error),
@@ -377,7 +328,7 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
           Authorization: `Bearer ${input.settings.openaiCompatibleApiKey}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(this.requestBody(input, { omitToolChoice })),
+        body: JSON.stringify(shapeOpenAICompatibleChatRequest(input, { omitToolChoice }).body),
         signal: abortController.signal,
       })
       let response = await fetch(endpoint, init(false))
@@ -389,23 +340,20 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
           if (response.ok) {
             const contentType = response.headers.get('content-type') ?? ''
             if (contentType.toLowerCase().includes('text/event-stream')) return await this.planFromStream(response, input)
-            return jsonPlanResult(await response.json())
+            return jsonPlanResult(await response.json(), input)
           }
           providerMessage = await response.text().catch(() => '')
         }
+        const classified = classifyProviderHttpError(response.status, providerMessage || response.statusText)
         return {
           source: SOURCE,
           steps: [],
-          error: {
-            kind: 'provider_http_error',
-            statusCode: response.status,
-            message: safeProviderErrorMessage(providerMessage || response.statusText),
-          },
+          error: classified,
         }
       }
       const contentType = response.headers.get('content-type') ?? ''
       if (contentType.toLowerCase().includes('text/event-stream')) return await this.planFromStream(response, input)
-      return jsonPlanResult(await response.json())
+      return jsonPlanResult(await response.json(), input)
     } catch (error) {
       const requestTimeoutMs = effectiveProviderRequestTimeoutMs(input)
       const message = providerTimedOut

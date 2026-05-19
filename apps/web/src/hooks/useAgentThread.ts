@@ -10,6 +10,8 @@ import {
   type AgentMessage,
   type AgentNavigationEvent,
   type AgentPlanStep,
+  type AgentProviderProbePayload,
+  type AgentProviderProbeResult,
   type AgentProviderSettingRecord,
   type AgentProviderSettingUpdatePayload,
   type AgentRunEvent,
@@ -73,6 +75,7 @@ export function useAgentThread(props: {
   const [planner, setPlanner] = useState<AgentSendResponse['planner'] | null>(null)
   const [memories, setMemories] = useState<AgentMemoryRecord[]>([])
   const [providerSetting, setProviderSetting] = useState<AgentProviderSettingRecord | null>(null)
+  const [providerProbe, setProviderProbe] = useState<AgentProviderProbeResult | null>(null)
   const [threadSummaries, setThreadSummaries] = useState<AgentThreadSummary[]>([])
   const [busy, setBusy] = useState(false)
   const [runningRunId, setRunningRunId] = useState<string | null>(null)
@@ -396,6 +399,7 @@ export function useAgentThread(props: {
     try {
       const response = await api.updateAgentProviderSetting(payload)
       setProviderSetting(response.setting)
+      setProviderProbe(null)
     } catch (providerError) {
       setError(providerError instanceof Error ? providerError.message : String(providerError))
       throw providerError
@@ -410,8 +414,24 @@ export function useAgentThread(props: {
     try {
       await api.deleteAgentProviderSetting()
       setProviderSetting(null)
+      setProviderProbe(null)
     } catch (providerError) {
       setError(providerError instanceof Error ? providerError.message : String(providerError))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function probeProviderSetting(payload: AgentProviderProbePayload) {
+    setBusy(true)
+    setError(null)
+    try {
+      const response = await api.probeAgentProviderSetting(payload)
+      setProviderProbe(response.probe)
+      return response.probe
+    } catch (providerError) {
+      setError(providerError instanceof Error ? providerError.message : String(providerError))
+      throw providerError
     } finally {
       setBusy(false)
     }
@@ -429,6 +449,7 @@ export function useAgentThread(props: {
     planner,
     memories,
     providerSetting,
+    providerProbe,
     threadSummaries,
     runningRunId,
     eventConnectionMode,
@@ -448,6 +469,7 @@ export function useAgentThread(props: {
     setAutomationLevel,
     deleteMemory,
     saveProviderSetting,
+    probeProviderSetting,
     deleteProviderSetting,
   }
 }

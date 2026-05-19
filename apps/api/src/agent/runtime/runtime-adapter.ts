@@ -9,6 +9,7 @@ export type RuntimePlanError = {
   statusCode?: number
   message?: string
   toolNames?: string[]
+  classification?: 'unsupported_parameter' | 'auth' | 'billing' | 'rate_limit' | 'context_overflow' | 'server' | 'http'
 }
 
 export type RuntimePlanResult = {

@@ -96,6 +96,11 @@
   - 首次保存必须提供 `apiKey`；后续只改 provider/baseUrl/model 时可省略 `apiKey` 并保留旧 key
   - 该设置优先于服务端环境变量，只影响当前用户 / 当前工作区的 Agent runtime
   - 支持 DeepSeek、Qwen、Doubao 等兼容 OpenAI Chat Completions `tools / tool_calls` 的服务；`tool_choice` 只作为 `auto` 或被省略，不发送 forced named choice；业务工具代码不按厂商特调
+- `POST /api/v1/agent/provider-settings/probe`
+  - 入参：`provider?`、`baseUrl?`、`model?`、`apiKey?`
+  - 用当前表单值或已保存设置发起一次低成本 OpenAI-compatible Chat Completions probe，验证认证、模型、对话和 provider-native `tool_calls`
+  - 返回 `status / provider / model / checks / message`，其中 `checks` 覆盖 `auth / model / chat / tools / stream`
+  - 不保存表单值，不返回 API key；如果本次未传 `apiKey`，会复用当前用户 / 工作区已保存 key
 - `DELETE /api/v1/agent/provider-settings`
   - 删除当前登录用户 / 当前工作区的 provider 设置
   - 删除后 Agent runtime 回到服务端环境变量配置；如果 provider 被选择但没有 key，仍然 fail-closed，不回退到本地规则伪造 tool call

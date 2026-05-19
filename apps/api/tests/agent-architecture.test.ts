@@ -30,7 +30,15 @@ describe('Agent ADR architecture boundaries', () => {
       'agent/runtime/adapter-router.ts',
       'agent/runtime/openai-agents-adapter.ts',
       'agent/runtime/openai-compatible-chat-adapter.ts',
+      'agent/runtime/provider-error-classifier.ts',
+      'agent/runtime/provider-failover-policy.ts',
+      'agent/runtime/provider-model-profile.ts',
+      'agent/runtime/provider-model-ref.ts',
+      'agent/runtime/provider-probe.ts',
+      'agent/runtime/provider-request-shaper.ts',
+      'agent/runtime/provider-tool-schema.ts',
       'agent/runtime/runtime-adapter.ts',
+      'agent/runtime/tool-call-repair.ts',
     ]
     const forbidden = [
       /['"]\.\.\/\.\.\/db\//,

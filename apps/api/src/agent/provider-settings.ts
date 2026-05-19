@@ -7,12 +7,20 @@ import { utcNow } from '../core/time.js'
 import type { Database, Row } from '../db/schema.js'
 import type { CurrentUser } from '../modules/auth.js'
 import { decryptProviderApiKey, encryptProviderApiKey, isEncryptedProviderApiKey } from './provider-key-codec.js'
+import { probeOpenAICompatibleProvider, type ProviderProbeResult } from './runtime/provider-probe.js'
 
 export type AgentProviderSettingInput = {
   provider: string
   baseUrl: string
   model: string
   apiKey?: string | null | undefined
+}
+
+export type AgentProviderProbeInput = {
+  provider?: string | undefined
+  baseUrl?: string | undefined
+  model?: string | undefined
+  apiKey?: string | undefined
 }
 
 function normalizeProvider(value: string) {
@@ -165,4 +173,29 @@ export async function resolveAgentRuntimeSettings(
     openaiCompatibleModel: setting.model,
     openaiCompatibleApiKey: decryptProviderApiKey(baseSettings, setting.api_key),
   }
+}
+
+export async function probeAgentProviderSetting(
+  db: Kysely<Database>,
+  settings: Settings,
+  workspace: Row<'workspaces'>,
+  user: CurrentUser,
+  input: AgentProviderProbeInput,
+): Promise<ProviderProbeResult> {
+  const existing = await getAgentProviderSetting(db, workspace, user)
+  const provider = normalizeProvider(input.provider ?? existing?.provider ?? settings.openaiCompatibleProvider)
+  const baseUrl = normalizeBaseUrl(input.baseUrl ?? existing?.base_url ?? settings.openaiCompatibleBaseUrl)
+  const model = normalizeModel(input.model ?? existing?.model ?? settings.openaiCompatibleModel)
+  const explicitApiKey = normalizeApiKey(input.apiKey)
+  const apiKey = explicitApiKey ?? (existing ? decryptProviderApiKey(settings, existing.api_key) : settings.openaiCompatibleApiKey)
+  return probeOpenAICompatibleProvider({
+    settings: {
+      ...settings,
+      llmProvider: provider === 'openai' ? 'openai-compatible' : provider,
+      openaiCompatibleProvider: provider,
+      openaiCompatibleBaseUrl: baseUrl,
+      openaiCompatibleModel: model,
+      openaiCompatibleApiKey: apiKey,
+    },
+  })
 }

@@ -12,6 +12,8 @@ import type {
   AgentPlanStep,
   AgentPlanStepStatus,
   AgentProviderSettingRecord,
+  AgentProviderProbePayload,
+  AgentProviderProbeResult,
   AgentProviderSettingUpdatePayload,
   AgentRunEvent,
   AgentSendResponse,
@@ -398,6 +400,8 @@ export const api = {
     apiRequest<{ setting: AgentProviderSettingRecord | null }>('GET', '/api/v1/agent/provider-settings'),
   updateAgentProviderSetting: (payload: AgentProviderSettingUpdatePayload) =>
     apiRequest<{ setting: AgentProviderSettingRecord }>('PUT', '/api/v1/agent/provider-settings', payload),
+  probeAgentProviderSetting: (payload: AgentProviderProbePayload) =>
+    apiRequest<{ probe: AgentProviderProbeResult }>('POST', '/api/v1/agent/provider-settings/probe', payload),
   deleteAgentProviderSetting: () =>
     apiRequest<{ ok: boolean }>('DELETE', '/api/v1/agent/provider-settings'),
   confirmAgentAction: (actionRequestId: string) =>
@@ -418,4 +422,4 @@ export const api = {
     ),
 }
 
-export type { AgentProviderSettingRecord, AgentProviderSettingUpdatePayload, AgentThreadEvent }
+export type { AgentProviderProbePayload, AgentProviderProbeResult, AgentProviderSettingRecord, AgentProviderSettingUpdatePayload, AgentThreadEvent }
