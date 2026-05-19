@@ -17,6 +17,7 @@ import {
 import { addRunEvent } from './run-events.js'
 import { agentThreadEvents } from './thread-events.js'
 import { addMessage, touchThreadAfterRun } from './thread-store.js'
+import { normalizeAgentAutomationLevel } from './tool-policy.js'
 
 const activeRunControllers = new Map<string, AbortController>()
 
@@ -59,7 +60,13 @@ async function failAgentRun(
 ) {
   const message = safeRunErrorMessage(error)
   await addMessage(db, thread.id, 'assistant', `运行失败：${message}`).catch(() => undefined)
-  await db.updateTable('agent_runs').set({ status: 'failed', completed_at: utcNow(), lease_expires_at: null }).where('id', '=', runId).execute().catch(() => undefined)
+  await db.updateTable('agent_runs').set({ status: 'failed', goal_status: 'failed', completed_at: utcNow(), lease_expires_at: null }).where('id', '=', runId).execute().catch(() => undefined)
+  await db
+    .updateTable('agent_goals')
+    .set({ status: 'failed', updated_at: utcNow(), completed_at: utcNow(), blocked_reason: message })
+    .where('run_id', '=', runId)
+    .execute()
+    .catch(() => undefined)
   await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', thread.id).execute().catch(() => undefined)
   await addRunEvent(db, {
     threadId: thread.id,
@@ -117,9 +124,14 @@ export async function cancelRunningAgentRun(
     .execute()
   await db
     .updateTable('agent_runs')
-    .set({ status: 'cancelled', completed_at: now, lease_expires_at: null })
+    .set({ status: 'cancelled', goal_status: 'cancelled', completed_at: now, lease_expires_at: null })
     .where('id', '=', runId)
     .where('status', '=', 'running')
+    .execute()
+  await db
+    .updateTable('agent_goals')
+    .set({ status: 'cancelled', updated_at: now, completed_at: now, blocked_reason: message })
+    .where('run_id', '=', runId)
     .execute()
   if (addAssistantMessage) await addMessage(db, thread.id, 'assistant', message)
   await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', thread.id).execute()
@@ -163,14 +175,20 @@ export async function completeAgentRun(ctx: PlannerContext & { thread: Row<'agen
       .where('worker_id', '=', runtimeSettings.agentWorkerId)
       .execute()
     await touchThreadAfterRun(ctx.db, ctx.thread, ctx.message)
+    const pendingActionCount = kernelResult.actionRows.filter((row) => row.status === 'pending').length
+    const executedActionCount = kernelResult.actionRows.filter((row) => row.status === 'executed').length
     await addRunEvent(ctx.db, {
       threadId: ctx.thread.id,
       runId: ctx.runId,
       type: 'run_completed',
       title: '运行完成',
-      message: kernelResult.actionRows.length > 0 ? '模型规划已完成，等待用户处理确认卡。' : '模型规划和只读回答已完成。',
+      message: pendingActionCount > 0
+        ? '模型规划已完成，等待用户处理确认卡。'
+        : executedActionCount > 0
+          ? '模型规划和自动执行已完成。'
+          : '模型规划和只读回答已完成。',
       status: 'completed',
-      data: { actionCount: kernelResult.actionRows.length, planStepCount: kernelResult.planRows.length },
+      data: { actionCount: kernelResult.actionRows.length, pendingActionCount, executedActionCount, planStepCount: kernelResult.planRows.length },
     })
     agentThreadEvents.publish(ctx.thread.id, 'run_completed')
     return kernelResult
@@ -232,7 +250,7 @@ export async function recoverRunningAgentRuns(db: Kysely<Database>, settings: Se
       if (activeRunControllers.has(run.id)) continue
       const thread = await db.selectFrom('agent_threads').selectAll().where('id', '=', run.thread_id).executeTakeFirst()
       if (!thread) {
-        await db.updateTable('agent_runs').set({ status: 'failed', completed_at: utcNow(), lease_expires_at: null }).where('id', '=', run.id).execute()
+        await db.updateTable('agent_runs').set({ status: 'failed', goal_status: 'failed', completed_at: utcNow(), lease_expires_at: null }).where('id', '=', run.id).execute()
         continue
       }
       const [workspace, user, planStepCount, actionCount] = await Promise.all([
@@ -265,6 +283,7 @@ export async function recoverRunningAgentRuns(db: Kysely<Database>, settings: Se
         threadId: thread.id,
         runId: run.id,
         message,
+        automationLevel: normalizeAgentAutomationLevel(run.automation_level),
         abortSignal: controller.signal,
       }).catch(() => undefined)
       started += 1

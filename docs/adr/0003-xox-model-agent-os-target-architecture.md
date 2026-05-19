@@ -4,7 +4,9 @@
 
 ## 状态
 
-Accepted for next implementation iteration.
+Superseded by [ADR 0004: Evaluator-Centered Harness Agent 架构](0004-evaluator-centered-harness-agent.md) for the target Agent OS architecture.
+
+本 ADR 保留为一次重要的架构收敛记录：它解决了“不要复制 OpenClaw control plane、不要把 Claude Code 当 SaaS 后端”的问题。但它把目标压缩成 Lean Product Harness，容易被误解为最小可落地版本。后续实现必须以 ADR 0004 为准：复杂目标由 Goal Run Engine 多轮推进，并由 Completion Evaluator 根据 action graph 和领域状态判断是否完成。
 
 ## 背景
 

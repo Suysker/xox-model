@@ -20,6 +20,7 @@ export type Settings = {
   agentWorkerId: string
   agentRunLeaseTtlMs: number
   agentRunWorkerPollMs: number
+  agentProviderRequestTimeoutMs: number
 }
 
 const generatedAgentWorkerId = `api-${hostname()}-${process.pid}-${randomUUID().slice(0, 8)}`
@@ -38,6 +39,7 @@ export function getSettings(): Settings {
   const llmProvider = process.env.LLM_PROVIDER ?? process.env.OPENAI_COMPATIBLE_PROVIDER ?? 'deepseek'
   const agentRunLeaseTtlMs = Math.max(1000, numberEnv(process.env.AGENT_RUN_LEASE_TTL_MS, 45_000))
   const agentRunWorkerPollMs = Math.max(250, numberEnv(process.env.AGENT_RUN_WORKER_POLL_MS, 2_000))
+  const agentProviderRequestTimeoutMs = Math.max(5_000, numberEnv(process.env.AGENT_PROVIDER_REQUEST_TIMEOUT_MS, 90_000))
   return {
     databaseUrl: process.env.XOX_DATABASE_URL ?? defaultDatabaseUrl(),
     sessionCookieName: process.env.XOX_SESSION_COOKIE_NAME ?? 'xox_session',
@@ -55,6 +57,7 @@ export function getSettings(): Settings {
     agentWorkerId: process.env.AGENT_WORKER_ID ?? generatedAgentWorkerId,
     agentRunLeaseTtlMs,
     agentRunWorkerPollMs,
+    agentProviderRequestTimeoutMs,
   }
 }
 

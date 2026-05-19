@@ -1,6 +1,8 @@
 import type { Kysely } from 'kysely'
 import type {
   AgentActionRequest,
+  AgentEvaluationResult,
+  AgentGoalRecord,
   AgentMessage,
   AgentNavigationEvent,
   AgentPlannerSource,
@@ -15,8 +17,9 @@ import { parseJson } from '../db/database.js'
 import { forbidden, notFound } from '../core/http.js'
 import { newId } from '../core/security.js'
 import { utcNow } from '../core/time.js'
-import { coerceAgentActionKind } from './tool-policy.js'
+import { coerceAgentActionKind, normalizeAgentAutomationLevel } from './tool-policy.js'
 import { serializeRunEvent } from './run-events.js'
+import { normalizeGoalStatus, serializeEvaluation, serializeGoal } from './goal-contract.js'
 
 export type AgentThreadUser = {
   id: string
@@ -93,6 +96,8 @@ export function serializeRun(row: Row<'agent_runs'>): AgentRunRecord {
     threadId: row.thread_id,
     status: runStatus(row.status),
     planner: plannerSource(row.planner_source),
+    automationLevel: normalizeAgentAutomationLevel(row.automation_level),
+    goalStatus: normalizeGoalStatus(row.goal_status),
     createdAt: row.created_at,
     completedAt: row.completed_at,
   }
@@ -211,12 +216,14 @@ export async function buildThreadState(
       .execute(),
   ])
   const latestRun = runs[0] ?? null
-  const planSteps = latestRun
-    ? await db.selectFrom('agent_plan_steps').selectAll().where('run_id', '=', latestRun.id).orderBy('sequence_no', 'asc').execute()
-    : []
-  const runEvents = latestRun
-    ? await db.selectFrom('agent_run_events').selectAll().where('run_id', '=', latestRun.id).orderBy('sequence_no', 'asc').execute()
-    : []
+  const [planSteps, runEvents, goals, evaluations] = latestRun
+    ? await Promise.all([
+        db.selectFrom('agent_plan_steps').selectAll().where('run_id', '=', latestRun.id).orderBy('sequence_no', 'asc').execute(),
+        db.selectFrom('agent_run_events').selectAll().where('run_id', '=', latestRun.id).orderBy('sequence_no', 'asc').execute(),
+        db.selectFrom('agent_goals').selectAll().where('run_id', '=', latestRun.id).orderBy('created_at', 'asc').execute(),
+        db.selectFrom('agent_evaluations').selectAll().where('run_id', '=', latestRun.id).orderBy('iteration_no', 'asc').execute(),
+      ])
+    : [[], [], [], []] as [Row<'agent_plan_steps'>[], Row<'agent_run_events'>[], Row<'agent_goals'>[], Row<'agent_evaluations'>[]]
   const navigationEvents = planSteps
     .map((step) => (step.navigation_json ? parseJson<AgentNavigationEvent | null>(step.navigation_json, null) : null))
     .filter((event): event is AgentNavigationEvent => Boolean(event))
@@ -226,6 +233,8 @@ export async function buildThreadState(
     messages: messages.map(serializeMessage),
     runs: runs.map(serializeRun),
     planner: latestRun ? plannerSource(latestRun.planner_source) : null,
+    goals: (goals as Row<'agent_goals'>[]).map(serializeGoal) as AgentGoalRecord[],
+    evaluations: (evaluations as Row<'agent_evaluations'>[]).map(serializeEvaluation) as AgentEvaluationResult[],
     navigationEvents,
     runEvents: runEvents.map(serializeRunEvent),
     planSteps: planSteps.map(serializePlanStep),

@@ -101,6 +101,9 @@ export type AgentToolCallStep = {
   patches?: Array<{ path: string; value: unknown; label?: string }>
   bundle?: unknown
   useProvidedBundle?: boolean
+  plan?: unknown
+  modelPlan?: unknown
+  scenario?: unknown
 }
 
 type JsonSchema = {
@@ -185,6 +188,123 @@ const ledgerEntryLocator = {
 function objectSchema(properties: Record<string, JsonSchema>, required: string[] = []): JsonSchema {
   return { type: 'object', properties, required, additionalProperties: false }
 }
+
+const namedAmount = objectSchema({
+  name: { type: 'string', description: '项目名称。' },
+  amount: { type: 'number', description: '金额。' },
+}, ['name', 'amount'])
+
+const operatingModelPlan = objectSchema({
+  workspaceName: { type: 'string', description: '目标工作区/项目名称。' },
+  planning: objectSchema({
+    startMonth: { type: 'number', description: '起始月份数字，3 表示 3 月。' },
+    horizonMonths: { type: 'number', description: '预测月份数量。' },
+  }),
+  operating: objectSchema({
+    offlineUnitPrice: { type: 'number', description: '线下单价。' },
+    onlineUnitPrice: { type: 'number', description: '线上单价。' },
+    onlineSalesFactor: { type: 'number', description: '统一线上系数；如果用户只给线上/线下张数，优先让服务端根据成员分层加权估算。' },
+    polaroidLossRate: { type: 'number', description: '损耗率，6% 填 0.06。' },
+    revenueFeeRate: { type: 'number', description: '收入手续费率，3% 填 0.03；服务端会折算成按张成本。' },
+  }),
+  reservedDividendRate: { type: 'number', description: '预留员工激励池或未出资分红池比例，5% 填 0.05；如果已在 shareholders 里作为 0 投资股东表达，可省略。' },
+  shareholders: {
+    type: 'array',
+    description: '股东投资和分红比例。',
+    items: objectSchema({
+      name: { type: 'string', description: '股东名称。' },
+      investmentAmount: { type: 'number', description: '投资金额；不出资的激励池填 0。' },
+      dividendRate: { type: 'number', description: '分红比例，35% 填 0.35。' },
+    }, ['name']),
+  },
+  memberSegments: {
+    type: 'array',
+    description: '按分层批量生成成员。不要逐个调用成员新增工具；50 个成员应按核心/普通/练习等分层填写。',
+    items: objectSchema({
+      label: { type: 'string', description: '成员分层名称，例如 核心、普通、练习。' },
+      count: { type: 'number', description: '该分层成员数量。' },
+      namePrefix: { type: 'string', description: '成员名前缀；默认用“成员”。服务端会生成 成员 1...成员 N。' },
+      employmentType: { type: 'string', enum: ['salary', 'partTime'], description: '成员合作类型。' },
+      monthlyBasePay: { type: 'number', description: '月保底；如果只能近似表达阶段性保底，填稳定期数值并在 assumptions 说明。' },
+      monthlyBasePayAfterMonth: { type: 'number', description: '从某阶段开始后的稳定期月保底；当前模型无法逐月变更保底，服务端会用稳定期值近似并写入假设。' },
+      firstBasePayFreeMonths: { type: 'number', description: '前多少期没有保底；当前模型无法逐月变更保底，服务端会写入近似假设。' },
+      commissionRate: { type: 'number', description: '提成比例，12% 填 0.12。' },
+      perEventTravelCost: { type: 'number', description: '每场交通/餐补。' },
+      offlineUnitsPerEvent: { type: 'number', description: '稳定期每场线下销量；服务端映射到成员 base units。' },
+      onlineUnitsPerEvent: { type: 'number', description: '稳定期每场线上销量；服务端可据此估算统一线上系数。' },
+      pessimisticUnitsPerEvent: { type: 'number', description: '保守场均线下销量；不填时服务端按 base 的 80% 估算。' },
+      optimisticUnitsPerEvent: { type: 'number', description: '乐观场均线下销量；不填时服务端按 base 的 120% 估算。' },
+    }, ['count']),
+  },
+  employees: {
+    type: 'array',
+    description: '运营员工，可按岗位和人数批量生成。',
+    items: objectSchema({
+      role: { type: 'string', description: '岗位。' },
+      namePrefix: { type: 'string', description: '姓名前缀；多人时服务端生成 前缀 1...N。' },
+      count: { type: 'number', description: '人数。' },
+      monthlyBasePay: { type: 'number', description: '月固定薪酬。' },
+      perEventCost: { type: 'number', description: '每场补贴或兼职成本。' },
+    }, ['role']),
+  },
+  monthlyFixedCosts: { type: 'array', description: '每月固定成本。', items: namedAmount },
+  perEventCosts: { type: 'array', description: '每场成本。', items: namedAmount },
+  perUnitCosts: { type: 'array', description: '每张成本。', items: namedAmount },
+  stageCosts: {
+    type: 'array',
+    description: '专项成本，可按 monthly/perEvent/perUnit 计费并可被月份覆盖。',
+    items: objectSchema({
+      name: { type: 'string', description: '专项成本名称。' },
+      mode: { type: 'string', enum: ['monthly', 'perEvent', 'perUnit'], description: '计费方式。' },
+      amount: { type: 'number', description: '默认金额。' },
+      count: { type: 'number', description: '默认数量；perEvent 通常填当月场次，未填由服务端用月份场次。' },
+    }, ['name', 'mode']),
+  },
+  startupCosts: { type: 'array', description: '启动阶段一次性成本，服务端会放在第 1 个月专项成本里。', items: namedAmount },
+  monthlyMarketing: {
+    type: 'array',
+    description: '按月宣发或营销成本。',
+    items: objectSchema({
+      monthIndex: { type: 'number', description: '第几个月，从 1 开始。' },
+      amount: { type: 'number', description: '该月金额。' },
+    }, ['monthIndex', 'amount']),
+  },
+  specialEvents: {
+    type: 'array',
+    description: '一次性活动或特殊月份的额外成本/收入。额外成本进入专项成本；额外收入由服务端折算为对应月销量系数并写入假设。',
+    items: objectSchema({
+      monthIndex: { type: 'number', description: '第几个月，从 1 开始。' },
+      name: { type: 'string', description: '活动名称。' },
+      extraCost: { type: 'number', description: '额外成本。' },
+      extraIncome: { type: 'number', description: '额外收入。' },
+    }, ['monthIndex']),
+  },
+  months: {
+    type: 'array',
+    description: '逐月经营节奏。monthIndex 从 1 开始；salesMultiplier 表示销量系数，onlineSalesFactor 表示线上系数。',
+    items: objectSchema({
+      monthIndex: { type: 'number', description: '第几个月，从 1 开始。' },
+      events: { type: 'number', description: '当月场次。' },
+      salesMultiplier: { type: 'number', description: '销量系数。试运营 45% 填 0.45；稳定期填 1；上浮 15% 填 1.15。' },
+      onlineSalesFactor: { type: 'number', description: '线上系数；不填时服务端可由成员线上/线下张数估算。' },
+      rehearsalCount: { type: 'number', description: '排练次数。' },
+      rehearsalCost: { type: 'number', description: '单次排练费。' },
+      teacherCount: { type: 'number', description: '老师次数。' },
+      teacherCost: { type: 'number', description: '单次老师费。' },
+      extraIncome: { type: 'number', description: '该月额外收入；服务端会折算进销量系数并在假设中说明。' },
+      specialCosts: {
+        type: 'array',
+        description: '该月专项成本覆盖。',
+        items: objectSchema({
+          name: { type: 'string', description: '专项成本名称。' },
+          amount: { type: 'number', description: '覆盖金额。' },
+          count: { type: 'number', description: '覆盖数量。' },
+        }, ['name']),
+      },
+    }, ['monthIndex']),
+  },
+  assumptions: { type: 'array', description: '模型近似、用户未明确但你合理预测的费用假设。', items: { type: 'string' } },
+})
 
 export const AGENT_TOOL_CATALOG: ChatTool[] = [
   {
@@ -518,6 +638,17 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
           }, ['path', 'value']),
         },
       }, ['patches']),
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'workspace_configure_operating_model',
+      description:
+        '规划一次性配置完整经营模型草稿，并给出保存前预测预览。用户给出完整经营简报、投资结构、批量成员、员工、成本、12 个月节奏、要求“新建/生成/规划一个模型”时优先调用本工具；不要把 50 个成员拆成 50 个 team_member_add，也不要用大量 workspace_patch_config 拼装。只生成可编辑确认卡和只读预测摘要，不直接保存、不发布版本。',
+      parameters: objectSchema({
+        plan: operatingModelPlan,
+      }, ['plan']),
     },
   },
   {
@@ -893,6 +1024,12 @@ const TOOL_METADATA: Record<string, Omit<AgentToolMetadata, 'name'>> = {
     confirmationMode: 'always',
     navigationTarget: 'inputs',
   },
+  workspace_configure_operating_model: {
+    capability: 'draft',
+    riskLevel: 'high',
+    confirmationMode: 'always',
+    navigationTarget: 'inputs',
+  },
   workspace_promote_version: {
     capability: 'version',
     riskLevel: 'high',
@@ -990,6 +1127,8 @@ export function toolCallToPlannerStep(toolName: string, args: Record<string, unk
       return { intent: 'stage_cost_type.delete', ...args }
     case 'workspace_patch_config':
       return { intent: 'workspace.patch_config', ...args }
+    case 'workspace_configure_operating_model':
+      return { intent: 'workspace.configure_operating_model', ...args }
     case 'workspace_rename':
       return { intent: 'workspace.rename', ...args }
     case 'workspace_save_snapshot':

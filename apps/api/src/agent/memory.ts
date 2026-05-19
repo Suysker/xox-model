@@ -1,5 +1,6 @@
 import type { Kysely } from 'kysely'
 import type { Database, Row } from '../db/schema.js'
+import { parseJson } from '../db/database.js'
 import { forbidden, notFound } from '../core/http.js'
 import { newId } from '../core/security.js'
 import { utcNow } from '../core/time.js'
@@ -13,7 +14,9 @@ const SECRET_PATTERNS = [
 ]
 const MEMORY_VALUE_LIMIT = 500
 const MEMORY_KEY_LIMIT = 120
-const MEMORY_KINDS = new Set(['preference', 'fact', 'business_rule', 'workflow'])
+const MEMORY_KINDS = new Set(['preference', 'fact', 'business_rule', 'workflow', 'episode', 'correction'])
+const MEMORY_SCOPE_TYPES = new Set(['thread', 'workspace', 'user', 'procedural', 'commitment'])
+const MEMORY_TYPES = new Set(['working', 'episodic', 'semantic', 'procedural', 'commitment'])
 
 export type AgentRuntimeContext = {
   memories: Row<'agent_memories'>[]
@@ -41,6 +44,16 @@ function normalizeMemoryKind(value: string | null | undefined) {
   return MEMORY_KINDS.has(kind) ? kind : 'preference'
 }
 
+function normalizeMemoryScopeType(value: string | null | undefined) {
+  const scopeType = typeof value === 'string' ? value.trim() : ''
+  return MEMORY_SCOPE_TYPES.has(scopeType) ? scopeType : 'workspace'
+}
+
+function normalizeMemoryType(value: string | null | undefined) {
+  const memoryType = typeof value === 'string' ? value.trim() : ''
+  return MEMORY_TYPES.has(memoryType) ? memoryType : 'semantic'
+}
+
 function normalizeMemoryKey(value: string | null | undefined, fallbackValue: string, kind: string) {
   const key = typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, MEMORY_KEY_LIMIT) : ''
   if (key && !containsSecretLikeContent(key)) return key
@@ -63,15 +76,22 @@ export async function rememberAgentMemory(input: {
   user: CurrentUser
   threadId: string
   messageId?: string | null
+  runId?: string | null
   kind?: string | null
+  scopeType?: string | null
+  memoryType?: string | null
   key?: string | null
   value: string
   confidence?: number | null
+  evidence?: Record<string, unknown> | null
+  metadata?: Record<string, unknown> | null
 }): Promise<RememberAgentMemoryResult> {
   const value = normalizeMemoryValue(input.value)
   if (!value || value.length < 3) return { memory: null, rejectedReason: 'empty' }
   if (containsSecretLikeContent(value)) return { memory: null, rejectedReason: 'secret' }
   const kind = normalizeMemoryKind(input.kind)
+  const scopeType = normalizeMemoryScopeType(input.scopeType)
+  const memoryType = normalizeMemoryType(input.memoryType)
   const key = normalizeMemoryKey(input.key, value, kind)
   const now = utcNow()
   const id = newId()
@@ -83,10 +103,18 @@ export async function rememberAgentMemory(input: {
       user_id: input.user.id,
       thread_id: input.threadId,
       kind,
+      scope_type: scopeType,
+      memory_type: memoryType,
       key,
       value,
       confidence: normalizeConfidence(input.confidence),
       source_message_id: input.messageId ?? null,
+      source_run_id: input.runId ?? null,
+      evidence_json: input.evidence ? JSON.stringify(input.evidence) : null,
+      last_used_at: null,
+      promoted_at: memoryType === 'semantic' || memoryType === 'procedural' ? now : null,
+      expires_at: null,
+      metadata_json: input.metadata ? JSON.stringify(input.metadata) : null,
       created_at: now,
       updated_at: now,
       archived_at: null,
@@ -106,6 +134,15 @@ export async function listAgentMemories(db: Kysely<Database>, workspace: Row<'wo
     .where('user_id', '=', user.id)
     .where('archived_at', 'is', null)
     .orderBy('updated_at', 'desc')
+    .execute()
+}
+
+export async function touchAgentMemories(db: Kysely<Database>, memories: Row<'agent_memories'>[]) {
+  if (memories.length === 0) return
+  await db
+    .updateTable('agent_memories')
+    .set({ last_used_at: utcNow(), updated_at: utcNow() })
+    .where('id', 'in', memories.map((memory) => memory.id))
     .execute()
 }
 
@@ -140,6 +177,7 @@ export async function loadAgentRuntimeContext(input: {
       .limit(8)
       .execute(),
   ])
+  await touchAgentMemories(input.db, memories)
   return {
     memories,
     contextSummary: snapshot?.summary ?? null,
@@ -212,9 +250,16 @@ export function serializeMemory(row: Row<'agent_memories'>) {
     userId: row.user_id,
     threadId: row.thread_id,
     kind: row.kind,
+    scopeType: row.scope_type as never,
+    memoryType: row.memory_type as never,
     key: row.key,
     value: row.value,
     confidence: row.confidence,
+    evidence: row.evidence_json ? parseJson<Record<string, unknown> | null>(row.evidence_json, null) : null,
+    sourceRunId: row.source_run_id,
+    lastUsedAt: row.last_used_at,
+    promotedAt: row.promoted_at,
+    expiresAt: row.expires_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }

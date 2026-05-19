@@ -260,6 +260,8 @@ export async function runMigrations(db: Kysely<Database>) {
       input_message_id VARCHAR(36),
       input_message TEXT,
       planner_source VARCHAR(64),
+      automation_level VARCHAR(16) NOT NULL DEFAULT 'manual',
+      goal_status VARCHAR(32),
       worker_id VARCHAR(96),
       lease_expires_at DATETIME,
       heartbeat_at DATETIME,
@@ -270,9 +272,47 @@ export async function runMigrations(db: Kysely<Database>) {
   await addColumnIfMissing(db, 'agent_runs', 'input_message_id', 'VARCHAR(36)')
   await addColumnIfMissing(db, 'agent_runs', 'input_message', 'TEXT')
   await addColumnIfMissing(db, 'agent_runs', 'planner_source', 'VARCHAR(64)')
+  await addColumnIfMissing(db, 'agent_runs', 'automation_level', "VARCHAR(16) NOT NULL DEFAULT 'manual'")
+  await addColumnIfMissing(db, 'agent_runs', 'goal_status', 'VARCHAR(32)')
   await addColumnIfMissing(db, 'agent_runs', 'worker_id', 'VARCHAR(96)')
   await addColumnIfMissing(db, 'agent_runs', 'lease_expires_at', 'DATETIME')
   await addColumnIfMissing(db, 'agent_runs', 'heartbeat_at', 'DATETIME')
+  await exec(
+    db,
+    `CREATE TABLE IF NOT EXISTS agent_goals (
+      id VARCHAR(36) PRIMARY KEY,
+      thread_id VARCHAR(36) NOT NULL REFERENCES agent_threads(id) ON DELETE CASCADE,
+      run_id VARCHAR(36) NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+      workspace_id VARCHAR(36) NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      status VARCHAR(32) NOT NULL,
+      objective TEXT NOT NULL,
+      contract_json JSON NOT NULL,
+      created_at DATETIME NOT NULL,
+      updated_at DATETIME NOT NULL,
+      completed_at DATETIME,
+      blocked_reason TEXT
+    )`,
+  )
+  await exec(
+    db,
+    `CREATE TABLE IF NOT EXISTS agent_evaluations (
+      id VARCHAR(36) PRIMARY KEY,
+      goal_id VARCHAR(36) NOT NULL REFERENCES agent_goals(id) ON DELETE CASCADE,
+      thread_id VARCHAR(36) NOT NULL REFERENCES agent_threads(id) ON DELETE CASCADE,
+      run_id VARCHAR(36) NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+      iteration_no INTEGER NOT NULL,
+      status VARCHAR(32) NOT NULL,
+      confidence REAL NOT NULL,
+      satisfied_json JSON NOT NULL,
+      unsatisfied_json JSON NOT NULL,
+      policy_json JSON NOT NULL,
+      next_planner_brief TEXT,
+      user_question TEXT,
+      blocker TEXT,
+      created_at DATETIME NOT NULL
+    )`,
+  )
   await exec(
     db,
     `CREATE TABLE IF NOT EXISTS agent_run_events (
@@ -335,15 +375,31 @@ export async function runMigrations(db: Kysely<Database>) {
       user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       thread_id VARCHAR(36) REFERENCES agent_threads(id) ON DELETE SET NULL,
       kind VARCHAR(64) NOT NULL,
+      scope_type VARCHAR(32) NOT NULL DEFAULT 'workspace',
+      memory_type VARCHAR(32) NOT NULL DEFAULT 'semantic',
       key VARCHAR(128) NOT NULL,
       value TEXT NOT NULL,
       confidence REAL NOT NULL,
       source_message_id VARCHAR(36),
+      source_run_id VARCHAR(36),
+      evidence_json JSON,
+      last_used_at DATETIME,
+      promoted_at DATETIME,
+      expires_at DATETIME,
+      metadata_json JSON,
       created_at DATETIME NOT NULL,
       updated_at DATETIME NOT NULL,
       archived_at DATETIME
     )`,
   )
+  await addColumnIfMissing(db, 'agent_memories', 'scope_type', "VARCHAR(32) NOT NULL DEFAULT 'workspace'")
+  await addColumnIfMissing(db, 'agent_memories', 'memory_type', "VARCHAR(32) NOT NULL DEFAULT 'semantic'")
+  await addColumnIfMissing(db, 'agent_memories', 'source_run_id', 'VARCHAR(36)')
+  await addColumnIfMissing(db, 'agent_memories', 'evidence_json', 'JSON')
+  await addColumnIfMissing(db, 'agent_memories', 'last_used_at', 'DATETIME')
+  await addColumnIfMissing(db, 'agent_memories', 'promoted_at', 'DATETIME')
+  await addColumnIfMissing(db, 'agent_memories', 'expires_at', 'DATETIME')
+  await addColumnIfMissing(db, 'agent_memories', 'metadata_json', 'JSON')
   await exec(
     db,
     `CREATE TABLE IF NOT EXISTS agent_context_snapshots (

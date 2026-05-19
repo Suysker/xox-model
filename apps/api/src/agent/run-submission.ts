@@ -17,6 +17,7 @@ import {
   touchThreadAfterRun,
 } from './thread-store.js'
 import { completeAgentRun, createAgentRunController, scheduleAgentRunQueueDrain } from './run-worker.js'
+import { normalizeAgentAutomationLevel, type AgentAutomationLevel } from './tool-policy.js'
 
 export type SubmitAgentMessageRunInput = {
   db: Kysely<Database>
@@ -26,10 +27,11 @@ export type SubmitAgentMessageRunInput = {
   threadId?: string | null | undefined
   message: string
   background?: boolean | undefined
+  automationLevel?: AgentAutomationLevel | undefined
 }
 
 export async function failSubmittedAgentRun(db: Kysely<Database>, runId: string, thread: Row<'agent_threads'>) {
-  await db.updateTable('agent_runs').set({ status: 'failed', completed_at: utcNow(), lease_expires_at: null }).where('id', '=', runId).execute().catch(() => undefined)
+  await db.updateTable('agent_runs').set({ status: 'failed', goal_status: 'failed', completed_at: utcNow(), lease_expires_at: null }).where('id', '=', runId).execute().catch(() => undefined)
   await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', thread.id).execute().catch(() => undefined)
   agentThreadEvents.publish(thread.id, 'run_failed')
 }
@@ -37,6 +39,7 @@ export async function failSubmittedAgentRun(db: Kysely<Database>, runId: string,
 export async function submitAgentMessageRun(input: SubmitAgentMessageRunInput): Promise<AgentSendResponse | AgentThreadState> {
   const thread = await getOrCreateThread(input.db, input.workspace, input.user, input.threadId)
   const runId = newId()
+  const automationLevel = normalizeAgentAutomationLevel(input.automationLevel)
   try {
     const now = utcNow()
     await input.db
@@ -49,6 +52,8 @@ export async function submitAgentMessageRun(input: SubmitAgentMessageRunInput): 
         input_message_id: null,
         input_message: input.message,
         planner_source: null,
+        automation_level: automationLevel,
+        goal_status: 'interpreting',
         worker_id: null,
         lease_expires_at: null,
         heartbeat_at: null,
@@ -77,6 +82,7 @@ export async function submitAgentMessageRun(input: SubmitAgentMessageRunInput): 
         runId,
         status: 'running' as const,
         planner: null,
+        automationLevel,
         messages: [serializeMessage(userMessage)],
         navigationEvents: [] as AgentNavigationEvent[],
         runEvents: [serializeRunEvent(queuedEvent)],
@@ -95,6 +101,7 @@ export async function submitAgentMessageRun(input: SubmitAgentMessageRunInput): 
       threadId: thread.id,
       runId,
       message: input.message,
+      automationLevel,
       abortSignal: controller.signal,
     })
     if (!completed) return buildThreadState(input.db, input.workspace, input.user, thread.id)
@@ -103,6 +110,7 @@ export async function submitAgentMessageRun(input: SubmitAgentMessageRunInput): 
       runId,
       status: 'completed' as const,
       planner: completed.plannerSource,
+      automationLevel,
       messages: [serializeMessage(userMessage), serializeMessage(completed.assistantMessage)],
       navigationEvents: completed.navigationEvents,
       runEvents: await listSerializedRunEvents(input.db, runId),

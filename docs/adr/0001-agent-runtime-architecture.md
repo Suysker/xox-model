@@ -4,7 +4,7 @@
 
 ## 状态
 
-Implemented for Lean Product Harness core. OpenAI Agents SDK 原生 tracing、guardrail、handoff 和 human-in-the-loop event 深度映射保留为后续 runtime maturity gate，不作为当前 `xox-model` Agent OS 的产品阻塞项；理由见 ADR 0003。
+Implemented for current runtime adapter core; target Agent OS architecture is now superseded by [ADR 0004: Evaluator-Centered Harness Agent 架构](0004-evaluator-centered-harness-agent.md). OpenAI Agents SDK 原生 tracing、guardrail、handoff 和 human-in-the-loop event 只能作为 runtime/hook 增强进入本项目 harness，不能替代 Goal Run Engine、Completion Evaluator、可编辑确认卡、租户隔离和领域审计。
 
 ## 背景
 
@@ -12,7 +12,7 @@ Implemented for Lean Product Harness core. OpenAI Agents SDK 原生 tracing、gu
 
 早期实现已经具备 TypeScript API、确认卡、可编辑待执行动作、租户内 memory、上下文摘要、OpenAI-compatible `tool_calls` 和显式 rules 降级路径，但 provider 调用、planning、tool 映射、业务执行、memory 和 prompt 曾混在一个 API module 附近，缺少正式 runtime 采用决策，也缺少对 OpenAI、Claude Code、OpenClaw 这类成熟架构的边界判断。
 
-当前实现已经按 ADR 0003 收敛为 Lean Product Harness：Agent API boundary、Conversation Store、Lean Agent Kernel、Context Pack、Tool Catalog Gateway、Runtime Adapter、Action Draft Builder 和 Approval Executor 已拆到 `apps/api/src/agent/*`；OpenAI Agents SDK 与 OpenAI-compatible Chat Completions 都通过 provider-neutral runtime adapter 接入，业务执行仍由 domain services 和确认卡掌控。
+当前实现已经按 ADR 0003 完成一次边界收敛：Agent API boundary、Conversation Store、Agent Kernel、Context Pack、Tool Catalog Gateway、Runtime Adapter、Action Draft Builder 和 Approval Executor 已拆到 `apps/api/src/agent/*`；OpenAI Agents SDK 与 OpenAI-compatible Chat Completions 都通过 provider-neutral runtime adapter 接入，业务执行仍由 domain services 和确认卡掌控。ADR 0004 在此基础上把目标架构升级为 evaluator-centered harness：复杂目标必须由 Goal Run Engine 多轮推进，并由 Completion Evaluator 根据 action graph 和领域状态判断是否完成。
 
 ## 必须满足的产品约束
 

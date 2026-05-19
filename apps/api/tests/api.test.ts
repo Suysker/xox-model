@@ -12,7 +12,7 @@ import type { Settings } from '../src/core/settings.js'
 import { AGENT_MANUAL_CAPABILITY_COVERAGE, agentWritableConfigPatterns, buildAgentWritableConfigCatalog } from '../src/agent/tool-coverage.js'
 import { AGENT_TOOL_CATALOG, AGENT_TOOL_REGISTRY } from '../src/agent/tool-catalog.js'
 import { buildRuntimeToolCatalogProjection } from '../src/agent/tool-gateway.js'
-import { createProductDefaultModel } from '@xox/domain'
+import { createProductDefaultModel, projectModel } from '@xox/domain'
 import { recoverRunningAgentRuns } from '../src/agent/run-worker.js'
 
 type JsonResponse = {
@@ -47,6 +47,7 @@ function testSettings(databasePath: string): Settings {
     agentWorkerId: `test-worker-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     agentRunLeaseTtlMs: 10_000,
     agentRunWorkerPollMs: 10_000,
+    agentProviderRequestTimeoutMs: 10_000,
   }
 }
 
@@ -311,6 +312,8 @@ async function insertRunningAgentRun(
     input_message_id: messageId,
     input_message: input.message,
     planner_source: null,
+    automation_level: 'manual',
+    goal_status: 'interpreting',
     worker_id: input.workerId ?? null,
     lease_expires_at: input.leaseExpiresAt ?? null,
     heartbeat_at: input.heartbeatAt ?? null,
@@ -366,8 +369,9 @@ function sleep(ms: number) {
 }
 
 function parseSseEvents(buffer: string) {
-  return buffer
-    .split(/\r?\n\r?\n/)
+  const chunks = buffer.split(/\r?\n\r?\n/)
+  const completeChunks = /\r?\n\r?\n$/.test(buffer) ? chunks : chunks.slice(0, -1)
+  return completeChunks
     .filter((chunk) => chunk.includes('data: '))
     .map((chunk) => {
       const event = chunk.match(/^event: (.+)$/m)?.[1] ?? 'message'
@@ -2274,7 +2278,7 @@ describe('xox TypeScript API', () => {
         const events = await collectSseEvents(
           `${sseBaseUrl}/api/v1/agent/threads/${initial.json.threadId}/events`,
           client.cookieHeader(),
-          7,
+          12,
           async () => {
             const next = await client.post('/api/v1/agent/messages', {
               threadId: initial.json.threadId,
@@ -2739,6 +2743,234 @@ describe('xox TypeScript API', () => {
       await confirm(deleted.json.actionRequests[0])
       draft = (await client.get('/api/v1/workspace/draft')).json
       expect(draft.config.employees.some((employee: any) => employee.name === '场务 C')).toBe(false)
+
+      await closeHarness(harness)
+    })
+  })
+
+  it('plans a comprehensive operating model through one high-level editable confirmation', async () => {
+    const months = [
+      { monthIndex: 1, events: 0, salesMultiplier: 0, onlineSalesFactor: 0.35 },
+      { monthIndex: 2, events: 4, salesMultiplier: 0.45, onlineSalesFactor: 0.35 },
+      { monthIndex: 3, events: 6, salesMultiplier: 0.45, onlineSalesFactor: 0.35 },
+      { monthIndex: 4, events: 8, salesMultiplier: 1, onlineSalesFactor: 0.35 },
+      { monthIndex: 5, events: 8, salesMultiplier: 1, onlineSalesFactor: 0.35 },
+      { monthIndex: 6, events: 8, salesMultiplier: 1, onlineSalesFactor: 0.35, extraIncome: 100000 },
+      { monthIndex: 7, events: 10, salesMultiplier: 1.15, onlineSalesFactor: 0.35 },
+      { monthIndex: 8, events: 10, salesMultiplier: 1.15, onlineSalesFactor: 0.35 },
+      { monthIndex: 9, events: 10, salesMultiplier: 1.15, onlineSalesFactor: 0.35 },
+      { monthIndex: 10, events: 12, salesMultiplier: 1.265, onlineSalesFactor: 0.35 },
+      { monthIndex: 11, events: 12, salesMultiplier: 1.265, onlineSalesFactor: 0.35 },
+      { monthIndex: 12, events: 12, salesMultiplier: 1.265, onlineSalesFactor: 0.35, extraIncome: 220000 },
+    ]
+    const operatingPlan = {
+      workspaceName: '星河 50 期启动测算',
+      planning: { startMonth: 3, horizonMonths: 12 },
+      operating: { offlineUnitPrice: 88, onlineUnitPrice: 68, polaroidLossRate: 0.06, revenueFeeRate: 0.03 },
+      reservedDividendRate: 0.05,
+      shareholders: [
+        { name: '股东 A', investmentAmount: 300000, dividendRate: 0.35 },
+        { name: '股东 B', investmentAmount: 200000, dividendRate: 0.25 },
+        { name: '股东 C', investmentAmount: 150000, dividendRate: 0.2 },
+        { name: '股东 D', investmentAmount: 100000, dividendRate: 0.15 },
+      ],
+      startupCosts: [
+        { name: '场地押金和装修', amount: 180000 },
+        { name: '设备灯光音响直播设备', amount: 120000 },
+        { name: '服装和首批物料', amount: 80000 },
+        { name: '招募拍摄宣发', amount: 60000 },
+        { name: '法务注册合同财务', amount: 25000 },
+        { name: '备用现金', amount: 85000 },
+      ],
+      memberSegments: [
+        { label: '核心成员', namePrefix: '成员', count: 10, monthlyBasePay: 2500, commissionRate: 0.12, perEventTravelCost: 35, offlineUnitsPerEvent: 18, onlineUnitsPerEvent: 6 },
+        { label: '普通成员', namePrefix: '成员', count: 25, monthlyBasePay: 1200, commissionRate: 0.1, perEventTravelCost: 35, offlineUnitsPerEvent: 8, onlineUnitsPerEvent: 3 },
+        { label: '练习成员', namePrefix: '成员', count: 15, monthlyBasePayAfterMonth: 800, firstBasePayFreeMonths: 3, commissionRate: 0.08, perEventTravelCost: 35, offlineUnitsPerEvent: 3, onlineUnitsPerEvent: 1 },
+      ],
+      monthlyFixedCosts: [
+        { name: '排练室和办公场地', amount: 45000 },
+        { name: '运营办公室杂费', amount: 8000 },
+        { name: '财务法务行政', amount: 6000 },
+        { name: '平台工具云服务剪辑工具', amount: 5000 },
+        { name: '保险和基础福利', amount: 12000 },
+      ],
+      employees: [
+        { role: '运营负责人', count: 1, monthlyBasePay: 18000 },
+        { role: '经纪统筹', count: 2, monthlyBasePay: 12000 },
+        { role: '编舞老师', count: 2, monthlyBasePay: 10000 },
+        { role: '摄影剪辑', count: 2, monthlyBasePay: 9000 },
+        { role: '直播运营', count: 2, monthlyBasePay: 8500 },
+        { role: '行政财务', count: 1, monthlyBasePay: 8000 },
+        { role: '现场执行兼职', count: 1, perEventCost: 2000 },
+      ],
+      perEventCosts: [
+        { name: '场地执行成本', amount: 6000 },
+        { name: '摄影摄像', amount: 2500 },
+        { name: '妆造', amount: 4000 },
+        { name: '直播推流', amount: 1800 },
+        { name: '安保和检票', amount: 1200 },
+      ],
+      perUnitCosts: [{ name: '物料消耗', amount: 6 }],
+      monthlyMarketing: [
+        { monthIndex: 1, amount: 50000 },
+        { monthIndex: 2, amount: 40000 },
+        { monthIndex: 3, amount: 30000 },
+        { monthIndex: 4, amount: 25000 },
+        { monthIndex: 5, amount: 25000 },
+        { monthIndex: 6, amount: 25000 },
+        { monthIndex: 7, amount: 35000 },
+        { monthIndex: 8, amount: 35000 },
+        { monthIndex: 9, amount: 35000 },
+        { monthIndex: 10, amount: 35000 },
+        { monthIndex: 11, amount: 35000 },
+        { monthIndex: 12, amount: 35000 },
+      ],
+      specialEvents: [
+        { monthIndex: 6, name: '中型活动', extraCost: 60000, extraIncome: 100000 },
+        { monthIndex: 12, name: '周年活动', extraCost: 120000, extraIncome: 220000 },
+      ],
+      months,
+      assumptions: ['未明确的杂项费用已按当前字段留空，不新增隐藏成本。'],
+    }
+
+    await withFakeOpenAICompatibleProvider((body) => {
+      const toolNames = new Set(body.tools.map((tool: any) => tool.function.name))
+      expect(toolNames.has('workspace_configure_operating_model')).toBe(true)
+      return fakeToolResponse('workspace_configure_operating_model', { plan: operatingPlan })
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-operating-model-tool', { llmProvider: 'openai-compatible', openaiCompatibleProvider: 'test-compatible', openaiCompatibleBaseUrl: baseUrl, openaiCompatibleApiKey: 'test-key' })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-operating-model-tool@example.com')
+
+      const planned = await client.post('/api/v1/agent/messages', {
+        message: '按这份投资、50 个成员、员工、成本和 12 个月节奏生成经营模型，所有写入先给确认卡。',
+      })
+      expect(planned.statusCode).toBe(200)
+      expect(planned.json.planner).toBe('openai_compatible_tool_calls')
+      expect(planned.json.actionRequests).toHaveLength(1)
+      expect(planned.json.planSteps.length).toBeGreaterThanOrEqual(2)
+      const action = planned.json.actionRequests[0]
+      expect(action.kind).toBe('workspace.update_draft')
+      expect(action.riskLevel).toBe('high')
+      expect(action.title).toContain('完整经营模型')
+      expect(action.navigation.route).toMatchObject({ mainTab: 'inputs', secondaryTab: 'capital' })
+      expect(action.details.some((detail: any) => detail.label === '最亏月份')).toBe(true)
+      expect(action.payload.workspaceName).toBe('星河 50 期启动测算')
+      expect(action.payload.config.shareholders).toHaveLength(5)
+      expect(action.payload.config.teamMembers).toHaveLength(50)
+      expect(action.payload.config.teamMembers.at(49).name).toBe('成员 50')
+      expect(action.payload.config.employees).toHaveLength(11)
+      expect(action.payload.config.months.map((month: any) => month.events)).toEqual(months.map((month) => month.events))
+      expect(action.payload.assumptions.some((item: string) => item.includes('阶段性保底'))).toBe(true)
+
+      const confirmed = await client.post(`/api/v1/agent/action-requests/${action.id}/confirm`)
+      expect(confirmed.statusCode).toBe(200)
+      expect(confirmed.json.actionRequest.status).toBe('executed')
+      const draft = (await client.get('/api/v1/workspace/draft')).json
+      expect(draft.workspaceName).toBe('星河 50 期启动测算')
+      expect(draft.config.planning).toMatchObject({ startMonth: 3, horizonMonths: 12 })
+      expect(draft.config.teamMembers).toHaveLength(50)
+      expect(draft.config.months).toHaveLength(12)
+      const base = projectModel(draft.config).scenarios.find((scenario) => scenario.key === 'base')
+      expect(base?.grossSales).toBeGreaterThan(0)
+      expect(base?.totalCost).toBeGreaterThan(0)
+      expect(base?.months.find((month) => month.monthIndex === 6)?.grossSales).toBeGreaterThan(0)
+
+      const autoPlanned = await client.post('/api/v1/agent/messages', {
+        threadId: planned.json.threadId,
+        message: '再次按同一份经营模型生成草稿，这次开启最高自动化。',
+        automationLevel: 'high',
+      })
+      expect(autoPlanned.statusCode).toBe(200)
+      expect(autoPlanned.json.automationLevel).toBe('high')
+      expect(autoPlanned.json.actionRequests).toHaveLength(1)
+      expect(autoPlanned.json.actionRequests[0].status).toBe('executed')
+      expect(autoPlanned.json.planSteps.find((step: any) => step.actionRequestId === autoPlanned.json.actionRequests[0].id)?.status).toBe('executed')
+      expect(autoPlanned.json.runEvents.some((event: any) => event.type === 'action_auto_executed')).toBe(true)
+      const autoDraft = (await client.get('/api/v1/workspace/draft')).json
+      expect(autoDraft.workspaceName).toBe('星河 50 期启动测算')
+      expect(autoDraft.config.teamMembers).toHaveLength(50)
+
+      await closeHarness(harness)
+    })
+  })
+
+  it('iterates through the Goal Run Engine until the Completion Evaluator verifies the repaired operating model', async () => {
+    const months = Array.from({ length: 12 }, (_, index) => ({
+      monthIndex: index + 1,
+      events: 4,
+      salesMultiplier: 1,
+      onlineSalesFactor: 0.2,
+    }))
+    const emptyPlan = {
+      workspaceName: '空预测模型',
+      planning: { startMonth: 3, horizonMonths: 12 },
+      operating: { offlineUnitPrice: 0, onlineUnitPrice: 0 },
+      shareholders: [{ name: '空股东', investmentAmount: 0, dividendRate: 0 }],
+      memberSegments: [{ label: '空成员', namePrefix: '空成员', count: 1, monthlyBasePay: 0, commissionRate: 0, offlineUnitsPerEvent: 0, onlineUnitsPerEvent: 0 }],
+      employees: [{ role: '空岗位', count: 1, monthlyBasePay: 0, perEventCost: 0 }],
+      monthlyFixedCosts: [{ name: '空固定成本', amount: 0 }],
+      perEventCosts: [{ name: '空每场成本', amount: 0 }],
+      perUnitCosts: [{ name: '空每张成本', amount: 0 }],
+      months: months.map((month) => ({ ...month, events: 0, salesMultiplier: 0, onlineSalesFactor: 0 })),
+    }
+    const repairedPlan = {
+      workspaceName: '修复后经营模型',
+      planning: { startMonth: 3, horizonMonths: 12 },
+      operating: { offlineUnitPrice: 100, onlineUnitPrice: 50, polaroidLossRate: 0.05 },
+      shareholders: [
+        { name: '股东 A', investmentAmount: 120000, dividendRate: 0.6 },
+        { name: '股东 B', investmentAmount: 80000, dividendRate: 0.4 },
+      ],
+      memberSegments: [{ label: '核心成员', namePrefix: '成员', count: 2, monthlyBasePay: 1000, commissionRate: 0.1, perEventTravelCost: 20, offlineUnitsPerEvent: 10, onlineUnitsPerEvent: 2 }],
+      employees: [{ role: '运营', count: 1, monthlyBasePay: 5000, perEventCost: 0 }],
+      monthlyFixedCosts: [{ name: '房租', amount: 1000 }],
+      perEventCosts: [{ name: '场务', amount: 300 }],
+      perUnitCosts: [{ name: '物料', amount: 3 }],
+      months,
+    }
+
+    let planningCalls = 0
+    await withFakeOpenAICompatibleProvider((body) => {
+      const toolNames = new Set(body.tools.map((tool: any) => tool.function.name))
+      expect(toolNames.has('workspace_configure_operating_model')).toBe(true)
+      planningCalls += 1
+      return fakeToolResponse('workspace_configure_operating_model', { plan: planningCalls === 1 ? emptyPlan : repairedPlan })
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-goal-run-engine-loop', { llmProvider: 'openai-compatible', openaiCompatibleProvider: 'test-compatible', openaiCompatibleBaseUrl: baseUrl, openaiCompatibleApiKey: 'test-key' })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-goal-run-engine-loop@example.com')
+
+      const response = await client.post('/api/v1/agent/messages', {
+        message: '构建 12 个月经营模型。如果预测结果为空，你必须继续修复，直到 evaluator 确认草稿有有效收入或成本。',
+        automationLevel: 'high',
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(response.json.planner).toBe('openai_compatible_tool_calls')
+      expect(planningCalls).toBe(2)
+      expect(response.json.actionRequests).toHaveLength(2)
+      expect(response.json.actionRequests.every((action: any) => action.status === 'executed')).toBe(true)
+      expect(response.json.planSteps.map((step: any) => step.sequence)).toEqual([1, 2, 3, 4])
+
+      const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
+      expect(state.statusCode).toBe(200)
+      expect(state.json.goals).toHaveLength(1)
+      expect(state.json.goals[0].status).toBe('completed')
+      expect(state.json.evaluations.map((evaluation: any) => evaluation.status)).toEqual(['continue', 'pass'])
+      expect(state.json.evaluations[0].unsatisfiedCriteria.some((finding: any) => finding.id === 'domain.operating_inputs_nonzero')).toBe(true)
+      expect(state.json.runEvents.filter((event: any) => event.type === 'goal_iteration_started')).toHaveLength(2)
+      expect(state.json.runEvents.some((event: any) => event.type === 'memory_consolidated')).toBe(true)
+
+      const memories = await client.get('/api/v1/agent/memories')
+      expect(memories.json.memories.some((memory: any) => memory.memoryType === 'episodic' && memory.value.includes('修复后经营模型'))).toBe(true)
+      const draft = (await client.get('/api/v1/workspace/draft')).json
+      expect(draft.workspaceName).toBe('修复后经营模型')
+      expect(draft.config.teamMembers).toHaveLength(2)
+      expect(draft.config.months).toHaveLength(12)
+      const base = projectModel(draft.config).scenarios.find((scenario) => scenario.key === 'base')
+      expect(base?.grossSales).toBeGreaterThan(0)
+      expect(base?.totalCost).toBeGreaterThan(0)
 
       await closeHarness(harness)
     })

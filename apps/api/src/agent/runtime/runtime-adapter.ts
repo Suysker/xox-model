@@ -5,7 +5,7 @@ import type { AgentToolCallStep, ChatTool } from '../tool-catalog.js'
 export type RuntimePlannerSource = Extract<AgentPlannerSource, 'openai_agents' | 'openai_compatible_tool_calls'>
 
 export type RuntimePlanError = {
-  kind: 'missing_api_key' | 'provider_http_error' | 'provider_network_error'
+  kind: 'missing_api_key' | 'provider_http_error' | 'provider_network_error' | 'provider_response_error'
   statusCode?: number
   message?: string
 }

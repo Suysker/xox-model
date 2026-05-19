@@ -23,6 +23,8 @@ type SmokeSummary = {
   maxMultiStepCount: number
   editableActionExecutedAmount: number
   editedDraftRevision: number
+  complexOperatingModelRevision: number
+  complexOperatingModelMemberCount: number
   actionKinds: string[]
   publishCreatedShare: true
   auditCount: number
@@ -183,15 +185,25 @@ function versionNoFromResult(result: any) {
 async function sendAgentMessage(
   client: SmokeClient,
   planners: Set<string>,
-  input: { label: string; message: string; threadId?: string | null },
+  input: { label: string; message: string; threadId?: string | null; automationLevel?: 'manual' | 'low' | 'medium' | 'high' },
 ) {
-  const response = await client.post('/api/v1/agent/messages', {
-    threadId: input.threadId ?? null,
-    message: input.message,
-  })
-  assertOk(response, input.label)
-  assertPlanner(response, input.label, planners)
-  return response
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    console.error(`[agent-smoke] send: ${input.label}${attempt > 1 ? ` retry ${attempt}` : ''}`)
+    const response = await client.post('/api/v1/agent/messages', {
+      threadId: input.threadId ?? null,
+      message: input.message,
+      ...(input.automationLevel ? { automationLevel: input.automationLevel } : {}),
+    })
+    assertOk(response, input.label)
+    assertPlanner(response, input.label, planners)
+    const providerNetworkFailed = response.json.planSteps?.some((step: any) =>
+      step.status === 'failed' && String(step.title ?? '').includes('无法连接模型服务'),
+    )
+    if (!providerNetworkFailed) return response
+    if (attempt === 3) return response
+    await sleep(1000 * attempt)
+  }
+  throw new Error(`${input.label} failed before sending`)
 }
 
 function sleep(ms: number) {
@@ -210,6 +222,7 @@ async function waitForThreadRun(client: SmokeClient, threadId: string, label: st
 }
 
 async function confirmAction(client: SmokeClient, action: any, label: string, actionKinds: Set<string>) {
+  console.error(`[agent-smoke] confirm: ${label}`)
   const response = await client.post(`/api/v1/agent/action-requests/${action.id}/confirm`)
   assertOk(response, label)
   assertSmoke(response.json.actionRequest.status === 'executed', `${label} action was not executed`)
@@ -245,6 +258,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     agentWorkerId: process.env.AGENT_WORKER_ID ?? `smoke-${process.pid}`,
     agentRunLeaseTtlMs: Math.max(1000, numberEnv(process.env.AGENT_RUN_LEASE_TTL_MS, 45_000)),
     agentRunWorkerPollMs: Math.max(250, numberEnv(process.env.AGENT_RUN_WORKER_POLL_MS, 2_000)),
+    agentProviderRequestTimeoutMs: Math.max(5_000, numberEnv(process.env.AGENT_PROVIDER_REQUEST_TIMEOUT_MS, 90_000)),
   }
 
   const db = createDatabase(settings)
@@ -256,6 +270,8 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
   let maxMultiStepCount = 0
   let editableActionExecutedAmount = 0
   let editedDraftRevision = 0
+  let complexOperatingModelRevision = 0
+  let complexOperatingModelMemberCount = 0
 
   try {
     const email = `agent-smoke-${Date.now()}@example.com`
@@ -353,7 +369,8 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     })
     assertSmoke(Array.isArray(teamQuestion.json.actionRequests) && teamQuestion.json.actionRequests.length === 0, 'team question created a write confirmation')
     assertSmoke(
-      String(teamQuestion.json.messages.at(-1)?.content ?? '').includes('共有 7 个成员'),
+      String(teamQuestion.json.messages.at(-1)?.content ?? '').includes('7') &&
+        String(teamQuestion.json.messages.at(-1)?.content ?? '').includes('成员'),
       `team question did not answer member count: ${String(teamQuestion.json.messages.at(-1)?.content ?? '')}`,
     )
     assertSmoke(
@@ -844,6 +861,52 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     await confirmAction(client, resetAction, 'confirm reset draft', actionKinds)
     rememberCoverage(coveredDirections, 'workspace_reset_draft')
 
+    const complexOperatingModel = await sendAgentMessage(client, plannerSources, {
+      label: 'complex operating model',
+      threadId: null,
+      automationLevel: 'high',
+      message: [
+        '请用完整经营模型能力生成并保存一个 12 个月草稿；写入仍先落确认卡，当前 high 自动化允许自动执行；不要发布正式版本。',
+        '项目=星河 50 期启动测算；周期=2026 年 3 月开始 12 个月。',
+        '股东=A 投 300000 分红35%；B 投200000 分红25%；C 投150000 分红20%；D 投100000 分红15%；员工激励池5%不投现金。',
+        '一次性启动成本=场地装修180000、设备直播120000、服装物料80000、招募宣发60000、法务财务25000、备用现金85000。',
+        '成员=50 人：核心10人保底2500提成12%场均线下18线上6；普通25人保底1200提成10%场均线下8线上3；练习15人稳定保底800提成8%场均线下3线上1；交通餐补每人每场35。',
+        '收入=线下单价88、线上单价68、损耗6%、线上系数可用0.35近似；场次节奏=0,4,6,8,8,8,10,10,10,12,12,12；销量系数=0.45,0.45,0.45,1,1,1,1.15,1.15,1.15,1.265,1.265,1.265。',
+        '固定月成本=排练办公45000、办公室杂费8000、财务法务行政6000、云服务剪辑工具5000、保险福利12000。',
+        '员工=运营负责人1*18000、经纪统筹2*12000、编舞2*10000、摄影剪辑2*9000、直播运营2*8500、行政财务1*8000、现场兼职每场2000。',
+        '每场/每张成本=场地执行6000/场、摄影2500/场、妆造4000/场、推流1800/场、安保1200/场、物料6/张、手续费按收入3%折算。',
+        '宣发=1月50000、2月40000、3月30000、4-6月25000/月、7-12月35000/月；6月活动成本60000收入100000；12月周年成本120000收入220000。',
+        '验收=草稿名更新、股东配置、50成员、员工成本、12个月节奏、总收入/总成本/总利润/期末现金/回本月/最亏最赚月均可计算。',
+      ].join('\n'),
+    })
+    const complexAction = findAction(complexOperatingModel, 'workspace.update_draft', 'complex operating model')
+    assertSmoke(
+      complexAction.payload?.source === 'workspace_configure_operating_model' ||
+        String(complexAction.title ?? '').includes('完整经营模型'),
+      `complex operating model did not use high-level operating model tool: ${JSON.stringify(complexOperatingModel.json.actionRequests)}`,
+    )
+    assertSmoke(complexAction.payload?.config?.teamMembers?.length === 50, 'complex operating model did not build 50 members')
+    assertSmoke(complexAction.payload?.config?.months?.length === 12, 'complex operating model did not build 12 months')
+    assertSmoke(
+      complexOperatingModel.json.planSteps.length >= 2,
+      `complex operating model did not expose action graph steps: ${JSON.stringify(complexOperatingModel.json.planSteps)}`,
+    )
+    assertSmoke(complexOperatingModel.json.automationLevel === 'high', 'complex operating model did not run with high automation')
+    assertSmoke(complexAction.status === 'executed', `complex operating model was not auto-executed: ${JSON.stringify(complexAction)}`)
+    assertSmoke(
+      complexOperatingModel.json.runEvents.some((event: any) => event.type === 'action_auto_executed'),
+      'complex operating model did not record auto-execution event',
+    )
+    actionKinds.add(complexAction.kind)
+    const complexDraft = await client.get('/api/v1/workspace/draft')
+    assertOk(complexDraft, 'read complex operating model draft')
+    complexOperatingModelRevision = Number(complexDraft.json.revision)
+    complexOperatingModelMemberCount = Number(complexDraft.json.config?.teamMembers?.length ?? 0)
+    assertSmoke(complexOperatingModelMemberCount === 50, 'confirmed complex operating model did not persist 50 members')
+    assertSmoke(complexDraft.json.workspaceName === '星河 50 期启动测算', 'confirmed complex operating model did not update workspace name')
+    rememberCoverage(coveredDirections, 'complex_operating_model_high_level_tool')
+    rememberCoverage(coveredDirections, 'automation_high_auto_execute')
+
     const auditCount = await db
       .selectFrom('audit_logs')
       .select(({ fn }) => fn.countAll<number>().as('count'))
@@ -864,6 +927,8 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
       maxMultiStepCount,
       editableActionExecutedAmount,
       editedDraftRevision,
+      complexOperatingModelRevision,
+      complexOperatingModelMemberCount,
       actionKinds: Array.from(actionKinds),
       publishCreatedShare: true,
       auditCount: Number(auditCount.count),

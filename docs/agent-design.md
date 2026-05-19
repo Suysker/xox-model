@@ -1,6 +1,6 @@
 # Agent OS 设计
 
-本文件描述 `xox-model` 的目标 Agent OS 架构。正式 runtime 采用策略见 [ADR 0001](adr/0001-agent-runtime-architecture.md)，Harness Agent 分层架构见 [ADR 0002](adr/0002-harness-agent-architecture.md)，项目目标架构见 [ADR 0003](adr/0003-xox-model-agent-os-target-architecture.md)。
+本文件描述 `xox-model` 的目标 Agent OS 架构。正式 runtime 采用策略见 [ADR 0001](adr/0001-agent-runtime-architecture.md)，Harness Agent 分层架构见 [ADR 0002](adr/0002-harness-agent-architecture.md)，历史收敛记录见 [ADR 0003](adr/0003-xox-model-agent-os-target-architecture.md)，当前目标架构以 [ADR 0004: Evaluator-Centered Harness Agent 架构](adr/0004-evaluator-centered-harness-agent.md) 为准。
 
 ## 目标
 
@@ -45,6 +45,106 @@
 | Claude Code | 交互模式参考 | 不引入 Claude Agent SDK；只借鉴 memory、subagents、hooks、skills、MCP 的产品模式 |
 | Skills | 可选过程知识层 | 不能替代 server tools，不能绕过确认、权限、审计 |
 | MCP | 外部工具和连接器边界 | 核心财务业务能力继续走受控 server tools |
+
+## Evaluator-Centered Goal Run Engine
+
+`xox-model` 的 Agent OS 不是一次 provider tool-call 规划器。复杂目标必须进入 Goal Run Engine，由 harness 多轮执行：
+
+```text
+Goal Interpreter
+  -> Context Governor
+  -> Tool Catalog Gateway
+  -> Runtime Planner
+  -> Action Graph Store
+  -> Approval Executor
+  -> Observation Collector
+  -> Completion Evaluator
+  -> Repair Planner
+  -> next iteration or final answer
+```
+
+核心变化：
+
+- `planner.ts` 只负责一轮 provider-native planning，不再代表完整任务已经完成。
+- `agent-kernel.ts` / 后续 `goal-run-engine.ts` 负责把复杂目标推进成多轮 `plan -> confirm/execute -> observe -> evaluate -> repair`。
+- 模型每轮只需要选择下一批工具；是否继续、是否阻断、是否完成由 Completion Evaluator 根据 server-owned action graph 和领域状态决定。
+- 模型 final text 不能直接结束复杂 run；`before_stop` 必须先运行 evaluator。
+- 自动执行阈值只控制确认卡是否可自动确认；即使 `automationLevel=high`，也必须先落 `agent_action_requests`，再经 Approval Executor 执行。
+
+当前已实现的运行切片：
+
+- `goal-contract.ts` 持久化 `AgentGoalContract`，并把 `goalStatus` 投影到 run/thread state。
+- `goal-run-engine.ts` 在每轮 provider planning 后运行 Completion Evaluator；`continue` 会生成下一轮 repair planning turn，`needs_confirmation` 会停止等待用户确认，`pass/blocked/failed` 会终止目标。
+- `planning-context.ts` 的 `planningTurn='evaluator_repair'` 让修复回合作为一次 harness-driven model call，不被用户多步骤分隔逻辑拆散。
+- `completion-evaluator.ts` 以 action graph、确认卡、audit 和领域投影为硬事实；经营模型草稿还会检查非零收入/成本驱动输入，避免空壳草稿被默认值误判通过。
+- `memory-candidate-detector.ts` 和 `memory-consolidator.ts` 会在 action 执行后主动沉淀 scoped episodic/procedural memory；显式 `memory_remember` 仍保留为用户可控记忆入口。
+- React `AgentConsole` 已显示最新目标、评估轮次、满足/未满足数量、blocker 和下一轮 planner brief。
+
+验证命令：
+
+- `npm.cmd run build:api`
+- `npm.cmd run build:web`
+- `npm.cmd run test:api`
+- `npm.cmd run test:web`
+
+目标运行图：
+
+```mermaid
+flowchart TB
+  User[User Goal] --> Contract[Goal Contract<br/>objective / scope / acceptance / constraints]
+  Contract --> Context[Context Governor<br/>memory / summary / outcome / pending cards]
+  Context --> Gateway[Tool Catalog Gateway<br/>model-selected capability projection]
+  Gateway --> Planner[Runtime Planner<br/>small batch tool calls]
+  Planner --> Graph[Action Graph Store<br/>steps / reads / write drafts]
+  Graph --> Approval[Approval Executor<br/>editable cards / policy / audit]
+  Approval --> Observation[Observation Collector<br/>workspace / ledger / version / share / projection]
+  Observation --> Eval[Completion Evaluator<br/>policy + domain + graph + context + rubric]
+  Eval -->|pass| Final[Final Answer]
+  Eval -->|needs confirmation| Cards[User Edits / Confirms Cards]
+  Cards --> Approval
+  Eval -->|continue| Repair[Repair Planner<br/>next brief]
+  Repair --> Context
+  Eval -->|blocked| Blocked[Visible Blocker / Clarification]
+```
+
+Completion Evaluator 分层：
+
+| Evaluator | 类型 | 判定对象 | 权限 |
+| --- | --- | --- | --- |
+| Policy Evaluator | deterministic | 账号动作、跨 workspace、锁账、版本不可变、派生分录、secret 泄漏 | 可阻断 |
+| Domain Evaluator | deterministic | draft 结构、成员/员工/股东/成本/月度节奏、账本、版本、分享、projection、audit | 可阻断或要求继续 |
+| Action Graph Evaluator | deterministic | 多步骤是否可见、依赖是否正确、写入是否有确认卡、失败后是否停止后续依赖 | 可阻断或要求继续 |
+| Context Evaluator | deterministic + heuristic | memory 作用域、summary、上下文预算、未完成动作是否保留 | 可要求压缩或 reset |
+| LLM Rubric Evaluator | model-assisted | 解释质量、分析深度、复杂追问是否覆盖 | 只能补软指标，不能覆盖硬事实 |
+| Human Evaluator | user decision | 高风险确认、业务口径歧义、修改待执行动作 | 用户决定 |
+
+Goal Contract 至少需要包含：
+
+- `objective`：用户原始目标的结构化目标。
+- `scope`：当前 workspace、允许页面、允许 capability。
+- `acceptanceCriteria`：能由 domain state、action graph 或 evaluator rubric 检查的验收项。
+- `forbiddenActions`：账号动作、未请求发布、跨 workspace、未确认写入等禁止项。
+- `automationLevel`：`manual | low | medium | high`。
+- `maxIterations`：防止无限循环；达到上限必须把未满足项展示给用户。
+- `contextStrategy`：memory scope、summary/reset、handoff 规则。
+
+对于“50 位成员 + 多股东 + 成本 + 12 个月预测 + 后续记账/发布”这类任务，正确行为不是一次性暴露全部工具并期待模型一次完成，而是：
+
+1. Goal Interpreter 建立可评估 contract。
+2. 第一轮 planner 选择经营模型配置、必要查询或澄清工具。
+3. 写入 draft 生成可编辑确认卡；若用户选择高自动化，仍先落卡再自动执行。
+4. Observation Collector 读取 draft、projection、audit 和 action graph。
+5. Completion Evaluator 检查成员数、股东、成本项、12 个月、预测结果、确认卡和 audit 是否满足 contract。
+6. 若缺项存在，Repair Planner 生成下一轮 brief，让模型补齐缺口；禁止用后端正则从原始文本猜语义。
+7. 直到 evaluator pass、需要用户确认/澄清、阻塞或取消。
+
+这套设计直接解决工具过多问题：
+
+- Capability Router 由模型通过 provider-native tool_call 选择能力域。
+- Tool Catalog Gateway 只投影本轮必要工具。
+- Evaluator findings 给下一轮 planner 一个小而具体的 brief。
+- 高阶工具处理完整经营模型、批量导入、批量草稿；低阶工具处理用户精修。
+- 服务端永远不使用关键词或正则替模型选择业务工具。
 
 ## 目标模块划分
 
@@ -95,7 +195,7 @@ provider adapter 层。所有 provider 必须输出统一的内部 plan/event，
 - `rules` 本地/CI no-op 路径
 - `runtime-adapter.ts`
 
-本轮先落地最小可验证切分：
+当前代码边界是目标架构中的一段可验证运行切片：
 
 ```text
 agent/routes.ts
@@ -174,6 +274,78 @@ planner.ts
 复用计划：`workspace.update_online_factor`、`workspace.patch_config`、`workspace.rename`、`workspace.export_bundle` 和 `workspace.import_bundle` 的 runtime handler 都只把 provider-native tool args 交给 workspace draft builder。handler registry 不选择工具、不理解自然语言；它只处理已经由模型选中的 intent。workspace draft 模块可以读取当前 workspace 草稿和导出 bundle，但不持久化 action request、不执行写入、不参与语义 tool selection。
 
 命名保持 handler intent 风格，例如 `workspace.patch_config -> planWorkspacePatch`、`workspace.import_bundle -> planImportBundleFromValue`。验收要求构建证明 `planner.ts` 不再引用 `projectModel`、`hydrateModelConfig`、`config-patch.ts` 或 `modules/workspace.ts` 的业务 draft 依赖。
+
+### 完整经营模型配置工具
+
+复杂经营简报不能退回到“暴露全部低层工具，然后希望模型连续调用几十次”。这会让 50 个成员、多个成本项、12 个月节奏这类目标变成脆弱的低层操作序列，也会让 provider 在长上下文里更容易返回空计划。因此新增一个通用高阶工具：
+
+```text
+provider tool: workspace_configure_operating_model
+internal intent: workspace.configure_operating_model
+confirmation action: workspace.update_draft
+```
+
+适用范围是用户一次性提供完整经营模型、投资结构、批量成员分层、员工编制、固定和变动成本、月份节奏，并要求生成预测。它不是任何项目名或文本模板的特调，也不解析原始自然语言；模型必须通过 provider-native tool call 把经营简报整理成 `plan` 结构。服务端只做确定性的领域模型生成和预览。
+
+依赖方向固定为：
+
+```text
+planning-session.ts
+  -> runtime-intent-handlers.ts
+      -> workspace-action-drafts.ts
+          -> action-draft-utils.ts
+          -> @xox/domain factories / hydration / projection
+          -> approval-executor.ts types only
+```
+
+模块分工：
+
+- `tool-catalog.ts` 定义 `workspace_configure_operating_model` 的 provider schema，包含股东、成员分层、员工、基础成本、专项成本、启动成本、月度节奏和模型假设。
+- `runtime-intent-handlers.ts` 只把 `workspace.configure_operating_model` 分发给 workspace draft builder，不做关键词或正则语义判断。
+- `workspace-action-drafts.ts` 复用 `@xox/domain` 的 `createShareholder / createMember / createEmployee / createCostItem / createStageCostItem / createMonth / hydrateModelConfig / projectModel`，生成一个可编辑 `workspace.update_draft` 确认卡和一个只读预测摘要。
+- `tool-executor.ts` 不需要新增执行路径；确认后仍执行既有 `workspace.update_draft`，所以编辑、policy、revision、audit 和保存草稿能力保持统一。
+
+确认卡必须展示至少这些信息：目标工作区名、预测周期、股东数和总投资、成员数和分层摘要、员工数、成本项数量、总收入、总成本、总利润、期末现金、回本月份、最亏和最赚钱月份、服务端近似假设。用户可以直接编辑确认卡 payload，确认执行时仍由既有 policy 和 domain hydration 二次校验。
+
+长结构化输入的拆分规则只允许根据文本形态决定是否保留换行，例如长度、有效行数、列表行数量、JSON 深度。它不能根据业务关键词决定工具，也不能为某个测试场景硬编码命中条件。紧凑的多动作句子继续按分号和换行拆成多次模型规划；完整经营简报保持为一次模型调用，让模型看到全局约束后选择高阶工具。
+
+### 自动执行策略
+
+Agent OS 默认仍是人工确认：写入工具先生成可编辑确认卡，用户确认后执行。为支持类似 Codex 的执行策略，用户也可以在本轮消息上选择自动执行阈值：
+
+```text
+manual  -> 所有写入保持 pending，等待用户编辑/确认
+low     -> 自动执行 low 风险确认卡
+medium  -> 自动执行 low/medium 风险确认卡
+high    -> 自动执行 low/medium/high 风险确认卡
+```
+
+设计原则：
+
+- 自动化是用户显式运行策略，不是模型自己决定权限；模型只负责 tool_call 规划。
+- 即使自动执行，也必须先持久化确认卡和 plan step，再由 Approval Executor 调用同一套 policy/domain service 执行，保证运行图、审计和刷新都可追踪。
+- 自动执行不绕过风险等级、导航、租户、账期锁定、派生分录、revision、版本和分享校验；失败时把对应 action/step 标记 failed 并记录 run event。
+- `agent_runs` 持久化本轮 `automation_level`，这样 background worker、SSE、恢复和同步请求看到同一个策略。默认值是 `manual`，兼容已有调用。
+- 前端只把用户选择的阈值传给 API；它不本地执行确认卡，也不推断哪些动作应该自动执行。
+
+依赖方向固定为：
+
+```text
+web AgentConsole automation selector
+  -> contracts AgentAutomationLevel
+  -> routes/run-submission persist agent_runs.automation_level
+  -> planner/action-graph-store
+      -> approval-executor.executeAgentActionRequest
+      -> tool-policy/domain services/audit
+```
+
+验收要求：
+
+- fake provider tool call 能用一个 `workspace_configure_operating_model` 生成可编辑 `workspace.update_draft` 确认卡和预测摘要。
+- 确认执行后草稿包含预期股东、成员、员工、成本、12 个月节奏，并能由 `projectModel` 计算。
+- 真实 DeepSeek smoke 中，复杂经营简报必须产生 tool call 和 action graph，而不是空回复或低层工具爆炸。
+- 现有 50-direction smoke 不回退，低层新增/删除/记账/版本/分享工具仍可独立被模型选择。
+- 自动执行阈值为 `high` 时，复杂经营模型的高风险 `workspace.update_draft` 确认卡必须在 action graph 中创建后自动执行，最终草稿被 domain service 持久化；阈值为 `manual` 时仍保持 pending 且可编辑。
 
 本轮 Tool Catalog Gateway 拆分的依赖方向固定为：
 
@@ -785,6 +957,7 @@ OpenAI Agents SDK
 
 - `provider_stream_started` 只记录 provider、model 和 adapter source。
 - `provider_stream_delta` 只记录短 `delta`、累计 `preview`、tool call index、tool name 和 arguments preview；所有字段先经过 secret-like redaction，并有长度上限。
+- OpenAI-compatible adapter 按时间和长度合并 content/tool argument trace。它仍实时消费 provider stream，但不会把每个 token 都同步写入 DB；长 tool-call 参数只落阶段性 preview 和完成事件，防止 DeepSeek/Qwen/Doubao 等 provider 因客户端消费过慢而中断。
 - `provider_stream_completed` 只记录内容长度和 tool call 数量。
 - 不保存 provider 原始 SSE 行、完整 prompt、API key、HTTP headers、完整 tool arguments 或 provider 原始 JSON。
 - OpenAI-compatible / DeepSeek / Qwen / Doubao 等兼容 Chat Completions `stream + tools + tool_calls` 的 provider 走 token/chunk 路径；如果 provider 返回普通 JSON，adapter 仍用非流式 tool_calls 解析，但不会伪造 token delta。
@@ -908,6 +1081,20 @@ API startup / recovery
 - 显式 `LLM_PROVIDER=rules` 的本地/CI no-op 路径；真实 provider 配置下不再用规则冒充模型 tool call，业务动作测试也必须走 fake provider tool_call。
 - 记账、线上系数试算/保存、发布、恢复、分享、锁账等主链路测试。
 
+当前关键实现状态：
+
+- 已持久化 `AgentGoalContract`、`AgentEvaluationResult` 和 run `goalStatus`，并通过 ThreadState / SSE 投影到前端。
+- `agent-kernel.ts` 已委托 `goal-run-engine.ts` 执行多轮 `plan -> action graph -> execute/confirm -> observe -> evaluate -> repair`。
+- Completion Evaluator 已作为每轮停止前的强制关口；模型 final text、空 tool-call 或失败 action 不能绕过 evaluator。
+- React Agent Console 已展示 Goal/Evaluation 面板，包括目标、评估轮次、满足/未满足数量、blocker 和下一轮 brief。
+- DeepSeek 真实 smoke 已升级为最终 domain outcome 验收：`npm.cmd run smoke:agent` 使用真实 OpenAI-compatible `tool_calls` 跑通 52 个方向，复杂经营模型最终保存 50 个成员、12 个月草稿，并验证自动执行、action graph、memory 注入和 audit。
+
+当前 maturity gates：
+
+- LLM rubric evaluator 仍未接入为软指标评分器；硬事实已由 deterministic evaluator 覆盖。
+- Memory promotion 目前已主动提取并写入 scoped episodic/procedural candidate，独立后台 promotion scheduler 和 Memory Panel 的候选解释视图仍可继续增强。
+- 多实例强实时 pub/sub 仍是后续能力；当前 SSE 使用单进程 broker，跨实例依赖 REST polling 恢复事实源。
+
 ### Server-side Workspace Bundle
 
 为补齐“导入 / 导出”这类原本只在浏览器文件系统中完成的手动能力，后端提供 server-side bundle 工具：
@@ -928,11 +1115,11 @@ Agent: workspace_import_bundle
 - 不允许 Agent 直接读写本地文件系统。用户可把 bundle JSON 粘贴给 Agent，或后续由前端上传文件后转为 server-side import payload。
 - 用户粘贴的大块 JSON 先由服务端 artifact parser 解析和校验摘要，再交给模型规划。模型只需调用 `workspace_import_bundle` 并声明使用已解析 artifact，不能被要求把完整 bundle 原样复制进 tool 参数。
 
-后续成熟化，不阻塞当前 Agent OS：
+目标架构后续落地点：
 
 - `apps/api/src/agent/routes.ts` 是当前 Agent API Boundary，只承载认证、HTTP DTO、SSE route 和 thread publish；run queue/recovery/cancel 与 worker lifecycle 已在 `run-worker.ts`。
 - `apps/api/src/agent/agent-kernel.ts` 已承接单次 run 的 planning/action graph/message/memory 协调；下一阶段可以继续收敛 kernel 输入输出命名，但 routes 和 worker 不应回收模型规划职责。
-- OpenAI Agents SDK adapter 已形成最小可验证路径，并把 runner lifecycle / function tool execute 映射为 provider-neutral run events；SDK 原生 streaming/tracing/guardrail/human-in-the-loop event 细节仍是下一阶段 maturity gate。
+- OpenAI Agents SDK adapter 已形成可验证 runtime adapter 路径，并把 runner lifecycle / function tool execute 映射为 provider-neutral run events；SDK 原生 streaming/tracing/guardrail/human-in-the-loop event 细节后续必须进入 provider-neutral run events 或 harness hooks。
 - 前端已有后端状态刷新式 action graph / memory panel，OpenAI-compatible provider chunk 和 OpenAI Agents SDK lifecycle/tool trace 已进入运行图；后续要继续做跨实例 pubsub 和 SDK tracing。
 - 任何 SDK 原生成熟化增强都必须进入 provider-neutral run events 或 Tool Policy hooks，不能替代确认卡、租户隔离、domain services 或 audit。
 
@@ -942,9 +1129,12 @@ Agent: workspace_import_bundle
 2. 把 contracts 改为 provider-neutral Agent Protocol。
 3. 拆分 `modules/agent.ts` 到 `runtime / kernel / tools / routes`。（已完成 routes、worker、runtime、tools、approval、context 和 kernel façade 的代码边界）
 4. 把兼容 Chat Completions provider 迁入 `openai-compatible-chat-adapter.ts`。（已完成 provider-native tool_calls 与 chunk streaming）
-5. 实现 OpenAI Agents SDK adapter。（已完成最小可验证路径和 lifecycle/tool trace；SDK 原生 streaming/tracing/guardrail/human-in-the-loop events 是后续 maturity gate）
+5. 实现 OpenAI Agents SDK adapter。（已完成可验证 runtime adapter 路径和 lifecycle/tool trace；SDK 原生 streaming/tracing/guardrail/human-in-the-loop events 后续进入 provider-neutral run events 或 harness hooks）
 6. 增强 React Agent OS 的 action graph、event timeline、memory 管理。（已完成后端状态刷新式 action graph、provider chunk 预览和 run-scoped navigation replay；跨实例实时 pub/sub 是后续 maturity gate）
 7. 用真实 provider 分别跑只读、确认写入、多步骤、拒绝账号动作、memory 隔离测试。
+8. 增加 Goal Contract / Goal Store / Evaluation Result contract 与持久化。
+9. 把 `agent-kernel.ts` 升级为 Goal Run Engine：多轮 planning、执行/确认、observation、Completion Evaluator、Repair Planner。
+10. 前端新增 Goal Panel 与 evaluator findings，真实 DeepSeek smoke 改为验证最终 domain outcome 和 evaluator pass。
 
 ## 验收标准
 
@@ -958,11 +1148,21 @@ Agent: workspace_import_bundle
 - 模型草稿、记账、版本、分享和工作区 bundle 导入导出等主要手动业务能力已映射到 tool registry / tool coverage；账号动作继续保持 `manual_only`。
 - 所有写入动作都有 `agent_action_requests` 和 `audit_logs`。
 - Memory list/delete/context injection 均证明不会跨用户或跨工作区。
+- 复杂目标必须通过 Goal Run Engine 多轮 `plan -> execute/confirm -> observe -> evaluate -> repair` 闭环；模型 final text 不能绕过 Completion Evaluator。
+- `AgentEvaluationResult` 必须能解释每个未满足验收项，并把下一步 brief 或 blocker 展示到 Action Graph / Goal Panel。
+- DeepSeek 复杂经营 smoke 必须验证最终 draft/projection/ledger/version/share/audit outcome，而不是只验证 provider 返回了 tool_call。
 
 ## 参考资料
 
+- ADR 0004：`docs/adr/0004-evaluator-centered-harness-agent.md`
 - OpenAI Agents guide：`https://platform.openai.com/docs/guides/agents`
 - OpenAI Agents SDK JS：`https://openai.github.io/openai-agents-js/`
+- OpenAI Agents SDK running agents：`https://openai.github.io/openai-agents-js/guides/running-agents/`
+- OpenAI Agents SDK human-in-the-loop：`https://openai.github.io/openai-agents-js/guides/human-in-the-loop/`
+- Anthropic Building Effective Agents：`https://www.anthropic.com/engineering/building-effective-agents`
+- Anthropic Demystifying Evals for AI Agents：`https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents`
+- Anthropic Effective Harnesses for Long-Running Agents：`https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents`
+- Anthropic Harness Design for Long-Running Application Development：`https://www.anthropic.com/engineering/harness-design-long-running-apps`
 - Claude Code memory：`https://code.claude.com/docs/en/memory`
 - Claude Code subagents：`https://code.claude.com/docs/en/sub-agents`
 - Claude Code hooks：`https://code.claude.com/docs/en/hooks`

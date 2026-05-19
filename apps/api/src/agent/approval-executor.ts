@@ -17,6 +17,10 @@ import { addRunEvent, listSerializedRunEvents } from './run-events.js'
 import { addMessage } from './thread-store.js'
 import { redactSecretLikeContent } from './memory.js'
 import { executeAgentTool } from './tool-executor.js'
+import { evaluateAgentGoal } from './completion-evaluator.js'
+import { getGoalForRun, serializeEvaluation } from './goal-contract.js'
+import { memoryCandidatesFromExecutedActions } from './memory-candidate-detector.js'
+import { storeMemoryCandidates } from './memory-consolidator.js'
 import {
   assertActionDraftAllowed,
   assertActionExecutionAllowed,
@@ -58,6 +62,15 @@ async function getActionRequest(db: Kysely<Database>, actionRequestId: string) {
 
 async function listPlanStepsForRun(db: Kysely<Database>, runId: string) {
   return db.selectFrom('agent_plan_steps').selectAll().where('run_id', '=', runId).orderBy('sequence_no', 'asc').execute()
+}
+
+async function nextEvaluationIteration(db: Kysely<Database>, runId: string) {
+  const row = await db
+    .selectFrom('agent_evaluations')
+    .select(({ fn }) => fn.max<number>('iteration_no').as('maxIteration'))
+    .where('run_id', '=', runId)
+    .executeTakeFirst()
+  return Number(row?.maxIteration ?? 0) + 1
 }
 
 function assertActionOwnedByWorkspace(action: Row<'agent_action_requests'>, workspace: Row<'workspaces'>, user: CurrentUser) {
@@ -121,6 +134,8 @@ export async function executeAgentActionRequest(db: Kysely<Database>, settings: 
 
 export async function confirmAgentActionRequest(db: Kysely<Database>, settings: Settings, user: CurrentUser, actionRequestId: string) {
   const action = await getActionRequest(db, actionRequestId)
+  const workspace = await getWorkspaceForUser(db, user)
+  assertActionOwnedByWorkspace(action, workspace, user)
   let result: unknown
   try {
     result = await executeAgentActionRequest(db, settings, user, action)
@@ -140,6 +155,42 @@ export async function confirmAgentActionRequest(db: Kysely<Database>, settings: 
   }
 
   const updated = await db.selectFrom('agent_action_requests').selectAll().where('id', '=', action.id).executeTakeFirstOrThrow()
+  const goal = await getGoalForRun(db, action.run_id)
+  if (goal) {
+    const iteration = await nextEvaluationIteration(db, action.run_id)
+    const evaluationRow = await evaluateAgentGoal({ db, workspace, goal, iteration })
+    const evaluation = serializeEvaluation(evaluationRow)
+    await addRunEvent(db, {
+      threadId: action.thread_id,
+      runId: action.run_id,
+      type: 'goal_evaluated',
+      title: 'Completion Evaluator 已复核',
+      message: evaluation.status === 'pass'
+        ? '确认卡执行后，Completion Evaluator 已确认目标满足验收条件。'
+        : `确认卡执行后仍需处理：${evaluation.unsatisfiedCriteria.map((item) => item.message).join('；') || evaluation.status}`,
+      status: evaluation.status === 'pass' ? 'completed' : evaluation.status === 'needs_confirmation' ? 'blocked' : evaluation.status === 'failed' || evaluation.status === 'blocked' ? 'failed' : 'info',
+      data: { goalId: goal.id, iteration, evaluationStatus: evaluation.status },
+    })
+  }
+  const storedMemories = await storeMemoryCandidates({
+    db,
+    workspace,
+    user,
+    threadId: action.thread_id,
+    runId: action.run_id,
+    candidates: memoryCandidatesFromExecutedActions({ runId: action.run_id, actionRows: [updated] }),
+  })
+  if (storedMemories.length > 0) {
+    await addRunEvent(db, {
+      threadId: action.thread_id,
+      runId: action.run_id,
+      type: 'memory_consolidated',
+      title: '主动记忆已沉淀',
+      message: `已从确认卡执行结果沉淀 ${storedMemories.length} 条记忆候选。`,
+      status: 'info',
+      data: { memoryCount: storedMemories.length },
+    })
+  }
   const planSteps = await listPlanStepsForRun(db, action.run_id)
   const assistant = await addMessage(db, action.thread_id, 'assistant', `已执行：${action.title}`)
   await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', action.thread_id).execute()

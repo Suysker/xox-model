@@ -4,6 +4,7 @@ import type { Database, Row } from '../db/schema.js'
 import { conflict, forbidden, unprocessable } from '../core/http.js'
 
 type RiskLevel = 'low' | 'medium' | 'high'
+export type AgentAutomationLevel = 'manual' | RiskLevel
 
 type AgentActionPolicy = {
   kind: AgentActionKind
@@ -24,6 +25,16 @@ const riskRank: Record<RiskLevel, number> = {
   low: 1,
   medium: 2,
   high: 3,
+}
+
+export function normalizeAgentAutomationLevel(value: unknown): AgentAutomationLevel {
+  return value === 'low' || value === 'medium' || value === 'high' ? value : 'manual'
+}
+
+export function canAutoExecuteRisk(riskLevel: string, automationLevel: AgentAutomationLevel) {
+  if (automationLevel === 'manual') return false
+  if (!(riskLevel in riskRank)) return false
+  return riskRank[riskLevel as RiskLevel] <= riskRank[automationLevel]
 }
 
 const ACTION_POLICIES: Record<AgentActionKind, AgentActionPolicy> = {

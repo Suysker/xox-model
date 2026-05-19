@@ -36,6 +36,7 @@ import {
   planExportBundleRead,
   planImportBundleFromValue,
   planOnlineFactorFromFields,
+  planOperatingModelFromStep,
   planWorkspacePatchFromStep,
   planWorkspaceRename,
 } from './workspace-action-drafts.js'
@@ -116,6 +117,7 @@ export const runtimeIntentHandlers: ActionDraftBuilderHandlers<PlannerContext> =
   'stage_cost_type.add': planAddStageCostTypeFromStep,
   'stage_cost_type.delete': planDeleteStageCostTypeFromStep,
   'workspace.patch_config': planWorkspacePatchFromStep,
+  'workspace.configure_operating_model': planOperatingModelFromStep,
   'workspace.rename': (ctx, step) => planWorkspaceRename(ctx, step.workspaceName),
   'workspace.save_snapshot': planSaveSnapshotAction,
   'workspace.publish_release': (ctx, step) => buildPublishReleaseDraft(ctx, Boolean(step.createShare)),

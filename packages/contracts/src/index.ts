@@ -178,6 +178,7 @@ export type AgentActionKind =
   | 'share.revoke'
 
 export type AgentActionRequestStatus = 'pending' | 'confirmed' | 'cancelled' | 'executed' | 'failed'
+export type AgentAutomationLevel = 'manual' | 'low' | 'medium' | 'high'
 
 export type AgentActionRequest = {
   id: string
@@ -228,6 +229,8 @@ export type AgentRunRecord = {
   threadId: string
   status: 'running' | 'completed' | 'failed' | 'cancelled'
   planner: AgentPlannerSource | null
+  automationLevel: AgentAutomationLevel
+  goalStatus: AgentGoalStatus | null
   createdAt: string
   completedAt: string | null
 }
@@ -259,11 +262,113 @@ export type AgentThreadSummary = {
   pendingActionCount: number
 }
 
+export type AgentGoalStatus =
+  | 'interpreting'
+  | 'planning'
+  | 'waiting_for_confirmation'
+  | 'evaluating'
+  | 'repairing'
+  | 'completed'
+  | 'blocked'
+  | 'failed'
+  | 'cancelled'
+
+export type AgentEvaluationStatus =
+  | 'pass'
+  | 'continue'
+  | 'needs_confirmation'
+  | 'needs_clarification'
+  | 'blocked'
+  | 'failed'
+
+export type AgentGoalCriterion = {
+  id: string
+  label: string
+  description: string
+  kind: 'policy' | 'domain' | 'action_graph' | 'context' | 'rubric' | 'human'
+  required: boolean
+}
+
+export type AgentForbiddenAction = {
+  id: string
+  label: string
+  reason: string
+}
+
+export type AgentHumanCheckpoint = {
+  id: string
+  label: string
+  reason: string
+  status: 'pending' | 'satisfied' | 'cancelled'
+}
+
+export type AgentGoalContract = {
+  goalId: string
+  threadId: string
+  runId: string
+  userId: string
+  workspaceId: string
+  objective: string
+  scope: {
+    workspace: 'current'
+    pages: Array<'model' | 'ledger' | 'variance' | 'versions' | 'share'>
+    allowedCapabilities: string[]
+  }
+  acceptanceCriteria: AgentGoalCriterion[]
+  forbiddenActions: AgentForbiddenAction[]
+  humanCheckpoints: AgentHumanCheckpoint[]
+  automationLevel: AgentAutomationLevel
+  maxIterations: number
+  contextStrategy: {
+    memoryScopes: Array<'user' | 'workspace' | 'thread'>
+    compactionMode: 'none' | 'summary' | 'reset_with_handoff'
+  }
+}
+
+export type AgentEvaluationFinding = {
+  id: string
+  criterionId: string
+  severity: 'info' | 'warning' | 'blocking'
+  message: string
+  evidence?: Record<string, unknown> | null
+}
+
+export type AgentEvaluationResult = {
+  id: string
+  goalId: string
+  threadId: string
+  runId: string
+  iteration: number
+  status: AgentEvaluationStatus
+  confidence: number
+  satisfiedCriteria: string[]
+  unsatisfiedCriteria: AgentEvaluationFinding[]
+  policyFindings: AgentEvaluationFinding[]
+  nextPlannerBrief: string | null
+  userQuestion: string | null
+  blocker: string | null
+  createdAt: string
+}
+
+export type AgentGoalRecord = {
+  id: string
+  threadId: string
+  runId: string
+  status: AgentGoalStatus
+  contract: AgentGoalContract
+  createdAt: string
+  updatedAt: string
+  completedAt: string | null
+  blockedReason: string | null
+}
+
 export type AgentThreadState = {
   thread: AgentThreadSummary
   messages: AgentMessage[]
   runs: AgentRunRecord[]
   planner: AgentPlannerSource | null
+  goals: AgentGoalRecord[]
+  evaluations: AgentEvaluationResult[]
   navigationEvents: AgentNavigationEvent[]
   runEvents: AgentRunEvent[]
   planSteps: AgentPlanStep[]
@@ -284,9 +389,16 @@ export type AgentMemoryRecord = {
   userId: string
   threadId: string | null
   kind: string
+  scopeType?: 'thread' | 'workspace' | 'user' | 'procedural' | 'commitment'
+  memoryType?: 'working' | 'episodic' | 'semantic' | 'procedural' | 'commitment'
   key: string
   value: string
   confidence: number
+  evidence?: Record<string, unknown> | null
+  sourceRunId?: string | null
+  lastUsedAt?: string | null
+  promotedAt?: string | null
+  expiresAt?: string | null
   createdAt: string
   updatedAt: string
 }
@@ -311,6 +423,7 @@ export type AgentSendResponse = {
   runId: string
   status: AgentRunRecord['status']
   planner: AgentPlannerSource | null
+  automationLevel: AgentAutomationLevel
   messages: AgentMessage[]
   navigationEvents: AgentNavigationEvent[]
   runEvents: AgentRunEvent[]

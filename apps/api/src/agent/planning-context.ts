@@ -3,6 +3,7 @@ import type { Database, Row } from '../db/schema.js'
 import type { Settings } from '../core/settings.js'
 import type { CurrentUser } from '../modules/auth.js'
 import type { ParsedWorkspaceBundleArtifact } from './workspace-bundle-artifact.js'
+import type { AgentAutomationLevel } from './tool-policy.js'
 
 export type PlannerContext = {
   db: Kysely<Database>
@@ -12,6 +13,8 @@ export type PlannerContext = {
   threadId: string
   runId: string
   message: string
+  planningTurn?: 'user_objective' | 'evaluator_repair'
+  automationLevel: AgentAutomationLevel
   abortSignal?: AbortSignal
   providedWorkspaceBundle?: ParsedWorkspaceBundleArtifact
 }

@@ -31,6 +31,8 @@ export function AgentShell(props: {
         messages={agent.messages}
         planSteps={agent.planSteps}
         runEvents={agent.runEvents}
+        goals={agent.goals}
+        evaluations={agent.evaluations}
         actionRequests={agent.actionRequests}
         navigationEvents={agent.navigationEvents}
         memories={agent.memories}
@@ -38,6 +40,7 @@ export function AgentShell(props: {
         threadSummaries={agent.threadSummaries}
         runningRunId={agent.runningRunId}
         eventConnectionMode={agent.eventConnectionMode}
+        automationLevel={agent.automationLevel}
         busy={agent.busy}
         error={agent.error}
         onSend={(message) => void agent.sendMessage(message)}
@@ -51,6 +54,7 @@ export function AgentShell(props: {
         onRefreshMemories={() => void agent.refreshMemories()}
         onDeleteMemory={(id) => void agent.deleteMemory(id)}
         onRefreshProviderSetting={() => void agent.refreshProviderSetting()}
+        onAutomationLevelChange={agent.setAutomationLevel}
         onSaveProviderSetting={(payload) => agent.saveProviderSetting(payload)}
         onDeleteProviderSetting={() => void agent.deleteProviderSetting()}
       />

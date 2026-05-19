@@ -206,11 +206,45 @@ export type AgentRunTable = {
   input_message_id: string | null
   input_message: string | null
   planner_source: string | null
+  automation_level: string
+  goal_status: string | null
   worker_id: string | null
   lease_expires_at: string | null
   heartbeat_at: string | null
   created_at: Timestamp
   completed_at: string | null
+}
+
+export type AgentGoalTable = {
+  id: Generated<string>
+  thread_id: string
+  run_id: string
+  workspace_id: string
+  user_id: string
+  status: string
+  objective: string
+  contract_json: JsonText
+  created_at: Timestamp
+  updated_at: Timestamp
+  completed_at: string | null
+  blocked_reason: string | null
+}
+
+export type AgentEvaluationTable = {
+  id: Generated<string>
+  goal_id: string
+  thread_id: string
+  run_id: string
+  iteration_no: number
+  status: string
+  confidence: number
+  satisfied_json: JsonText
+  unsatisfied_json: JsonText
+  policy_json: JsonText
+  next_planner_brief: string | null
+  user_question: string | null
+  blocker: string | null
+  created_at: Timestamp
 }
 
 export type AgentRunEventTable = {
@@ -266,10 +300,18 @@ export type AgentMemoryTable = {
   user_id: string
   thread_id: string | null
   kind: string
+  scope_type: string
+  memory_type: string
   key: string
   value: string
   confidence: number
   source_message_id: string | null
+  source_run_id: string | null
+  evidence_json: JsonText | null
+  last_used_at: string | null
+  promoted_at: string | null
+  expires_at: string | null
+  metadata_json: JsonText | null
   created_at: Timestamp
   updated_at: Timestamp
   archived_at: string | null
@@ -316,6 +358,8 @@ export type Database = {
   agent_threads: AgentThreadTable
   agent_messages: AgentMessageTable
   agent_runs: AgentRunTable
+  agent_goals: AgentGoalTable
+  agent_evaluations: AgentEvaluationTable
   agent_run_events: AgentRunEventTable
   agent_action_requests: AgentActionRequestTable
   agent_plan_steps: AgentPlanStepTable

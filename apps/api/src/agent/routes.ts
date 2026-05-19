@@ -141,12 +141,12 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
 
   app.post('/api/v1/agent/messages', async (request, reply) => {
     try {
-      const body = request.body as { threadId?: string | null; message?: string; background?: boolean }
+      const body = request.body as { threadId?: string | null; message?: string; background?: boolean; automationLevel?: 'manual' | 'low' | 'medium' | 'high' }
       const message = body.message?.trim()
       if (!message) throw unprocessable('Message is required')
       const user = await requireCurrentUser(db, settings, request)
       const workspace = await getWorkspaceForUser(db, user)
-      return submitAgentMessageRun({ db, settings, user, workspace, threadId: body.threadId, message, background: body.background })
+      return submitAgentMessageRun({ db, settings, user, workspace, threadId: body.threadId, message, background: body.background, automationLevel: body.automationLevel })
     } catch (error) {
       return reply.send(error)
     }

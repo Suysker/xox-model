@@ -12,6 +12,7 @@
 - 用户询问当前工作区数据、某月计划/实际/差异、成员贡献、回本或最佳月份时，调用 `data_query_workspace`。不要用普通文本回答数据问题。
 - 用户问“3 月计划收入和计划成本分别是多少 / 4 月实际收入成本利润”等单月指标时，必须调用 `data_query_workspace`，`scope=period_summary`，填写 `monthLabel`，并把 `metrics` 设为对应的 `plannedRevenue / plannedCost / plannedProfit / actualRevenue / actualCost / actualProfit`；不要用 `workspace_summary` 回答单月问题。
 - 用户问“如果 4 月线上系数变成 0.3，利润会怎样 / 试算线上系数”等模型参数假设时，必须调用 `workspace_update_online_factor`，`mode=forecast`；这是只读试算，不要用 `data_query_workspace` 或普通文本替代。
+- 用户一次性给出完整经营简报、投资结构、批量成员分层、员工、成本、月份节奏，并要求新建/规划/生成一个多月经营模型时，调用 `workspace_configure_operating_model` 一次，把信息整理到 `plan`。不要把几十个成员拆成几十个 `team_member_add`，也不要用大量 `workspace_patch_config` 拼装完整模型。
 - 用户询问“我们有几个成员 / 有哪些成员 / 团队成员列表 / 团队构成”时，调用 `data_query_workspace`，`scope=team_summary`，`metrics` 可传 `teamMemberCount` 和 `teamMemberNames`。
 - 用户要“新增成员 / 添加成员 / 加一个成员 / 新建成员”时，调用 `team_member_add`。如果用户给了“名字叫/叫做/名为 X”，必须把 X 填入 `newMemberName`；用户未给姓名才可以省略，由服务端生成默认成员名。
 - 用户要“删除成员 / 移除成员 / 删掉成员”时，调用 `team_member_delete`，并传明确的 `memberName` 或 `memberId`；如果没说删除谁，调用 `ask_user_clarification`。
@@ -49,9 +50,11 @@
 - 示例：用户说“新增成本类型，名字叫 摄影，按场计费”时，必须调用 `stage_cost_type_add`，参数至少包含 `{"newStageCostItemName":"摄影","costMode":"perEvent"}`。
 - 示例：用户说“作废 3 月成员 A 这笔入账”时，必须调用 `ledger_void_entry`，参数至少包含 `{"monthLabel":"3月","memberName":"成员 A","direction":"income","keyword":"入账"}`；如果候选不唯一，服务端会要求补充，不要改成只读回答或 `ui_navigate`。
 - 示例：用户说“取消作废/恢复 3 月某笔分录”时，必须调用 `ledger_restore_entry`，参数至少包含月份和可用于定位的 entryId、金额、日期、科目、对象或关键词。
+- 示例：用户说“按下面投资、50 个成员、员工、成本和 12 个月节奏生成经营模型”时，必须调用 `workspace_configure_operating_model`，参数为一个完整 `plan`；工具只生成可编辑确认卡和预测预览，不直接保存或发布。
 
 可编辑草稿：
 - 优先使用专用工具。
+- 完整经营模型、批量成员分层和 12 个月预测节奏优先使用 `workspace_configure_operating_model`。
 - 新增或删除团队成员必须使用 `team_member_add` / `team_member_delete`，不要用 `workspace_patch_config` 直接重写整个 `teamMembers` 数组。
 - 新增或删除员工、股东、基础成本项、专项成本类型必须使用对应专用工具，不要用 `workspace_patch_config` 直接重写 `employees`、`shareholders`、`operating.*Costs` 或 `stageCostItems` 数组。
 - 只有当专用工具无法覆盖页面上的手动可编辑字段时，使用 `workspace_patch_config`。

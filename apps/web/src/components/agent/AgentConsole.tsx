@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { Bot, Database, History, KeyRound, Plus, RefreshCw, Save, SendHorizontal, Trash2, XCircle } from 'lucide-react'
-import type { AgentActionRequest, AgentActionUpdatePayload, AgentMemoryRecord, AgentMessage, AgentNavigationEvent, AgentPlanStep, AgentProviderSettingRecord, AgentProviderSettingUpdatePayload, AgentRunEvent, AgentSendResponse, AgentThreadSummary } from '../../lib/api'
+import { AlertTriangle, Bot, CheckCircle2, Database, History, KeyRound, Plus, RefreshCw, Save, SendHorizontal, Target, Trash2, XCircle } from 'lucide-react'
+import type { AgentActionRequest, AgentActionUpdatePayload, AgentAutomationLevel, AgentEvaluationResult, AgentGoalRecord, AgentMemoryRecord, AgentMessage, AgentNavigationEvent, AgentPlanStep, AgentProviderSettingRecord, AgentProviderSettingUpdatePayload, AgentRunEvent, AgentSendResponse, AgentThreadSummary } from '../../lib/api'
 import { AgentActionCard } from './AgentActionCard'
 import { AgentPlanTimeline } from './AgentPlanTimeline'
 
@@ -78,6 +78,8 @@ export function AgentConsole(props: {
   messages: AgentMessage[]
   planSteps: AgentPlanStep[]
   runEvents: AgentRunEvent[]
+  goals: AgentGoalRecord[]
+  evaluations: AgentEvaluationResult[]
   actionRequests: AgentActionRequest[]
   navigationEvents: AgentNavigationEvent[]
   memories: AgentMemoryRecord[]
@@ -85,6 +87,7 @@ export function AgentConsole(props: {
   threadSummaries: AgentThreadSummary[]
   runningRunId: string | null
   eventConnectionMode: 'idle' | 'connecting' | 'sse' | 'polling'
+  automationLevel: AgentAutomationLevel
   busy: boolean
   error: string | null
   onSend: (message: string) => void
@@ -98,6 +101,7 @@ export function AgentConsole(props: {
   onRefreshMemories: () => void
   onDeleteMemory: (id: string) => void
   onRefreshProviderSetting: () => void
+  onAutomationLevelChange: (level: AgentAutomationLevel) => void
   onSaveProviderSetting: (payload: AgentProviderSettingUpdatePayload) => Promise<void> | void
   onDeleteProviderSetting: () => void
 }) {
@@ -114,6 +118,8 @@ export function AgentConsole(props: {
   const pendingActions = props.actionRequests.filter((action) => action.status === 'pending')
   const recentMessages = props.messages.slice(-6)
   const streamPreview = buildProviderStreamPreview(props.runEvents)
+  const latestGoal = props.goals.at(-1) ?? null
+  const latestEvaluation = props.evaluations.at(-1) ?? null
   const plannerLabel =
     props.planner === 'openai_agents'
       ? 'OpenAI Agents'
@@ -130,6 +136,12 @@ export function AgentConsole(props: {
       : props.eventConnectionMode === 'polling'
         ? '轮询'
         : '待机'
+  const automationOptions: Array<{ level: AgentAutomationLevel; label: string; title: string }> = [
+    { level: 'manual', label: '手动', title: '所有写入都停在确认卡' },
+    { level: 'low', label: '低', title: '自动执行低风险动作' },
+    { level: 'medium', label: '中', title: '自动执行低/中风险动作' },
+    { level: 'high', label: '高', title: '自动执行低/中/高风险动作' },
+  ]
 
   useEffect(() => {
     if (!providerOpen) return
@@ -208,6 +220,25 @@ export function AgentConsole(props: {
                 取消
               </button>
             ) : null}
+            <div className="inline-flex h-8 overflow-hidden rounded-md border border-stone-900/10 bg-white" aria-label="自动化执行级别">
+              {automationOptions.map((option) => (
+                <button
+                  key={option.level}
+                  type="button"
+                  onClick={() => props.onAutomationLevelChange(option.level)}
+                  disabled={props.busy}
+                  className={[
+                    'min-w-9 px-2 text-xs font-semibold transition disabled:opacity-50',
+                    props.automationLevel === option.level
+                      ? 'bg-stone-950 text-white'
+                      : 'text-stone-600 hover:bg-stone-100',
+                  ].join(' ')}
+                  title={option.title}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
             <button
               type="button"
               onClick={() => setHistoryOpen((current) => !current)}
@@ -434,6 +465,50 @@ export function AgentConsole(props: {
                       ) : null}
                     </div>
                   ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          {latestGoal || latestEvaluation ? (
+            <div className="mt-2 rounded-md border border-stone-900/10 bg-white px-3 py-2 text-xs text-stone-700">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="inline-flex min-w-0 items-center gap-1 font-semibold text-stone-900">
+                  <Target className="h-3.5 w-3.5 text-emerald-700" />
+                  <span className="truncate">{latestGoal?.contract.objective ?? '当前目标'}</span>
+                </span>
+                <span className="rounded-md bg-stone-100 px-2 py-0.5 text-[10px] font-semibold text-stone-600">
+                  {latestGoal?.status ?? latestEvaluation?.status}
+                </span>
+              </div>
+              {latestEvaluation ? (
+                <div className="mt-1 grid gap-1">
+                  <p className="flex flex-wrap items-center gap-2 text-[11px] text-stone-500">
+                    <span className="inline-flex items-center gap-1">
+                      <CheckCircle2 className="h-3 w-3 text-emerald-700" />
+                      {latestEvaluation.satisfiedCriteria.length} 已满足
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <AlertTriangle className="h-3 w-3 text-amber-700" />
+                      {latestEvaluation.unsatisfiedCriteria.length} 待完善
+                    </span>
+                    <span>第 {latestEvaluation.iteration} 轮</span>
+                    <span>置信度 {Math.round(latestEvaluation.confidence * 100)}%</span>
+                  </p>
+                  {latestEvaluation.blocker ? (
+                    <p className="rounded-md bg-red-50 px-2 py-1 text-red-700">{latestEvaluation.blocker}</p>
+                  ) : latestEvaluation.nextPlannerBrief ? (
+                    <p className="rounded-md bg-amber-50 px-2 py-1 text-amber-800">{latestEvaluation.nextPlannerBrief}</p>
+                  ) : null}
+                  {latestEvaluation.unsatisfiedCriteria.length > 0 ? (
+                    <div className="grid max-h-16 gap-1 overflow-y-auto">
+                      {latestEvaluation.unsatisfiedCriteria.slice(0, 3).map((finding) => (
+                        <p key={finding.id} className="truncate text-[11px] text-stone-500">
+                          {finding.message}
+                        </p>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
             </div>

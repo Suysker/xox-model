@@ -2,7 +2,10 @@ import type { ModelConfig, ModelResult } from '../types'
 import type {
   AgentActionRequest,
   AgentActionUpdatePayload,
+  AgentAutomationLevel,
   AgentLedgerHistoryFilters,
+  AgentEvaluationResult,
+  AgentGoalRecord,
   AgentMemoryRecord,
   AgentMessage,
   AgentNavigationEvent,
@@ -156,7 +159,10 @@ export type PublicShareResponse = {
 export type {
   AgentActionRequest,
   AgentActionUpdatePayload,
+  AgentAutomationLevel,
   AgentLedgerHistoryFilters,
+  AgentEvaluationResult,
+  AgentGoalRecord,
   AgentMemoryRecord,
   AgentMessage,
   AgentNavigationEvent,
@@ -374,7 +380,7 @@ export const api = {
     apiRequest<VarianceResponse>('GET', `/api/v1/variance/periods/${periodId}`),
   getSharedVersion: (shareToken: string) =>
     apiRequest<PublicShareResponse>('GET', `/api/v1/public/shares/${encodeURIComponent(shareToken)}`),
-  sendAgentMessage: (payload: { threadId?: string | null; message: string; background?: boolean }) =>
+  sendAgentMessage: (payload: { threadId?: string | null; message: string; background?: boolean; automationLevel?: AgentAutomationLevel }) =>
     apiRequest<AgentSendResponse>('POST', '/api/v1/agent/messages', payload),
   listAgentThreads: () =>
     apiRequest<{ threads: AgentThreadSummary[] }>('GET', '/api/v1/agent/threads'),

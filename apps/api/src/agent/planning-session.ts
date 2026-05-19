@@ -15,12 +15,36 @@ function isStepDelimiter(char: string) {
   return char === '；' || char === ';' || char === '\n'
 }
 
-function splitRequestedSteps(message: string) {
+function shouldPreserveDelimitersAsStructuredBrief(message: string) {
+  const lines = message.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+  if (message.length >= 1200 || lines.length >= 8) return true
+  const startsWithNumberedMarker = (line: string) => {
+    let index = 0
+    while (index < line.length) {
+      const code = line.charCodeAt(index)
+      if (code < 48 || code > 57) break
+      index += 1
+    }
+    if (index === 0) return false
+    const marker = line[index]
+    return marker === '.' || marker === ')' || marker === '、'
+  }
+  const listLikeLines = lines.filter((line) =>
+    line.startsWith('-') ||
+    line.startsWith('*') ||
+    line.startsWith('•') ||
+    startsWithNumberedMarker(line),
+  )
+  return listLikeLines.length >= 4
+}
+
+export function splitRequestedSteps(message: string) {
   const parts: string[] = []
   let current = ''
   let depth = 0
   let inString = false
   let escaped = false
+  const preserveStructuredDelimiters = shouldPreserveDelimitersAsStructuredBrief(message)
 
   for (let index = 0; index < message.length; index += 1) {
     const char = message[index] ?? ''
@@ -51,7 +75,7 @@ function splitRequestedSteps(message: string) {
       current += char
       continue
     }
-    if (depth === 0 && isStepDelimiter(char)) {
+    if (depth === 0 && isStepDelimiter(char) && !preserveStructuredDelimiters) {
       const part = current.trim()
       if (part) parts.push(part)
       current = ''
@@ -73,7 +97,8 @@ export async function runPlanningSession(
   const items: PlannedItem[] = []
   let source: AgentPlannerSource | null = null
 
-  for (const part of splitRequestedSteps(ctx.message)) {
+  const requestedParts = ctx.planningTurn === 'evaluator_repair' ? [ctx.message] : splitRequestedSteps(ctx.message)
+  for (const part of requestedParts) {
     const artifact = extractWorkspaceBundleArtifact(part)
     const baseCtx: PlannerContext = { ...ctx, message: part }
     const planningCtx: PlannerContext = artifact ? { ...baseCtx, providedWorkspaceBundle: artifact } : baseCtx

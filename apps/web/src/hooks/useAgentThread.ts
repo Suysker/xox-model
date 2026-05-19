@@ -3,6 +3,9 @@ import {
   api,
   type AgentActionRequest,
   type AgentActionUpdatePayload,
+  type AgentAutomationLevel,
+  type AgentEvaluationResult,
+  type AgentGoalRecord,
   type AgentMemoryRecord,
   type AgentMessage,
   type AgentNavigationEvent,
@@ -64,6 +67,8 @@ export function useAgentThread(props: {
   const [actionRequests, setActionRequests] = useState<AgentActionRequest[]>([])
   const [planSteps, setPlanSteps] = useState<AgentPlanStep[]>([])
   const [runEvents, setRunEvents] = useState<AgentRunEvent[]>([])
+  const [goals, setGoals] = useState<AgentGoalRecord[]>([])
+  const [evaluations, setEvaluations] = useState<AgentEvaluationResult[]>([])
   const [navigationEvents, setNavigationEvents] = useState<AgentNavigationEvent[]>([])
   const [planner, setPlanner] = useState<AgentSendResponse['planner'] | null>(null)
   const [memories, setMemories] = useState<AgentMemoryRecord[]>([])
@@ -72,6 +77,7 @@ export function useAgentThread(props: {
   const [busy, setBusy] = useState(false)
   const [runningRunId, setRunningRunId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [automationLevel, setAutomationLevel] = useState<AgentAutomationLevel>('manual')
   const [eventConnectionMode, setEventConnectionMode] = useState<'idle' | 'connecting' | 'sse' | 'polling'>('idle')
   const replayedNavigationKeys = useRef(new Set<string>())
 
@@ -82,6 +88,8 @@ export function useAgentThread(props: {
     setActionRequests(state.actionRequests)
     setPlanSteps(state.planSteps)
     setRunEvents(state.runEvents)
+    setGoals(state.goals)
+    setEvaluations(state.evaluations)
     setNavigationEvents(state.navigationEvents)
     setPlanner(state.planner)
     setRunningRunId(latestRun?.status === 'running' ? latestRun.id : null)
@@ -250,7 +258,7 @@ export function useAgentThread(props: {
     }
     setMessages((current) => [...current, optimisticMessage])
     try {
-      const response = await api.sendAgentMessage({ threadId, message, background: true })
+      const response = await api.sendAgentMessage({ threadId, message, background: true, automationLevel })
       setThreadId(response.threadId)
       writeCurrentThreadId(response.threadId)
       setPlanner(response.planner)
@@ -258,6 +266,8 @@ export function useAgentThread(props: {
       setActionRequests(response.actionRequests)
       setPlanSteps(response.planSteps)
       setRunEvents(response.runEvents)
+      setGoals([])
+      setEvaluations([])
       setNavigationEvents(response.navigationEvents)
       setRunningRunId(response.status === 'running' ? response.runId : null)
       takeUnreplayedNavigationEvents({
@@ -285,6 +295,8 @@ export function useAgentThread(props: {
       setPlanSteps(response.planSteps)
       setRunEvents(response.runEvents)
       setMessages((current) => [...current, ...response.messages])
+      const state = await api.getAgentThread(response.actionRequest.threadId)
+      applyThreadState(state, false)
       await props.onActionExecuted(response.actionRequest)
       void refreshMemories()
       void refreshThreads()
@@ -304,6 +316,8 @@ export function useAgentThread(props: {
       setPlanSteps(response.planSteps)
       setRunEvents(response.runEvents)
       setMessages((current) => [...current, ...response.messages])
+      const state = await api.getAgentThread(response.actionRequest.threadId)
+      applyThreadState(state, false)
       void refreshThreads()
     } catch (cancelError) {
       setError(cancelError instanceof Error ? cancelError.message : String(cancelError))
@@ -335,6 +349,8 @@ export function useAgentThread(props: {
       mergeActions([response.actionRequest])
       setPlanSteps(response.planSteps)
       setRunEvents(response.runEvents)
+      const state = await api.getAgentThread(response.actionRequest.threadId)
+      applyThreadState(state, false)
       void refreshThreads()
     } catch (updateError) {
       setError(updateError instanceof Error ? updateError.message : String(updateError))
@@ -351,6 +367,8 @@ export function useAgentThread(props: {
     setActionRequests([])
     setPlanSteps([])
     setRunEvents([])
+    setGoals([])
+    setEvaluations([])
     setNavigationEvents([])
     setPlanner(null)
     setRunningRunId(null)
@@ -405,6 +423,8 @@ export function useAgentThread(props: {
     actionRequests,
     planSteps,
     runEvents,
+    goals,
+    evaluations,
     navigationEvents,
     planner,
     memories,
@@ -412,6 +432,7 @@ export function useAgentThread(props: {
     threadSummaries,
     runningRunId,
     eventConnectionMode,
+    automationLevel,
     busy: busy || Boolean(runningRunId),
     error,
     sendMessage,
@@ -424,6 +445,7 @@ export function useAgentThread(props: {
     refreshMemories,
     refreshThreads,
     refreshProviderSetting,
+    setAutomationLevel,
     deleteMemory,
     saveProviderSetting,
     deleteProviderSetting,

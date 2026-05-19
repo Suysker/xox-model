@@ -37,6 +37,14 @@ function modelToolCallRequiredRead(error?: RuntimePlanError | null): ReadDraft {
     }
   }
 
+  if (error?.kind === 'provider_response_error') {
+    return {
+      title: '模型响应格式不可用',
+      message: `模型服务返回了无法解析的工具调用或流式片段，系统没有生成写入动作。${error.message ? ` 错误：${error.message}` : ''}`,
+      status: 'failed',
+    }
+  }
+
   return {
     title: '模型没有返回内容',
     message: '模型这轮没有返回可展示内容，也没有调用工具。系统没有生成任何写入动作；请换一种说法重试。',
