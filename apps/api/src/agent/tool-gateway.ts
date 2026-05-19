@@ -39,6 +39,7 @@ const BUSINESS_CORE_CAPABILITIES: AgentToolCapability[] = ROUTABLE_CAPABILITIES.
 const ALL_CAPABILITIES = new Set<AgentToolCapability>([...ESSENTIAL_CAPABILITIES, ...ROUTABLE_CAPABILITIES])
 const CAPABILITY_TOOL_EXPANSIONS: Partial<Record<AgentToolCapability, string[]>> = {
   data: ['workspace_update_online_factor'],
+  draft: ['workspace_reset_draft'],
 }
 
 const CAPABILITY_ROUTER_SYSTEM_PROMPT = [
@@ -47,6 +48,7 @@ const CAPABILITY_ROUTER_SYSTEM_PROMPT = [
   '必须调用 tool_catalog_select_capabilities。可以选择多个能力域；普通问候、身份说明或闲聊可以传空数组。',
   '用户明确要求“记住/以后默认/以后都”某个稳定偏好或默认业务习惯时选择 memory。',
   '用户做模型参数假设、试算或问“如果某参数变成 X 会怎样”时选择 draft；普通当前数据查询才选择 data。',
+  '用户要求重置当前草稿、恢复默认模型或用默认模板覆盖当前输入时选择 draft。',
   '用户一次性提供完整经营简报、投资结构、批量成员、员工、成本和多月节奏并要求生成经营模型时选择 draft。',
   '不要臆造能力域，不要输出 JSON 文本替代 tool_call。',
 ].join('\n')
@@ -66,8 +68,8 @@ const CAPABILITY_SELECTION_TOOL: ChatTool = {
       '选择本轮主 Agent planning 需要暴露的工具能力域。',
       'ledger=记账、实际分录、批量入账、历史分录修改/作废/恢复、锁账/解锁。',
       'memory=保存当前用户在当前工作区内的长期记忆、默认偏好或默认业务习惯。',
-      'draft=调模型、预测试算、如果某模型参数变成某值会怎样、团队成员/员工/股东/成本结构/工作区名称等草稿变更。',
-      'version=保存快照、发布正式版、恢复版本、快照发布为正式版、删除版本、重置草稿。',
+      'draft=调模型、预测试算、如果某模型参数变成某值会怎样、团队成员/员工/股东/成本结构/工作区名称、重置草稿为默认模型等草稿变更。',
+      'version=保存快照、发布正式版、恢复版本、快照发布为正式版、删除版本。',
       'share=创建或撤销分享链接。',
       'data=当前数据只读问答、预实分析深度追问、账本历史筛选；不要把参数假设试算只归到 data。',
       'navigation=只打开页面或面板；数据问答、记账、调模型、版本、分享等业务工具会自己返回导航事件，不要额外选择 navigation。',
@@ -170,7 +172,6 @@ async function callCapabilityRouter(
       routerPurpose: 'Only choose capability buckets for the main planner. Do not inspect or copy full workspace context.',
     },
     tools: [CAPABILITY_SELECTION_TOOL],
-    toolChoice: { type: 'function', function: { name: 'tool_catalog_select_capabilities' } },
     stream: false,
     maxTokens: 400,
     ...(ctx.abortSignal ? { abortSignal: ctx.abortSignal } : {}),

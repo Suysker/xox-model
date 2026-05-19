@@ -184,7 +184,7 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
       stream: input.stream ?? true,
     }
     if (!options.omitToolChoice) {
-      body.tool_choice = input.toolChoice ?? 'auto'
+      body.tool_choice = 'auto'
     }
     return body
   }

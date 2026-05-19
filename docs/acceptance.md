@@ -67,7 +67,7 @@
 - [x] 当前用户 / 当前工作区可保存 OpenAI-compatible provider 设置，运行时优先使用该设置；API 测试覆盖用户隔离、key 不回传、无 key fail-closed 和删除后回到环境变量兜底
 - [x] Provider 调用错误不会再伪装成“模型未返回工具调用”；API 测试覆盖 HTTP 401 认证失败会提示重新保存当前 provider 的 API key
 - [x] Provider 超时不会误报为 base URL 不可达；复杂结构化目标会使用长请求预算，stream 已暴露工具名后超时会用同一工具非流式重试，运行图记录 `requestTimeoutMs` 和 `provider_retrying`
-- [x] OpenAI-compatible provider 如果拒绝 `tool_choice` 参数，会自动保留工具列表并去掉 `tool_choice` 重试；API 测试覆盖 DeepSeek reasoner 风格的 `does not support this tool_choice` 400
+- [x] OpenAI-compatible provider retry 不发送 forced named `tool_choice`；如果 provider 连 `tool_choice: auto` 也拒绝，会保留工具列表并去掉 `tool_choice` 重试；API 测试覆盖 DeepSeek reasoner 风格的 `does not support this tool_choice` 400
 - [x] 配置 `AGENT_PROVIDER_KEY_ENCRYPTION_SECRET` 后，用户 provider key 以 `enc:v1` ciphertext 入库；API 测试覆盖密文存储、运行时解密调用 provider、旧明文记录升级后仍可读取
 - [x] Agent prompts、tool catalog、memory/context 模块有独立代码边界，不把系统提示词散在路由代码里
 - [x] 普通对话、问候、身份说明和能力说明通过 provider assistant 文本直接返回；`agent_reply` 废弃工具已删除，真实 DeepSeek smoke 覆盖“你好，告诉我你是谁”，不会把基础对话误判为规划失败

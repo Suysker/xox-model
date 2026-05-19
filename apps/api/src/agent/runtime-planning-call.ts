@@ -52,7 +52,6 @@ function retryRuntimeInput(input: RuntimePlanningInput, result: RuntimePlanResul
     ...input,
     stream: false,
     tools: selectedTool ? [selectedTool] : input.tools,
-    toolChoice: { type: 'function', function: { name: selectedToolName } },
     maxTokens: Math.max(input.maxTokens ?? 1600, 12000),
     requestTimeoutMs: Math.max(input.requestTimeoutMs ?? input.settings.agentProviderRequestTimeoutMs, 240_000),
   }
@@ -112,9 +111,7 @@ export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePl
         provider: ctx.settings.openaiCompatibleProvider,
         errorKind: first?.error?.kind,
         retryStream: retryInput.stream ?? true,
-        retryTool: retryInput.toolChoice && typeof retryInput.toolChoice === 'object'
-          ? retryInput.toolChoice.function.name
-          : null,
+        retryTool: retryInput.tools.length === 1 ? retryInput.tools[0]?.function.name ?? null : null,
         requestTimeoutMs: retryInput.requestTimeoutMs ?? ctx.settings.agentProviderRequestTimeoutMs,
       },
     })

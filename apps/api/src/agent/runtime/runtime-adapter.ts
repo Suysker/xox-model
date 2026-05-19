@@ -51,7 +51,6 @@ export type RuntimePlanningInput = {
   context: unknown
   tools: ChatTool[]
   systemPrompt?: string
-  toolChoice?: 'auto' | { type: 'function'; function: { name: string } }
   stream?: boolean
   maxTokens?: number
   requestTimeoutMs?: number

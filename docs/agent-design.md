@@ -669,7 +669,7 @@ REST 管理接口：
 - `PUT /api/v1/agent/provider-settings`：保存或更新当前用户 / 工作区设置；首次保存必须带 `apiKey`，后续可省略 key 以保留旧 key。
 - `DELETE /api/v1/agent/provider-settings`：删除当前用户 / 工作区设置，运行时回到环境变量兜底。
 
-DeepSeek 的 `DEEPSEEK_BASE_URL / DEEPSEEK_MODEL / DEEPSEEK_API_KEY` 仍作为默认 smoke 兼容变量。豆包、Qwen 等服务只要兼容 OpenAI Chat Completions `tools / tool_choice / tool_calls`，就通过用户配置或 `OPENAI_COMPATIBLE_*` 接入，不改业务工具代码。密钥只允许放在用户提交的 server-side provider 设置、本地 `.env` 或部署环境变量中，不写入仓库、文档、测试夹具或日志。配置 `AGENT_PROVIDER_KEY_ENCRYPTION_SECRET` 后，`agent_provider_settings.api_key` 使用 AES-256-GCM 存储为 `enc:v1` ciphertext；旧明文记录仍可读，便于升级。生产 SaaS 应把该 secret 放在 KMS/secret vault 或部署平台 secret 中，并建立轮换策略。
+DeepSeek 的 `DEEPSEEK_BASE_URL / DEEPSEEK_MODEL / DEEPSEEK_API_KEY` 仍作为默认 smoke 兼容变量。豆包、Qwen 等服务只要兼容 OpenAI Chat Completions `tools / tool_calls`，就通过用户配置或 `OPENAI_COMPATIBLE_*` 接入，不改业务工具代码；`tool_choice` 只允许作为 `auto` 提示或被 adapter 省略，xox-model 不发送 forced named `tool_choice`。密钥只允许放在用户提交的 server-side provider 设置、本地 `.env` 或部署环境变量中，不写入仓库、文档、测试夹具或日志。配置 `AGENT_PROVIDER_KEY_ENCRYPTION_SECRET` 后，`agent_provider_settings.api_key` 使用 AES-256-GCM 存储为 `enc:v1` ciphertext；旧明文记录仍可读，便于升级。生产 SaaS 应把该 secret 放在 KMS/secret vault 或部署平台 secret 中，并建立轮换策略。
 
 ## 真实 Provider Smoke Harness
 
@@ -770,6 +770,7 @@ provider-neutral source 当前固定为：
 - 普通对话、问候、身份说明和能力说明直接使用 assistant 文本返回；不保留 `agent_reply` 这类把普通回复包装成工具调用的废弃路径。
 - `rules` 只保留给明确配置的本地/CI 生命周期路径；它不能根据自然语言生成业务确认卡。业务动作测试必须使用 fake OpenAI-compatible provider 返回 provider-native `tool_calls`；真实 smoke 和产品验收必须使用 provider key，并验证 planner source 为 `openai_agents` 或 `openai_compatible_tool_calls`。
 - Tool catalog 的 `description` 要把常见中文业务动词映射到目标工具和关键参数，例如锁定/锁账/封账/关闭账期必须对应 `ledger_set_period_lock` 且 `locked=true`。这不是规则兜底，而是提供给不同 OpenAI-compatible 模型做 provider-native tool selection 的语义说明。
+- Capability projection 可以为跨域工具做显式扩展：例如 `workspace_reset_draft` 的实现和版本面板相关，但用户语义是“用默认模型覆盖当前草稿”，所以 draft 能力域也会投影该工具。这是工具目录治理，不是根据用户文本做后端意图路由。
 
 ### Data Agent 只读问答
 
@@ -958,7 +959,7 @@ OpenAI Agents SDK
 - `provider_stream_started` 只记录 provider、model 和 adapter source。
 - `provider_stream_delta` 只记录短 `delta`、累计 `preview`、tool call index、tool name 和 arguments preview；所有字段先经过 secret-like redaction，并有长度上限。
 - OpenAI-compatible adapter 按时间和长度合并 content/tool argument trace。它仍实时消费 provider stream，但不会把每个 token 都同步写入 DB；长 tool-call 参数只落阶段性 preview 和完成事件，防止 DeepSeek/Qwen/Doubao 等 provider 因客户端消费过慢而中断。
-- 如果兼容 provider 的 stream 已经暴露 tool name，但最终 arguments 是不完整 JSON，Runtime Planner 记录 `provider_retrying`，并用同一 provider 非流式重试一次；重试只投影已暴露的单个工具，默认会强制 `tool_choice` 指向该工具。若 provider 明确返回 `tool_choice` 不支持，例如 DeepSeek reasoner 系模型限制，OpenAI-compatible adapter 会保留单工具投影并去掉 `tool_choice` 再试一次。没有 backend 语义路由：工具选择仍来自第一次 provider-native tool call，重试仍必须返回合法 provider-native tool call，否则 fail closed。
+- 如果兼容 provider 的 stream 已经暴露 tool name，但最终 arguments 是不完整 JSON，Runtime Planner 记录 `provider_retrying`，并用同一 provider 非流式重试一次；重试只投影已暴露的单个工具，但仍让 provider 通过正常 `tool_calls` 返回结果，不发送 forced named `tool_choice`。若 provider 明确拒绝 `tool_choice` 参数，OpenAI-compatible adapter 会保留当前工具投影并去掉 `tool_choice` 再试一次。没有 backend 语义路由：工具选择仍来自第一次 provider-native tool call，重试仍必须返回合法 provider-native tool call，否则 fail closed。
 - Provider request timeout 是 Goal Run Engine 的运行预算，不是 adapter 内部不可见常量。模块分工如下：
   - `settings.ts` 定义部署默认值和 env 下限，生产默认要覆盖复杂 tool-call JSON 生成时间。
   - `runtime-planning-call.ts` 根据结构化输入长度、工具目录规模和 `maxTokens` 生成本轮 `requestTimeoutMs`；普通问答保持轻量预算，复杂经营模型、批量记账或宽工具目录自动升到长预算。

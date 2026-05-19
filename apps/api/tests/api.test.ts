@@ -1108,6 +1108,11 @@ describe('xox TypeScript API', () => {
     expect(dataProjection.toolNames).toContain('workspace_update_online_factor')
     expect(dataProjection.toolNames).not.toContain('workspace_patch_config')
 
+    const draftProjection = buildRuntimeToolCatalogProjection({ selectedCapabilities: ['draft'] })
+    expect(draftProjection.toolNames).toContain('workspace_patch_config')
+    expect(draftProjection.toolNames).toContain('workspace_reset_draft')
+    expect(draftProjection.toolNames).not.toContain('workspace_publish_release')
+
     const memoryProjection = buildRuntimeToolCatalogProjection({ selectedCapabilities: ['memory'] })
     expect(memoryProjection.toolNames).toContain('memory_remember')
     expect(memoryProjection.toolNames).toContain('account_forbidden')
@@ -1129,10 +1134,8 @@ describe('xox TypeScript API', () => {
   it('projects task-relevant tools through a model-selected capability router', async () => {
     await withFakeOpenAICompatibleProvider((body) => {
       if (isCapabilityRouterRequest(body)) {
-        expect(body.tool_choice).toMatchObject({
-          type: 'function',
-          function: { name: 'tool_catalog_select_capabilities' },
-        })
+        expect(body.tool_choice).toBe('auto')
+        expect(body.tools.map((tool: any) => tool.function.name)).toEqual(['tool_catalog_select_capabilities'])
         expect(body.stream).toBe(false)
         return fakeCapabilitySelectionResponse(['ledger'])
       }
@@ -1302,7 +1305,7 @@ describe('xox TypeScript API', () => {
       }
       expect(body.stream).toBe(false)
       expect(body.tools.map((tool: any) => tool.function.name)).toEqual(['ledger_create_member_income'])
-      expect(body.tool_choice).toEqual({ type: 'function', function: { name: 'ledger_create_member_income' } })
+      expect(body.tool_choice).toBe('auto')
       return fakeToolResponse('ledger_create_member_income', {
         monthLabel: '3月',
         memberName: '成员 A',
@@ -1425,7 +1428,7 @@ describe('xox TypeScript API', () => {
       }
       expect(body.stream).toBe(false)
       expect(body.tools.map((tool: any) => tool.function.name)).toEqual(['ledger_create_member_income'])
-      expect(body.tool_choice).toEqual({ type: 'function', function: { name: 'ledger_create_member_income' } })
+      expect(body.tool_choice).toBe('auto')
       return fakeToolResponse('ledger_create_member_income', {
         monthLabel: '3月',
         memberName: '成员 A',
@@ -1492,7 +1495,8 @@ describe('xox TypeScript API', () => {
       }
       if (planningRequests.length === 2) {
         expect(body.stream).toBe(false)
-        expect(body.tool_choice).toEqual({ type: 'function', function: { name: 'workspace_configure_operating_model' } })
+        expect(body.tool_choice).toBe('auto')
+        expect(body.tools.map((tool: any) => tool.function.name)).toEqual(['workspace_configure_operating_model'])
         return {
           __statusCode: 400,
           body: {
