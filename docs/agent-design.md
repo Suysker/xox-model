@@ -959,6 +959,14 @@ OpenAI Agents SDK
 - `provider_stream_delta` 只记录短 `delta`、累计 `preview`、tool call index、tool name 和 arguments preview；所有字段先经过 secret-like redaction，并有长度上限。
 - OpenAI-compatible adapter 按时间和长度合并 content/tool argument trace。它仍实时消费 provider stream，但不会把每个 token 都同步写入 DB；长 tool-call 参数只落阶段性 preview 和完成事件，防止 DeepSeek/Qwen/Doubao 等 provider 因客户端消费过慢而中断。
 - 如果兼容 provider 的 stream 已经暴露 tool name，但最终 arguments 是不完整 JSON，Runtime Planner 记录 `provider_retrying`，并用同一 provider 非流式重试一次；重试只投影已暴露的单个工具并强制 `tool_choice`。这不是后端语义路由，而是 provider 响应修复：工具选择仍来自第一次 provider-native tool call，重试仍必须返回合法 provider-native tool call，否则 fail closed。
+- Provider request timeout 是 Goal Run Engine 的运行预算，不是 adapter 内部不可见常量。模块分工如下：
+  - `settings.ts` 定义部署默认值和 env 下限，生产默认要覆盖复杂 tool-call JSON 生成时间。
+  - `runtime-planning-call.ts` 根据结构化输入长度、工具目录规模和 `maxTokens` 生成本轮 `requestTimeoutMs`；普通问答保持轻量预算，复杂经营模型、批量记账或宽工具目录自动升到长预算。
+  - `runtime-adapter.ts` 暴露 provider-neutral `requestTimeoutMs` 字段，具体 provider adapter 只负责执行 HTTP/stream timeout，不决定业务复杂度。
+  - `openai-compatible-chat-adapter.ts` 把超时归类为 `provider_timeout`，不同于认证、HTTP、网络和响应格式错误；如果超时前已流出 tool name，重试继续沿用这个 provider-native 选择，并切到单工具非流式请求。
+  - `runtime-trace-events.ts` 在 `provider_stream_started` 中记录脱敏的 `requestTimeoutMs`，便于从运行图判断是否走了复杂任务预算。
+  - `runtime-plan-reader.ts` 用“模型服务响应超时”解释超时，不再误报为 base URL/网络不可达。
+  - 依赖方向保持为 `Goal Run Engine -> Runtime Planning Call -> Runtime Adapter -> Runtime Trace`；Tool Catalog Gateway 仍只投影工具，不承担 timeout 或业务意图判断。
 - `provider_stream_completed` 只记录内容长度和 tool call 数量。
 - 不保存 provider 原始 SSE 行、完整 prompt、API key、HTTP headers、完整 tool arguments 或 provider 原始 JSON。
 - OpenAI-compatible / DeepSeek / Qwen / Doubao 等兼容 Chat Completions `stream + tools + tool_calls` 的 provider 走 token/chunk 路径；如果 provider 返回普通 JSON，adapter 仍用非流式 tool_calls 解析，但不会伪造 token delta。

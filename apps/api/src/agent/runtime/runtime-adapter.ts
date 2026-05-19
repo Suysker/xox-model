@@ -5,7 +5,7 @@ import type { AgentToolCallStep, ChatTool } from '../tool-catalog.js'
 export type RuntimePlannerSource = Extract<AgentPlannerSource, 'openai_agents' | 'openai_compatible_tool_calls'>
 
 export type RuntimePlanError = {
-  kind: 'missing_api_key' | 'provider_http_error' | 'provider_network_error' | 'provider_response_error'
+  kind: 'missing_api_key' | 'provider_http_error' | 'provider_network_error' | 'provider_response_error' | 'provider_timeout'
   statusCode?: number
   message?: string
   toolNames?: string[]
@@ -24,6 +24,7 @@ export type RuntimeStreamEvent =
       provider: string
       model: string
       source: RuntimePlannerSource
+      requestTimeoutMs?: number
     }
   | {
       kind: 'content_delta'
@@ -53,6 +54,7 @@ export type RuntimePlanningInput = {
   toolChoice?: 'auto' | { type: 'function'; function: { name: string } }
   stream?: boolean
   maxTokens?: number
+  requestTimeoutMs?: number
   abortSignal?: AbortSignal
   onStreamEvent?: (event: RuntimeStreamEvent) => void | Promise<void>
 }

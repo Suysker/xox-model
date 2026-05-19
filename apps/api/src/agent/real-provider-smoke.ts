@@ -258,7 +258,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     agentWorkerId: process.env.AGENT_WORKER_ID ?? `smoke-${process.pid}`,
     agentRunLeaseTtlMs: Math.max(1000, numberEnv(process.env.AGENT_RUN_LEASE_TTL_MS, 45_000)),
     agentRunWorkerPollMs: Math.max(250, numberEnv(process.env.AGENT_RUN_WORKER_POLL_MS, 2_000)),
-    agentProviderRequestTimeoutMs: Math.max(5_000, numberEnv(process.env.AGENT_PROVIDER_REQUEST_TIMEOUT_MS, 90_000)),
+    agentProviderRequestTimeoutMs: Math.max(5_000, numberEnv(process.env.AGENT_PROVIDER_REQUEST_TIMEOUT_MS, 240_000)),
   }
 
   const db = createDatabase(settings)

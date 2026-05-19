@@ -37,6 +37,14 @@ function modelToolCallRequiredRead(error?: RuntimePlanError | null): ReadDraft {
     }
   }
 
+  if (error?.kind === 'provider_timeout') {
+    return {
+      title: '模型服务响应超时',
+      message: `当前 provider 在本轮规划预算内没有完成响应。复杂经营模型会自动使用更长预算并重试；如果仍失败，请稍后重试或检查 provider 负载。${error.message ? ` 错误：${error.message}` : ''}`,
+      status: 'failed',
+    }
+  }
+
   if (error?.kind === 'provider_response_error') {
     return {
       title: '模型响应格式不可用',

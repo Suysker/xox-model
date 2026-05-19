@@ -26,6 +26,16 @@ class ProviderToolCallParseError extends Error {
   }
 }
 
+class ProviderTimeoutError extends Error {
+  constructor(
+    message: string,
+    readonly toolNames: string[] = [],
+  ) {
+    super(message)
+    this.name = 'ProviderTimeoutError'
+  }
+}
+
 function parseToolArguments(raw: unknown) {
   if (raw && typeof raw === 'object') return raw as Record<string, unknown>
   if (typeof raw !== 'string' || !raw.trim()) return {}
@@ -53,7 +63,17 @@ function isProviderResponseParseError(error: unknown) {
 }
 
 function providerToolNamesFromError(error: unknown) {
-  return error instanceof ProviderToolCallParseError ? error.toolNames : undefined
+  return error instanceof ProviderToolCallParseError || error instanceof ProviderTimeoutError
+    ? error.toolNames
+    : undefined
+}
+
+function isProviderTimeoutError(error: unknown) {
+  return error instanceof ProviderTimeoutError
+}
+
+function effectiveProviderRequestTimeoutMs(input: RuntimePlanningInput) {
+  return Math.max(100, input.requestTimeoutMs ?? input.settings.agentProviderRequestTimeoutMs)
 }
 
 function plannerStepsFromToolCalls(toolCalls: unknown): AgentToolCallStep[] {
@@ -108,6 +128,14 @@ function normalizeStreamingToolCalls(toolCalls: Map<number, StreamingToolCall>) 
     }))
 }
 
+function streamingToolNames(toolCalls: Map<number, StreamingToolCall>) {
+  return [...new Set(
+    [...toolCalls.values()]
+      .map((toolCall) => toolCall.name)
+      .filter((name): name is string => typeof name === 'string' && name.length > 0),
+  )]
+}
+
 function sseDataFromRecord(record: string) {
   const data = record
     .split(/\r?\n/)
@@ -145,6 +173,7 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
       provider: input.settings.openaiCompatibleProvider,
       model: input.settings.openaiCompatibleModel,
       source: SOURCE,
+      requestTimeoutMs: effectiveProviderRequestTimeoutMs(input),
     })
 
     const decoder = new TextDecoder()
@@ -154,7 +183,8 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
     const toolTraceState = new Map<number, { argumentLength: number; flushedAt: number; emittedName: boolean }>()
     let contentTraceLength = 0
     let contentTraceFlushedAt = 0
-    const deadline = Date.now() + input.settings.agentProviderRequestTimeoutMs
+    const requestTimeoutMs = effectiveProviderRequestTimeoutMs(input)
+    const deadline = Date.now() + requestTimeoutMs
 
     const emitContentTrace = async (force = false) => {
       const delta = content.slice(contentTraceLength)
@@ -237,8 +267,17 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
 
     while (true) {
       const remainingMs = deadline - Date.now()
-      if (remainingMs <= 0) throw new Error(`Provider stream timed out after ${input.settings.agentProviderRequestTimeoutMs}ms`)
-      const { done, value } = await readProviderStreamChunk(reader, remainingMs)
+      if (remainingMs <= 0) throw new ProviderTimeoutError(`Provider stream timed out after ${requestTimeoutMs}ms`, streamingToolNames(toolCalls))
+      let chunk: Awaited<ReturnType<typeof readProviderStreamChunk>>
+      try {
+        chunk = await readProviderStreamChunk(reader, remainingMs)
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('timed out')) {
+          throw new ProviderTimeoutError(`Provider stream timed out after ${requestTimeoutMs}ms`, streamingToolNames(toolCalls))
+        }
+        throw error
+      }
+      const { done, value } = chunk
       if (value) buffer += decoder.decode(value, { stream: true })
       if (done) {
         buffer += decoder.decode()
@@ -300,10 +339,11 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
     }
 
     try {
+      const requestTimeoutMs = effectiveProviderRequestTimeoutMs(input)
       timeout = setTimeout(() => {
         providerTimedOut = true
-        abortController.abort(new Error(`Provider request timed out after ${input.settings.agentProviderRequestTimeoutMs}ms`))
-      }, input.settings.agentProviderRequestTimeoutMs)
+        abortController.abort(new Error(`Provider request timed out after ${requestTimeoutMs}ms`))
+      }, requestTimeoutMs + 1_000)
       timeout.unref?.()
       const init: RequestInit = {
         method: 'POST',
@@ -343,15 +383,20 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
       if (contentType.toLowerCase().includes('text/event-stream')) return await this.planFromStream(response, input)
       return jsonPlanResult(await response.json())
     } catch (error) {
+      const requestTimeoutMs = effectiveProviderRequestTimeoutMs(input)
       const message = providerTimedOut
-        ? `Provider request timed out after ${input.settings.agentProviderRequestTimeoutMs}ms`
+        ? `Provider request timed out after ${requestTimeoutMs}ms`
         : error instanceof Error ? error.message : String(error)
       const toolNames = providerToolNamesFromError(error)
       return {
         source: SOURCE,
         steps: [],
         error: {
-          kind: isProviderResponseParseError(error) ? 'provider_response_error' : 'provider_network_error',
+          kind: providerTimedOut || isProviderTimeoutError(error)
+            ? 'provider_timeout'
+            : isProviderResponseParseError(error)
+              ? 'provider_response_error'
+              : 'provider_network_error',
           message: safeProviderErrorMessage(message),
           ...(toolNames && toolNames.length > 0 ? { toolNames } : {}),
         },

@@ -24,6 +24,7 @@ function runtimeStreamEventPayload(event: RuntimeStreamEvent): Record<string, un
       provider: safeProviderStreamValue(event.provider, 80),
       model: safeProviderStreamValue(event.model, 120),
       source: event.source,
+      ...(event.requestTimeoutMs ? { requestTimeoutMs: event.requestTimeoutMs } : {}),
     }
   }
   if (event.kind === 'content_delta') {

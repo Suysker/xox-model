@@ -74,6 +74,7 @@ sudo systemctl status xox-model-web
   - `OPENAI_COMPATIBLE_MODEL=<model-name>`
   - `OPENAI_COMPATIBLE_API_KEY=<provider-key>`
   - `AGENT_PROVIDER_KEY_ENCRYPTION_SECRET=<deployment-secret-for-user-provider-keys>`
+  - `AGENT_PROVIDER_REQUEST_TIMEOUT_MS=240000`：provider 单轮请求默认预算。复杂结构化目标会在运行时保底使用长预算；生产不建议低于默认值，否则大 tool-call arguments 可能被本服务提前 abort。
 - DeepSeek 兼容变量仍可用作默认 smoke 配置：`DEEPSEEK_BASE_URL / DEEPSEEK_MODEL / DEEPSEEK_API_KEY`。密钥只放用户提交的 provider setting、本地 `.env` 或部署环境变量，不写入仓库。
 - `apps/api/src/agent/runtime/openai-agents-adapter.ts` 使用 OpenAI Agents SDK 的 `Agent / Runner / tool / OpenAIProvider`，SDK tool 只收集内部 plan step，不执行领域写入；`apps/api/src/agent/runtime/openai-compatible-chat-adapter.ts` 使用通用 Chat Completions `tools / tool_choice / tool_calls`，同时接受普通 assistant 文本作为只读回复。当 `LLM_PROVIDER` 不是 `rules` 时，常规 Agent 请求不会回退到规则/正则生成业务动作；只有 provider-native tool call 才能生成确认卡。真实 smoke 命令不允许无 key 运行。
 - Agent memory 会拒绝保存 secret-like 内容；context summary 和 provider prompt 注入的 recent messages 会做 secret redaction，避免 key/token 被带入后续模型上下文。
@@ -83,7 +84,7 @@ sudo systemctl status xox-model-web
 - Agent 数据问答通过 `data_query_workspace` 只读工具完成。模型只负责选择查询 scope 和指标，服务端用当前工作区的测算、账本和预实汇总计算答案；不要暴露自由 SQL，也不要在 provider 模式下用本地正则替模型选择工具。
 - 团队成员数量、成员名单和团队构成问题使用 `data_query_workspace` 的 `scope=team_summary`；服务端从当前草稿 `teamMembers` 读取人数和名称，不返回工作区财务总览替代答案。
 - Agent 普通对话、问候、身份说明和能力说明直接使用 assistant 文本完成。provider 模式下如果模型只返回普通文本而没有 tool call，系统只持久化文本回复，不会用规则伪造业务动作；不保留 `agent_reply` 这类废弃回复工具。
-- Agent provider 调用错误会按缺少 API key、HTTP 认证/请求失败、网络/base URL 失败、真实无 tool_call 分开展示。切换 provider 时如果 API key 留空会保留旧 key；从 qwen 切到 DeepSeek 时必须重新填写 DeepSeek key，否则会显示 HTTP 401/403 认证失败。
+- Agent provider 调用错误会按缺少 API key、HTTP 认证/请求失败、网络/base URL 失败、响应超时、真实无 tool_call 分开展示。切换 provider 时如果 API key 留空会保留旧 key；从 qwen 切到 DeepSeek 时必须重新填写 DeepSeek key，否则会显示 HTTP 401/403 认证失败。复杂 tool-call stream 如果已暴露工具名但超时，系统会记录 `provider_retrying`，改用同一工具的非流式请求重试一次。
 - Agent 可写模型字段矩阵维护在 `apps/api/src/agent/tool-coverage.ts`。新增前端手动输入字段时，必须同步补该矩阵和 API 覆盖测试，否则模型可能不知道对应 patch path。真实 provider prompt 只注入 patterns 和少量样例字段，完整矩阵留在代码和测试里，避免每次请求携带所有月份/成本项导致延迟过高。
 - 团队成员新增/删除是结构性草稿变更，必须走 `team_member_add` / `team_member_delete` 专用 tool call，再由服务端生成 `workspace.update_draft` 确认卡；不要让模型通过 `workspace_patch_config` 直接重写整个 `teamMembers` 数组。确认执行前会拒绝把团队成员编辑到 0 个，防止用户编辑确认卡载荷后破坏模型可计算性。
 - 股东、基础成本项和专项成本类型新增/删除同样是结构性草稿变更，必须走 `shareholder_*`、`cost_item_*`、`stage_cost_type_*` 专用 tool call。专项成本类型变更会同步 `stageCostItems`、模板 `specialCosts` 和每个月的 `specialCosts`，避免只改类型表但月份表残留旧值。

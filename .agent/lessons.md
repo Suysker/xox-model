@@ -116,6 +116,7 @@
 - Provider stream tracing must be coalesced before persistence. Real OpenAI-compatible providers can emit long tool-call arguments token by token; if every token awaits a database run event, the client consumes the provider stream too slowly and the provider may terminate the connection. Keep realtime UX, but write redacted preview events by time/size thresholds plus a completion event.
 - Real-provider smoke assertions should validate business facts, not exact assistant prose. Wording like `7 名成员` versus `7 个成员` is normal model variation; smoke should assert the numeric/domain outcome and then inspect persisted action graph, confirmation cards, draft state, memory, and audit.
 - OpenAI-compatible provider streaming can finish with malformed tool-call JSON even after revealing the intended tool name. Treat that as provider response damage, not as user intent failure: record a retry event, force the same provider-native tool in a non-stream retry with only that tool schema, and still fail closed if the retry cannot produce a valid tool call.
+- Long structured Agent goals need an explicit provider runtime budget. Do not rely on a short adapter-local timeout that only passes in smoke scripts with an env override; compute a per-planning-turn `requestTimeoutMs`, trace it in `provider_stream_started`, classify expiry as `provider_timeout`, and retry timeout-damaged streams with any provider-native tool name already observed.
 
 ## Testing
 

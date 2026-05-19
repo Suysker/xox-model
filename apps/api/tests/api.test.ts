@@ -1338,6 +1338,129 @@ describe('xox TypeScript API', () => {
     })
   })
 
+  it('uses an extended provider budget for complex structured planning turns', async () => {
+    const planningTokenBudgets: number[] = []
+    await withFakeOpenAICompatibleProvider((body) => {
+      planningTokenBudgets.push(body.max_tokens)
+      expect(body.stream).toBe(true)
+      return {
+        __stream: [{
+          choices: [{
+            delta: {
+              tool_calls: [{
+                index: 0,
+                id: 'call_complex_read',
+                type: 'function',
+                function: {
+                  name: 'data_query_workspace',
+                  arguments: '{"question":"复杂经营模型预算","scope":"workspace_summary"}',
+                },
+              }],
+            },
+          }],
+        }],
+      }
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-complex-provider-budget', {
+        llmProvider: 'openai-compatible',
+        openaiCompatibleProvider: 'test-compatible',
+        openaiCompatibleBaseUrl: baseUrl,
+        openaiCompatibleApiKey: 'test-key',
+        agentProviderRequestTimeoutMs: 10_000,
+      })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-complex-provider-budget@example.com')
+
+      const planned = await client.post('/api/v1/agent/messages', {
+        message: [
+          '请规划一个复杂经营模型。',
+          '1. 50 个成员。',
+          '2. 多个股东。',
+          '3. 多类员工。',
+          '4. 固定成本。',
+          '5. 每场成本。',
+          '6. 每张成本。',
+          '7. 12 个月预测。',
+          '8. 需要计算总收入、总成本、总利润。',
+        ].join('\n'),
+      })
+
+      expect(planned.statusCode).toBe(200)
+      expect(planningTokenBudgets).toEqual([6000])
+      const streamStarted = planned.json.runEvents.find((event: any) => event.type === 'provider_stream_started')
+      expect(streamStarted?.data?.requestTimeoutMs).toBe(240_000)
+      expect(planned.json.runEvents.some((event: any) =>
+        event.type === 'tool_catalog_ready' &&
+        event.data?.toolCount >= 20,
+      )).toBe(true)
+      await closeHarness(harness)
+    })
+  })
+
+  it('retries streamed tool-call timeouts as non-stream selected-tool planning', async () => {
+    const planningStreams: Array<unknown> = []
+    await withFakeOpenAICompatibleProvider((body) => {
+      planningStreams.push(body.stream)
+      if (planningStreams.length === 1) {
+        return {
+          __stream: [
+            {
+              choices: [{
+                delta: {
+                  tool_calls: [{
+                    index: 0,
+                    id: 'call_timeout',
+                    type: 'function',
+                    function: {
+                      name: 'ledger_create_member_income',
+                      arguments: '{"monthLabel":"3月"',
+                    },
+                  }],
+                },
+              }],
+            },
+          ],
+          delayMs: 150,
+        }
+      }
+      expect(body.stream).toBe(false)
+      expect(body.tools.map((tool: any) => tool.function.name)).toEqual(['ledger_create_member_income'])
+      expect(body.tool_choice).toEqual({ type: 'function', function: { name: 'ledger_create_member_income' } })
+      return fakeToolResponse('ledger_create_member_income', {
+        monthLabel: '3月',
+        memberName: '成员 A',
+        offlineUnits: 1,
+        onlineUnits: 0,
+      })
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-streaming-tool-call-timeout-retry', {
+        llmProvider: 'openai-compatible',
+        openaiCompatibleProvider: 'test-compatible',
+        openaiCompatibleBaseUrl: baseUrl,
+        openaiCompatibleApiKey: 'test-key',
+        agentProviderRequestTimeoutMs: 50,
+      })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-streaming-tool-call-timeout-retry@example.com')
+
+      const planned = await client.post('/api/v1/agent/messages', {
+        message: '把 3 月成员 A 线下 1 张入账',
+      })
+
+      expect(planned.statusCode).toBe(200)
+      expect(planningStreams).toEqual([true, false])
+      expect(planned.json.actionRequests[0].kind).toBe('ledger.create_entry')
+      expect(planned.json.actionRequests[0].payload.amount).toBe(88)
+      expect(planned.json.runEvents.some((event: any) =>
+        event.type === 'provider_retrying' &&
+        event.data?.errorKind === 'provider_timeout' &&
+        event.data?.retryStream === false &&
+        event.data?.retryTool === 'ledger_create_member_income',
+      )).toBe(true)
+      await closeHarness(harness)
+    }, { capabilities: ['ledger'] })
+  })
+
   it('answers basic conversation through direct provider assistant text', async () => {
     let callCount = 0
     await withFakeOpenAICompatibleProvider((body) => {

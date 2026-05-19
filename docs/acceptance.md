@@ -66,6 +66,7 @@
 - [x] API 集成测试覆盖通用 OpenAI-compatible Chat Completions `tool_calls` 协议；假 provider 分别以 `qwen`、`doubao`、`openai-compatible` 配置接入，证明业务工具不特调 DeepSeek；当 provider 已配置或被选择时，模型未返回 tool call 不会回退规则规划
 - [x] 当前用户 / 当前工作区可保存 OpenAI-compatible provider 设置，运行时优先使用该设置；API 测试覆盖用户隔离、key 不回传、无 key fail-closed 和删除后回到环境变量兜底
 - [x] Provider 调用错误不会再伪装成“模型未返回工具调用”；API 测试覆盖 HTTP 401 认证失败会提示重新保存当前 provider 的 API key
+- [x] Provider 超时不会误报为 base URL 不可达；复杂结构化目标会使用长请求预算，stream 已暴露工具名后超时会用同一工具非流式重试，运行图记录 `requestTimeoutMs` 和 `provider_retrying`
 - [x] 配置 `AGENT_PROVIDER_KEY_ENCRYPTION_SECRET` 后，用户 provider key 以 `enc:v1` ciphertext 入库；API 测试覆盖密文存储、运行时解密调用 provider、旧明文记录升级后仍可读取
 - [x] Agent prompts、tool catalog、memory/context 模块有独立代码边界，不把系统提示词散在路由代码里
 - [x] 普通对话、问候、身份说明和能力说明通过 provider assistant 文本直接返回；`agent_reply` 废弃工具已删除，真实 DeepSeek smoke 覆盖“你好，告诉我你是谁”，不会把基础对话误判为规划失败
