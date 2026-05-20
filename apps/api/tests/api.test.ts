@@ -14,6 +14,7 @@ import { AGENT_TOOL_CATALOG, AGENT_TOOL_REGISTRY } from '../src/agent/tool-catal
 import { buildRuntimeToolCatalogProjection } from '../src/agent/tool-gateway.js'
 import { createProductDefaultModel, projectModel } from '@xox/domain'
 import { recoverRunningAgentRuns } from '../src/agent/run-worker.js'
+import { rememberAgentMemory } from '../src/agent/memory.js'
 
 type JsonResponse = {
   statusCode: number
@@ -2690,12 +2691,50 @@ describe('xox TypeScript API', () => {
       expect(remembered.statusCode).toBe(200)
       expect(remembered.json.planner).toBe('openai_compatible_tool_calls')
       expect(remembered.json.planSteps.some((step: any) => step.title === '已保存记忆')).toBe(true)
+      expect(remembered.json.runEvents.some((event: any) => event.type === 'memory_recall_completed')).toBe(true)
       const threadId = remembered.json.threadId
       const firstMemories = await firstClient.get('/api/v1/agent/memories')
       expect(firstMemories.json.memories).toHaveLength(1)
       expect(firstMemories.json.memories[0].value).toContain('成员 A')
+      expect(firstMemories.json.memories[0].status).toBe('promoted')
+      const searchedMemories = await firstClient.get('/api/v1/agent/memories?query=%E9%BB%98%E8%AE%A4%E6%88%90%E5%91%98')
+      expect(searchedMemories.json.memories).toHaveLength(1)
       expect((await secondClient.get('/api/v1/agent/memories')).json.memories).toHaveLength(0)
       expect((await secondClient.delete(`/api/v1/agent/memories/${firstMemories.json.memories[0].id}`)).statusCode).toBe(403)
+      const capturedEvents = await harness.db
+        .selectFrom('agent_memory_events')
+        .selectAll()
+        .where('memory_id', '=', firstMemories.json.memories[0].id)
+        .where('event_type', '=', 'captured')
+        .execute()
+      expect(capturedEvents).toHaveLength(1)
+
+      const workspace = await harness.db.selectFrom('workspaces').selectAll().where('owner_id', '=', firstUser.id).executeTakeFirstOrThrow()
+      const firstUserRow = await harness.db.selectFrom('users').selectAll().where('id', '=', firstUser.id).executeTakeFirstOrThrow()
+      const candidateMemory = await rememberAgentMemory({
+        db: harness.db,
+        workspace,
+        user: firstUserRow,
+        threadId,
+        runId: remembered.json.runId,
+        kind: 'fact',
+        scopeType: 'workspace',
+        memoryType: 'episodic',
+        status: 'candidate',
+        key: 'workspace.fact.defaultApprover',
+        value: '默认审批人是 李雷',
+        confidence: 0.8,
+        evidence: { test: 'promotion' },
+      })
+      expect(candidateMemory.memory?.status).toBe('candidate')
+      const firstRecall = await firstClient.post('/api/v1/agent/messages', { threadId, message: '默认审批人是谁？' })
+      expect(firstRecall.statusCode).toBe(200)
+      const secondRecall = await firstClient.post('/api/v1/agent/messages', { threadId, message: '默认审批人是谁？' })
+      expect(secondRecall.statusCode).toBe(200)
+      expect(secondRecall.json.runEvents.some((event: any) => event.type === 'memory_promoted')).toBe(true)
+      const promotedMemory = await harness.db.selectFrom('agent_memories').selectAll().where('id', '=', candidateMemory.memory!.id).executeTakeFirstOrThrow()
+      expect(promotedMemory.status).toBe('promoted')
+      expect(promotedMemory.memory_type).toBe('semantic')
 
       const secretRemember = await firstClient.post('/api/v1/agent/messages', {
         threadId,
@@ -2704,7 +2743,7 @@ describe('xox TypeScript API', () => {
       expect(secretRemember.statusCode).toBe(200)
       expect(secretRemember.json.planSteps.some((step: any) => step.title === '未保存记忆')).toBe(true)
       const memoriesAfterSecret = await firstClient.get('/api/v1/agent/memories')
-      expect(memoriesAfterSecret.json.memories).toHaveLength(1)
+      expect(memoriesAfterSecret.json.memories.some((memory: any) => memory.value.includes('成员 A'))).toBe(true)
       expect(JSON.stringify(memoriesAfterSecret.json.memories)).not.toContain(secretValue)
 
       for (let index = 0; index < 5; index += 1) {
@@ -2723,7 +2762,8 @@ describe('xox TypeScript API', () => {
       expect(snapshots[0]?.summary).toContain('[redacted-api-key]')
 
       expect((await firstClient.delete(`/api/v1/agent/memories/${firstMemories.json.memories[0].id}`)).statusCode).toBe(200)
-      expect((await firstClient.get('/api/v1/agent/memories')).json.memories).toHaveLength(0)
+      const afterDelete = await firstClient.get('/api/v1/agent/memories')
+      expect(afterDelete.json.memories.some((memory: any) => memory.id === firstMemories.json.memories[0].id)).toBe(false)
       await closeHarness(harness)
     })
   })
@@ -2804,6 +2844,16 @@ describe('xox TypeScript API', () => {
       expect(plannedFromNewThread.json.planner).toBe('openai_compatible_tool_calls')
       expect(plannedFromNewThread.json.actionRequests[0].kind).toBe('ledger.create_entry')
       expect(plannedFromNewThread.json.actionRequests[0].targetLabel).toContain('成员 A')
+      const memoryEvent = plannedFromNewThread.json.runEvents.find((event: any) => event.type === 'memory_injected')
+      expect(memoryEvent?.data.memoryCount).toBe(1)
+      expect(memoryEvent?.data.memoryIds).toHaveLength(1)
+      const recalledEvents = await harness.db
+        .selectFrom('agent_memory_events')
+        .selectAll()
+        .where('run_id', '=', plannedFromNewThread.json.runId)
+        .where('event_type', 'in', ['recalled', 'injected'])
+        .execute()
+      expect(recalledEvents.length).toBeGreaterThanOrEqual(2)
       await closeHarness(harness)
     })
   })
@@ -3558,8 +3608,9 @@ describe('xox TypeScript API', () => {
     }, { capabilities: ['draft'] })
   })
 
-  it('fills operating-model workspace name from the original goal when the model omits it from long arguments', async () => {
+  it('fills operating-model workspace name from the original goal when the model omits or mangles it in long arguments', async () => {
     const operatingPlan = {
+      workspaceName: '星河50期启动测算',
       planning: { startMonth: 3, horizonMonths: 12 },
       operating: { offlineUnitPrice: 88, onlineUnitPrice: 68 },
       shareholders: [{ name: '股东 A', investmentAmount: 100000, dividendRate: 1 }],
@@ -3668,7 +3719,7 @@ describe('xox TypeScript API', () => {
       expect(state.json.evaluations.map((evaluation: any) => evaluation.status)).toEqual(['continue', 'pass'])
       expect(state.json.evaluations[0].unsatisfiedCriteria.some((finding: any) => finding.id === 'domain.operating_inputs_nonzero')).toBe(true)
       expect(state.json.runEvents.filter((event: any) => event.type === 'goal_iteration_started')).toHaveLength(2)
-      expect(state.json.runEvents.some((event: any) => event.type === 'memory_consolidated')).toBe(true)
+      expect(state.json.runEvents.some((event: any) => event.type === 'memory_candidate_stored')).toBe(true)
 
       const memories = await client.get('/api/v1/agent/memories')
       expect(memories.json.memories.some((memory: any) => memory.memoryType === 'episodic' && memory.value.includes('修复后经营模型'))).toBe(true)

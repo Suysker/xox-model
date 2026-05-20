@@ -171,4 +171,20 @@ describe('AgentPlanTimeline presentation helpers', () => {
     expect(formatAgentRunEventStatus(rows[0]!)).toBe('已入队')
     expect(formatAgentRunEventStatus(rows[1]!)).toBe('待确认')
   })
+
+  it('shows memory ids for memory-related run graph events', () => {
+    const rows = buildAgentRunTraceRows([
+      buildRunEvent({
+        id: 'run-event-memory',
+        type: 'memory_injected',
+        title: '主动记忆已注入',
+        message: '已注入 2 条当前用户/工作区相关记忆。',
+        status: 'info',
+        data: { memoryIds: ['memory-abcdef123', 'memory-987654321'] },
+      }),
+    ])
+
+    expect(rows[0]?.message).toContain('memory-a')
+    expect(rows[0]?.message).toContain('memory-9')
+  })
 })

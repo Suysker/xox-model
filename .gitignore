@@ -14,6 +14,7 @@ AGENTS.md
 .pytest_cache
 .ruff_cache
 .venv
+.codex-runtime/
 __pycache__
 *.pyc
 apps/api/.coverage

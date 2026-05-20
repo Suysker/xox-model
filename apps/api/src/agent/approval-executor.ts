@@ -19,8 +19,14 @@ import { redactSecretLikeContent } from './memory.js'
 import { executeAgentTool } from './tool-executor.js'
 import { evaluateAgentGoal } from './completion-evaluator.js'
 import { getGoalForRun, serializeEvaluation } from './goal-contract.js'
-import { memoryCandidatesFromExecutedActions } from './memory-candidate-detector.js'
-import { storeMemoryCandidates } from './memory-consolidator.js'
+import {
+  consolidateAgentMemoryCandidates,
+  consolidateExecutedActionMemory,
+} from './memory-kernel.js'
+import {
+  memoryCandidateFromCancelledAction,
+  memoryCandidateFromEditedAction,
+} from './memory-candidate-detector.js'
 import {
   assertActionDraftAllowed,
   assertActionExecutionAllowed,
@@ -172,25 +178,15 @@ export async function confirmAgentActionRequest(db: Kysely<Database>, settings: 
       data: { goalId: goal.id, iteration, evaluationStatus: evaluation.status },
     })
   }
-  const storedMemories = await storeMemoryCandidates({
+  await consolidateExecutedActionMemory({
     db,
     workspace,
     user,
     threadId: action.thread_id,
     runId: action.run_id,
-    candidates: memoryCandidatesFromExecutedActions({ runId: action.run_id, actionRows: [updated] }),
+    actionRows: [updated],
+    message: '已从确认卡执行结果沉淀记忆候选。',
   })
-  if (storedMemories.length > 0) {
-    await addRunEvent(db, {
-      threadId: action.thread_id,
-      runId: action.run_id,
-      type: 'memory_consolidated',
-      title: '主动记忆已沉淀',
-      message: `已从确认卡执行结果沉淀 ${storedMemories.length} 条记忆候选。`,
-      status: 'info',
-      data: { memoryCount: storedMemories.length },
-    })
-  }
   const planSteps = await listPlanStepsForRun(db, action.run_id)
   const assistant = await addMessage(db, action.thread_id, 'assistant', `已执行：${action.title}`)
   await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', action.thread_id).execute()
@@ -232,6 +228,16 @@ export async function cancelAgentActionRequest(db: Kysely<Database>, workspace: 
     message: `已取消：${action.title}`,
     status: 'cancelled',
     data: { actionKind: action.kind },
+  })
+  await consolidateAgentMemoryCandidates({
+    db,
+    workspace,
+    user,
+    threadId: action.thread_id,
+    runId: action.run_id,
+    candidates: [memoryCandidateFromCancelledAction({ runId: action.run_id, action: updated })],
+    title: '取消动作已进入记忆候选',
+    message: '用户取消确认卡的事实已作为带证据的纠错记忆候选保存。',
   })
   return {
     actionRequest: updated,
@@ -290,6 +296,16 @@ export async function updateAgentActionRequest(
     message: `确认卡已编辑：${updated.title}`,
     status: 'info',
     data: { actionKind: action.kind },
+  })
+  await consolidateAgentMemoryCandidates({
+    db,
+    workspace,
+    user,
+    threadId: action.thread_id,
+    runId: action.run_id,
+    candidates: [memoryCandidateFromEditedAction({ runId: action.run_id, action: updated })],
+    title: '编辑动作已进入记忆候选',
+    message: '用户编辑确认卡的事实已作为带证据的纠错记忆候选保存。',
   })
   return {
     actionRequest: updated,

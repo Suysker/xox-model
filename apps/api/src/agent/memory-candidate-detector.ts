@@ -84,3 +84,75 @@ export function memoryCandidatesFromExecutedActions(input: {
   }
   return candidates
 }
+
+export function memoryCandidateFromEditedAction(input: {
+  runId: string
+  action: Row<'agent_action_requests'>
+}): AgentMemoryCandidate {
+  return {
+    kind: 'correction',
+    scopeType: 'workspace',
+    memoryType: 'episodic',
+    status: 'candidate',
+    key: `agent.correction.action_edit.${input.action.id}`,
+    value: compactValue(`用户编辑了 Agent 确认卡：${input.action.title}。后续相似动作应参考用户编辑后的确认卡内容，并继续通过确认卡执行。`),
+    confidence: 0.68,
+    evidence: { runId: input.runId, actionRequestId: input.action.id, actionKind: input.action.kind, lifecycle: 'edited' },
+  }
+}
+
+export function memoryCandidateFromCancelledAction(input: {
+  runId: string
+  action: Row<'agent_action_requests'>
+}): AgentMemoryCandidate {
+  return {
+    kind: 'correction',
+    scopeType: 'workspace',
+    memoryType: 'episodic',
+    status: 'candidate',
+    key: `agent.correction.action_cancel.${input.action.id}`,
+    value: compactValue(`用户取消了 Agent 确认卡：${input.action.title}。这表示该动作在当时上下文中不应继续自动推进。`),
+    confidence: 0.62,
+    evidence: { runId: input.runId, actionRequestId: input.action.id, actionKind: input.action.kind, lifecycle: 'cancelled' },
+  }
+}
+
+export function memoryCandidateFromEvaluatorFinding(input: {
+  runId: string
+  evaluation: Row<'agent_evaluations'>
+}): AgentMemoryCandidate | null {
+  if (input.evaluation.status === 'pass') return null
+  const unsatisfied = parseJson<Array<{ message?: string }>>(input.evaluation.unsatisfied_json, [])
+  const firstFinding = unsatisfied.map((item) => item.message).find((message): message is string => Boolean(message))
+  if (!firstFinding) return null
+  return {
+    kind: 'workflow',
+    scopeType: 'procedural',
+    memoryType: 'episodic',
+    status: 'candidate',
+    key: `agent.evaluator.finding.${input.evaluation.id}`,
+    value: compactValue(`Evaluator 发现目标未满足：${firstFinding}。后续类似任务必须优先补齐该类缺口，再判断完成。`),
+    confidence: 0.7,
+    evidence: {
+      runId: input.runId,
+      evaluationId: input.evaluation.id,
+      evaluationStatus: input.evaluation.status,
+      iteration: input.evaluation.iteration_no,
+    },
+  }
+}
+
+export function memoryCandidateFromCompletedGoal(input: {
+  goal: Row<'agent_goals'>
+}): AgentMemoryCandidate {
+  return {
+    kind: 'episode',
+    scopeType: 'workspace',
+    memoryType: 'episodic',
+    status: 'candidate',
+    key: `agent.goal.completed.${input.goal.id}`,
+    value: compactValue(`Agent 已完成目标：${input.goal.objective}`),
+    confidence: 0.64,
+    evidence: { runId: input.goal.run_id, goalId: input.goal.id, status: input.goal.status },
+  }
+}

@@ -3,9 +3,15 @@ import type { Row } from '../db/schema.js'
 import type { PlannerContext } from './planning-context.js'
 import { createGoalContract, serializeEvaluation } from './goal-contract.js'
 import { evaluateAgentGoal } from './completion-evaluator.js'
-import { compactThreadContextIfNeeded } from './memory.js'
-import { memoryCandidatesFromExecutedActions } from './memory-candidate-detector.js'
-import { storeMemoryCandidates } from './memory-consolidator.js'
+import {
+  consolidateAgentMemoryCandidates,
+  consolidateExecutedActionMemory,
+  flushThreadContextToMemoryIfNeeded,
+} from './memory-kernel.js'
+import {
+  memoryCandidateFromCompletedGoal,
+  memoryCandidateFromEvaluatorFinding,
+} from './memory-candidate-detector.js'
 import { planResponse } from './planner.js'
 import { addRunEvent } from './run-events.js'
 import { addMessage } from './thread-store.js'
@@ -119,6 +125,34 @@ export async function executeAgentGoalRun(
         nextPlannerBrief: evaluation.nextPlannerBrief,
       },
     })
+    const evaluatorCandidate = memoryCandidateFromEvaluatorFinding({ runId: ctx.runId, evaluation: evaluationRow })
+    if (evaluatorCandidate) {
+      await consolidateAgentMemoryCandidates({
+        db: ctx.db,
+        workspace: ctx.workspace,
+        user: ctx.user,
+        threadId: ctx.thread.id,
+        runId: ctx.runId,
+        candidates: [evaluatorCandidate],
+        title: 'Evaluator 发现已进入记忆候选',
+        message: 'Completion Evaluator 的未满足项已作为带证据的流程记忆候选保存。',
+      })
+    }
+    if (evaluation.status === 'pass' && actionRows.length > 0) {
+      const updatedGoal = await ctx.db.selectFrom('agent_goals').selectAll().where('id', '=', goal.id).executeTakeFirst()
+      if (updatedGoal) {
+        await consolidateAgentMemoryCandidates({
+          db: ctx.db,
+          workspace: ctx.workspace,
+          user: ctx.user,
+          threadId: ctx.thread.id,
+          runId: ctx.runId,
+          candidates: [memoryCandidateFromCompletedGoal({ goal: updatedGoal })],
+          title: '完成目标已进入记忆候选',
+          message: '本轮完成目标已保存为带证据的情节记忆候选，供后续同工作区任务召回。',
+        })
+      }
+    }
 
     if (evaluation.status === 'pass' || evaluation.status === 'needs_confirmation' || evaluation.status === 'blocked' || evaluation.status === 'failed') {
       break
@@ -133,30 +167,17 @@ export async function executeAgentGoalRun(
   const assistantText = assistantParts.length > 0
     ? assistantParts.join(' ')
     : 'Goal Run Engine 已完成本轮评估，但没有生成新的可见回复。'
-  const storedMemories = await storeMemoryCandidates({
+  await consolidateExecutedActionMemory({
     db: ctx.db,
     workspace: ctx.workspace,
     user: ctx.user,
     threadId: ctx.thread.id,
     runId: ctx.runId,
-    candidates: memoryCandidatesFromExecutedActions({ runId: ctx.runId, actionRows }),
+    actionRows,
+    message: `已从本轮执行结果沉淀记忆候选。`,
   })
-  if (storedMemories.length > 0) {
-    await addRunEvent(ctx.db, {
-      threadId: ctx.thread.id,
-      runId: ctx.runId,
-      type: 'memory_consolidated',
-      title: '主动记忆已沉淀',
-      message: `已从本轮执行结果沉淀 ${storedMemories.length} 条短期/长期记忆候选。`,
-      status: 'info',
-      data: {
-        memoryCount: storedMemories.length,
-        memoryTypes: storedMemories.map((memory) => memory.memory_type),
-      },
-    })
-  }
   const assistantMessage = await addMessage(ctx.db, ctx.thread.id, 'assistant', assistantText)
-  await compactThreadContextIfNeeded({ db: ctx.db, workspace: ctx.workspace, user: ctx.user, threadId: ctx.thread.id })
+  await flushThreadContextToMemoryIfNeeded({ db: ctx.db, workspace: ctx.workspace, user: ctx.user, threadId: ctx.thread.id, runId: ctx.runId })
   if (!(await options.beforeStateWrite())) return null
   return {
     plannerSource,

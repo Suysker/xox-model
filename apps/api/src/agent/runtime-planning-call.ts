@@ -71,6 +71,8 @@ export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePl
     workspace: ctx.workspace,
     user: ctx.user,
     threadId: ctx.threadId,
+    runId: ctx.runId,
+    message: ctx.message,
     ...(ctx.providedWorkspaceBundle ? { providedWorkspaceBundle: ctx.providedWorkspaceBundle } : {}),
   })
 

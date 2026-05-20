@@ -403,9 +403,11 @@ export type AgentMemoryRecord = {
   kind: string
   scopeType?: 'thread' | 'workspace' | 'user' | 'procedural' | 'commitment'
   memoryType?: 'working' | 'episodic' | 'semantic' | 'procedural' | 'commitment'
+  status?: 'candidate' | 'active' | 'promoted' | 'archived' | 'rejected' | 'expired'
   key: string
   value: string
   confidence: number
+  sensitivity?: 'normal' | 'private' | 'restricted'
   evidence?: Record<string, unknown> | null
   sourceRunId?: string | null
   lastUsedAt?: string | null

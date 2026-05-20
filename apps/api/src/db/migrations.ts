@@ -377,9 +377,11 @@ export async function runMigrations(db: Kysely<Database>) {
       kind VARCHAR(64) NOT NULL,
       scope_type VARCHAR(32) NOT NULL DEFAULT 'workspace',
       memory_type VARCHAR(32) NOT NULL DEFAULT 'semantic',
+      status VARCHAR(32) NOT NULL DEFAULT 'active',
       key VARCHAR(128) NOT NULL,
       value TEXT NOT NULL,
       confidence REAL NOT NULL,
+      sensitivity VARCHAR(32) NOT NULL DEFAULT 'normal',
       source_message_id VARCHAR(36),
       source_run_id VARCHAR(36),
       evidence_json JSON,
@@ -394,12 +396,32 @@ export async function runMigrations(db: Kysely<Database>) {
   )
   await addColumnIfMissing(db, 'agent_memories', 'scope_type', "VARCHAR(32) NOT NULL DEFAULT 'workspace'")
   await addColumnIfMissing(db, 'agent_memories', 'memory_type', "VARCHAR(32) NOT NULL DEFAULT 'semantic'")
+  await addColumnIfMissing(db, 'agent_memories', 'status', "VARCHAR(32) NOT NULL DEFAULT 'active'")
+  await addColumnIfMissing(db, 'agent_memories', 'sensitivity', "VARCHAR(32) NOT NULL DEFAULT 'normal'")
   await addColumnIfMissing(db, 'agent_memories', 'source_run_id', 'VARCHAR(36)')
   await addColumnIfMissing(db, 'agent_memories', 'evidence_json', 'JSON')
   await addColumnIfMissing(db, 'agent_memories', 'last_used_at', 'DATETIME')
   await addColumnIfMissing(db, 'agent_memories', 'promoted_at', 'DATETIME')
   await addColumnIfMissing(db, 'agent_memories', 'expires_at', 'DATETIME')
   await addColumnIfMissing(db, 'agent_memories', 'metadata_json', 'JSON')
+  await exec(
+    db,
+    `CREATE TABLE IF NOT EXISTS agent_memory_events (
+      id VARCHAR(36) PRIMARY KEY,
+      memory_id VARCHAR(36) REFERENCES agent_memories(id) ON DELETE SET NULL,
+      workspace_id VARCHAR(36) NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      thread_id VARCHAR(36) REFERENCES agent_threads(id) ON DELETE SET NULL,
+      run_id VARCHAR(36) REFERENCES agent_runs(id) ON DELETE SET NULL,
+      event_type VARCHAR(32) NOT NULL,
+      evidence_json JSON,
+      metadata_json JSON,
+      created_at DATETIME NOT NULL
+    )`,
+  )
+  await exec(db, 'CREATE INDEX IF NOT EXISTS idx_agent_memories_scope ON agent_memories (workspace_id, user_id, archived_at, status)')
+  await exec(db, 'CREATE INDEX IF NOT EXISTS idx_agent_memory_events_memory ON agent_memory_events (memory_id, event_type)')
+  await exec(db, 'CREATE INDEX IF NOT EXISTS idx_agent_memory_events_run ON agent_memory_events (run_id, event_type)')
   await exec(
     db,
     `CREATE TABLE IF NOT EXISTS agent_context_snapshots (

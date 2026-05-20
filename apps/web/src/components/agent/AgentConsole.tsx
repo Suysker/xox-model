@@ -99,7 +99,7 @@ export function AgentConsole(props: {
   onSelectThread: (id: string) => void
   onNewThread: () => void
   onRefreshThreads: () => void
-  onRefreshMemories: () => void
+  onRefreshMemories: (query?: string) => void
   onDeleteMemory: (id: string) => void
   onRefreshProviderSetting: () => void
   onAutomationLevelChange: (level: AgentAutomationLevel) => void
@@ -109,6 +109,8 @@ export function AgentConsole(props: {
 }) {
   const [draft, setDraft] = useState('')
   const [memoryOpen, setMemoryOpen] = useState(false)
+  const [memorySearch, setMemorySearch] = useState('')
+  const [memoryTypeFilter, setMemoryTypeFilter] = useState('all')
   const [historyOpen, setHistoryOpen] = useState(false)
   const [providerOpen, setProviderOpen] = useState(false)
   const [providerDraft, setProviderDraft] = useState({
@@ -118,6 +120,12 @@ export function AgentConsole(props: {
     apiKey: '',
   })
   const pendingActions = props.actionRequests.filter((action) => action.status === 'pending')
+  const visibleMemories = props.memories.filter((memory) => {
+    if (memoryTypeFilter !== 'all' && memory.memoryType !== memoryTypeFilter) return false
+    const query = memorySearch.trim().toLowerCase()
+    if (!query) return true
+    return `${memory.value} ${memory.key} ${memory.kind} ${memory.memoryType ?? ''} ${memory.status ?? ''}`.toLowerCase().includes(query)
+  })
   const recentMessages = props.messages.slice(-6)
   const streamPreview = buildProviderStreamPreview(props.runEvents)
   const latestGoal = props.goals.at(-1) ?? null
@@ -332,23 +340,56 @@ export function AgentConsole(props: {
             <div className="mt-2 rounded-md border border-stone-900/10 bg-white px-3 py-2 text-xs">
               <div className="flex items-center justify-between gap-2">
                 <span className="font-semibold text-stone-800">当前工作区记忆</span>
-                <button
-                  type="button"
-                  onClick={props.onRefreshMemories}
-                  disabled={props.busy}
-                  className="inline-flex h-7 items-center justify-center rounded-md border border-stone-900/10 px-2 text-stone-600 transition hover:bg-stone-100 disabled:opacity-50"
-                  title="刷新记忆"
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => props.onRefreshMemories(memorySearch)}
+                    disabled={props.busy}
+                    className="inline-flex h-7 items-center justify-center rounded-md border border-stone-900/10 px-2 text-stone-600 transition hover:bg-stone-100 disabled:opacity-50"
+                    title="按关键词刷新记忆"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+              <div className="mt-2 grid gap-1 sm:grid-cols-[minmax(0,1fr)_120px]">
+                <input
+                  value={memorySearch}
+                  onChange={(event) => setMemorySearch(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') props.onRefreshMemories(memorySearch)
+                  }}
+                  className="h-7 rounded-md border border-stone-900/10 px-2 text-[11px] outline-none transition focus:border-emerald-500"
+                  placeholder="搜索记忆"
+                />
+                <select
+                  value={memoryTypeFilter}
+                  onChange={(event) => setMemoryTypeFilter(event.target.value)}
+                  className="h-7 rounded-md border border-stone-900/10 px-2 text-[11px] outline-none transition focus:border-emerald-500"
+                  title="按记忆类型过滤"
                 >
-                  <RefreshCw className="h-3.5 w-3.5" />
-                </button>
+                  <option value="all">全部类型</option>
+                  <option value="working">working</option>
+                  <option value="episodic">episodic</option>
+                  <option value="semantic">semantic</option>
+                  <option value="procedural">procedural</option>
+                  <option value="commitment">commitment</option>
+                </select>
               </div>
               <div className="mt-2 max-h-24 overflow-y-auto">
-                {props.memories.length > 0 ? (
-                  props.memories.map((memory) => (
+                {visibleMemories.length > 0 ? (
+                  visibleMemories.map((memory) => (
                     <div key={memory.id} className="flex items-start gap-2 border-t border-stone-100 py-1.5 first:border-t-0">
                       <div className="min-w-0 flex-1">
                         <p className="truncate font-medium text-stone-800">{memory.value}</p>
-                        <p className="text-[10px] text-stone-400">{memory.kind} / {memory.confidence.toFixed(2)}</p>
+                        <p className="text-[10px] text-stone-400">
+                          {memory.kind} / {memory.memoryType ?? 'semantic'} / {memory.status ?? 'active'} / {memory.confidence.toFixed(2)}
+                        </p>
+                        {memory.evidence ? (
+                          <p className="truncate text-[10px] text-stone-400">
+                            证据 {String(memory.evidence.runId ?? memory.evidence.actionRequestId ?? memory.evidence.snapshotId ?? '已记录')}
+                          </p>
+                        ) : null}
                       </div>
                       <button
                         type="button"

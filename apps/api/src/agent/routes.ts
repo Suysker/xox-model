@@ -13,6 +13,7 @@ import {
   listAgentMemories,
   serializeMemory,
 } from './memory.js'
+import { retrieveAgentMemories } from './memory-retriever.js'
 import { agentThreadEvents } from './thread-events.js'
 import {
   cancelAgentActionRequest,
@@ -203,7 +204,11 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
     try {
       const user = await requireCurrentUser(db, settings, request)
       const workspace = await getWorkspaceForUser(db, user)
-      const memories = await listAgentMemories(db, workspace, user)
+      const query = request.query as { query?: string; q?: string }
+      const search = (query.query ?? query.q ?? '').trim()
+      const memories = search
+        ? (await retrieveAgentMemories({ db, workspace, user, query: search, limit: 30, includeCandidates: true })).map((result) => result.memory)
+        : await listAgentMemories(db, workspace, user)
       return { memories: memories.map(serializeMemory) }
     } catch (error) {
       const { sendError } = await import('../core/http.js')

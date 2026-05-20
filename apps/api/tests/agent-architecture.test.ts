@@ -103,4 +103,24 @@ describe('Agent ADR architecture boundaries', () => {
     expect(memory).not.toContain('rememberFromUserMessage')
     expect(memory).not.toContain('message.match')
   })
+
+  it('keeps active memory recall as a harness context subsystem, not a business executor', () => {
+    const memoryFiles = [
+      'agent/active-memory-recall.ts',
+      'agent/memory-events.ts',
+      'agent/memory-kernel.ts',
+      'agent/memory-retriever.ts',
+      'agent/memory-safety.ts',
+    ]
+    const forbidden = [
+      /approval-executor/,
+      /tool-executor/,
+      /workspace-action-drafts/,
+      /ledger-action-drafts/,
+      /version-action-drafts/,
+      /model-structure-action-drafts/,
+      /runtime\//,
+    ]
+    for (const file of memoryFiles) expectNoImports(file, forbidden)
+  })
 })

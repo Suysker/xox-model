@@ -302,9 +302,11 @@ export type AgentMemoryTable = {
   kind: string
   scope_type: string
   memory_type: string
+  status: string
   key: string
   value: string
   confidence: number
+  sensitivity: string
   source_message_id: string | null
   source_run_id: string | null
   evidence_json: JsonText | null
@@ -315,6 +317,19 @@ export type AgentMemoryTable = {
   created_at: Timestamp
   updated_at: Timestamp
   archived_at: string | null
+}
+
+export type AgentMemoryEventTable = {
+  id: Generated<string>
+  memory_id: string | null
+  workspace_id: string
+  user_id: string
+  thread_id: string | null
+  run_id: string | null
+  event_type: string
+  evidence_json: JsonText | null
+  metadata_json: JsonText | null
+  created_at: Timestamp
 }
 
 export type AgentContextSnapshotTable = {
@@ -364,6 +379,7 @@ export type Database = {
   agent_action_requests: AgentActionRequestTable
   agent_plan_steps: AgentPlanStepTable
   agent_memories: AgentMemoryTable
+  agent_memory_events: AgentMemoryEventTable
   agent_context_snapshots: AgentContextSnapshotTable
   agent_provider_settings: AgentProviderSettingTable
 }

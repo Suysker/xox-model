@@ -145,14 +145,20 @@ export function buildAgentRunTraceRows(runEvents: AgentRunEvent[]): AgentRunTrac
   return runEvents
     .slice()
     .sort((a, b) => a.sequence - b.sequence)
-    .map((event) => ({
-      id: event.id,
-      sequence: event.sequence,
-      title: event.title,
-      message: event.message,
-      status: event.status,
-      createdAt: event.createdAt,
-    }))
+    .map((event) => {
+      const memoryIds = Array.isArray(event.data?.memoryIds)
+        ? event.data.memoryIds.filter((item): item is string => typeof item === 'string')
+        : []
+      const memorySuffix = memoryIds.length > 0 ? ` 记忆 ${memoryIds.map((id) => id.slice(0, 8)).join(', ')}` : ''
+      return {
+        id: event.id,
+        sequence: event.sequence,
+        title: event.title,
+        message: `${event.message}${memorySuffix}`,
+        status: event.status,
+        createdAt: event.createdAt,
+      }
+    })
 }
 
 export function summarizeAgentTimeline(rows: AgentTimelineRow[], actionRequests: AgentActionRequest[]): AgentTimelineSummary {

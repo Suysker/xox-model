@@ -690,7 +690,7 @@ export async function planOperatingModelFromStep(ctx: PlannerContext, step: Runt
   const result = buildOperatingModelConfig(config, rawPlan, assumptions)
   const normalized = result.config
   const goalWorkspaceName = extractAgentGoalFacts(ctx.message).workspaceName
-  const workspaceName = firstString(rawPlan, 'workspaceName', 'projectName') || goalWorkspaceName || ctx.workspace.name
+  const workspaceName = goalWorkspaceName || firstString(rawPlan, 'workspaceName', 'projectName') || ctx.workspace.name
   const summary = projectionSummary(normalized)
   const navigation = operatingModelNavigation('完整经营模型配置需要打开调模型页面，从资本和输入结构开始核对。')
   const totalInvestment = normalized.shareholders.reduce((sum, shareholder) => sum + Math.max(0, shareholder.investmentAmount), 0)

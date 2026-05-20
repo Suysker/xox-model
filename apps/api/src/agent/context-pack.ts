@@ -6,6 +6,7 @@ import type { CurrentUser } from '../modules/auth.js'
 import { getWorkspaceDraft, listVersions } from '../modules/workspace.js'
 import { listPeriods, listSubjectsForPeriod } from '../modules/ledger.js'
 import { loadAgentRuntimeContext } from './memory.js'
+import { recallActiveAgentMemory } from './active-memory-recall.js'
 import { buildAgentWritableConfigContext } from './tool-coverage.js'
 import type { ParsedWorkspaceBundleArtifact } from './workspace-bundle-artifact.js'
 
@@ -14,6 +15,8 @@ export type AgentContextPackInput = {
   workspace: Row<'workspaces'>
   user: CurrentUser
   threadId: string
+  runId: string
+  message: string
   providedWorkspaceBundle?: ParsedWorkspaceBundleArtifact
 }
 
@@ -27,6 +30,14 @@ export async function buildAgentContextPack(input: AgentContextPackInput) {
     workspace: input.workspace,
     user: input.user,
     threadId: input.threadId,
+  })
+  const memoryRecall = await recallActiveAgentMemory({
+    db: input.db,
+    workspace: input.workspace,
+    user: input.user,
+    threadId: input.threadId,
+    runId: input.runId,
+    message: input.message,
   })
 
   return {
@@ -43,11 +54,21 @@ export async function buildAgentContextPack(input: AgentContextPackInput) {
           group: subject.subjectGroup,
         }))
       : [],
-    tenantScopedMemory: runtimeContext.memories.map((memory) => ({
+    tenantScopedMemory: memoryRecall.memories.map((memory) => ({
       kind: memory.kind,
       key: memory.key,
       value: memory.value,
+      memoryType: memory.memory_type,
+      status: memory.status,
+      confidence: memory.confidence,
     })),
+    memoryContext: memoryRecall.injectedSummary,
+    memoryUsage: {
+      usedMemoryIds: memoryRecall.usedMemoryIds,
+      skippedReason: memoryRecall.skippedReason ?? null,
+      confidence: memoryRecall.confidence,
+      retrieval: memoryRecall.retrieval,
+    },
     contextSummary: runtimeContext.contextSummary,
     recentMessages: runtimeContext.recentMessages.map((message) => ({
       role: message.role,

@@ -107,9 +107,9 @@ export function useAgentThread(props: {
     }
   }
 
-  async function refreshMemories() {
+  async function refreshMemories(query?: string) {
     try {
-      const response = await api.listAgentMemories()
+      const response = await api.listAgentMemories(query)
       setMemories(response.memories)
     } catch (memoryError) {
       setError(memoryError instanceof Error ? memoryError.message : String(memoryError))

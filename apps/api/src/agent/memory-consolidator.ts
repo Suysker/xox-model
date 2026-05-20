@@ -7,6 +7,8 @@ export type AgentMemoryCandidate = {
   kind: 'preference' | 'fact' | 'business_rule' | 'workflow' | 'episode' | 'correction'
   scopeType: 'thread' | 'workspace' | 'user' | 'procedural' | 'commitment'
   memoryType: 'working' | 'episodic' | 'semantic' | 'procedural' | 'commitment'
+  status?: 'candidate' | 'active' | 'promoted'
+  sensitivity?: 'normal' | 'private' | 'restricted'
   key: string
   value: string
   confidence: number
@@ -41,6 +43,8 @@ export async function storeMemoryCandidates(input: {
       kind: candidate.kind,
       scopeType: candidate.scopeType,
       memoryType: candidate.memoryType,
+      status: candidate.status ?? 'candidate',
+      sensitivity: candidate.sensitivity ?? 'normal',
       key: candidate.key,
       value: candidate.value,
       confidence: candidate.confidence,

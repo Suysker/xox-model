@@ -73,8 +73,9 @@
 - [x] 配置 `AGENT_PROVIDER_KEY_ENCRYPTION_SECRET` 后，用户 provider key 以 `enc:v1` ciphertext 入库；API 测试覆盖密文存储、运行时解密调用 provider、旧明文记录升级后仍可读取
 - [x] Agent prompts、tool catalog、memory/context 模块有独立代码边界，不把系统提示词散在路由代码里
 - [x] 普通对话、问候、身份说明和能力说明通过 provider assistant 文本直接返回；`agent_reply` 废弃工具已删除，真实 DeepSeek smoke 覆盖“你好，告诉我你是谁”，不会把基础对话误判为规划失败
-- [x] Agent memory 按用户和工作区隔离，支持查询和删除；长对话会生成同租户上下文摘要
-- [x] 新建对话后，真实 provider 请求会注入同用户 / 同工作区 memory
+- [x] Agent memory 按用户和工作区隔离，支持查询、搜索、过滤和删除；长对话会生成同租户上下文摘要，并把压缩结果作为带证据的 working memory 候选
+- [x] OpenClaw-inspired Memory Kernel 已落地：`active-memory-recall.ts` 在 provider planning 前做当前用户/工作区 ranked recall，`memory-retriever.ts` 做中文友好的 token/bigram 排名，`agent_memory_events` 记录 captured/recalled/injected/promoted/archived 事件，run graph 展示 `memory_recall_*`、`memory_injected`、`memory_candidate_stored` 和 `memory_promoted`
+- [x] 新建对话后，真实 provider 请求只注入同用户 / 同工作区的相关 memory；注入内容以 `memory_context trust="untrusted"` 进入 Context Pack，不能覆盖当前用户指令、确认卡策略、租户隔离或工具 schema
 - [x] 记账类命令会生成确认卡，确认后过账并刷新工作台
 - [x] 线上系数试算类命令只读执行，不修改草稿
 - [x] 团队成员新增/删除通过 `team_member_add / team_member_delete` 专用 tool call 生成可编辑草稿确认卡；删除最后一个成员会被服务端拒绝，不生成破坏模型可计算性的确认卡
@@ -159,8 +160,9 @@
 - [x] 通用工作区 / 草稿 / bundle preview 已从 `planner.ts` 抽到 `apps/api/src/agent/workspace-action-drafts.ts`，覆盖线上系数试算/写入、通用草稿 patch、工作区改名、bundle 导入导出；planner 不再直接引用 `@xox/domain` 投影/水合、`config-patch.ts` 或 `modules/workspace.ts` 的业务 draft 依赖
 - [x] Tool policy / permission hooks 覆盖账号动作拒绝、写入确认、确认卡编辑后的必需导航、跨租户 payload 禁止、锁账禁止、派生提成禁止直接编辑
 - [x] 多步骤消息中如果同时包含合法业务动作和账号禁用动作，合法业务动作仍会生成确认卡，账号动作只作为该步骤的只读拒绝项展示
-- [x] Memory list/delete/context injection 有测试证明不会跨用户或跨工作区，并且不会保存 secrets；memory 写入由模型显式调用 `memory_remember`，message submission 不再用正则捕获“记住”意图；当前 secret-like 消息会在 provider prompt 中 redaction，后续新线程不再注入
-- [x] Context compaction 有测试证明 summary 只来自同一 thread / user / workspace，并且 summary 不包含 API key/token 原文
+- [x] Memory list/search/delete/context injection 有测试证明不会跨用户或跨工作区，并且不会保存 secrets；memory 写入由模型显式调用 `memory_remember`，message submission 不再用正则捕获“记住”意图；当前 secret-like 消息会在 provider prompt 中 redaction，后续新线程不再注入
+- [x] Active memory recall 有 API 测试证明会在新线程注入相关记忆、记录 recalled/injected events、在 run graph 暴露 memory ids；候选记忆被重复有效召回后会确定性晋升为 semantic/procedural 长期记忆
+- [x] Context compaction 有测试证明 summary 只来自同一 thread / user / workspace，并且 summary 不包含 API key/token 原文；压缩摘要会进入 memory candidate 生命周期而不只是丢进 thread-local summary
 - [x] React Agent OS 展示 action graph、导航事件、确认卡状态、确认卡编辑、取消、失败和执行后刷新；当前为后端状态刷新式 timeline，web 测试覆盖同一 run 的导航事件不会因 SSE 重放重复执行，后续 run 打开同一页面也不会被旧 replay 状态误吞
 - [x] Agent 历史对话和当前线程恢复已由 `/api/v1/agent/threads` 与 `/api/v1/agent/threads/{threadId}` 提供；API 测试覆盖 messages、runs、planSteps、actionRequests、navigationEvents、跨用户隔离和确认后状态恢复，React hook 会用本地 threadId 指针恢复服务端状态
 - [x] Agent thread store 已从 `apps/api/src/modules/agent.ts` 拆到 `apps/api/src/agent/thread-store.ts`，集中处理 thread ownership、message 写入、ThreadState 恢复和 DTO 序列化，避免 routes 自己拼恢复状态
