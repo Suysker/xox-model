@@ -318,5 +318,21 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
     expect(retry.stream).toBe(false)
     expect(retry.tools.map((item) => item.function.name)).toEqual(['workspace_publish_release'])
     expect(retry.requestTimeoutMs).toBeGreaterThanOrEqual(240_000)
+
+    const operatingRetry = retryRuntimeInput(runtimeInput('deepseek', 'deepseek-v4-pro', [
+      tool('workspace_configure_operating_model'),
+      tool('workspace_rename'),
+    ]), {
+      source: 'openai_compatible_tool_calls',
+      steps: [],
+      error: {
+        kind: 'provider_response_error',
+        toolNames: ['workspace_configure_operating_model'],
+      },
+    })
+    expect(operatingRetry.stream).toBe(false)
+    expect(operatingRetry.tools.map((item) => item.function.name)).toEqual(['workspace_configure_operating_model'])
+    expect(operatingRetry.maxTokens).toBeGreaterThanOrEqual(48_000)
+    expect(operatingRetry.requestTimeoutMs).toBeGreaterThanOrEqual(360_000)
   })
 })

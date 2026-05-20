@@ -1362,24 +1362,8 @@ describe('xox TypeScript API', () => {
     }
     await withFakeOpenAICompatibleProvider((body) => {
       planningTokenBudgets.push(body.max_tokens)
-      expect(body.stream).toBe(true)
-      return {
-        __stream: [{
-          choices: [{
-            delta: {
-              tool_calls: [{
-                index: 0,
-                id: 'call_complex_read',
-                type: 'function',
-                function: {
-                  name: 'workspace_configure_operating_model',
-                  arguments: JSON.stringify({ plan: budgetPlan }),
-                },
-              }],
-            },
-          }],
-        }],
-      }
+      expect(body.stream).toBe(false)
+      return fakeToolResponse('workspace_configure_operating_model', { plan: budgetPlan })
     }, async (baseUrl) => {
       const harness = await buildHarness('agent-complex-provider-budget', {
         llmProvider: 'openai-compatible',
@@ -1406,9 +1390,14 @@ describe('xox TypeScript API', () => {
       })
 
       expect(planned.statusCode).toBe(200)
-      expect(planningTokenBudgets).toEqual([6000])
-      const streamStarted = planned.json.runEvents.find((event: any) => event.type === 'provider_stream_started')
-      expect(streamStarted?.data?.requestTimeoutMs).toBe(240_000)
+      expect(planningTokenBudgets).toEqual([48000])
+      const stableMode = planned.json.runEvents.find((event: any) => event.type === 'provider_stable_long_tool_mode')
+      expect(stableMode?.data).toMatchObject({
+        toolName: 'workspace_configure_operating_model',
+        stream: false,
+        maxTokens: 48000,
+        requestTimeoutMs: 240_000,
+      })
       expect(planned.json.runEvents.some((event: any) =>
         event.type === 'tool_catalog_ready' &&
         event.data?.toolCount >= 20,
@@ -3565,6 +3554,51 @@ describe('xox TypeScript API', () => {
       expect(draft.config.teamMembers).toHaveLength(50)
       expect(draft.config.shareholders).toHaveLength(5)
       expect(draft.config.planning).toMatchObject({ startMonth: 3, horizonMonths: 12 })
+      await closeHarness(harness)
+    }, { capabilities: ['draft'] })
+  })
+
+  it('fills operating-model workspace name from the original goal when the model omits it from long arguments', async () => {
+    const operatingPlan = {
+      planning: { startMonth: 3, horizonMonths: 12 },
+      operating: { offlineUnitPrice: 88, onlineUnitPrice: 68 },
+      shareholders: [{ name: '股东 A', investmentAmount: 100000, dividendRate: 1 }],
+      memberSegments: [{ label: '成员', namePrefix: '成员', count: 50, monthlyBasePay: 1000, commissionRate: 0.1, offlineUnitsPerEvent: 5, onlineUnitsPerEvent: 2 }],
+      employees: [{ role: '运营', count: 1, monthlyBasePay: 10000 }],
+      monthlyFixedCosts: [{ name: '房租', amount: 10000 }],
+      perEventCosts: [{ name: '场地', amount: 1000 }],
+      perUnitCosts: [{ name: '物料', amount: 6 }],
+      months: Array.from({ length: 12 }, (_, index) => ({
+        monthIndex: index + 1,
+        events: index === 0 ? 0 : 4,
+        salesMultiplier: index === 0 ? 0 : 1,
+        onlineSalesFactor: 0.35,
+      })),
+    }
+
+    await withFakeOpenAICompatibleProvider(() =>
+      fakeToolResponse('workspace_configure_operating_model', { plan: operatingPlan }),
+    async (baseUrl) => {
+      const harness = await buildHarness('agent-operating-model-goal-name-fill', {
+        llmProvider: 'openai-compatible',
+        openaiCompatibleProvider: 'test-compatible',
+        openaiCompatibleBaseUrl: baseUrl,
+        openaiCompatibleApiKey: 'test-key',
+      })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-operating-model-goal-name-fill@example.com')
+
+      const response = await client.post('/api/v1/agent/messages', {
+        message: '项目=星河 50 期启动测算；请生成并保存 50 个成员、12 个月的完整经营模型。',
+        automationLevel: 'high',
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(response.json.actionRequests[0].payload.workspaceName).toBe('星河 50 期启动测算')
+      expect(response.json.actionRequests[0].status).toBe('executed')
+      const draft = (await client.get('/api/v1/workspace/draft')).json
+      expect(draft.workspaceName).toBe('星河 50 期启动测算')
+      expect(draft.config.teamMembers).toHaveLength(50)
       await closeHarness(harness)
     }, { capabilities: ['draft'] })
   })

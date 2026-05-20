@@ -41,6 +41,11 @@ function providerExtraParams(profile: ProviderModelProfile, options: ProviderReq
   return {}
 }
 
+function requestMaxTokens(input: RuntimePlanningInput, profile: ProviderModelProfile) {
+  const requested = input.maxTokens ?? 1600
+  return profile.maxOutputTokens ? Math.min(requested, profile.maxOutputTokens) : requested
+}
+
 export function shapeOpenAICompatibleChatRequest(
   input: RuntimePlanningInput,
   options: ProviderRequestShapeOptions = {},
@@ -54,7 +59,7 @@ export function shapeOpenAICompatibleChatRequest(
       { role: 'user', content: `上下文：${JSON.stringify(input.context)}\n用户指令：${input.message}` },
     ],
     temperature: 0,
-    max_tokens: input.maxTokens ?? 1600,
+    max_tokens: requestMaxTokens(input, profile),
     stream: input.stream ?? true,
     ...providerExtraParams(profile, options),
   }

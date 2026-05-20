@@ -10,6 +10,20 @@ function isRecoverableHttpError(error?: RuntimePlanError) {
   return error?.kind === 'provider_http_error' && error.classification === 'server'
 }
 
+function retryMaxTokens(input: RuntimePlanningInput, selectedToolName?: string) {
+  const baseline = input.maxTokens ?? 1600
+  return selectedToolName === 'workspace_configure_operating_model'
+    ? Math.max(baseline, 48_000)
+    : Math.max(baseline, 12_000)
+}
+
+function retryTimeoutMs(input: RuntimePlanningInput, selectedToolName?: string) {
+  const baseline = input.requestTimeoutMs ?? input.settings.agentProviderRequestTimeoutMs
+  return selectedToolName === 'workspace_configure_operating_model'
+    ? Math.max(baseline, 360_000)
+    : Math.max(baseline, 240_000)
+}
+
 export function shouldRetryRuntimePlan(result: RuntimePlanResult | null | undefined) {
   return result?.error?.kind === 'provider_network_error' ||
     result?.error?.kind === 'provider_response_error' ||
@@ -29,7 +43,7 @@ export function retryRuntimeInput(
     return {
       ...input,
       stream: false,
-      requestTimeoutMs: Math.max(input.requestTimeoutMs ?? input.settings.agentProviderRequestTimeoutMs, 240_000),
+      requestTimeoutMs: retryTimeoutMs(input),
     }
   }
   const selectedTool = input.tools.find((tool) => tool.function.name === selectedToolName)
@@ -37,8 +51,8 @@ export function retryRuntimeInput(
     ...input,
     stream: false,
     tools: selectedTool ? [selectedTool] : input.tools,
-    maxTokens: Math.max(input.maxTokens ?? 1600, 12_000),
-    requestTimeoutMs: Math.max(input.requestTimeoutMs ?? input.settings.agentProviderRequestTimeoutMs, 240_000),
+    maxTokens: retryMaxTokens(input, selectedToolName),
+    requestTimeoutMs: retryTimeoutMs(input, selectedToolName),
   }
 }
 

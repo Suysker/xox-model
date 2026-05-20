@@ -344,9 +344,14 @@ This keeps LLM semantic understanding while moving deterministic expansion and v
   - Accumulates streamed `delta.tool_calls` per index/id before any execution.
 - `apps/api/src/agent/runtime/tool-call-validator.ts`
   - Central executable gate from provider tool calls to internal planner steps.
+- `apps/api/src/agent/runtime-planning-call.ts`
+  - Detects high-volume structured planning turns that include `workspace_configure_operating_model`.
+  - Uses non-streaming long-budget planning for those turns so provider SSE does not have to carry very large tool-call argument strings.
 - `apps/api/src/agent/goal-fact-extractor.ts`
   - Stores hard objective facts in `AgentGoalContract.facts`.
   - Extracts facts such as workspace name, member count, shareholder count, start month, horizon, forecast-summary requirement, and no-publish/no-share constraints.
+- `apps/api/src/agent/workspace-action-drafts.ts`
+  - Uses extracted goal facts as a deterministic safety net for high-level operating-model confirmation cards, so a model that omits `plan.workspaceName` from a large argument still produces the requested project/workspace name.
 - `apps/api/src/agent/completion-evaluator.ts`
   - Compares original goal facts against domain observation and action graph.
   - Prevents rename-only completion when the original objective asks for a 50-member/12-month operating model.
@@ -361,7 +366,7 @@ This keeps LLM semantic understanding while moving deterministic expansion and v
   - Validates targeted non-stream retry for malformed `workspace_configure_operating_model` after a streamed `workspace_rename`.
   - Validates prefix/suffix-polluted streamed arguments are repaired before confirmation cards are created.
   - Validates complex goal facts force a second repair loop after rename-only output.
-  - Keeps extended provider budget behavior stable for complex structured planning turns.
+  - Keeps extended provider budget behavior stable for complex structured planning turns, including the stable non-streaming path for large operating-model arguments.
 - `apps/api/tests/agent-architecture.test.ts`
   - Guards the new runtime modules against DB/routes/domain execution imports.
 

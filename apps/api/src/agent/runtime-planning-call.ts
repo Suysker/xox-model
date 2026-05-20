@@ -17,6 +17,22 @@ function plannerTokenBudget(message: string) {
   return message.length >= 600 || structuredLineCount >= 8 ? 6000 : 1600
 }
 
+function isHighVolumeStructuredPlanning(input: {
+  message: string
+  tools: RuntimePlanningInput['tools']
+}) {
+  const structuredLineCount = input.message.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).length
+  return input.tools.some((tool) => tool.function.name === 'workspace_configure_operating_model') &&
+    (input.message.length >= 600 || structuredLineCount >= 8)
+}
+
+function runtimeMaxTokens(input: {
+  message: string
+  tools: RuntimePlanningInput['tools']
+}) {
+  return isHighVolumeStructuredPlanning(input) ? 48_000 : plannerTokenBudget(input.message)
+}
+
 function plannerRequestTimeoutMs(input: {
   baseTimeoutMs: number
   maxTokens: number
@@ -51,13 +67,15 @@ export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePl
     ...(ctx.abortSignal ? { abortSignal: ctx.abortSignal } : {}),
   })
 
-  const maxTokens = plannerTokenBudget(ctx.message)
+  const maxTokens = runtimeMaxTokens({ message: ctx.message, tools: toolCatalog.tools })
+  const stableLongToolMode = isHighVolumeStructuredPlanning({ message: ctx.message, tools: toolCatalog.tools })
   const runtimeInput: RuntimePlanningInput = {
     settings: ctx.settings,
     message: redactSecretLikeContent(ctx.message),
     context,
     tools: toolCatalog.tools,
     maxTokens,
+    ...(stableLongToolMode ? { stream: false } : {}),
     requestTimeoutMs: plannerRequestTimeoutMs({
       baseTimeoutMs: ctx.settings.agentProviderRequestTimeoutMs,
       maxTokens,
@@ -66,6 +84,24 @@ export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePl
     }),
     ...(ctx.abortSignal ? { abortSignal: ctx.abortSignal } : {}),
     onStreamEvent: (event) => addRuntimeStreamRunEvent(ctx, event),
+  }
+
+  if (stableLongToolMode) {
+    await addRunEvent(ctx.db, {
+      threadId: ctx.threadId,
+      runId: ctx.runId,
+      type: 'provider_stable_long_tool_mode',
+      title: '长参数工具稳定模式',
+      message: '本轮包含大型结构化工具参数，已跳过易截断的流式 arguments，改用非流式长预算规划。',
+      status: 'running',
+      data: {
+        provider: ctx.settings.openaiCompatibleProvider,
+        toolName: 'workspace_configure_operating_model',
+        stream: false,
+        maxTokens,
+        requestTimeoutMs: runtimeInput.requestTimeoutMs,
+      },
+    })
   }
 
   const first = await planWithRuntimeAdapter(runtimeInput)

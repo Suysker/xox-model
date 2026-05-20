@@ -52,7 +52,7 @@ function uniqueSpecificShareholderCount(text: string) {
 }
 
 function workspaceNameFromObjective(text: string) {
-  const byLabel = valueAfterLabel(text, ['项目名称：', '项目名称:'])
+  const byLabel = valueAfterLabel(text, ['项目名称：', '项目名称:', '项目：', '项目='])
   if (byLabel) return byLabel
   const renameMarker = text.includes('改名为') ? '改名为' : text.includes('重命名为') ? '重命名为' : null
   if (!renameMarker) return undefined
