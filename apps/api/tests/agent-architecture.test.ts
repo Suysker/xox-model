@@ -29,6 +29,7 @@ describe('Agent ADR architecture boundaries', () => {
     const runtimeFiles = [
       'agent/runtime/adapter-router.ts',
       'agent/runtime/balanced-json.ts',
+      'agent/runtime/high-volume-tool-policy.ts',
       'agent/runtime/openai-agents-adapter.ts',
       'agent/runtime/openai-compatible-chat-adapter.ts',
       'agent/runtime/provider-error-classifier.ts',

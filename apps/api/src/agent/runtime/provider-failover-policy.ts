@@ -1,4 +1,9 @@
 import type { RuntimePlanningInput, RuntimePlanError, RuntimePlanResult } from './runtime-adapter.js'
+import {
+  HIGH_VOLUME_STRUCTURED_MAX_TOKENS,
+  HIGH_VOLUME_STRUCTURED_TIMEOUT_MS,
+  isHighVolumeStructuredToolName,
+} from './high-volume-tool-policy.js'
 
 function selectedToolFromError(input: RuntimePlanningInput, error?: RuntimePlanError) {
   return error?.toolNames?.find((name) =>
@@ -12,15 +17,15 @@ function isRecoverableHttpError(error?: RuntimePlanError) {
 
 function retryMaxTokens(input: RuntimePlanningInput, selectedToolName?: string) {
   const baseline = input.maxTokens ?? 1600
-  return selectedToolName === 'workspace_configure_operating_model'
-    ? Math.max(baseline, 48_000)
+  return isHighVolumeStructuredToolName(selectedToolName)
+    ? Math.max(baseline, HIGH_VOLUME_STRUCTURED_MAX_TOKENS)
     : Math.max(baseline, 12_000)
 }
 
 function retryTimeoutMs(input: RuntimePlanningInput, selectedToolName?: string) {
   const baseline = input.requestTimeoutMs ?? input.settings.agentProviderRequestTimeoutMs
-  return selectedToolName === 'workspace_configure_operating_model'
-    ? Math.max(baseline, 360_000)
+  return isHighVolumeStructuredToolName(selectedToolName)
+    ? Math.max(baseline, HIGH_VOLUME_STRUCTURED_TIMEOUT_MS)
     : Math.max(baseline, 240_000)
 }
 

@@ -132,6 +132,7 @@
 - Inline natural-language fact extraction must stop project/workspace names at clear delimiters such as comma, period, semicolon, or newline. Otherwise a phrase like "改名为 X，然后生成 50 个成员" turns the whole remaining objective into the expected name and traps the Goal Run Engine in repair loops.
 - High-volume structured tools such as `workspace_configure_operating_model` should not start with streamed tool-call arguments. For long operating briefs, use a non-streaming long-budget request first and keep streamed repair as a fallback for smaller turns; otherwise users repeatedly see truncated JSON and retry noise even though the model selected the correct tool.
 - For high-level typed tools, preserve hard facts from the original goal as deterministic payload defaults. If a real model omits fields such as `plan.workspaceName` inside a huge tool argument, the confirmation card should recover from the Goal Contract instead of silently keeping the old workspace name.
+- Keep long-tool budget policy centralized. First attempts and retries for the same high-volume structured tool should share one token/timeout policy so the harness is predictable and tests do not encode divergent hidden budgets.
 
 ## Testing
 

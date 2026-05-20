@@ -9,6 +9,12 @@ import {
   shouldRetryRuntimePlan,
 } from './runtime/provider-failover-policy.js'
 import type { RuntimePlanningInput, RuntimePlanResult } from './runtime/runtime-adapter.js'
+import {
+  HIGH_VOLUME_STRUCTURED_MAX_TOKENS,
+  HIGH_VOLUME_STRUCTURED_TIMEOUT_MS,
+  HIGH_VOLUME_STRUCTURED_TOOL_NAME,
+  hasHighVolumeStructuredTool,
+} from './runtime/high-volume-tool-policy.js'
 import { addRunEvent } from './run-events.js'
 import { provideRuntimeToolCatalog } from './tool-gateway.js'
 
@@ -22,7 +28,7 @@ function isHighVolumeStructuredPlanning(input: {
   tools: RuntimePlanningInput['tools']
 }) {
   const structuredLineCount = input.message.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).length
-  return input.tools.some((tool) => tool.function.name === 'workspace_configure_operating_model') &&
+  return hasHighVolumeStructuredTool(input.tools) &&
     (input.message.length >= 600 || structuredLineCount >= 8)
 }
 
@@ -30,7 +36,7 @@ function runtimeMaxTokens(input: {
   message: string
   tools: RuntimePlanningInput['tools']
 }) {
-  return isHighVolumeStructuredPlanning(input) ? 48_000 : plannerTokenBudget(input.message)
+  return isHighVolumeStructuredPlanning(input) ? HIGH_VOLUME_STRUCTURED_MAX_TOKENS : plannerTokenBudget(input.message)
 }
 
 function plannerRequestTimeoutMs(input: {
@@ -46,6 +52,17 @@ function plannerRequestTimeoutMs(input: {
     input.message.length >= 1200 ||
     structuredLineCount >= 12
   return isComplexPlanning ? Math.max(input.baseTimeoutMs, 240_000) : input.baseTimeoutMs
+}
+
+function runtimeRequestTimeoutMs(input: {
+  baseTimeoutMs: number
+  maxTokens: number
+  message: string
+  toolCount: number
+  stableLongToolMode: boolean
+}) {
+  if (input.stableLongToolMode) return Math.max(input.baseTimeoutMs, HIGH_VOLUME_STRUCTURED_TIMEOUT_MS)
+  return plannerRequestTimeoutMs(input)
 }
 
 export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePlanResult | null> {
@@ -76,11 +93,12 @@ export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePl
     tools: toolCatalog.tools,
     maxTokens,
     ...(stableLongToolMode ? { stream: false } : {}),
-    requestTimeoutMs: plannerRequestTimeoutMs({
+    requestTimeoutMs: runtimeRequestTimeoutMs({
       baseTimeoutMs: ctx.settings.agentProviderRequestTimeoutMs,
       maxTokens,
       message: ctx.message,
       toolCount: toolCatalog.toolCount,
+      stableLongToolMode,
     }),
     ...(ctx.abortSignal ? { abortSignal: ctx.abortSignal } : {}),
     onStreamEvent: (event) => addRuntimeStreamRunEvent(ctx, event),
@@ -96,7 +114,7 @@ export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePl
       status: 'running',
       data: {
         provider: ctx.settings.openaiCompatibleProvider,
-        toolName: 'workspace_configure_operating_model',
+        toolName: HIGH_VOLUME_STRUCTURED_TOOL_NAME,
         stream: false,
         maxTokens,
         requestTimeoutMs: runtimeInput.requestTimeoutMs,

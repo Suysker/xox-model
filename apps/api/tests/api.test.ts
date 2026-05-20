@@ -1396,7 +1396,7 @@ describe('xox TypeScript API', () => {
         toolName: 'workspace_configure_operating_model',
         stream: false,
         maxTokens: 48000,
-        requestTimeoutMs: 240_000,
+        requestTimeoutMs: 360_000,
       })
       expect(planned.json.runEvents.some((event: any) =>
         event.type === 'tool_catalog_ready' &&

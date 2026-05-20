@@ -346,7 +346,10 @@ This keeps LLM semantic understanding while moving deterministic expansion and v
   - Central executable gate from provider tool calls to internal planner steps.
 - `apps/api/src/agent/runtime-planning-call.ts`
   - Detects high-volume structured planning turns that include `workspace_configure_operating_model`.
-  - Uses non-streaming long-budget planning for those turns so provider SSE does not have to carry very large tool-call argument strings.
+  - Uses the same non-streaming high-capacity budget for those turns so provider SSE does not have to carry very large tool-call argument strings.
+- `apps/api/src/agent/runtime/high-volume-tool-policy.ts`
+  - Centralizes the high-volume structured tool policy: `workspace_configure_operating_model`, `48000` output tokens, `360000ms` timeout.
+  - The same values are used for first attempt and retry.
 - `apps/api/src/agent/goal-fact-extractor.ts`
   - Stores hard objective facts in `AgentGoalContract.facts`.
   - Extracts facts such as workspace name, member count, shareholder count, start month, horizon, forecast-summary requirement, and no-publish/no-share constraints.
