@@ -1,9 +1,10 @@
-import type { AgentEvaluationFinding, AgentEvaluationResult } from '@xox/contracts'
+import type { AgentEvaluationFinding, AgentEvaluationResult, AgentGoalContract, AgentGoalFacts } from '@xox/contracts'
 import type { Kysely } from 'kysely'
 import type { Database, Row } from '../db/schema.js'
 import { parseJson } from '../db/database.js'
 import { collectAgentObservation } from './observation-collector.js'
 import { addEvaluationResult, updateGoalStatus } from './goal-contract.js'
+import { extractAgentGoalFacts } from './goal-fact-extractor.js'
 
 function finding(input: {
   id: string
@@ -57,6 +58,179 @@ function hasPositiveOperatingInput(config: any) {
     arrayOfRecords(month.specialCosts).some((cost) => positiveNumber(cost.amount) && positiveNumber(cost.count)),
   )
   return (hasActiveMonth && hasRevenueUnit && hasUnitPrice) || hasRecurringCost || hasStaffCost || hasStageCost
+}
+
+function goalFactsFromRow(goal: Row<'agent_goals'>): AgentGoalFacts {
+  const contract = parseJson<Partial<AgentGoalContract>>(goal.contract_json, {})
+  return contract.facts && typeof contract.facts === 'object'
+    ? contract.facts
+    : extractAgentGoalFacts(goal.objective)
+}
+
+function actionPayload(action: Row<'agent_action_requests'>) {
+  return parseJson<any>(action.payload_json, null)
+}
+
+function isOperatingModelAction(action: Row<'agent_action_requests'>) {
+  if (action.kind !== 'workspace.update_draft') return false
+  const payload = actionPayload(action)
+  return payload?.source === 'workspace_configure_operating_model'
+}
+
+function evaluateGoalFacts(input: {
+  facts: AgentGoalFacts
+  actions: Row<'agent_action_requests'>[]
+  observation: Awaited<ReturnType<typeof collectAgentObservation>>
+}) {
+  const findings: AgentEvaluationFinding[] = []
+  const policyFindings: AgentEvaluationFinding[] = []
+  const satisfied: string[] = []
+  const requiredCapabilities = new Set(input.facts.requiredCapabilities ?? [])
+  const forbiddenActions = new Set(input.facts.forbiddenActions ?? [])
+  const operatingModelAction = input.actions.find(isOperatingModelAction)
+
+  if (input.facts.workspaceName) {
+    if (input.observation.draft.workspaceName === input.facts.workspaceName) {
+      satisfied.push('goal.workspace_name')
+    } else {
+      findings.push(finding({
+        id: 'goal.workspace_name',
+        criterionId: 'domain.goal_facts_match_outcome',
+        severity: 'blocking',
+        message: `目标要求工作区名称为 ${input.facts.workspaceName}，当前为 ${input.observation.draft.workspaceName}。`,
+        evidence: { expected: input.facts.workspaceName, actual: input.observation.draft.workspaceName },
+      }))
+    }
+  }
+
+  if (input.facts.expectedMemberCount) {
+    if (input.observation.draft.teamMemberCount === input.facts.expectedMemberCount) {
+      satisfied.push('goal.expected_member_count')
+    } else {
+      findings.push(finding({
+        id: 'goal.expected_member_count',
+        criterionId: 'domain.goal_facts_match_outcome',
+        severity: 'blocking',
+        message: `目标要求 ${input.facts.expectedMemberCount} 个成员，当前草稿为 ${input.observation.draft.teamMemberCount} 个。`,
+        evidence: { expected: input.facts.expectedMemberCount, actual: input.observation.draft.teamMemberCount },
+      }))
+    }
+  }
+
+  if (input.facts.expectedShareholderCount) {
+    if (input.observation.draft.shareholderCount === input.facts.expectedShareholderCount) {
+      satisfied.push('goal.expected_shareholder_count')
+    } else {
+      findings.push(finding({
+        id: 'goal.expected_shareholder_count',
+        criterionId: 'domain.goal_facts_match_outcome',
+        severity: 'blocking',
+        message: `目标要求 ${input.facts.expectedShareholderCount} 个股东/分红主体，当前草稿为 ${input.observation.draft.shareholderCount} 个。`,
+        evidence: { expected: input.facts.expectedShareholderCount, actual: input.observation.draft.shareholderCount },
+      }))
+    }
+  }
+
+  if (input.facts.expectedHorizonMonths) {
+    if (input.observation.draft.monthCount === input.facts.expectedHorizonMonths) {
+      satisfied.push('goal.expected_horizon_months')
+    } else {
+      findings.push(finding({
+        id: 'goal.expected_horizon_months',
+        criterionId: 'domain.goal_facts_match_outcome',
+        severity: 'blocking',
+        message: `目标要求 ${input.facts.expectedHorizonMonths} 个月预测，当前草稿为 ${input.observation.draft.monthCount} 个月。`,
+        evidence: { expected: input.facts.expectedHorizonMonths, actual: input.observation.draft.monthCount },
+      }))
+    }
+  }
+
+  if (input.facts.expectedStartMonth) {
+    if (input.observation.draft.startMonth === input.facts.expectedStartMonth) {
+      satisfied.push('goal.expected_start_month')
+    } else {
+      findings.push(finding({
+        id: 'goal.expected_start_month',
+        criterionId: 'domain.goal_facts_match_outcome',
+        severity: 'blocking',
+        message: `目标要求从 ${input.facts.expectedStartMonth} 月开始，当前草稿从 ${input.observation.draft.startMonth} 月开始。`,
+        evidence: { expected: input.facts.expectedStartMonth, actual: input.observation.draft.startMonth },
+      }))
+    }
+  }
+
+  if (requiredCapabilities.has('operating_model')) {
+    if (operatingModelAction && input.observation.draft.totalRevenue > 0 && input.observation.draft.totalCost > 0) {
+      satisfied.push('goal.required_operating_model')
+    } else {
+      findings.push(finding({
+        id: 'goal.required_operating_model',
+        criterionId: 'domain.goal_facts_match_outcome',
+        severity: 'blocking',
+        message: '目标要求生成经营模型，但当前运行还没有可验证的经营模型草稿写入和有效预测。',
+        evidence: {
+          hasOperatingModelAction: Boolean(operatingModelAction),
+          totalRevenue: input.observation.draft.totalRevenue,
+          totalCost: input.observation.draft.totalCost,
+        },
+      }))
+    }
+  }
+
+  if (input.facts.requiresForecastSummary) {
+    if (input.observation.draft.totalRevenue > 0 || input.observation.draft.totalCost > 0) {
+      satisfied.push('goal.forecast_summary_computable')
+    } else {
+      findings.push(finding({
+        id: 'goal.forecast_summary_computable',
+        criterionId: 'domain.goal_facts_match_outcome',
+        severity: 'blocking',
+        message: '目标要求输出预测结果摘要，但当前草稿还不能计算有效收入或成本。',
+        evidence: {
+          totalRevenue: input.observation.draft.totalRevenue,
+          totalCost: input.observation.draft.totalCost,
+        },
+      }))
+    }
+  }
+
+  if (forbiddenActions.has('publish_release')) {
+    const violating = input.actions.find((action) =>
+      action.kind === 'workspace.publish_release' || action.kind === 'workspace.promote_version',
+    )
+    if (violating) {
+      const item = finding({
+        id: 'policy.no_publish_requested',
+        criterionId: 'policy.no_forbidden_actions',
+        severity: 'blocking',
+        message: '用户明确要求先不要发布正式版本，但运行图包含发布动作。',
+        evidence: { actionId: violating.id, kind: violating.kind },
+      })
+      findings.push(item)
+      policyFindings.push(item)
+    } else {
+      satisfied.push('goal.no_publish_requested')
+    }
+  }
+
+  if (forbiddenActions.has('share_link')) {
+    const violating = input.actions.find((action) => action.kind === 'share.create')
+    if (violating) {
+      const item = finding({
+        id: 'policy.no_share_requested',
+        criterionId: 'policy.no_forbidden_actions',
+        severity: 'blocking',
+        message: '用户明确要求先不要创建分享链接，但运行图包含分享动作。',
+        evidence: { actionId: violating.id, kind: violating.kind },
+      })
+      findings.push(item)
+      policyFindings.push(item)
+    } else {
+      satisfied.push('goal.no_share_requested')
+    }
+  }
+
+  return { findings, policyFindings, satisfied }
 }
 
 function evaluateWorkspaceDraftAction(input: {
@@ -140,6 +314,7 @@ export async function evaluateAgentGoal(input: {
   const satisfied = new Set<string>(['policy.no_forbidden_actions', 'context.memory_scoped'])
   const unsatisfied: AgentEvaluationFinding[] = []
   const policyFindings: AgentEvaluationFinding[] = []
+  const facts = goalFactsFromRow(input.goal)
 
   if (planSteps.length > 0 || actions.length > 0) {
     satisfied.add('graph.visible_steps')
@@ -220,6 +395,11 @@ export async function evaluateAgentGoal(input: {
       evidence: { executedActionCount: executedActions.length, auditCount: observation.audit.executedActionCount },
     }))
   }
+
+  const factResult = evaluateGoalFacts({ facts, actions, observation })
+  factResult.satisfied.forEach((id) => satisfied.add(id))
+  unsatisfied.push(...factResult.findings)
+  policyFindings.push(...factResult.policyFindings)
 
   let status: AgentEvaluationResult['status'] = 'pass'
   let nextPlannerBrief: string | null = null

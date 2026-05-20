@@ -13,6 +13,7 @@ import { jsonString, parseJson } from '../db/database.js'
 import { newId } from '../core/security.js'
 import { utcNow } from '../core/time.js'
 import type { CurrentUser } from '../modules/auth.js'
+import { extractAgentGoalFacts } from './goal-fact-extractor.js'
 
 const DEFAULT_GOAL_PAGES: AgentGoalContract['scope']['pages'] = ['model', 'ledger', 'variance', 'versions', 'share']
 const DEFAULT_CAPABILITIES = ['data', 'draft', 'import_export', 'ledger', 'memory', 'share', 'version']
@@ -48,6 +49,13 @@ function defaultCriteria(): AgentGoalContract['acceptanceCriteria'] {
       required: true,
     },
     {
+      id: 'domain.goal_facts_match_outcome',
+      label: '原始目标事实已满足',
+      description: '复杂目标中的成员数量、预测周期、工作区名称、禁止发布等硬事实必须从领域状态和运行图中验证。',
+      kind: 'domain',
+      required: true,
+    },
+    {
       id: 'context.memory_scoped',
       label: '记忆作用域正确',
       description: '注入和沉淀的记忆必须限定在当前用户、工作区和线程允许范围内。',
@@ -79,6 +87,7 @@ export function buildInitialGoalContract(input: {
       allowedCapabilities: DEFAULT_CAPABILITIES,
     },
     acceptanceCriteria: defaultCriteria(),
+    facts: extractAgentGoalFacts(input.objective),
     forbiddenActions: [
       {
         id: 'account.manual_only',
@@ -116,6 +125,7 @@ export function serializeGoal(row: Row<'agent_goals'>): AgentGoalRecord {
       objective: row.objective,
       scope: { workspace: 'current', pages: DEFAULT_GOAL_PAGES, allowedCapabilities: DEFAULT_CAPABILITIES },
       acceptanceCriteria: defaultCriteria(),
+      facts: extractAgentGoalFacts(row.objective),
       forbiddenActions: [],
       humanCheckpoints: [],
       automationLevel: 'manual',

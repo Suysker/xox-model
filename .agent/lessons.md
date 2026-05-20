@@ -127,6 +127,9 @@
 - If a high-level operating-model action already contains the target workspace name, drop a same-name `workspace_rename` from the same planning turn. This avoids duplicate confirmation cards and same-run draft revision conflicts while preserving the higher-level editable model card.
 - Treat streamed tool-call arguments as progress, not executable state. Before Action Graph persistence, assemble per tool-call index/id, apply provider-gated bounded repair, validate schema, and preserve failed-tool identity for retry.
 - When porting OpenClaw runtime code, reuse only small MIT-licensed pure modules with attribution. Do not import OpenClaw's control plane, runner, plugin registry, filesystem auth/session store, or channel delivery into xox-model's SaaS harness.
+- Completion evaluators for complex goals must compare the original goal contract against live domain state, not only the action graph emitted by the last model turn. A shrunken graph such as rename-only must continue when the objective facts require a 50-member operating model, shareholder structure, forecast horizon, or no-publish policy.
+- Agent observations should read live workspace rows during evaluation. Passing the run-start workspace object through the evaluator makes workspace rename facts look unsatisfied even after a confirmed rename action succeeds.
+- Inline natural-language fact extraction must stop project/workspace names at clear delimiters such as comma, period, semicolon, or newline. Otherwise a phrase like "改名为 X，然后生成 50 个成员" turns the whole remaining objective into the expected name and traps the Goal Run Engine in repair loops.
 
 ## Testing
 

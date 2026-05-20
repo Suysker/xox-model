@@ -40,6 +40,13 @@ export type RuntimeStreamEvent =
       argumentsPreview?: string
     }
   | {
+      kind: 'tool_call_repaired'
+      toolName: string
+      toolCallId?: string
+      leadingChars: number
+      trailingChars: number
+    }
+  | {
       kind: 'stream_completed'
       contentLength: number
       toolCallCount: number

@@ -8,6 +8,7 @@ import { resolveProviderModelProfile } from '../src/agent/runtime/provider-model
 import { resolveProviderModelRef } from '../src/agent/runtime/provider-model-ref.js'
 import { shapeOpenAICompatibleChatRequest } from '../src/agent/runtime/provider-request-shaper.js'
 import { normalizeProviderToolSchemas } from '../src/agent/runtime/provider-tool-schema.js'
+import { extractBalancedJson } from '../src/agent/runtime/balanced-json.js'
 import {
   parseToolArguments,
   plannerStepsFromProviderToolCalls,
@@ -194,6 +195,9 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
       monthLabel: '3月',
       offlineUnits: 1,
     })
+    expect(() =>
+      parseToolArguments('provider prefix {"monthLabel":"3月","offlineUnits":1} trailing text', { enabled: false }),
+    ).toThrow(SyntaxError)
     expect(parseToolArguments(['not', 'object'])).toEqual({})
 
     const steps = plannerStepsFromProviderToolCalls({
@@ -243,6 +247,39 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
       expect((error as ProviderToolCallParseError).failedToolName).toBe('workspace_configure_operating_model')
       expect((error as ProviderToolCallParseError).toolNames[0]).toBe('workspace_configure_operating_model')
     }
+  })
+
+  it('extracts only complete balanced JSON and rejects unbounded streamed pollution', () => {
+    const nested = extractBalancedJson('prefix .functions.read:0 {"x":[{"y":"}"}],"z":true}x')
+    expect(nested).toMatchObject({
+      jsonText: '{"x":[{"y":"}"}],"z":true}',
+      leadingText: 'prefix .functions.read:0 ',
+      trailingText: 'x',
+      complete: true,
+    })
+
+    expect(extractBalancedJson('prefix {"x":{"y":1}')).toMatchObject({
+      jsonText: '{"x":{"y":1}',
+      complete: false,
+    })
+
+    expect(parseToolArguments('.functions.read:0 {"x":1}x', {
+      enabled: true,
+      maxLeadingChars: 64,
+      maxTrailingChars: 2,
+    })).toEqual({ x: 1 })
+
+    expect(() =>
+      parseToolArguments('this provider prefix is intentionally too long {"x":1}', {
+        enabled: true,
+        maxLeadingChars: 8,
+        maxTrailingChars: 2,
+      }),
+    ).toThrow(/pollution exceeded bounds/)
+
+    expect(() =>
+      parseToolArguments('prefix {"x":1', { enabled: true }),
+    ).toThrow(/complete balanced JSON/)
   })
 
   it('classifies provider errors and retries only recoverable provider failures', () => {

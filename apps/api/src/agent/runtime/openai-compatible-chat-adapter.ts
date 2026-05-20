@@ -3,10 +3,11 @@ import type { AgentToolCallStep } from '../tool-catalog.js'
 import { classifyProviderHttpError, providerRejectsToolChoice, safeProviderErrorMessage } from './provider-error-classifier.js'
 import { shapeOpenAICompatibleChatRequest } from './provider-request-shaper.js'
 import {
-  plannerStepsFromProviderToolCalls,
   ProviderToolCallParseError,
-  type ProviderToolCall,
 } from './tool-call-repair.js'
+import type { ProviderModelProfile } from './provider-model-profile.js'
+import { ToolCallStreamAssembler, type StreamingToolCall } from './tool-call-stream-assembler.js'
+import { validateProviderToolCallsForExecution } from './tool-call-validator.js'
 
 const SOURCE = 'openai_compatible_tool_calls' as const
 const STREAM_DELTA_LIMIT = 240
@@ -14,13 +15,6 @@ const STREAM_PREVIEW_LIMIT = 700
 const CONTENT_TRACE_FLUSH_CHARS = 80
 const TOOL_TRACE_FLUSH_CHARS = 320
 const STREAM_TRACE_FLUSH_INTERVAL_MS = 250
-
-type StreamingToolCall = {
-  id?: string
-  type?: string
-  name?: string
-  arguments: string
-}
 
 class ProviderTimeoutError extends Error {
   constructor(
@@ -78,38 +72,39 @@ function allowedToolNames(input: RuntimePlanningInput) {
   return input.tools.map((tool) => tool.function.name)
 }
 
-function jsonPlanResult(body: any, input: RuntimePlanningInput): RuntimePlanResult {
+function argumentRepairPolicy(profile: ProviderModelProfile) {
+  return {
+    enabled: profile.streamArgumentRepair === 'bounded-balanced-json',
+  }
+}
+
+function jsonPlanResult(
+  body: any,
+  input: RuntimePlanningInput,
+  profile: ProviderModelProfile,
+): RuntimePlanResult {
   const message = body?.choices?.[0]?.message
-  const toolSteps = plannerStepsFromProviderToolCalls({
+  const toolSteps = validateProviderToolCallsForExecution({
     toolCalls: message?.tool_calls,
     allowedToolNames: allowedToolNames(input),
+    options: {
+      argumentRepair: argumentRepairPolicy(profile),
+      onArgumentRepaired: (event) => {
+        void input.onStreamEvent?.({
+          kind: 'tool_call_repaired',
+          toolName: event.toolName,
+          ...(event.toolCallId ? { toolCallId: event.toolCallId } : {}),
+          leadingChars: event.leadingChars,
+          trailingChars: event.trailingChars,
+        })
+      },
+    },
   })
   if (toolSteps.length > 0) return { source: SOURCE, steps: toolSteps }
   const assistantText = textContentFromMessage(message)
   return assistantText
     ? { source: SOURCE, steps: [], assistantText }
     : { source: SOURCE, steps: [] }
-}
-
-function normalizeStreamingToolCalls(toolCalls: Map<number, StreamingToolCall>) {
-  return [...toolCalls.entries()]
-    .sort(([left], [right]) => left - right)
-    .map(([index, toolCall]): ProviderToolCall => ({
-      id: toolCall.id ?? `call_${index}${toolCall.name ? `_${toolCall.name}` : ''}`,
-      type: toolCall.type ?? 'function',
-      function: {
-        ...(toolCall.name ? { name: toolCall.name } : {}),
-        arguments: toolCall.arguments,
-      },
-    }))
-}
-
-function streamingToolNames(toolCalls: Map<number, StreamingToolCall>) {
-  return [...new Set(
-    [...toolCalls.values()]
-      .map((toolCall) => toolCall.name)
-      .filter((name): name is string => typeof name === 'string' && name.length > 0),
-  )]
 }
 
 function sseDataFromRecord(record: string) {
@@ -140,9 +135,13 @@ async function readProviderStreamChunk(reader: ReadableStreamDefaultReader<Uint8
 export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
   readonly name = 'openai-compatible-chat'
 
-  private async planFromStream(response: Response, input: RuntimePlanningInput): Promise<RuntimePlanResult> {
+  private async planFromStream(
+    response: Response,
+    input: RuntimePlanningInput,
+    profile: ProviderModelProfile,
+  ): Promise<RuntimePlanResult> {
     const reader = response.body?.getReader()
-    if (!reader) return jsonPlanResult(await response.json(), input)
+    if (!reader) return jsonPlanResult(await response.json(), input, profile)
 
     await input.onStreamEvent?.({
       kind: 'stream_started',
@@ -155,7 +154,7 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
     const decoder = new TextDecoder()
     let buffer = ''
     let content = ''
-    const toolCalls = new Map<number, StreamingToolCall>()
+    const toolAssembler = new ToolCallStreamAssembler()
     const toolTraceState = new Map<number, { argumentLength: number; flushedAt: number; emittedName: boolean }>()
     let contentTraceLength = 0
     let contentTraceFlushedAt = 0
@@ -226,30 +225,21 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
 
         if (!Array.isArray(delta.tool_calls)) continue
         for (const toolDelta of delta.tool_calls) {
-          const index = Number.isInteger(toolDelta?.index) ? Number(toolDelta.index) : toolCalls.size
-          const current = toolCalls.get(index) ?? { arguments: '' }
-          if (typeof toolDelta?.id === 'string' && toolDelta.id.length > 0) current.id = toolDelta.id
-          if (typeof toolDelta?.type === 'string' && toolDelta.type.length > 0) current.type = toolDelta.type
-          const fn = toolDelta?.function
-          if (fn && typeof fn === 'object') {
-            if (typeof fn.name === 'string' && fn.name.length > 0) current.name = fn.name
-            if (typeof fn.arguments === 'string' && fn.arguments.length > 0) current.arguments += fn.arguments
-          }
-          toolCalls.set(index, current)
-          await emitToolTrace(index, current)
+          const { index, toolCall } = toolAssembler.append(toolDelta)
+          await emitToolTrace(index, toolCall)
         }
       }
     }
 
     while (true) {
       const remainingMs = deadline - Date.now()
-      if (remainingMs <= 0) throw new ProviderTimeoutError(`Provider stream timed out after ${requestTimeoutMs}ms`, streamingToolNames(toolCalls))
+      if (remainingMs <= 0) throw new ProviderTimeoutError(`Provider stream timed out after ${requestTimeoutMs}ms`, toolAssembler.toolNames())
       let chunk: Awaited<ReturnType<typeof readProviderStreamChunk>>
       try {
         chunk = await readProviderStreamChunk(reader, remainingMs)
       } catch (error) {
         if (error instanceof Error && error.message.includes('timed out')) {
-          throw new ProviderTimeoutError(`Provider stream timed out after ${requestTimeoutMs}ms`, streamingToolNames(toolCalls))
+          throw new ProviderTimeoutError(`Provider stream timed out after ${requestTimeoutMs}ms`, toolAssembler.toolNames())
         }
         throw error
       }
@@ -267,20 +257,32 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
     const trailing = buffer.trim()
     if (trailing.length > 0) await handleRecord(trailing)
     await emitContentTrace(true)
-    for (const [index, toolCall] of toolCalls.entries()) await emitToolTrace(index, toolCall, true)
+    for (const [index, toolCall] of toolAssembler.entries()) await emitToolTrace(index, toolCall, true)
 
     await input.onStreamEvent?.({
       kind: 'stream_completed',
       contentLength: content.length,
-      toolCallCount: toolCalls.size,
+      toolCallCount: toolAssembler.count(),
     })
 
-    const normalizedToolCalls = normalizeStreamingToolCalls(toolCalls)
+    const normalizedToolCalls = toolAssembler.toProviderToolCalls()
     let toolSteps: AgentToolCallStep[]
     try {
-      toolSteps = plannerStepsFromProviderToolCalls({
+      toolSteps = validateProviderToolCallsForExecution({
         toolCalls: normalizedToolCalls,
         allowedToolNames: allowedToolNames(input),
+        options: {
+          argumentRepair: argumentRepairPolicy(profile),
+          onArgumentRepaired: (event) => {
+            void input.onStreamEvent?.({
+              kind: 'tool_call_repaired',
+              toolName: event.toolName,
+              ...(event.toolCallId ? { toolCallId: event.toolCallId } : {}),
+              leadingChars: event.leadingChars,
+              trailingChars: event.trailingChars,
+            })
+          },
+        },
       })
     } catch (error) {
       if (error instanceof ProviderToolCallParseError) throw error
@@ -326,25 +328,31 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
       }, requestTimeoutMs + 1_000)
       timeout.unref?.()
       const endpoint = `${input.settings.openaiCompatibleBaseUrl.replace(/\/$/, '')}/chat/completions`
-      const init = (omitToolChoice = false): RequestInit => ({
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${input.settings.openaiCompatibleApiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(shapeOpenAICompatibleChatRequest(input, { omitToolChoice }).body),
-        signal: abortController.signal,
-      })
+      const shape = (omitToolChoice = false) => shapeOpenAICompatibleChatRequest(input, { omitToolChoice })
+      const init = (omitToolChoice = false): RequestInit => {
+        const requestShape = shape(omitToolChoice)
+        return {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${input.settings.openaiCompatibleApiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestShape.body),
+          signal: abortController.signal,
+        }
+      }
+      let requestShape = shape(false)
       let response = await fetch(endpoint, init(false))
 
       if (!response.ok) {
         let providerMessage = await response.text().catch(() => '')
         if (providerRejectsToolChoice(response.status, providerMessage) && input.tools.length > 0 && !abortController.signal.aborted) {
+          requestShape = shape(true)
           response = await fetch(endpoint, init(true))
           if (response.ok) {
             const contentType = response.headers.get('content-type') ?? ''
-            if (contentType.toLowerCase().includes('text/event-stream')) return await this.planFromStream(response, input)
-            return jsonPlanResult(await response.json(), input)
+            if (contentType.toLowerCase().includes('text/event-stream')) return await this.planFromStream(response, input, requestShape.profile)
+            return jsonPlanResult(await response.json(), input, requestShape.profile)
           }
           providerMessage = await response.text().catch(() => '')
         }
@@ -356,8 +364,8 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
         }
       }
       const contentType = response.headers.get('content-type') ?? ''
-      if (contentType.toLowerCase().includes('text/event-stream')) return await this.planFromStream(response, input)
-      return jsonPlanResult(await response.json(), input)
+      if (contentType.toLowerCase().includes('text/event-stream')) return await this.planFromStream(response, input, requestShape.profile)
+      return jsonPlanResult(await response.json(), input, requestShape.profile)
     } catch (error) {
       const requestTimeoutMs = effectiveProviderRequestTimeoutMs(input)
       const message = providerTimedOut

@@ -1343,6 +1343,23 @@ describe('xox TypeScript API', () => {
 
   it('uses an extended provider budget for complex structured planning turns', async () => {
     const planningTokenBudgets: number[] = []
+    const budgetPlan = {
+      workspaceName: '复杂经营模型预算',
+      planning: { startMonth: 3, horizonMonths: 12 },
+      operating: { offlineUnitPrice: 88, onlineUnitPrice: 68 },
+      shareholders: [{ name: '股东 A', investmentAmount: 100000, dividendRate: 1 }],
+      memberSegments: [{ label: '成员', namePrefix: '成员', count: 50, monthlyBasePay: 1000, commissionRate: 0.1, offlineUnitsPerEvent: 5, onlineUnitsPerEvent: 2 }],
+      employees: [{ role: '运营', count: 1, monthlyBasePay: 10000 }],
+      monthlyFixedCosts: [{ name: '房租', amount: 10000 }],
+      perEventCosts: [{ name: '场地', amount: 1000 }],
+      perUnitCosts: [{ name: '物料', amount: 6 }],
+      months: Array.from({ length: 12 }, (_, index) => ({
+        monthIndex: index + 1,
+        events: index === 0 ? 0 : 4,
+        salesMultiplier: index === 0 ? 0 : 1,
+        onlineSalesFactor: 0.35,
+      })),
+    }
     await withFakeOpenAICompatibleProvider((body) => {
       planningTokenBudgets.push(body.max_tokens)
       expect(body.stream).toBe(true)
@@ -1355,8 +1372,8 @@ describe('xox TypeScript API', () => {
                 id: 'call_complex_read',
                 type: 'function',
                 function: {
-                  name: 'data_query_workspace',
-                  arguments: '{"question":"复杂经营模型预算","scope":"workspace_summary"}',
+                  name: 'workspace_configure_operating_model',
+                  arguments: JSON.stringify({ plan: budgetPlan }),
                 },
               }],
             },
@@ -3340,6 +3357,95 @@ describe('xox TypeScript API', () => {
     }, { capabilities: ['draft'] })
   }, 10_000)
 
+  it('repairs bounded prefix/suffix pollution in streamed tool-call arguments before creating cards', async () => {
+    await withFakeOpenAICompatibleProvider(() => ({
+      __stream: [
+        {
+          choices: [{
+            delta: {
+              tool_calls: [{
+                index: 0,
+                id: 'call_0_workspace_rename',
+                type: 'function',
+                function: {
+                  name: 'workspace_rename',
+                  arguments: '.functions.workspace_rename:0 {"workspaceName":"流式修复工作区"}x',
+                },
+              }],
+            },
+          }],
+        },
+      ],
+    }), async (baseUrl) => {
+      const harness = await buildHarness('agent-stream-argument-repair', {
+        llmProvider: 'openai-compatible',
+        openaiCompatibleProvider: 'test-compatible',
+        openaiCompatibleBaseUrl: baseUrl,
+        openaiCompatibleApiKey: 'test-key',
+      })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-stream-argument-repair@example.com')
+
+      const planned = await client.post('/api/v1/agent/messages', {
+        message: '把工作区改名为“流式修复工作区”。',
+        automationLevel: 'high',
+      })
+      expect(planned.statusCode).toBe(200)
+      expect(planned.json.actionRequests).toHaveLength(1)
+      expect(planned.json.actionRequests[0].kind).toBe('workspace.rename')
+      expect(planned.json.actionRequests[0].status).toBe('executed')
+      expect(planned.json.runEvents.some((event: any) => event.type === 'provider_tool_call_repaired')).toBe(true)
+      const draft = (await client.get('/api/v1/workspace/draft')).json
+      expect(draft.workspaceName).toBe('流式修复工作区')
+      await closeHarness(harness)
+    }, { capabilities: ['draft'] })
+  })
+
+  it('fails closed instead of returning 500 when non-stream tool-call arguments remain malformed after retry', async () => {
+    let calls = 0
+    await withFakeOpenAICompatibleProvider(() => {
+      calls += 1
+      return {
+        choices: [{
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [{
+              id: 'call_broken_operating_model',
+              type: 'function',
+              function: {
+                name: 'workspace_configure_operating_model',
+                arguments: '{"plan":{"workspaceName":"损坏的复杂模型"',
+              },
+            }],
+          },
+        }],
+      }
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-non-stream-tool-parse-fail-closed', {
+        llmProvider: 'openai-compatible',
+        openaiCompatibleProvider: 'test-compatible',
+        openaiCompatibleBaseUrl: baseUrl,
+        openaiCompatibleApiKey: 'test-key',
+      })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-non-stream-tool-parse-fail-closed@example.com')
+
+      const response = await client.post('/api/v1/agent/messages', {
+        message: '生成一个 50 个成员、12 个月预测的复杂经营模型。',
+        automationLevel: 'high',
+      })
+      expect(response.statusCode).toBe(200)
+      expect(calls).toBeGreaterThanOrEqual(2)
+      expect(response.json.actionRequests).toHaveLength(0)
+      expect(response.json.planSteps.some((step: any) =>
+        step.status === 'failed' &&
+        String(step.title).includes('模型响应格式不可用'),
+      )).toBe(true)
+      await closeHarness(harness)
+    }, { capabilities: ['draft'] })
+  })
+
   it('deduplicates a redundant workspace rename when the operating-model action owns the same name', async () => {
     const operatingPlan = {
       workspaceName: '星河 50 期启动测算',
@@ -3386,6 +3492,79 @@ describe('xox TypeScript API', () => {
       const draft = (await client.get('/api/v1/workspace/draft')).json
       expect(draft.workspaceName).toBe('星河 50 期启动测算')
       expect(draft.config.teamMembers).toHaveLength(50)
+      await closeHarness(harness)
+    }, { capabilities: ['draft'] })
+  })
+
+  it('does not complete a complex operating-model goal after only renaming the workspace', async () => {
+    const operatingPlan = {
+      workspaceName: '星河 50 期启动测算',
+      planning: { startMonth: 3, horizonMonths: 12 },
+      operating: { offlineUnitPrice: 88, onlineUnitPrice: 68 },
+      shareholders: [
+        { name: '股东 A', investmentAmount: 300000, dividendRate: 0.35 },
+        { name: '股东 B', investmentAmount: 200000, dividendRate: 0.25 },
+        { name: '股东 C', investmentAmount: 150000, dividendRate: 0.2 },
+        { name: '股东 D', investmentAmount: 100000, dividendRate: 0.15 },
+        { name: '员工激励池', investmentAmount: 0, dividendRate: 0.05 },
+      ],
+      memberSegments: [
+        { label: '核心成员', namePrefix: '成员', count: 10, monthlyBasePay: 2500, commissionRate: 0.12, perEventTravelCost: 35, offlineUnitsPerEvent: 18, onlineUnitsPerEvent: 6 },
+        { label: '普通成员', namePrefix: '成员', count: 25, monthlyBasePay: 1200, commissionRate: 0.1, perEventTravelCost: 35, offlineUnitsPerEvent: 8, onlineUnitsPerEvent: 3 },
+        { label: '练习成员', namePrefix: '成员', count: 15, monthlyBasePayAfterMonth: 800, firstBasePayFreeMonths: 3, commissionRate: 0.08, perEventTravelCost: 35, offlineUnitsPerEvent: 3, onlineUnitsPerEvent: 1 },
+      ],
+      employees: [{ role: '运营负责人', count: 1, monthlyBasePay: 18000 }],
+      monthlyFixedCosts: [{ name: '排练室和办公场地', amount: 45000 }],
+      perEventCosts: [{ name: '场地执行成本', amount: 6000 }],
+      perUnitCosts: [{ name: '物料消耗', amount: 6 }],
+      months: Array.from({ length: 12 }, (_, index) => ({
+        monthIndex: index + 1,
+        events: index === 0 ? 0 : index < 3 ? 4 : 8,
+        salesMultiplier: index === 0 ? 0 : index < 3 ? 0.45 : 1,
+        onlineSalesFactor: 0.35,
+      })),
+    }
+
+    let planningCalls = 0
+    await withFakeOpenAICompatibleProvider(() => {
+      planningCalls += 1
+      if (planningCalls === 1) return fakeToolResponse('workspace_rename', { workspaceName: '星河 50 期启动测算' })
+      return fakeToolResponse('workspace_configure_operating_model', { plan: operatingPlan })
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-complex-goal-facts-rename-only', {
+        llmProvider: 'openai-compatible',
+        openaiCompatibleProvider: 'test-compatible',
+        openaiCompatibleBaseUrl: baseUrl,
+        openaiCompatibleApiKey: 'test-key',
+      })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-complex-goal-facts-rename-only@example.com')
+
+      const response = await client.post('/api/v1/agent/messages', {
+        message: [
+          '项目名称：星河 50 期启动测算',
+          '周期：从 2026 年 3 月开始，预测 12 个月。',
+          '团队规模：按 50 个成员来做。',
+          '投资和股东：股东 A 投资 300000，占分红 35%，股东 B 投资 200000，占分红 25%，股东 C 投资 150000，占分红 20%，股东 D 投资 100000，占分红 15%，预留员工激励池 5%。',
+          '请生成 12 个月预测结果，回答总收入、总成本、总利润、期末现金、回本月份。先不要发布正式版本。',
+        ].join('，'),
+        automationLevel: 'high',
+      })
+
+      expect(response.statusCode).toBe(200)
+      const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
+      expect(planningCalls).toBe(2)
+      expect(state.statusCode).toBe(200)
+      expect(state.json.evaluations.map((evaluation: any) => evaluation.status)).toEqual(['continue', 'pass'])
+      expect(state.json.evaluations[0].unsatisfiedCriteria.some((finding: any) => finding.id === 'goal.expected_member_count')).toBe(true)
+      expect(state.json.evaluations[0].unsatisfiedCriteria.some((finding: any) => finding.id === 'goal.required_operating_model')).toBe(true)
+      expect(state.json.evaluations[1].satisfiedCriteria).toContain('goal.expected_member_count')
+      expect(state.json.evaluations[1].satisfiedCriteria).toContain('goal.no_publish_requested')
+      const draft = (await client.get('/api/v1/workspace/draft')).json
+      expect(draft.workspaceName).toBe('星河 50 期启动测算')
+      expect(draft.config.teamMembers).toHaveLength(50)
+      expect(draft.config.shareholders).toHaveLength(5)
+      expect(draft.config.planning).toMatchObject({ startMonth: 3, horizonMonths: 12 })
       await closeHarness(harness)
     }, { capabilities: ['draft'] })
   })

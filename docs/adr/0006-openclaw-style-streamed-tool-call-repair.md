@@ -1,8 +1,10 @@
 # ADR 0006: OpenClaw-Style Streamed Tool-Call Repair And Complex Goal Runtime
 
-Status: Proposed
+Status: Accepted / Implemented
 
 Date: 2026-05-20
+
+Implementation note: implemented in the TypeScript API runtime on 2026-05-20. The implementation ports the small OpenClaw-style pure-runtime patterns into xox-model modules, keeps OpenClaw out of the dependency graph, and validates behavior with provider-runtime tests, API integration tests, and real-provider smoke.
 
 ## Context
 
@@ -325,6 +327,43 @@ This keeps LLM semantic understanding while moving deterministic expansion and v
    - Fake provider: split/malformed multi-tool stream.
    - Fake provider: polluted prefix/suffix arguments.
    - Real DeepSeek: complex operating model smoke.
+
+## Implemented Modules
+
+- `apps/api/src/agent/runtime/balanced-json.ts`
+  - Extracts complete balanced JSON object/array from polluted provider text.
+  - Carries OpenClaw MIT attribution because it follows the same small pure-module pattern.
+- `apps/api/src/agent/runtime/tool-call-argument-repair.ts`
+  - Parses exact JSON first, then applies provider-profile-gated bounded repair.
+  - Enforces max buffer, max leading prefix, and max trailing suffix.
+  - Rejects incomplete streamed JSON instead of creating partial confirmation cards.
+- `apps/api/src/agent/runtime/tool-call-name-normalizer.ts`
+  - Normalizes provider tool names/id prefixes against the allowed projected tool list.
+  - This is provider format hygiene, not business intent routing.
+- `apps/api/src/agent/runtime/tool-call-stream-assembler.ts`
+  - Accumulates streamed `delta.tool_calls` per index/id before any execution.
+- `apps/api/src/agent/runtime/tool-call-validator.ts`
+  - Central executable gate from provider tool calls to internal planner steps.
+- `apps/api/src/agent/goal-fact-extractor.ts`
+  - Stores hard objective facts in `AgentGoalContract.facts`.
+  - Extracts facts such as workspace name, member count, shareholder count, start month, horizon, forecast-summary requirement, and no-publish/no-share constraints.
+- `apps/api/src/agent/completion-evaluator.ts`
+  - Compares original goal facts against domain observation and action graph.
+  - Prevents rename-only completion when the original objective asks for a 50-member/12-month operating model.
+- `apps/api/src/agent/observation-collector.ts`
+  - Re-reads current workspace state during evaluation so renamed workspace facts are evaluated against live DB state, not the stale run-start row.
+
+## Implemented Validation
+
+- `apps/api/tests/provider-runtime.test.ts`
+  - Validates balanced JSON extraction, disabled repair failure, bounded repair success, unbounded pollution rejection, incomplete JSON rejection, and failed-tool identity preservation.
+- `apps/api/tests/api.test.ts`
+  - Validates targeted non-stream retry for malformed `workspace_configure_operating_model` after a streamed `workspace_rename`.
+  - Validates prefix/suffix-polluted streamed arguments are repaired before confirmation cards are created.
+  - Validates complex goal facts force a second repair loop after rename-only output.
+  - Keeps extended provider budget behavior stable for complex structured planning turns.
+- `apps/api/tests/agent-architecture.test.ts`
+  - Guards the new runtime modules against DB/routes/domain execution imports.
 
 ## Acceptance Criteria
 

@@ -10,6 +10,7 @@ export type ProviderModelProfile = ProviderModelRef & {
   supportsStreaming: boolean
   supportsParallelToolCalls: boolean
   toolChoicePolicy: ProviderToolChoicePolicy
+  streamArgumentRepair: 'off' | 'bounded-balanced-json'
   thinking?: {
     mode: 'none' | 'binary' | 'reasoning-effort' | 'provider-extra-body'
     disabledPayload?: Record<string, unknown>
@@ -32,6 +33,7 @@ function genericProfile(ref: ProviderModelRef): ProviderModelProfile {
     supportsStreaming: true,
     supportsParallelToolCalls: false,
     toolChoicePolicy: 'auto',
+    streamArgumentRepair: 'bounded-balanced-json',
     schemaProfile: 'generic-json-schema',
     replayPolicy: 'generic',
   }

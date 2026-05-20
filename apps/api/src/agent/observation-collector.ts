@@ -13,6 +13,7 @@ export type AgentDomainObservation = {
     employeeCount: number
     shareholderCount: number
     monthCount: number
+    startMonth: number
     totalRevenue: number
     totalCost: number
     totalProfit: number
@@ -37,7 +38,8 @@ export async function collectAgentObservation(input: {
   workspace: Row<'workspaces'>
   runId: string
 }): Promise<AgentDomainObservation> {
-  const [draft, periods, versions, shares, audits] = await Promise.all([
+  const [currentWorkspace, draft, periods, versions, shares, audits] = await Promise.all([
+    input.db.selectFrom('workspaces').select(['id', 'name']).where('id', '=', input.workspace.id).executeTakeFirst(),
     getWorkspaceDraft(input.db, input.workspace),
     listPeriods(input.db, input.workspace),
     listVersions(input.db, input.workspace),
@@ -58,12 +60,13 @@ export async function collectAgentObservation(input: {
   const scenario = projectModel(config).scenarios.find((item) => item.key === 'base')
   return {
     draft: {
-      workspaceName: input.workspace.name,
+      workspaceName: currentWorkspace?.name ?? input.workspace.name,
       revision: draft.revision,
       teamMemberCount: config.teamMembers.length,
       employeeCount: config.employees.length,
       shareholderCount: config.shareholders.length,
       monthCount: config.months.length,
+      startMonth: config.planning.startMonth,
       totalRevenue: scenario?.grossSales ?? 0,
       totalCost: scenario?.totalCost ?? 0,
       totalProfit: scenario?.totalProfit ?? 0,

@@ -302,6 +302,17 @@ export type AgentHumanCheckpoint = {
   status: 'pending' | 'satisfied' | 'cancelled'
 }
 
+export type AgentGoalFacts = {
+  workspaceName?: string
+  expectedMemberCount?: number
+  expectedShareholderCount?: number
+  expectedHorizonMonths?: number
+  expectedStartMonth?: number
+  requiresForecastSummary?: boolean
+  forbiddenActions?: Array<'publish_release' | 'share_link' | 'account_action'>
+  requiredCapabilities?: Array<'workspace_rename' | 'operating_model' | 'ledger' | 'version' | 'share'>
+}
+
 export type AgentGoalContract = {
   goalId: string
   threadId: string
@@ -315,6 +326,7 @@ export type AgentGoalContract = {
     allowedCapabilities: string[]
   }
   acceptanceCriteria: AgentGoalCriterion[]
+  facts?: AgentGoalFacts
   forbiddenActions: AgentForbiddenAction[]
   humanCheckpoints: AgentHumanCheckpoint[]
   automationLevel: AgentAutomationLevel
