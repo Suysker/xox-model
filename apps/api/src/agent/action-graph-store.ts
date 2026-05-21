@@ -82,7 +82,7 @@ async function autoExecuteActionIfAllowed(
     title: '自动执行确认卡',
     message: `自动化策略 ${ctx.automationLevel} 允许执行 ${action.risk_level} 风险动作：${action.title}`,
     status: 'running',
-    data: { actionKind: action.kind, riskLevel: action.risk_level, automationLevel: ctx.automationLevel },
+    data: { actionRequestId: action.id, actionKind: action.kind, riskLevel: action.risk_level, automationLevel: ctx.automationLevel },
   })
 
   try {
@@ -94,7 +94,7 @@ async function autoExecuteActionIfAllowed(
       title: '确认卡已自动执行',
       message: `已自动执行：${action.title}`,
       status: 'completed',
-      data: { actionKind: action.kind, riskLevel: action.risk_level, automationLevel: ctx.automationLevel },
+      data: { actionRequestId: action.id, actionKind: action.kind, riskLevel: action.risk_level, automationLevel: ctx.automationLevel },
     })
   } catch (error) {
     const message = safeAutoExecutionError(error)
@@ -115,7 +115,7 @@ async function autoExecuteActionIfAllowed(
       title: '确认卡自动执行失败',
       message: `${action.title}：${message}`,
       status: 'failed',
-      data: { actionKind: action.kind, riskLevel: action.risk_level, automationLevel: ctx.automationLevel },
+      data: { actionRequestId: action.id, actionKind: action.kind, riskLevel: action.risk_level, automationLevel: ctx.automationLevel },
     })
   }
 

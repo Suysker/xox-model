@@ -5,7 +5,7 @@ import type {
   AgentNavigationEvent,
 } from '@xox/contracts'
 import type { Database, Row } from '../db/schema.js'
-import { jsonString } from '../db/database.js'
+import { jsonString, parseJson } from '../db/database.js'
 import { conflict, forbidden, notFound, unprocessable } from '../core/http.js'
 import type { Settings } from '../core/settings.js'
 import { newId } from '../core/security.js'
@@ -58,6 +58,33 @@ export type AgentPlanContext = {
 function safeActionErrorMessage(error: unknown) {
   const message = error instanceof Error ? error.message : String(error)
   return redactSecretLikeContent(message).slice(0, 500) || 'Agent action failed'
+}
+
+function previewValue(value: unknown) {
+  const raw = typeof value === 'string' ? value : JSON.stringify(value)
+  return redactSecretLikeContent((raw ?? '').slice(0, 260))
+}
+
+function changedField(label: string, before: unknown, after: unknown) {
+  const beforePreview = previewValue(before)
+  const afterPreview = previewValue(after)
+  if (beforePreview === afterPreview) return null
+  return { label, value: `${beforePreview || '空'} -> ${afterPreview || '空'}` }
+}
+
+function actionUpdateChanges(before: Row<'agent_action_requests'>, after: Row<'agent_action_requests'>) {
+  const beforeDetails = parseJson<unknown>(before.details_json, null)
+  const afterDetails = parseJson<unknown>(after.details_json, null)
+  const beforePayload = parseJson<unknown>(before.payload_json, null)
+  const afterPayload = parseJson<unknown>(after.payload_json, null)
+  return [
+    changedField('标题', before.title, after.title),
+    changedField('摘要', before.summary, after.summary),
+    changedField('目标', before.target_label, after.target_label),
+    changedField('风险', before.risk_level, after.risk_level),
+    changedField('明细', beforeDetails, afterDetails),
+    changedField('执行载荷', beforePayload, afterPayload),
+  ].filter((item): item is { label: string; value: string } => Boolean(item))
 }
 
 async function getActionRequest(db: Kysely<Database>, actionRequestId: string) {
@@ -155,7 +182,7 @@ export async function confirmAgentActionRequest(db: Kysely<Database>, settings: 
       title: '确认卡执行失败',
       message: `${action.title}：${message}`,
       status: 'failed',
-      data: { actionKind: action.kind },
+      data: { actionRequestId: action.id, actionKind: action.kind },
     }).catch(() => undefined)
     throw executionError
   }
@@ -197,7 +224,7 @@ export async function confirmAgentActionRequest(db: Kysely<Database>, settings: 
     title: '确认卡已执行',
     message: `已执行：${action.title}`,
     status: 'completed',
-    data: { actionKind: action.kind },
+    data: { actionRequestId: action.id, actionKind: action.kind },
   })
   return {
     actionRequest: updated,
@@ -227,7 +254,7 @@ export async function cancelAgentActionRequest(db: Kysely<Database>, workspace: 
     title: '确认卡已取消',
     message: `已取消：${action.title}`,
     status: 'cancelled',
-    data: { actionKind: action.kind },
+    data: { actionRequestId: action.id, actionKind: action.kind },
   })
   await consolidateAgentMemoryCandidates({
     db,
@@ -276,6 +303,7 @@ export async function updateAgentActionRequest(
 
   await db.updateTable('agent_action_requests').set(update).where('id', '=', action.id).execute()
   const updated = await db.selectFrom('agent_action_requests').selectAll().where('id', '=', action.id).executeTakeFirstOrThrow()
+  const changes = actionUpdateChanges(action, updated)
   await db
     .updateTable('agent_plan_steps')
     .set({
@@ -295,7 +323,7 @@ export async function updateAgentActionRequest(
     title: '确认卡已编辑',
     message: `确认卡已编辑：${updated.title}`,
     status: 'info',
-    data: { actionKind: action.kind },
+    data: { actionRequestId: action.id, actionKind: action.kind, changes },
   })
   await consolidateAgentMemoryCandidates({
     db,

@@ -135,6 +135,7 @@
 - High-volume structured tools such as `workspace_configure_operating_model` should not start with streamed tool-call arguments. For long operating briefs, use a non-streaming long-budget request first and keep streamed repair as a fallback for smaller turns; otherwise users repeatedly see truncated JSON and retry noise even though the model selected the correct tool.
 - For high-level typed tools, preserve hard facts from the original goal as deterministic payload defaults. If a real model omits fields such as `plan.workspaceName` inside a huge tool argument, the confirmation card should recover from the Goal Contract instead of silently keeping the old workspace name.
 - Keep long-tool budget policy centralized. First attempts and retries for the same high-volume structured tool should share one token/timeout policy so the harness is predictable and tests do not encode divergent hidden budgets.
+- User-facing Agent transcripts should not expose harness internals such as queued runs, worker leases, goal contracts, goal loops, or evaluator class names. Keep those in an explicit technical log; the default UI should show business steps, tool calls, waiting states, tool results, navigation, confirmation cards, and actionable checks.
 
 ## Testing
 

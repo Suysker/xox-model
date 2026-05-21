@@ -808,6 +808,15 @@ describe('xox TypeScript API', () => {
       expect(planned.json.runEvents.map((event: any) => event.type)).toEqual(
         expect.arrayContaining(['run_queued', 'worker_claimed', 'model_planning', 'tool_plan_ready', 'confirmation_ready', 'run_completed']),
       )
+      const visibleTranscript = planned.json.transcriptItems
+        .filter((item: any) => item.visibility === 'user')
+        .map((item: any) => `${item.title}\n${item.summary}`)
+        .join('\n')
+      expect(visibleTranscript).toContain('正在理解你的目标')
+      expect(visibleTranscript).toContain('需要你确认动作')
+      expect(visibleTranscript).toContain('确认成员收入入账')
+      expect(visibleTranscript).not.toContain('Worker 已认领')
+      expect(visibleTranscript).not.toContain('run lease')
       expect(planned.json.actionRequests[0].details).toEqual(
         expect.arrayContaining([expect.objectContaining({ label: '发生日', value: expect.stringMatching(/-03-01$/) })]),
       )
@@ -817,6 +826,10 @@ describe('xox TypeScript API', () => {
       expect(confirmed.json.actionRequest.status).toBe('executed')
       expect(confirmed.json.result.amount).toBe(1056)
       expect(confirmed.json.runEvents.some((event: any) => event.type === 'action_executed')).toBe(true)
+      const projected = await client.get(`/api/v1/agent/threads/${planned.json.threadId}/ag-ui-events`)
+      expect(projected.statusCode).toBe(200)
+      expect(projected.json.events.some((event: any) => event.type === 'TOOL_CALL_RESULT' && event.toolName === 'ledger.create_entry')).toBe(true)
+      expect(projected.json.transcriptItems.some((item: any) => item.kind === 'tool_result' && item.title === '已执行动作')).toBe(true)
 
       const periodId = planned.json.navigationEvents[0].route.selectedPeriodId
       const entries = (await client.get(`/api/v1/ledger/entries?periodId=${periodId}`)).json

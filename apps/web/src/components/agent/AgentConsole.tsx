@@ -1,8 +1,8 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { AlertTriangle, Bot, CheckCircle2, Database, History, KeyRound, Plus, RefreshCw, Save, SendHorizontal, Target, Trash2, XCircle } from 'lucide-react'
-import type { AgentActionRequest, AgentActionUpdatePayload, AgentAutomationLevel, AgentEvaluationResult, AgentGoalRecord, AgentMemoryRecord, AgentMessage, AgentNavigationEvent, AgentPlanStep, AgentProviderProbePayload, AgentProviderProbeResult, AgentProviderSettingRecord, AgentProviderSettingUpdatePayload, AgentRunEvent, AgentSendResponse, AgentThreadSummary } from '../../lib/api'
+import { Bot, Database, History, KeyRound, Plus, RefreshCw, Save, SendHorizontal, Trash2, XCircle } from 'lucide-react'
+import type { AgentActionRequest, AgentActionUpdatePayload, AgentAutomationLevel, AgentEvaluationResult, AgentGoalRecord, AgentMemoryRecord, AgentMessage, AgentNavigationEvent, AgentPlanStep, AgentProviderProbePayload, AgentProviderProbeResult, AgentProviderSettingRecord, AgentProviderSettingUpdatePayload, AgentRunEvent, AgentSendResponse, AgentThreadSummary, AgentTranscriptItem } from '../../lib/api'
 import { AgentActionCard } from './AgentActionCard'
-import { AgentPlanTimeline } from './AgentPlanTimeline'
+import { AgentExecutionTranscript } from './AgentExecutionTranscript'
 
 export type ProviderStreamPreview = {
   content: string
@@ -78,6 +78,7 @@ export function AgentConsole(props: {
   messages: AgentMessage[]
   planSteps: AgentPlanStep[]
   runEvents: AgentRunEvent[]
+  transcriptItems: AgentTranscriptItem[]
   goals: AgentGoalRecord[]
   evaluations: AgentEvaluationResult[]
   actionRequests: AgentActionRequest[]
@@ -127,9 +128,10 @@ export function AgentConsole(props: {
     return `${memory.value} ${memory.key} ${memory.kind} ${memory.memoryType ?? ''} ${memory.status ?? ''}`.toLowerCase().includes(query)
   })
   const recentMessages = props.messages.slice(-6)
-  const streamPreview = buildProviderStreamPreview(props.runEvents)
-  const latestGoal = props.goals.at(-1) ?? null
-  const latestEvaluation = props.evaluations.at(-1) ?? null
+  const actionDiffsById = new Map<string, Array<{ label: string; value: string }>>()
+  props.transcriptItems
+    .filter((item) => item.kind === 'action_update' && item.actionRequestId && item.details?.length)
+    .forEach((item) => actionDiffsById.set(item.actionRequestId!, item.details ?? []))
   const plannerLabel =
     props.planner === 'openai_agents'
       ? 'OpenAI Agents'
@@ -537,82 +539,7 @@ export function AgentConsole(props: {
             )}
           </div>
 
-          {streamPreview ? (
-            <div className="mt-2 rounded-md border border-emerald-900/10 bg-emerald-50/80 px-3 py-2 text-xs text-stone-700">
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-semibold text-stone-800">模型实时输出</span>
-                <span className={streamPreview.completed ? 'text-stone-500' : 'font-semibold text-emerald-700'}>
-                  {streamPreview.completed ? '已完成' : '接收中'}
-                </span>
-              </div>
-              {streamPreview.content ? (
-                <p className="mt-1 max-h-14 overflow-y-auto whitespace-pre-wrap text-stone-700">{streamPreview.content}</p>
-              ) : null}
-              {streamPreview.tools.length > 0 ? (
-                <div className="mt-1 grid max-h-20 gap-1 overflow-y-auto">
-                  {streamPreview.tools.map((tool) => (
-                    <div key={tool.index} className="grid gap-0.5 rounded-md bg-white/80 px-2 py-1">
-                      <span className="truncate font-semibold text-stone-800">{tool.name}</span>
-                      {tool.argumentsPreview ? (
-                        <code className="whitespace-pre-wrap break-words text-[10px] leading-4 text-stone-600">{tool.argumentsPreview}</code>
-                      ) : null}
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-
-          {latestGoal || latestEvaluation ? (
-            <div className="mt-2 rounded-md border border-stone-900/10 bg-white px-3 py-2 text-xs text-stone-700">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="inline-flex min-w-0 items-center gap-1 font-semibold text-stone-900">
-                  <Target className="h-3.5 w-3.5 text-emerald-700" />
-                  <span className="truncate">{latestGoal?.contract.objective ?? '当前目标'}</span>
-                </span>
-                <span className="rounded-md bg-stone-100 px-2 py-0.5 text-[10px] font-semibold text-stone-600">
-                  {latestGoal?.status ?? latestEvaluation?.status}
-                </span>
-              </div>
-              {latestEvaluation ? (
-                <div className="mt-1 grid gap-1">
-                  <p className="flex flex-wrap items-center gap-2 text-[11px] text-stone-500">
-                    <span className="inline-flex items-center gap-1">
-                      <CheckCircle2 className="h-3 w-3 text-emerald-700" />
-                      {latestEvaluation.satisfiedCriteria.length} 已满足
-                    </span>
-                    <span className="inline-flex items-center gap-1">
-                      <AlertTriangle className="h-3 w-3 text-amber-700" />
-                      {latestEvaluation.unsatisfiedCriteria.length} 待完善
-                    </span>
-                    <span>第 {latestEvaluation.iteration} 轮</span>
-                    <span>置信度 {Math.round(latestEvaluation.confidence * 100)}%</span>
-                  </p>
-                  {latestEvaluation.blocker ? (
-                    <p className="rounded-md bg-red-50 px-2 py-1 text-red-700">{latestEvaluation.blocker}</p>
-                  ) : latestEvaluation.nextPlannerBrief ? (
-                    <p className="rounded-md bg-amber-50 px-2 py-1 text-amber-800">{latestEvaluation.nextPlannerBrief}</p>
-                  ) : null}
-                  {latestEvaluation.unsatisfiedCriteria.length > 0 ? (
-                    <div className="grid max-h-16 gap-1 overflow-y-auto">
-                      {latestEvaluation.unsatisfiedCriteria.slice(0, 3).map((finding) => (
-                        <p key={finding.id} className="truncate text-[11px] text-stone-500">
-                          {finding.message}
-                        </p>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-
-          <AgentPlanTimeline
-            planSteps={props.planSteps}
-            runEvents={props.runEvents}
-            actionRequests={props.actionRequests}
-            navigationEvents={props.navigationEvents}
-          />
+          <AgentExecutionTranscript items={props.transcriptItems} />
 
           <form onSubmit={handleSubmit} className="mt-2 flex gap-2">
             <input
@@ -639,6 +566,7 @@ export function AgentConsole(props: {
               <AgentActionCard
                 key={action.id}
                 action={action}
+                diffDetails={actionDiffsById.get(action.id) ?? []}
                 busy={props.busy}
                 onConfirm={props.onConfirm}
                 onCancel={props.onCancel}

@@ -164,6 +164,8 @@
 - [x] Active memory recall 有 API 测试证明会在新线程注入相关记忆、记录 recalled/injected events、在 run graph 暴露 memory ids；候选记忆被重复有效召回后会确定性晋升为 semantic/procedural 长期记忆
 - [x] Context compaction 有测试证明 summary 只来自同一 thread / user / workspace，并且 summary 不包含 API key/token 原文；压缩摘要会进入 memory candidate 生命周期而不只是丢进 thread-local summary
 - [x] React Agent OS 展示 action graph、导航事件、确认卡状态、确认卡编辑、取消、失败和执行后刷新；当前为后端状态刷新式 timeline，web 测试覆盖同一 run 的导航事件不会因 SSE 重放重复执行，后续 run 打开同一页面也不会被旧 replay 状态误吞
+- [x] ADR 0008 的 AG-UI-compatible Agent Execution Transcript 已落地：`AgentThreadState` 和 `AgentSendResponse` 同时返回 `agUiEvents` 与 `transcriptItems`，后端从 server-owned run/action/thread state 投影，前端默认展示业务步骤、工具调用、等待状态、导航、确认卡、编辑 diff、工具结果、memory/evaluation 行
+- [x] 默认 Agent Transcript 不再暴露 `Run 已入队`、`Worker 已认领`、`run lease`、`目标契约已建立`、`目标循环`、`Completion Evaluator` 等 harness 内部标签；这些仅进入显式展开的技术日志，API/web 测试均覆盖该可见性边界
 - [x] Agent 历史对话和当前线程恢复已由 `/api/v1/agent/threads` 与 `/api/v1/agent/threads/{threadId}` 提供；API 测试覆盖 messages、runs、planSteps、actionRequests、navigationEvents、跨用户隔离和确认后状态恢复，React hook 会用本地 threadId 指针恢复服务端状态
 - [x] Agent thread store 已从 `apps/api/src/modules/agent.ts` 拆到 `apps/api/src/agent/thread-store.ts`，集中处理 thread ownership、message 写入、ThreadState 恢复和 DTO 序列化，避免 routes 自己拼恢复状态
 - [x] Agent message run submission 已从 `apps/api/src/modules/agent.ts` 拆到 `apps/api/src/agent/run-submission.ts`，集中处理 run 创建、user message 持久化、queued event、background enqueue 和同步 completion 返回；route module 不再直接拼 run/action graph 响应，也不在提交阶段做本地语义捕获

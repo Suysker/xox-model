@@ -15,36 +15,35 @@ export function AgentActionCard(props: {
   onConfirm: (id: string) => void
   onCancel: (id: string) => void
   onUpdate: (id: string, payload: AgentActionUpdatePayload) => void
+  diffDetails?: Array<{ label: string; value: string }>
 }) {
   const isPending = props.action.status === 'pending'
   const [editing, setEditing] = useState(false)
   const [summary, setSummary] = useState(props.action.summary)
-  const [detailsJson, setDetailsJson] = useState(JSON.stringify(props.action.details, null, 2))
+  const [detailsDraft, setDetailsDraft] = useState(props.action.details)
   const [payloadJson, setPayloadJson] = useState(JSON.stringify(props.action.payload, null, 2))
   const [editError, setEditError] = useState<string | null>(null)
   const summaryRef = useRef<HTMLTextAreaElement | null>(null)
-  const detailsRef = useRef<HTMLTextAreaElement | null>(null)
   const payloadRef = useRef<HTMLTextAreaElement | null>(null)
   const navigationLabel = formatAgentNavigationTarget(props.action.navigation)
+  const diffDetails = props.diffDetails ?? []
 
   useEffect(() => {
     setSummary(props.action.summary)
-    setDetailsJson(JSON.stringify(props.action.details, null, 2))
+    setDetailsDraft(props.action.details)
     setPayloadJson(JSON.stringify(props.action.payload, null, 2))
   }, [props.action])
 
   function handleSave() {
     try {
       const nextSummary = summaryRef.current?.value ?? summary
-      const nextDetailsJson = detailsRef.current?.value ?? detailsJson
       const nextPayloadJson = payloadRef.current?.value ?? payloadJson
-      const details = JSON.parse(nextDetailsJson) as AgentActionRequest['details']
       const payload = JSON.parse(nextPayloadJson) as unknown
-      if (!Array.isArray(details)) {
+      if (!Array.isArray(detailsDraft)) {
         setEditError('明细必须是数组。')
         return
       }
-      props.onUpdate(props.action.id, { summary: nextSummary, details, payload })
+      props.onUpdate(props.action.id, { summary: nextSummary, details: detailsDraft, payload })
       setEditing(false)
       setEditError(null)
     } catch {
@@ -84,15 +83,35 @@ export function AgentActionCard(props: {
               className="min-h-14 rounded-md border border-stone-900/10 px-2 py-1 text-xs font-normal text-stone-800 outline-none focus:border-emerald-500"
             />
           </label>
-          <label className="grid gap-1 text-[11px] font-medium text-stone-500">
-            明细 JSON
-            <textarea
-              ref={detailsRef}
-              value={detailsJson}
-              onChange={(event) => setDetailsJson(event.target.value)}
-              className="min-h-20 rounded-md border border-stone-900/10 px-2 py-1 font-mono text-[11px] font-normal text-stone-800 outline-none focus:border-emerald-500"
-            />
-          </label>
+          <div className="grid gap-1 text-[11px] font-medium text-stone-500">
+            明细
+            <div className="grid gap-1">
+              {detailsDraft.map((detail, index) => (
+                <div key={`${props.action.id}-detail-${index}`} className="grid grid-cols-[minmax(80px,0.45fr)_minmax(0,1fr)] gap-1">
+                  <input
+                    value={detail.label}
+                    onChange={(event) => {
+                      const next = [...detailsDraft]
+                      next[index] = { ...detail, label: event.target.value }
+                      setDetailsDraft(next)
+                    }}
+                    className="h-8 rounded-md border border-stone-900/10 px-2 text-xs font-normal text-stone-800 outline-none focus:border-emerald-500"
+                    aria-label="明细名称"
+                  />
+                  <input
+                    value={detail.value}
+                    onChange={(event) => {
+                      const next = [...detailsDraft]
+                      next[index] = { ...detail, value: event.target.value }
+                      setDetailsDraft(next)
+                    }}
+                    className="h-8 rounded-md border border-stone-900/10 px-2 text-xs font-normal text-stone-800 outline-none focus:border-emerald-500"
+                    aria-label="明细值"
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
           <label className="grid gap-1 text-[11px] font-medium text-stone-500">
             执行载荷 JSON
             <textarea
@@ -115,6 +134,19 @@ export function AgentActionCard(props: {
               </div>
             ))}
           </dl>
+          {diffDetails.length > 0 ? (
+            <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px]">
+              <p className="font-semibold text-amber-800">已按你的编辑调整</p>
+              <dl className="mt-1 grid gap-1">
+                {diffDetails.map((detail) => (
+                  <div key={`${props.action.id}-diff-${detail.label}`} className="grid min-w-0 grid-cols-[72px_minmax(0,1fr)] gap-2">
+                    <dt className="text-amber-700">{detail.label}</dt>
+                    <dd className="break-words text-amber-900">{detail.value}</dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          ) : null}
         </>
       )}
       {isPending ? (

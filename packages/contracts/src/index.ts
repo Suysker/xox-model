@@ -250,6 +250,85 @@ export type AgentRunEvent = {
   createdAt: string
 }
 
+export type AgentAgUiEventType =
+  | 'RUN_STARTED'
+  | 'RUN_FINISHED'
+  | 'RUN_ERROR'
+  | 'STEP_STARTED'
+  | 'STEP_FINISHED'
+  | 'TEXT_MESSAGE_START'
+  | 'TEXT_MESSAGE_CONTENT'
+  | 'TEXT_MESSAGE_END'
+  | 'TOOL_CALL_START'
+  | 'TOOL_CALL_ARGS'
+  | 'TOOL_CALL_END'
+  | 'TOOL_CALL_RESULT'
+  | 'STATE_SNAPSHOT'
+  | 'STATE_DELTA'
+  | 'MESSAGES_SNAPSHOT'
+  | 'CUSTOM'
+
+export type AgentAgUiEvent = {
+  id: string
+  threadId: string
+  runId: string
+  sequence: number
+  type: AgentAgUiEventType
+  name?: string
+  title?: string
+  role?: 'user' | 'assistant' | 'system'
+  content?: string
+  delta?: string
+  toolCallId?: string
+  toolName?: string
+  status?: AgentRunEventStatus | AgentPlanStepStatus | AgentActionRequestStatus | AgentEvaluationStatus
+  payload?: Record<string, unknown> | null
+  createdAt: string
+}
+
+export type AgentTranscriptItemKind =
+  | 'message'
+  | 'planning'
+  | 'tool_call'
+  | 'tool_result'
+  | 'navigation'
+  | 'confirmation'
+  | 'action_update'
+  | 'evaluation'
+  | 'memory'
+  | 'status'
+  | 'error'
+  | 'technical'
+
+export type AgentTranscriptItemStatus =
+  | 'pending'
+  | 'running'
+  | 'waiting'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'info'
+
+export type AgentTranscriptItem = {
+  id: string
+  threadId: string
+  runId: string
+  sequence: number
+  kind: AgentTranscriptItemKind
+  title: string
+  summary: string
+  status: AgentTranscriptItemStatus
+  visibility: 'user' | 'technical'
+  sourceType?: string
+  agUiEventType?: AgentAgUiEventType
+  actionRequestId?: string | null
+  toolName?: string | null
+  navigation?: AgentNavigationEvent | null
+  details?: Array<{ label: string; value: string }>
+  payload?: Record<string, unknown> | null
+  createdAt: string
+}
+
 export type AgentThreadSummary = {
   id: string
   title: string
@@ -383,6 +462,8 @@ export type AgentThreadState = {
   evaluations: AgentEvaluationResult[]
   navigationEvents: AgentNavigationEvent[]
   runEvents: AgentRunEvent[]
+  agUiEvents: AgentAgUiEvent[]
+  transcriptItems: AgentTranscriptItem[]
   planSteps: AgentPlanStep[]
   actionRequests: AgentActionRequest[]
 }
@@ -455,6 +536,8 @@ export type AgentSendResponse = {
   messages: AgentMessage[]
   navigationEvents: AgentNavigationEvent[]
   runEvents: AgentRunEvent[]
+  agUiEvents: AgentAgUiEvent[]
+  transcriptItems: AgentTranscriptItem[]
   planSteps: AgentPlanStep[]
   actionRequests: AgentActionRequest[]
 }

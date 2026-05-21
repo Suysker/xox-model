@@ -18,6 +18,8 @@ import {
 } from './thread-store.js'
 import { completeAgentRun, createAgentRunController, scheduleAgentRunQueueDrain } from './run-worker.js'
 import { normalizeAgentAutomationLevel, type AgentAutomationLevel } from './tool-policy.js'
+import { buildAgentAgUiEvents } from './ag-ui-projection.js'
+import { buildAgentTranscriptItems } from './agent-transcript-projector.js'
 
 export type SubmitAgentMessageRunInput = {
   db: Kysely<Database>
@@ -77,17 +79,31 @@ export async function submitAgentMessageRun(input: SubmitAgentMessageRunInput): 
       await touchThreadAfterRun(input.db, thread, input.message)
       agentThreadEvents.publish(thread.id, 'thread_started')
       scheduleAgentRunQueueDrain(input.db, input.settings)
+      const messages = [serializeMessage(userMessage)]
+      const runEvents = [serializeRunEvent(queuedEvent)]
+      const projection = {
+        thread: { id: thread.id },
+        messages,
+        goals: [],
+        evaluations: [],
+        navigationEvents: [] as AgentNavigationEvent[],
+        runEvents,
+        planSteps: [] as AgentPlanStep[],
+        actionRequests: [] as AgentActionRequest[],
+      }
       return {
         threadId: thread.id,
         runId,
         status: 'running' as const,
         planner: null,
         automationLevel,
-        messages: [serializeMessage(userMessage)],
-        navigationEvents: [] as AgentNavigationEvent[],
-        runEvents: [serializeRunEvent(queuedEvent)],
-        planSteps: [] as AgentPlanStep[],
-        actionRequests: [] as AgentActionRequest[],
+        messages,
+        navigationEvents: projection.navigationEvents,
+        runEvents,
+        agUiEvents: buildAgentAgUiEvents(projection),
+        transcriptItems: buildAgentTranscriptItems(projection),
+        planSteps: projection.planSteps,
+        actionRequests: projection.actionRequests,
       }
     }
 
@@ -105,17 +121,33 @@ export async function submitAgentMessageRun(input: SubmitAgentMessageRunInput): 
       abortSignal: controller.signal,
     })
     if (!completed) return buildThreadState(input.db, input.workspace, input.user, thread.id)
+    const runEvents = await listSerializedRunEvents(input.db, runId)
+    const messages = [serializeMessage(userMessage), serializeMessage(completed.assistantMessage)]
+    const planSteps = completed.planRows.map(serializePlanStep)
+    const actionRequests = completed.actionRows.map(serializeAction)
+    const projection = {
+      thread: { id: thread.id },
+      messages,
+      goals: [],
+      evaluations: [],
+      navigationEvents: completed.navigationEvents,
+      runEvents,
+      planSteps,
+      actionRequests,
+    }
     return {
       threadId: thread.id,
       runId,
       status: 'completed' as const,
       planner: completed.plannerSource,
       automationLevel,
-      messages: [serializeMessage(userMessage), serializeMessage(completed.assistantMessage)],
+      messages,
       navigationEvents: completed.navigationEvents,
-      runEvents: await listSerializedRunEvents(input.db, runId),
-      planSteps: completed.planRows.map(serializePlanStep),
-      actionRequests: completed.actionRows.map(serializeAction),
+      runEvents,
+      agUiEvents: buildAgentAgUiEvents(projection),
+      transcriptItems: buildAgentTranscriptItems(projection),
+      planSteps,
+      actionRequests,
     }
   } catch (error) {
     await failSubmittedAgentRun(input.db, runId, thread)

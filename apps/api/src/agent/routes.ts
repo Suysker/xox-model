@@ -110,6 +110,19 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
     }
   })
 
+  app.get('/api/v1/agent/threads/:threadId/ag-ui-events', async (request, reply) => {
+    try {
+      const user = await requireCurrentUser(db, settings, request)
+      const workspace = await getWorkspaceForUser(db, user)
+      const { threadId } = request.params as { threadId: string }
+      const state = await buildThreadState(db, workspace, user, threadId)
+      return { events: state.agUiEvents, transcriptItems: state.transcriptItems }
+    } catch (error) {
+      const { sendError } = await import('../core/http.js')
+      return sendError(reply, error)
+    }
+  })
+
   app.get('/api/v1/agent/provider-settings', async (request, reply) => {
     try {
       const user = await requireCurrentUser(db, settings, request)

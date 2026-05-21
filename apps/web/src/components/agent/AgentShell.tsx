@@ -31,6 +31,7 @@ export function AgentShell(props: {
         messages={agent.messages}
         planSteps={agent.planSteps}
         runEvents={agent.runEvents}
+        transcriptItems={agent.transcriptItems}
         goals={agent.goals}
         evaluations={agent.evaluations}
         actionRequests={agent.actionRequests}

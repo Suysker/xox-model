@@ -1,0 +1,136 @@
+import { describe, expect, it } from 'vitest'
+import type { AgentActionRequest, AgentNavigationEvent, AgentPlanStep, AgentRunEvent } from '@xox/contracts'
+import { buildAgentAgUiEvents } from '../src/agent/ag-ui-projection.js'
+import { buildAgentTranscriptItems } from '../src/agent/agent-transcript-projector.js'
+import type { AgentProjectionState } from '../src/agent/ag-ui-projection.js'
+
+const createdAt = '2026-05-22T00:00:00.000Z'
+
+function navigation(): AgentNavigationEvent {
+  return {
+    type: 'navigation',
+    route: { mainTab: 'bookkeeping', secondaryTab: 'entries', selectedPeriodId: 'period-1' },
+    panel: null,
+    focusRecordId: null,
+    reason: '记账动作需要打开本期账本。',
+  }
+}
+
+function runEvent(overrides: Partial<AgentRunEvent>): AgentRunEvent {
+  return {
+    id: `event-${overrides.sequence ?? 1}`,
+    threadId: 'thread-1',
+    runId: 'run-1',
+    sequence: overrides.sequence ?? 1,
+    type: 'run_queued',
+    title: 'Run 已入队',
+    message: '用户指令已持久化，等待 Agent worker 认领执行。',
+    status: 'queued',
+    data: null,
+    createdAt,
+    ...overrides,
+  }
+}
+
+function action(overrides: Partial<AgentActionRequest> = {}): AgentActionRequest {
+  return {
+    id: 'action-1',
+    threadId: 'thread-1',
+    runId: 'run-1',
+    kind: 'ledger.create_entry',
+    status: 'pending',
+    title: '新增收入入账',
+    summary: '把 3 月成员 A 收入入账。',
+    targetLabel: '3 月账本',
+    riskLevel: 'medium',
+    details: [{ label: '金额', value: '176' }],
+    navigation: navigation(),
+    payload: { amount: 176 },
+    createdAt,
+    executedAt: null,
+    errorMessage: null,
+    ...overrides,
+  }
+}
+
+function planStep(overrides: Partial<AgentPlanStep> = {}): AgentPlanStep {
+  return {
+    id: 'step-1',
+    threadId: 'thread-1',
+    runId: 'run-1',
+    actionRequestId: 'action-1',
+    sequence: 1,
+    title: '新增收入入账',
+    description: '生成确认卡等待确认。',
+    status: 'ready',
+    navigation: navigation(),
+    createdAt,
+    updatedAt: createdAt,
+    ...overrides,
+  }
+}
+
+function projectionState(input: { runEvents: AgentRunEvent[]; planSteps?: AgentPlanStep[]; actionRequests?: AgentActionRequest[] }): AgentProjectionState {
+  return {
+    thread: { id: 'thread-1' },
+    messages: [],
+    goals: [],
+    evaluations: [],
+    navigationEvents: input.planSteps?.map((step) => step.navigation).filter((item): item is AgentNavigationEvent => Boolean(item)) ?? [],
+    runEvents: input.runEvents,
+    planSteps: input.planSteps ?? [],
+    actionRequests: input.actionRequests ?? [],
+  }
+}
+
+describe('Agent execution transcript projection', () => {
+  it('keeps harness internals out of the default user transcript', () => {
+    const transcript = buildAgentTranscriptItems(projectionState({
+      runEvents: [
+        runEvent({ sequence: 1, type: 'run_queued', title: 'Run 已入队', message: '用户指令已持久化，等待 Agent worker 认领执行。' }),
+        runEvent({ sequence: 2, type: 'worker_claimed', title: 'Worker 已认领', message: '后台 worker 已取得 run lease，开始执行。', status: 'running' }),
+        runEvent({ sequence: 3, type: 'goal_contract_created', title: '目标契约已建立', message: 'Goal Run Engine 已建立目标契约。', status: 'info' }),
+        runEvent({ sequence: 4, type: 'goal_iteration_started', title: '目标循环 1', message: '开始第一轮模型规划。', status: 'running' }),
+        runEvent({ sequence: 5, type: 'model_planning', title: '模型规划中', message: '正在调用配置的模型。', status: 'running' }),
+      ],
+    }))
+
+    const visibleText = transcript.filter((item) => item.visibility === 'user').map((item) => `${item.title}\n${item.summary}`).join('\n')
+    expect(visibleText).toContain('正在理解你的目标')
+    expect(visibleText).toContain('已拆解业务目标')
+    expect(visibleText).toContain('正在规划下一步')
+    expect(visibleText).not.toContain('Run 已入队')
+    expect(visibleText).not.toContain('Worker 已认领')
+    expect(visibleText).not.toContain('run lease')
+    expect(visibleText).not.toContain('目标循环')
+
+    const technicalText = transcript.filter((item) => item.visibility === 'technical').map((item) => item.title).join('\n')
+    expect(technicalText).toContain('Run 已入队')
+    expect(technicalText).toContain('Worker 已认领')
+    expect(technicalText).toContain('目标循环 1')
+  })
+
+  it('projects tool-call streaming, confirmation interrupts, edits, and execution results', () => {
+    const state = projectionState({
+      runEvents: [
+        runEvent({ sequence: 1, type: 'provider_stream_started', title: 'Provider 流已打开', message: '正在接收 deepseek 输出。', status: 'running', data: { kind: 'stream_started' } }),
+        runEvent({ sequence: 2, type: 'provider_stream_delta', title: '工具调用片段', message: 'ledger_create_entry', status: 'running', data: { kind: 'tool_call_delta', toolCallIndex: 0, toolName: 'ledger_create_entry', argumentsPreview: '{"amount":176}' } }),
+        runEvent({ sequence: 3, type: 'action_updated', title: '确认卡已编辑', message: '确认卡已编辑：新增收入入账', status: 'info', data: { actionRequestId: 'action-1', actionKind: 'ledger.create_entry', changes: [{ label: '金额', value: '176 -> 188' }] } }),
+        runEvent({ sequence: 4, type: 'action_executed', title: '确认卡已执行', message: '已执行：新增收入入账', status: 'completed', data: { actionRequestId: 'action-1', actionKind: 'ledger.create_entry' } }),
+      ],
+      planSteps: [planStep()],
+      actionRequests: [action()],
+    })
+    const agUiEvents = buildAgentAgUiEvents(state)
+    const transcript = buildAgentTranscriptItems(state)
+
+    expect(agUiEvents.some((event) => event.type === 'TOOL_CALL_ARGS' && event.toolName === 'ledger_create_entry')).toBe(true)
+    expect(agUiEvents.some((event) => event.type === 'CUSTOM' && event.name === 'xox.interrupt.confirmation_card')).toBe(true)
+    expect(agUiEvents.some((event) => event.type === 'TOOL_CALL_RESULT' && event.toolName === 'ledger.create_entry')).toBe(true)
+
+    expect(transcript.some((item) => item.kind === 'tool_call' && item.title === '调用工具：ledger_create_entry')).toBe(true)
+    expect(transcript.some((item) => item.kind === 'confirmation' && item.status === 'waiting')).toBe(true)
+    expect(transcript.some((item) => item.kind === 'action_update' && item.details?.[0]?.value === '176 -> 188')).toBe(true)
+    expect(transcript.some((item) => item.kind === 'tool_result' && item.status === 'completed')).toBe(true)
+  })
+})
