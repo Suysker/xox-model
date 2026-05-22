@@ -136,6 +136,7 @@
 - For high-level typed tools, preserve hard facts from the original goal as deterministic payload defaults. If a real model omits fields such as `plan.workspaceName` inside a huge tool argument, the confirmation card should recover from the Goal Contract instead of silently keeping the old workspace name.
 - Keep long-tool budget policy centralized. First attempts and retries for the same high-volume structured tool should share one token/timeout policy so the harness is predictable and tests do not encode divergent hidden budgets.
 - User-facing Agent transcripts should not expose harness internals such as queued runs, worker leases, goal contracts, goal loops, or evaluator class names. Keep those in an explicit technical log; the default UI should show business steps, tool calls, waiting states, tool results, navigation, confirmation cards, and actionable checks.
+- Mature Agent UI should render model replies, tool calls, tool results, inline confirmation interrupts, action edits, and final summaries inside one chronological conversation timeline. Do not split chat, execution process, and confirmation cards into separate primary regions; use compact collapsed tool rows by default and keep technical logs behind an explicit disclosure.
 
 ## Testing
 
