@@ -223,4 +223,95 @@ describe('Agent execution transcript projection', () => {
     expect(streamRows).toHaveLength(1)
     expect(streamRows[0]?.content).toContain('我是 Agent')
   })
+
+  it('marks read-only provider tool calls completed after the run finishes', () => {
+    const timeline = buildAgentTimelineItems(projectionState({
+      messages: [
+        { id: 'message-user-payback', threadId: 'thread-1', role: 'user', content: '我现在几个月回本', createdAt },
+        { id: 'message-assistant-payback', threadId: 'thread-1', role: 'assistant', content: '当前按资金回报率计算还未回本。', createdAt },
+      ],
+      runEvents: [
+        runEvent({
+          sequence: 1,
+          type: 'provider_stream_delta',
+          title: '工具调用片段',
+          message: 'data_query_workspace',
+          status: 'running',
+          data: {
+            kind: 'tool_call_delta',
+            toolCallIndex: 0,
+            toolName: 'data_query_workspace',
+            argumentsPreview: '{"scope":"workspace_summary","metrics":["payback"]}',
+          },
+        }),
+        runEvent({
+          sequence: 2,
+          type: 'provider_stream_completed',
+          title: 'Provider 流已结束',
+          message: '模型流已结束。',
+          status: 'completed',
+          data: { toolCallCount: 1 },
+        }),
+        runEvent({
+          sequence: 3,
+          type: 'tool_plan_ready',
+          title: '模型回复已生成',
+          message: '模型规划生成 1 个步骤。',
+          status: 'completed',
+          data: { stepCount: 1, pendingActionCount: 0, executedActionCount: 0 },
+        }),
+        runEvent({
+          sequence: 4,
+          type: 'run_completed',
+          title: '运行完成',
+          message: '模型规划和只读回答已完成。',
+          status: 'completed',
+        }),
+      ],
+      planSteps: [
+        planStep({
+          id: 'step-read',
+          actionRequestId: null,
+          title: '查询回本周期',
+          description: '已读取当前工作区测算结果。',
+          status: 'executed',
+        }),
+      ],
+      actionRequests: [],
+    }))
+
+    const toolCall = timeline.find((item) => item.kind === 'tool_call' && item.toolName === 'data_query_workspace')
+    expect(toolCall).toMatchObject({
+      status: 'completed',
+      visibility: 'user',
+    })
+  })
+
+  it('keeps provider tool calls running while the provider stream is still open', () => {
+    const timeline = buildAgentTimelineItems(projectionState({
+      messages: [
+        { id: 'message-user-live-tool', threadId: 'thread-1', role: 'user', content: '查一下回本', createdAt },
+      ],
+      runEvents: [
+        runEvent({
+          sequence: 1,
+          type: 'provider_stream_delta',
+          title: '工具调用片段',
+          message: 'data_query_workspace',
+          status: 'running',
+          data: {
+            kind: 'tool_call_delta',
+            toolCallIndex: 0,
+            toolName: 'data_query_workspace',
+            argumentsPreview: '{"scope":"workspace_summary"}',
+          },
+        }),
+      ],
+      planSteps: [],
+      actionRequests: [],
+    }))
+
+    const toolCall = timeline.find((item) => item.kind === 'tool_call' && item.toolName === 'data_query_workspace')
+    expect(toolCall?.status).toBe('running')
+  })
 })

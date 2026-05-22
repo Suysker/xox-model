@@ -246,6 +246,27 @@ function mergeTimelineItems(items: PendingTimelineItem[]) {
   return merged
 }
 
+function providerToolCallCompletedStatus(state: AgentProjectionState, runId: string | null | undefined): AgentTimelineItem['status'] | null {
+  if (!runId) return null
+  let streamCompleted = false
+  for (const event of state.runEvents) {
+    if (event.runId !== runId) continue
+    if (event.type === 'run_failed') return 'failed'
+    if (event.type === 'run_cancelled') return 'cancelled'
+    if (event.type === 'run_completed') return 'completed'
+    if (event.type === 'provider_stream_completed') streamCompleted = true
+  }
+  return streamCompleted ? 'completed' : null
+}
+
+function finalizeProviderToolCallStatus(state: AgentProjectionState, item: PendingTimelineItem): PendingTimelineItem {
+  if (item.kind !== 'tool_call') return item
+  if (item.sourceType !== 'provider_stream_delta') return item
+  if (item.status !== 'running') return item
+  const completedStatus = providerToolCallCompletedStatus(state, item.runId)
+  return completedStatus ? { ...item, status: completedStatus } : item
+}
+
 export function buildAgentTimelineItems(state: AgentProjectionState): AgentTimelineItem[] {
   const actionsById = new Map(state.actionRequests.map((action) => [action.id, action]))
   const transcriptItems = buildAgentTranscriptItems(state)
@@ -269,6 +290,7 @@ export function buildAgentTimelineItems(state: AgentProjectionState): AgentTimel
   })
 
   return mergeTimelineItems(items)
+    .map((item) => finalizeProviderToolCallStatus(state, item))
     .sort((left, right) => left.order - right.order || left.id.localeCompare(right.id))
     .map(({ order: _order, ...item }, index) => ({ ...item, sequence: index + 1 }))
 }
