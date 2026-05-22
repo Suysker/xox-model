@@ -32,7 +32,7 @@ export function AgentMarkdown(props: { source: string; streaming?: boolean; clas
 
   return (
     <div
-      className={['agent-markdown max-w-[92%] break-words text-sm leading-6 text-stone-800', props.className ?? ''].filter(Boolean).join(' ')}
+      className={['agent-markdown max-w-[92%] break-words text-sm leading-5 text-stone-800', props.className ?? ''].filter(Boolean).join(' ')}
       onClick={handleClick}
     >
       {html ? <div dangerouslySetInnerHTML={{ __html: html }} /> : null}
