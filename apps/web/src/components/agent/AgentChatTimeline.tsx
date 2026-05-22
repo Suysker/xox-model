@@ -131,7 +131,7 @@ function TimelineMessage(props: { item: AgentTimelineItem }) {
       <p
         className={[
           'max-w-[92%] whitespace-pre-wrap break-words text-sm leading-6',
-          isUser ? 'text-right font-medium text-stone-950' : 'text-stone-800',
+          isUser ? 'rounded-lg bg-stone-950 px-3 py-1.5 text-right font-medium text-white shadow-sm' : 'text-stone-800',
           isStream ? 'border-l-2 border-stone-300 pl-2 text-stone-600' : '',
         ].join(' ')}
       >
