@@ -73,6 +73,7 @@ function timelineItemFromTranscript(
   state: AgentProjectionState,
   item: AgentTranscriptItem,
   action: AgentActionRequest | null,
+  visibility: AgentTimelineItem['visibility'],
 ): PendingTimelineItem {
   const kind = action && item.kind === 'confirmation' ? 'tool_call' : transcriptKind(item)
   return {
@@ -85,7 +86,7 @@ function timelineItemFromTranscript(
     summary: item.summary,
     ...(kind === 'assistant_stream' ? { content: item.summary } : {}),
     status: item.status,
-    visibility: item.visibility,
+    visibility,
     ...(item.sourceType ? { sourceType: item.sourceType } : {}),
     ...(item.agUiEventType ? { agUiEventType: item.agUiEventType } : {}),
     ...((action?.kind ?? item.toolName) ? { toolName: action?.kind ?? item.toolName } : {}),
@@ -97,6 +98,35 @@ function timelineItemFromTranscript(
     createdAt: item.createdAt,
     order: transcriptOrder(state, item),
   }
+}
+
+function hasFinalAssistantMessageForRun(state: AgentProjectionState) {
+  const firstRunEventTime = state.runEvents[0]?.createdAt
+  if (!firstRunEventTime) return state.messages.some((message) => message.role === 'assistant')
+  const firstRunEventMillis = Date.parse(firstRunEventTime)
+  return state.messages.some((message) => {
+    if (message.role !== 'assistant') return false
+    const messageMillis = Date.parse(message.createdAt)
+    return Number.isFinite(messageMillis) && Number.isFinite(firstRunEventMillis)
+      ? messageMillis >= firstRunEventMillis
+      : true
+  })
+}
+
+function shouldDropTranscriptItem(item: AgentTranscriptItem, state: AgentProjectionState) {
+  return item.kind === 'message' && hasFinalAssistantMessageForRun(state)
+}
+
+function transcriptTimelineVisibility(item: AgentTranscriptItem, action: AgentActionRequest | null): AgentTimelineItem['visibility'] {
+  if (item.visibility === 'technical') return 'technical'
+  if (action) return 'user'
+  if (item.kind === 'message') return 'user'
+  if (item.kind === 'error') return 'user'
+  if (item.kind === 'tool_call' || item.kind === 'tool_result' || item.kind === 'navigation' || item.kind === 'confirmation' || item.kind === 'action_update') {
+    return 'user'
+  }
+  if (item.kind === 'evaluation' && (item.status === 'failed' || item.status === 'waiting')) return 'user'
+  return 'technical'
 }
 
 function actionKind(status: AgentActionRequest['status']): AgentTimelineItemKind {
@@ -228,9 +258,10 @@ export function buildAgentTimelineItems(state: AgentProjectionState): AgentTimel
 
   for (const item of transcriptItems) {
     if (shouldHideGenericConfirmation(item, state)) continue
+    if (shouldDropTranscriptItem(item, state)) continue
     const action = item.actionRequestId ? actionsById.get(item.actionRequestId) ?? null : null
     if (action) representedActionIds.add(action.id)
-    items.push(timelineItemFromTranscript(state, item, action))
+    items.push(timelineItemFromTranscript(state, item, action, transcriptTimelineVisibility(item, action)))
   }
 
   state.actionRequests.forEach((action, index) => {

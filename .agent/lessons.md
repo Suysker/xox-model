@@ -138,6 +138,7 @@
 - User-facing Agent transcripts should not expose harness internals such as queued runs, worker leases, goal contracts, goal loops, or evaluator class names. Keep those in an explicit technical log; the default UI should show business steps, tool calls, waiting states, tool results, navigation, confirmation cards, and actionable checks.
 - Mature Agent UI should render model replies, tool calls, tool results, inline confirmation interrupts, action edits, and final summaries inside one chronological conversation timeline. Do not split chat, execution process, and confirmation cards into separate primary regions; use compact collapsed tool rows by default and keep technical logs behind an explicit disclosure.
 - When replacing Agent UI surfaces, remove deprecated primary components and prop paths in the same change. Keeping old chat/transcript/card regions beside a unified timeline creates duplicate state ownership and makes later Agent OS behavior harder to reason about.
+- A user-facing Agent timeline is not a run log. For simple chat such as "你好", show only the user message and one model reply; route planning, goal setup, memory recall, provider completion, and run lifecycle rows to the technical log unless they produce a business tool row, confirmation card, failure, or explicit user-facing interruption.
 
 ## Testing
 
@@ -259,3 +260,4 @@
 - In dense bookkeeping tables, editable count inputs should center within the cell while money columns stay right-aligned with tabular figures. Mixed alignment inside one grid makes the table feel broken even when the math is correct.
 - Ledger history is operational tooling, not decoration. Once actuals accumulate, it must support at least direction, status, and keyword filters, or users cannot trace a posted entry back to its subject/member/counterparty quickly enough.
 - If an expense workbench sits inside the main accounting surface, do not use a heavy black slab by default. Finance users need a light, legible work surface that keeps attention on inputs and budget context, not on the chrome itself.
+- Agent transcript surfaces should reserve the main lane for user-visible work only: plain user text, visible model text, compact tool rows, confirmation cards, and errors. Do not label messages as `You` / `Agent`, do not use chat bubbles, and show a lightweight `Thinking` placeholder while the provider has not emitted visible content.

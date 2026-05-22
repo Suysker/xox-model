@@ -1,5 +1,5 @@
-import type { AgentNavigationEvent } from '../lib/api'
-import { takeUnreplayedNavigationEvents } from './useAgentThread'
+import type { AgentMessage, AgentNavigationEvent } from '../lib/api'
+import { buildOptimisticUserTimelineItem, takeUnreplayedNavigationEvents } from './useAgentThread'
 
 function buildNavigation(overrides: Partial<AgentNavigationEvent> = {}): AgentNavigationEvent {
   return {
@@ -62,5 +62,28 @@ describe('useAgentThread navigation replay', () => {
       navigationEvents: [first, second],
       replayedKeys,
     })).toEqual([first, second])
+  })
+})
+
+describe('useAgentThread optimistic timeline', () => {
+  it('turns a local user message into a visible transcript row immediately', () => {
+    const message: AgentMessage = {
+      id: 'local-1',
+      threadId: 'pending',
+      role: 'user',
+      content: '你好',
+      createdAt: '2026-05-22T00:00:00.000Z',
+    }
+
+    expect(buildOptimisticUserTimelineItem(message)).toMatchObject({
+      id: 'timeline-local-1',
+      threadId: 'pending',
+      runId: null,
+      kind: 'user_message',
+      summary: '你好',
+      content: '你好',
+      status: 'completed',
+      visibility: 'user',
+    })
   })
 })

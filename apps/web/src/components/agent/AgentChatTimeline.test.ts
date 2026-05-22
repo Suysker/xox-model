@@ -1,5 +1,5 @@
 import type { AgentTimelineItem } from '../../lib/api'
-import { formatTimelineStatus, summarizeAgentChatTimeline, technicalTimelineItems, userTimelineItems } from './AgentChatTimeline'
+import { formatTimelineStatus, shouldShowTimelineThinking, summarizeAgentChatTimeline, technicalTimelineItems, userTimelineItems } from './AgentChatTimeline'
 
 function item(overrides: Partial<AgentTimelineItem> = {}): AgentTimelineItem {
   return {
@@ -41,5 +41,27 @@ describe('AgentChatTimeline helpers', () => {
     expect(formatTimelineStatus('waiting')).toBe('待确认')
     expect(formatTimelineStatus('running')).toBe('进行中')
     expect(formatTimelineStatus('completed')).toBe('完成')
+  })
+
+  it('shows Thinking after a submitted user message until visible work appears', () => {
+    const userMessage = item({
+      id: 'user-message',
+      kind: 'user_message',
+      title: '用户',
+      summary: '你好',
+      status: 'completed',
+    })
+
+    expect(shouldShowTimelineThinking([userMessage], true)).toBe(true)
+    expect(shouldShowTimelineThinking([], true)).toBe(true)
+    expect(shouldShowTimelineThinking([userMessage], false)).toBe(false)
+    expect(shouldShowTimelineThinking([
+      userMessage,
+      item({ id: 'stream', kind: 'assistant_stream', title: '实时回复', summary: '你好', status: 'running' }),
+    ], true)).toBe(false)
+    expect(shouldShowTimelineThinking([
+      userMessage,
+      item({ id: 'tool', kind: 'tool_call', title: '调用工具：workspace_rename', summary: '准备修改工作区。', status: 'running' }),
+    ], true)).toBe(false)
   })
 })

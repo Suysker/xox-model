@@ -62,6 +62,22 @@ export function takeUnreplayedNavigationEvents(input: {
   return nextEvents
 }
 
+export function buildOptimisticUserTimelineItem(message: AgentMessage): AgentTimelineItem {
+  return {
+    id: `timeline-${message.id}`,
+    threadId: message.threadId,
+    runId: null,
+    sequence: Number.MAX_SAFE_INTEGER,
+    kind: 'user_message',
+    title: '用户',
+    summary: message.content,
+    content: message.content,
+    status: 'completed',
+    visibility: 'user',
+    createdAt: message.createdAt,
+  }
+}
+
 export function useAgentThread(props: {
   onNavigate: (event: AgentNavigationEvent) => void
   onActionExecuted: (action: AgentActionRequest) => Promise<void> | void
@@ -266,6 +282,8 @@ export function useAgentThread(props: {
       createdAt: new Date().toISOString(),
     }
     setMessages((current) => [...current, optimisticMessage])
+    const optimisticTimelineItem = buildOptimisticUserTimelineItem(optimisticMessage)
+    setTimelineItems((current) => [...current.filter((item) => item.id !== optimisticTimelineItem.id), optimisticTimelineItem])
     try {
       const response = await api.sendAgentMessage({ threadId, message, background: true, automationLevel })
       setThreadId(response.threadId)
@@ -291,6 +309,7 @@ export function useAgentThread(props: {
       void refreshThreads()
     } catch (sendError) {
       setMessages((current) => current.filter((item) => item.id !== optimisticId))
+      setTimelineItems((current) => current.filter((item) => item.id !== optimisticTimelineItem.id))
       setError(sendError instanceof Error ? sendError.message : String(sendError))
     } finally {
       setBusy(false)

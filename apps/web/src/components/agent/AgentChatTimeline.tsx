@@ -60,6 +60,26 @@ export function formatTimelineStatus(status: AgentTimelineItem['status']) {
   return statusLabels[status]
 }
 
+export function shouldShowTimelineThinking(items: AgentTimelineItem[], busy: boolean) {
+  if (!busy) return false
+  const visible = userTimelineItems(items)
+  if (visible.length === 0) return true
+  const latestUserIndex = visible.map((item) => item.kind).lastIndexOf('user_message')
+  if (latestUserIndex === -1) return false
+  return !visible.slice(latestUserIndex + 1).some((item) => (
+    item.kind === 'assistant_stream' ||
+    item.kind === 'assistant_message' ||
+    item.kind === 'tool_call' ||
+    item.kind === 'tool_result' ||
+    item.kind === 'navigation' ||
+    item.kind === 'confirmation' ||
+    item.kind === 'action_edit' ||
+    item.kind === 'summary' ||
+    item.kind === 'evaluation' ||
+    item.status === 'failed'
+  ))
+}
+
 function statusClass(status: AgentTimelineItem['status']) {
   if (status === 'completed') return 'border-emerald-200 bg-emerald-50 text-emerald-700'
   if (status === 'waiting' || status === 'pending' || status === 'running') return 'border-amber-200 bg-amber-50 text-amber-700'
@@ -105,20 +125,30 @@ function TimelineStatusBadge(props: { status: AgentTimelineItem['status'] }) {
 
 function TimelineMessage(props: { item: AgentTimelineItem }) {
   const isUser = props.item.kind === 'user_message'
+  const isStream = props.item.kind === 'assistant_stream'
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
-      <div className={[
-        'max-w-[92%] rounded-lg px-3 py-2 text-sm leading-6 shadow-sm',
-        isUser ? 'bg-stone-950 text-white' : 'border border-stone-900/10 bg-white text-stone-800',
-      ].join(' ')}
+      <p
+        className={[
+          'max-w-[92%] whitespace-pre-wrap break-words text-sm leading-6',
+          isUser ? 'text-right font-medium text-stone-950' : 'text-stone-800',
+          isStream ? 'border-l-2 border-stone-300 pl-2 text-stone-600' : '',
+        ].join(' ')}
       >
-        <div className="mb-1 flex items-center gap-1.5 text-[10px] font-semibold opacity-70">
-          <KindIcon kind={props.item.kind} />
-          {props.item.title}
-          {props.item.kind === 'assistant_stream' ? <span>实时</span> : null}
-        </div>
-        <p className="whitespace-pre-wrap break-words">{props.item.content ?? props.item.summary}</p>
-      </div>
+        {props.item.content ?? props.item.summary}
+      </p>
+    </div>
+  )
+}
+
+function ThinkingRow() {
+  return (
+    <div className="flex items-center gap-2 px-1 py-1 text-xs font-medium text-stone-500">
+      <span className="relative flex h-2.5 w-2.5">
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-stone-300 opacity-75" />
+        <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-stone-500" />
+      </span>
+      <span>Thinking</span>
     </div>
   )
 }
@@ -166,24 +196,22 @@ function TimelineEventRow(props: {
   const expandable = hasExpandableDetails(props.item)
   const showDetails = props.expanded && expandable
   return (
-    <div className="rounded-md border border-stone-900/10 bg-white px-2.5 py-2 shadow-sm">
-      <div className="grid grid-cols-[24px_minmax(0,1fr)_auto] items-start gap-2">
-        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-stone-100 text-stone-600">
+    <div className="rounded-md border border-stone-900/10 bg-white px-2 py-1 shadow-sm">
+      <div className="grid min-h-7 grid-cols-[20px_minmax(0,1fr)_auto] items-center gap-2">
+        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-stone-100 text-stone-600">
           <KindIcon kind={props.item.kind} />
         </span>
-        <div className="min-w-0">
-          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-            <span className="truncate text-xs font-semibold text-stone-950">{props.item.title}</span>
-            <span className="rounded-full bg-stone-100 px-1.5 py-0.5 text-[10px] font-semibold text-stone-500">
-              {kindLabels[props.item.kind]}
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span className="shrink-0 text-xs font-semibold text-stone-950">{props.item.title}</span>
+          <span className="shrink-0 rounded-full bg-stone-100 px-1.5 py-0.5 text-[10px] font-semibold text-stone-500">
+            {kindLabels[props.item.kind]}
+          </span>
+          {props.item.toolName ? (
+            <span className="max-w-[220px] shrink truncate rounded-full bg-emerald-50 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-emerald-700">
+              {props.item.toolName}
             </span>
-            {props.item.toolName ? (
-              <span className="max-w-[220px] truncate rounded-full bg-emerald-50 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-emerald-700">
-                {props.item.toolName}
-              </span>
-            ) : null}
-          </div>
-          <p className="mt-0.5 truncate text-[11px] leading-4 text-stone-500">{props.item.summary}</p>
+          ) : null}
+          <span className="min-w-0 truncate text-[11px] text-stone-500">{props.item.summary}</span>
         </div>
         <div className="flex items-center gap-1">
           {expandable ? (
@@ -230,6 +258,7 @@ export function AgentChatTimeline(props: {
   const visible = userTimelineItems(props.items)
   const technical = technicalTimelineItems(props.items)
   const summary = summarizeAgentChatTimeline(props.items)
+  const showThinking = shouldShowTimelineThinking(props.items, props.busy)
 
   function toggleExpanded(id: string) {
     setExpandedIds((current) => {
@@ -240,7 +269,7 @@ export function AgentChatTimeline(props: {
     })
   }
 
-  if (visible.length === 0 && technical.length === 0) {
+  if (visible.length === 0 && technical.length === 0 && !showThinking) {
     return (
       <div className="mt-3 rounded-md border border-stone-900/10 bg-white px-3 py-3 text-xs text-stone-500">
         输入命令，例如：把 3 月成员 A 线下 10 张、线上 2 张入账。
@@ -288,6 +317,7 @@ export function AgentChatTimeline(props: {
               />
             )
         ))}
+        {showThinking ? <ThinkingRow /> : null}
       </div>
 
       {technicalOpen ? (

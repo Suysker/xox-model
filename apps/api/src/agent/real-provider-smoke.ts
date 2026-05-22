@@ -178,7 +178,7 @@ function findAction(response: JsonResponse, kind: string, label: string) {
 function assertUnifiedTimeline(
   response: JsonResponse,
   label: string,
-  options: { actionId?: string; requireTool?: boolean } = {},
+  options: { actionId?: string; requireTool?: boolean; expectedVisibleKinds?: string[] } = {},
 ) {
   const timeline = response.json.timelineItems
   assertSmoke(Array.isArray(timeline) && timeline.length > 0, `${label} missing unified timeline items`)
@@ -189,6 +189,12 @@ function assertUnifiedTimeline(
     visible.some((item: any) => item.kind === 'assistant_message' || item.kind === 'assistant_stream' || item.kind === 'summary'),
     `${label} timeline missing assistant/model text`,
   )
+  if (options.expectedVisibleKinds) {
+    assertSmoke(
+      JSON.stringify(visible.map((item: any) => item.kind)) === JSON.stringify(options.expectedVisibleKinds),
+      `${label} visible timeline was too noisy: ${JSON.stringify(visible.map((item: any) => ({ kind: item.kind, title: item.title })))}`,
+    )
+  }
   if (options.requireTool) {
     assertSmoke(
       visible.some((item: any) => item.kind === 'tool_call' || item.kind === 'tool_result' || item.kind === 'confirmation'),
@@ -349,7 +355,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
       Array.isArray(greeting.json.planSteps) && greeting.json.planSteps.some((step: any) => step.status === 'executed'),
       `basic reply did not produce an executed read-only step: ${JSON.stringify(greeting.json.planSteps)}`,
     )
-    assertUnifiedTimeline(greeting, 'basic conversational reply')
+    assertUnifiedTimeline(greeting, 'basic conversational reply', { expectedVisibleKinds: ['user_message', 'assistant_message'] })
     rememberCoverage(coveredDirections, 'basic_conversational_reply')
 
     const forecast = await sendAgentMessage(client, plannerSources, {

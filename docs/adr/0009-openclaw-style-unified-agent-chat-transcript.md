@@ -398,6 +398,8 @@ These can appear only in an explicit technical log, redacted and collapsed by de
 
 - `packages/contracts` now exposes `AgentTimelineItem` and includes `timelineItems` in `AgentThreadState` and `AgentSendResponse`.
 - `apps/api/src/agent/agent-timeline-projector.ts` builds one backend-owned timeline from persisted messages, AG-UI transcript rows, action requests, navigation, memory and evaluator state. It attaches pending action requests to the producing tool/action row and keeps harness internals technical-only.
+- The default user timeline is intentionally sparse: simple assistant-text turns show only the user message and one assistant reply. Planning lifecycle, memory recall, provider stream completion, tool catalog, and run completion rows are routed to the technical log unless they create a business tool row, confirmation interrupt, user-facing failure, or live assistant stream before the final reply exists.
+- The primary chat surface does not render role labels like "you" or "Agent" and does not wrap messages in chat bubbles. It behaves like a compact agent console: submitted input is shown as plain transcript text, `Thinking` appears while the provider has not produced visible output, and provider-visible text deltas replace the placeholder as they stream in. Hidden model reasoning is never exposed or fabricated.
 - `GET /api/v1/agent/threads/:threadId/ag-ui-events` remains additive for compatibility and now also returns `timelineItems`; the primary React surface reads the same `timelineItems` from normal thread state.
 - `apps/web/src/components/agent/AgentChatTimeline.tsx` replaces the old separated chat/process/cards layout with one chronological lane. Tool rows are compact and collapsed by default, pending confirmation cards render inline, and raw technical rows sit behind a collapsed "技术日志" disclosure.
 - `AgentConsole` no longer receives `messages`, `planSteps`, `runEvents`, `goals`, `evaluations`, `actionRequests`, or `navigationEvents` as independent render inputs. Those server-owned facts still exist in thread state, but the primary UI consumes only the unified timeline to prevent drift.
@@ -407,6 +409,8 @@ These can appear only in an explicit technical log, redacted and collapsed by de
 
 - User message, assistant text, tool call, tool result, confirmation card, action edit, evaluator check, memory note, and final summary render in one chronological timeline.
 - Tool calls are collapsed to a one-line row by default.
+- A just-submitted user request immediately shows a `Thinking` row until assistant text, a tool call, a confirmation card, or an error appears.
+- User and assistant messages render without role labels and without bubble cards.
 - Expanding a tool row shows tool arguments, result preview, linked confirmation card, and audit details.
 - Pending write actions are editable inline before execution.
 - The optional review lane mirrors the same action request id and cannot drift from inline state.
