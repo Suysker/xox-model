@@ -28,14 +28,7 @@ export function AgentShell(props: {
       <AgentConsole
         threadId={agent.threadId}
         planner={agent.planner}
-        messages={agent.messages}
-        planSteps={agent.planSteps}
-        runEvents={agent.runEvents}
-        transcriptItems={agent.transcriptItems}
-        goals={agent.goals}
-        evaluations={agent.evaluations}
-        actionRequests={agent.actionRequests}
-        navigationEvents={agent.navigationEvents}
+        timelineItems={agent.timelineItems}
         memories={agent.memories}
         providerSetting={agent.providerSetting}
         providerProbe={agent.providerProbe}

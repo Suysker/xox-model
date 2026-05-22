@@ -1,7 +1,7 @@
 import { Check, Pencil, Save, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { AgentActionRequest, AgentActionUpdatePayload } from '../../lib/api'
-import { formatAgentNavigationTarget } from './AgentPlanTimeline'
+import { formatAgentNavigationTarget } from './agentNavigation'
 
 const riskLabels: Record<AgentActionRequest['riskLevel'], string> = {
   low: '低风险',
@@ -16,6 +16,7 @@ export function AgentActionCard(props: {
   onCancel: (id: string) => void
   onUpdate: (id: string, payload: AgentActionUpdatePayload) => void
   diffDetails?: Array<{ label: string; value: string }>
+  layout?: 'standalone' | 'inline'
 }) {
   const isPending = props.action.status === 'pending'
   const [editing, setEditing] = useState(false)
@@ -27,6 +28,9 @@ export function AgentActionCard(props: {
   const payloadRef = useRef<HTMLTextAreaElement | null>(null)
   const navigationLabel = formatAgentNavigationTarget(props.action.navigation)
   const diffDetails = props.diffDetails ?? []
+  const rootClass = props.layout === 'inline'
+    ? 'w-full rounded-md border border-stone-900/10 bg-white p-3 shadow-sm'
+    : 'min-w-[320px] max-w-[430px] rounded-lg border border-stone-900/10 bg-white p-3 shadow-sm'
 
   useEffect(() => {
     setSummary(props.action.summary)
@@ -52,7 +56,7 @@ export function AgentActionCard(props: {
   }
 
   return (
-    <div className="min-w-[320px] max-w-[430px] rounded-lg border border-stone-900/10 bg-white p-3 shadow-sm">
+    <div className={rootClass}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-xs font-semibold text-stone-500">{props.action.targetLabel}</p>

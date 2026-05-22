@@ -20,6 +20,7 @@ import { completeAgentRun, createAgentRunController, scheduleAgentRunQueueDrain 
 import { normalizeAgentAutomationLevel, type AgentAutomationLevel } from './tool-policy.js'
 import { buildAgentAgUiEvents } from './ag-ui-projection.js'
 import { buildAgentTranscriptItems } from './agent-transcript-projector.js'
+import { buildAgentTimelineItems } from './agent-timeline-projector.js'
 
 export type SubmitAgentMessageRunInput = {
   db: Kysely<Database>
@@ -102,6 +103,7 @@ export async function submitAgentMessageRun(input: SubmitAgentMessageRunInput): 
         runEvents,
         agUiEvents: buildAgentAgUiEvents(projection),
         transcriptItems: buildAgentTranscriptItems(projection),
+        timelineItems: buildAgentTimelineItems(projection),
         planSteps: projection.planSteps,
         actionRequests: projection.actionRequests,
       }
@@ -146,6 +148,7 @@ export async function submitAgentMessageRun(input: SubmitAgentMessageRunInput): 
       runEvents,
       agUiEvents: buildAgentAgUiEvents(projection),
       transcriptItems: buildAgentTranscriptItems(projection),
+      timelineItems: buildAgentTimelineItems(projection),
       planSteps,
       actionRequests,
     }

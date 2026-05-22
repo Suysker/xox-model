@@ -233,7 +233,7 @@ Recommended module boundaries:
 The first implementation should prefer existing state and components over a wholesale UI library migration:
 
 - Reuse `AgentActionCard`, but add structured field editors and diff rendering.
-- Reuse `AgentPlanTimeline` pure helpers where possible, but rename the richer surface to `AgentExecutionTranscript`.
+- Reuse existing projection helpers where possible; ADR 0009 later replaces the richer primary surface with `AgentChatTimeline`.
 - Reuse existing SSE fallback behavior; do not introduce a second frontend truth store.
 
 ## Acceptance Criteria
@@ -264,7 +264,7 @@ The first implementation should prefer existing state and components over a whol
 - `apps/api/src/agent/agent-transcript-projector.ts` derives the default user transcript and filters harness internals into technical-only rows.
 - `GET /api/v1/agent/threads/:threadId/ag-ui-events` returns the projected AG-UI events and transcript items without replacing the existing thread state API.
 - `AgentThreadState` and `AgentSendResponse` include `agUiEvents` and `transcriptItems`, so REST, SSE recovery and the immediate background response all share the same server-owned projection.
-- React now renders `AgentExecutionTranscript` instead of exposing raw run trace as the default timeline. Technical rows such as worker leases and goal loops are collapsed behind "技术日志".
+- ADR 0009 supersedes the initial `AgentExecutionTranscript` primary UI with `AgentChatTimeline`; `agUiEvents` and `transcriptItems` remain compatibility/debug projections.
 - `AgentActionCard` renders structured detail inputs and shows persisted edit diffs before confirmation.
 
 ## Non-Goals

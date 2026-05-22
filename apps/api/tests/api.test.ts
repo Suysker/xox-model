@@ -817,6 +817,15 @@ describe('xox TypeScript API', () => {
       expect(visibleTranscript).toContain('确认成员收入入账')
       expect(visibleTranscript).not.toContain('Worker 已认领')
       expect(visibleTranscript).not.toContain('run lease')
+      const visibleTimeline = planned.json.timelineItems
+        .filter((item: any) => item.visibility === 'user')
+        .map((item: any) => `${item.kind}:${item.title}\n${item.summary}`)
+        .join('\n')
+      expect(visibleTimeline).toContain('user_message:你')
+      expect(visibleTimeline).toContain('tool_call:调用工具')
+      expect(planned.json.timelineItems.some((item: any) => item.kind === 'tool_call' && item.actionRequest?.id === planned.json.actionRequests[0].id)).toBe(true)
+      expect(visibleTimeline).not.toContain('Worker 已认领')
+      expect(visibleTimeline).not.toContain('run lease')
       expect(planned.json.actionRequests[0].details).toEqual(
         expect.arrayContaining([expect.objectContaining({ label: '发生日', value: expect.stringMatching(/-03-01$/) })]),
       )
@@ -830,6 +839,7 @@ describe('xox TypeScript API', () => {
       expect(projected.statusCode).toBe(200)
       expect(projected.json.events.some((event: any) => event.type === 'TOOL_CALL_RESULT' && event.toolName === 'ledger.create_entry')).toBe(true)
       expect(projected.json.transcriptItems.some((item: any) => item.kind === 'tool_result' && item.title === '已执行动作')).toBe(true)
+      expect(projected.json.timelineItems.some((item: any) => item.kind === 'tool_result' && item.toolName === 'ledger.create_entry')).toBe(true)
 
       const periodId = planned.json.navigationEvents[0].route.selectedPeriodId
       const entries = (await client.get(`/api/v1/ledger/entries?periodId=${periodId}`)).json

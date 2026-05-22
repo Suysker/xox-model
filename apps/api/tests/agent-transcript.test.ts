@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { AgentActionRequest, AgentNavigationEvent, AgentPlanStep, AgentRunEvent } from '@xox/contracts'
 import { buildAgentAgUiEvents } from '../src/agent/ag-ui-projection.js'
 import { buildAgentTranscriptItems } from '../src/agent/agent-transcript-projector.js'
+import { buildAgentTimelineItems } from '../src/agent/agent-timeline-projector.js'
 import type { AgentProjectionState } from '../src/agent/ag-ui-projection.js'
 
 const createdAt = '2026-05-22T00:00:00.000Z'
@@ -73,7 +74,22 @@ function planStep(overrides: Partial<AgentPlanStep> = {}): AgentPlanStep {
 function projectionState(input: { runEvents: AgentRunEvent[]; planSteps?: AgentPlanStep[]; actionRequests?: AgentActionRequest[] }): AgentProjectionState {
   return {
     thread: { id: 'thread-1' },
-    messages: [],
+    messages: [
+      {
+        id: 'message-user-1',
+        threadId: 'thread-1',
+        role: 'user',
+        content: '把 3 月成员 A 收入入账。',
+        createdAt,
+      },
+      {
+        id: 'message-assistant-1',
+        threadId: 'thread-1',
+        role: 'assistant',
+        content: '我已经准备好一张确认卡，请检查金额后确认。',
+        createdAt,
+      },
+    ],
     goals: [],
     evaluations: [],
     navigationEvents: input.planSteps?.map((step) => step.navigation).filter((item): item is AgentNavigationEvent => Boolean(item)) ?? [],
@@ -132,5 +148,32 @@ describe('Agent execution transcript projection', () => {
     expect(transcript.some((item) => item.kind === 'confirmation' && item.status === 'waiting')).toBe(true)
     expect(transcript.some((item) => item.kind === 'action_update' && item.details?.[0]?.value === '176 -> 188')).toBe(true)
     expect(transcript.some((item) => item.kind === 'tool_result' && item.status === 'completed')).toBe(true)
+  })
+
+  it('builds one unified chat timeline with inline confirmations and technical separation', () => {
+    const timeline = buildAgentTimelineItems(projectionState({
+      runEvents: [
+        runEvent({ sequence: 1, type: 'run_queued', title: 'Run 已入队', message: '用户指令已持久化，等待 Agent worker 认领执行。' }),
+        runEvent({ sequence: 2, type: 'worker_claimed', title: 'Worker 已认领', message: '后台 worker 已取得 run lease，开始执行。', status: 'running' }),
+        runEvent({ sequence: 3, type: 'provider_stream_delta', title: '文本片段', message: '你好', status: 'running', data: { kind: 'content_delta', preview: '你好' } }),
+        runEvent({ sequence: 4, type: 'provider_stream_delta', title: '文本片段', message: '你好，我是 Agent', status: 'running', data: { kind: 'content_delta', preview: '你好，我是 Agent' } }),
+        runEvent({ sequence: 5, type: 'provider_stream_delta', title: '工具调用片段', message: 'ledger_create_entry', status: 'running', data: { kind: 'tool_call_delta', toolCallIndex: 0, toolName: 'ledger_create_entry', argumentsPreview: '{"amount":176}' } }),
+      ],
+      planSteps: [planStep()],
+      actionRequests: [action()],
+    }))
+
+    const visible = timeline.filter((item) => item.visibility === 'user')
+    const technical = timeline.filter((item) => item.visibility === 'technical')
+
+    expect(visible.map((item) => item.kind)).toContain('user_message')
+    expect(visible.map((item) => item.kind)).toContain('assistant_message')
+    const streamRows = visible.filter((item) => item.kind === 'assistant_stream')
+    expect(streamRows).toHaveLength(1)
+    expect(streamRows[0]?.content).toContain('我是 Agent')
+    expect(visible.some((item) => item.kind === 'tool_call' && item.toolName === 'ledger_create_entry')).toBe(true)
+    expect(visible.some((item) => item.kind === 'tool_call' && item.actionRequest?.id === 'action-1')).toBe(true)
+    expect(visible.map((item) => `${item.title}\n${item.summary}`).join('\n')).not.toContain('run lease')
+    expect(technical.map((item) => item.title).join('\n')).toContain('Worker 已认领')
   })
 })

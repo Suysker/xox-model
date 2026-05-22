@@ -20,7 +20,7 @@ import {
   type AgentThreadEvent,
   type AgentThreadState,
   type AgentThreadSummary,
-  type AgentTranscriptItem,
+  type AgentTimelineItem,
 } from '../lib/api'
 
 const CURRENT_THREAD_STORAGE_KEY = 'xox.agent.currentThreadId'
@@ -75,7 +75,7 @@ export function useAgentThread(props: {
   const [evaluations, setEvaluations] = useState<AgentEvaluationResult[]>([])
   const [navigationEvents, setNavigationEvents] = useState<AgentNavigationEvent[]>([])
   const [agUiEvents, setAgUiEvents] = useState<AgentAgUiEvent[]>([])
-  const [transcriptItems, setTranscriptItems] = useState<AgentTranscriptItem[]>([])
+  const [timelineItems, setTimelineItems] = useState<AgentTimelineItem[]>([])
   const [planner, setPlanner] = useState<AgentSendResponse['planner'] | null>(null)
   const [memories, setMemories] = useState<AgentMemoryRecord[]>([])
   const [providerSetting, setProviderSetting] = useState<AgentProviderSettingRecord | null>(null)
@@ -99,7 +99,7 @@ export function useAgentThread(props: {
     setEvaluations(state.evaluations)
     setNavigationEvents(state.navigationEvents)
     setAgUiEvents(state.agUiEvents)
-    setTranscriptItems(state.transcriptItems)
+    setTimelineItems(state.timelineItems)
     setPlanner(state.planner)
     setRunningRunId(latestRun?.status === 'running' ? latestRun.id : null)
     writeCurrentThreadId(state.thread.id)
@@ -276,7 +276,7 @@ export function useAgentThread(props: {
       setPlanSteps(response.planSteps)
       setRunEvents(response.runEvents)
       setAgUiEvents(response.agUiEvents)
-      setTranscriptItems(response.transcriptItems)
+      setTimelineItems(response.timelineItems)
       setGoals([])
       setEvaluations([])
       setNavigationEvents(response.navigationEvents)
@@ -382,7 +382,7 @@ export function useAgentThread(props: {
     setEvaluations([])
     setNavigationEvents([])
     setAgUiEvents([])
-    setTranscriptItems([])
+    setTimelineItems([])
     setPlanner(null)
     setRunningRunId(null)
     setError(null)
@@ -457,7 +457,7 @@ export function useAgentThread(props: {
     evaluations,
     navigationEvents,
     agUiEvents,
-    transcriptItems,
+    timelineItems,
     planner,
     memories,
     providerSetting,

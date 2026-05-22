@@ -1,6 +1,6 @@
 # ADR 0009: OpenClaw-Style Unified Agent Chat Transcript
 
-Status: Proposed
+Status: Implemented
 
 Date: 2026-05-22
 
@@ -207,18 +207,16 @@ Responsibilities:
 Paths:
 
 - `apps/web/src/components/agent/AgentConsole.tsx`
-- new `apps/web/src/components/agent/timeline/AgentChatTimeline.tsx`
-- new `apps/web/src/components/agent/timeline/AgentToolRow.tsx`
-- new `apps/web/src/components/agent/timeline/AgentInlineConfirmation.tsx`
-- new `apps/web/src/components/agent/timeline/toolExpansionState.ts`
-- new `apps/web/src/components/agent/timeline/toolDisplay.ts`
+- `apps/web/src/components/agent/AgentChatTimeline.tsx`
+- `apps/web/src/components/agent/AgentActionCard.tsx`
+- `apps/web/src/components/agent/agentNavigation.ts`
 
 Responsibilities:
 
 - Render user and assistant messages in the same lane as tool rows.
 - Render tool rows collapsed by default.
 - Expand a tool row to show arguments, result preview, audit details, and inline confirmation card.
-- Keep per-thread expansion state stable during SSE/polling refresh.
+- Keep expansion state in the timeline component, keyed by stable backend item id, so SSE/polling refreshes do not create a second action state store.
 - Render model final summaries as normal assistant messages.
 - Keep technical log behind a disclosure.
 
@@ -393,6 +391,17 @@ These can appear only in an explicit technical log, redacted and collapsed by de
    - Add web tests for collapsed rows, inline confirmation, final summary, and hidden internals.
    - Add API tests for timeline projection reconstruction.
    - Run existing build/test suite and real-provider smoke.
+
+## Implementation Notes
+
+2026-05-22 implementation:
+
+- `packages/contracts` now exposes `AgentTimelineItem` and includes `timelineItems` in `AgentThreadState` and `AgentSendResponse`.
+- `apps/api/src/agent/agent-timeline-projector.ts` builds one backend-owned timeline from persisted messages, AG-UI transcript rows, action requests, navigation, memory and evaluator state. It attaches pending action requests to the producing tool/action row and keeps harness internals technical-only.
+- `GET /api/v1/agent/threads/:threadId/ag-ui-events` remains additive for compatibility and now also returns `timelineItems`; the primary React surface reads the same `timelineItems` from normal thread state.
+- `apps/web/src/components/agent/AgentChatTimeline.tsx` replaces the old separated chat/process/cards layout with one chronological lane. Tool rows are compact and collapsed by default, pending confirmation cards render inline, and raw technical rows sit behind a collapsed "技术日志" disclosure.
+- `AgentConsole` no longer receives `messages`, `planSteps`, `runEvents`, `goals`, `evaluations`, `actionRequests`, or `navigationEvents` as independent render inputs. Those server-owned facts still exist in thread state, but the primary UI consumes only the unified timeline to prevent drift.
+- The deprecated primary UI components `AgentExecutionTranscript` and `AgentPlanTimeline` were removed rather than retained as parallel surfaces.
 
 ## Acceptance Criteria
 

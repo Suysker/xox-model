@@ -175,6 +175,43 @@ function findAction(response: JsonResponse, kind: string, label: string) {
   return action
 }
 
+function assertUnifiedTimeline(
+  response: JsonResponse,
+  label: string,
+  options: { actionId?: string; requireTool?: boolean } = {},
+) {
+  const timeline = response.json.timelineItems
+  assertSmoke(Array.isArray(timeline) && timeline.length > 0, `${label} missing unified timeline items`)
+  const visible = timeline.filter((item: any) => item.visibility === 'user')
+  const technical = timeline.filter((item: any) => item.visibility === 'technical')
+  assertSmoke(visible.some((item: any) => item.kind === 'user_message'), `${label} timeline missing user message`)
+  assertSmoke(
+    visible.some((item: any) => item.kind === 'assistant_message' || item.kind === 'assistant_stream' || item.kind === 'summary'),
+    `${label} timeline missing assistant/model text`,
+  )
+  if (options.requireTool) {
+    assertSmoke(
+      visible.some((item: any) => item.kind === 'tool_call' || item.kind === 'tool_result' || item.kind === 'confirmation'),
+      `${label} timeline missing compact tool/action row`,
+    )
+  }
+  if (options.actionId) {
+    assertSmoke(
+      visible.some((item: any) => item.actionRequest?.id === options.actionId || item.actionRequestId === options.actionId),
+      `${label} timeline missing inline confirmation/action ${options.actionId}`,
+    )
+  }
+  const visibleText = JSON.stringify(visible)
+  assertSmoke(!visibleText.includes('Worker 已认领'), `${label} leaked worker lifecycle into visible timeline`)
+  assertSmoke(!visibleText.includes('run lease'), `${label} leaked lease details into visible timeline`)
+  if (technical.length > 0) {
+    assertSmoke(
+      technical.every((item: any) => item.visibility === 'technical'),
+      `${label} technical log rows were not separated`,
+    )
+  }
+}
+
 function versionNoFromResult(result: any) {
   const version = result?.version ?? result
   const versionNo = Number(version?.versionNo ?? version?.version_no)
@@ -312,6 +349,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
       Array.isArray(greeting.json.planSteps) && greeting.json.planSteps.some((step: any) => step.status === 'executed'),
       `basic reply did not produce an executed read-only step: ${JSON.stringify(greeting.json.planSteps)}`,
     )
+    assertUnifiedTimeline(greeting, 'basic conversational reply')
     rememberCoverage(coveredDirections, 'basic_conversational_reply')
 
     const forecast = await sendAgentMessage(client, plannerSources, {
@@ -578,6 +616,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     maxMultiStepCount = Math.max(maxMultiStepCount, multi.json.planSteps.length)
 
     const ledgerAction = findAction(multi, 'ledger.create_entry', 'multi-step ledger')
+    assertUnifiedTimeline(multi, 'multi-step ledger and account refusal', { actionId: ledgerAction.id, requireTool: true })
     assertSmoke(String(ledgerAction.targetLabel).includes('成员 A'), `memory was not injected into new-thread ledger action: ${ledgerAction.targetLabel}`)
     assertSmoke(
       multi.json.planSteps.some((step: any) => String(step.title).includes('账号') || String(step.description).includes('账号')),
@@ -587,6 +626,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     rememberCoverage(coveredDirections, 'multi_step_planning')
     rememberCoverage(coveredDirections, 'account_action_forbidden')
     rememberCoverage(coveredDirections, 'ledger_confirmation_card')
+    rememberCoverage(coveredDirections, 'unified_timeline_inline_confirmation')
 
     const editedPayload = editableLedgerPayload(ledgerAction.payload)
     const editedLedger = await client.patch(`/api/v1/agent/action-requests/${ledgerAction.id}`, {
@@ -880,6 +920,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
       ].join('\n'),
     })
     const complexAction = findAction(complexOperatingModel, 'workspace.update_draft', 'complex operating model')
+    assertUnifiedTimeline(complexOperatingModel, 'complex operating model', { actionId: complexAction.id, requireTool: true })
     assertSmoke(
       complexAction.payload?.source === 'workspace_configure_operating_model' ||
         String(complexAction.title ?? '').includes('完整经营模型'),
@@ -906,6 +947,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     assertSmoke(complexDraft.json.workspaceName === '星河 50 期启动测算', 'confirmed complex operating model did not update workspace name')
     rememberCoverage(coveredDirections, 'complex_operating_model_high_level_tool')
     rememberCoverage(coveredDirections, 'automation_high_auto_execute')
+    rememberCoverage(coveredDirections, 'unified_timeline_complex_tool_rows')
 
     const auditCount = await db
       .selectFrom('audit_logs')

@@ -1,8 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Bot, Database, History, KeyRound, Plus, RefreshCw, Save, SendHorizontal, Trash2, XCircle } from 'lucide-react'
-import type { AgentActionRequest, AgentActionUpdatePayload, AgentAutomationLevel, AgentEvaluationResult, AgentGoalRecord, AgentMemoryRecord, AgentMessage, AgentNavigationEvent, AgentPlanStep, AgentProviderProbePayload, AgentProviderProbeResult, AgentProviderSettingRecord, AgentProviderSettingUpdatePayload, AgentRunEvent, AgentSendResponse, AgentThreadSummary, AgentTranscriptItem } from '../../lib/api'
-import { AgentActionCard } from './AgentActionCard'
-import { AgentExecutionTranscript } from './AgentExecutionTranscript'
+import type { AgentActionUpdatePayload, AgentAutomationLevel, AgentMemoryRecord, AgentProviderProbePayload, AgentProviderProbeResult, AgentProviderSettingRecord, AgentProviderSettingUpdatePayload, AgentRunEvent, AgentSendResponse, AgentThreadSummary, AgentTimelineItem } from '../../lib/api'
+import { AgentChatTimeline } from './AgentChatTimeline'
 
 export type ProviderStreamPreview = {
   content: string
@@ -75,14 +74,7 @@ export function buildProviderStreamPreview(runEvents: AgentRunEvent[]): Provider
 export function AgentConsole(props: {
   threadId: string | null
   planner: AgentSendResponse['planner'] | null
-  messages: AgentMessage[]
-  planSteps: AgentPlanStep[]
-  runEvents: AgentRunEvent[]
-  transcriptItems: AgentTranscriptItem[]
-  goals: AgentGoalRecord[]
-  evaluations: AgentEvaluationResult[]
-  actionRequests: AgentActionRequest[]
-  navigationEvents: AgentNavigationEvent[]
+  timelineItems: AgentTimelineItem[]
   memories: AgentMemoryRecord[]
   providerSetting: AgentProviderSettingRecord | null
   providerProbe: AgentProviderProbeResult | null
@@ -120,17 +112,15 @@ export function AgentConsole(props: {
     model: 'deepseek-v4-pro',
     apiKey: '',
   })
-  const pendingActions = props.actionRequests.filter((action) => action.status === 'pending')
   const visibleMemories = props.memories.filter((memory) => {
     if (memoryTypeFilter !== 'all' && memory.memoryType !== memoryTypeFilter) return false
     const query = memorySearch.trim().toLowerCase()
     if (!query) return true
     return `${memory.value} ${memory.key} ${memory.kind} ${memory.memoryType ?? ''} ${memory.status ?? ''}`.toLowerCase().includes(query)
   })
-  const recentMessages = props.messages.slice(-6)
   const actionDiffsById = new Map<string, Array<{ label: string; value: string }>>()
-  props.transcriptItems
-    .filter((item) => item.kind === 'action_update' && item.actionRequestId && item.details?.length)
+  props.timelineItems
+    .filter((item) => item.kind === 'action_edit' && item.actionRequestId && item.details?.length)
     .forEach((item) => actionDiffsById.set(item.actionRequestId!, item.details ?? []))
   const plannerLabel =
     props.planner === 'openai_agents'
@@ -209,7 +199,7 @@ export function AgentConsole(props: {
 
   return (
     <section className="fixed inset-x-3 bottom-3 z-50 rounded-lg border border-stone-900/10 bg-stone-50/95 shadow-[0_18px_60px_rgba(41,37,36,0.24)] backdrop-blur md:inset-x-6">
-      <div className="grid gap-3 p-3 lg:grid-cols-[minmax(0,1fr)_minmax(360px,42%)]">
+      <div className="grid gap-3 p-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex min-w-0 flex-1 items-center gap-2">
@@ -526,20 +516,14 @@ export function AgentConsole(props: {
             </form>
           ) : null}
 
-          <div className="mt-3 h-24 overflow-y-auto rounded-md border border-stone-900/10 bg-white px-3 py-2 text-xs leading-5 text-stone-700">
-            {recentMessages.length > 0 ? (
-              recentMessages.map((message) => (
-                <p key={message.id} className={message.role === 'user' ? 'text-stone-950' : 'text-stone-600'}>
-                  <span className="font-semibold">{message.role === 'user' ? '你' : 'Agent'}：</span>
-                  {message.content}
-                </p>
-              ))
-            ) : (
-              <p className="text-stone-500">输入命令，例如：把 3 月成员 A 线下 10 张、线上 2 张入账。</p>
-            )}
-          </div>
-
-          <AgentExecutionTranscript items={props.transcriptItems} />
+          <AgentChatTimeline
+            items={props.timelineItems}
+            busy={props.busy}
+            actionDiffsById={actionDiffsById}
+            onConfirm={props.onConfirm}
+            onCancel={props.onCancel}
+            onUpdate={props.onUpdate}
+          />
 
           <form onSubmit={handleSubmit} className="mt-2 flex gap-2">
             <input
@@ -558,26 +542,6 @@ export function AgentConsole(props: {
             </button>
           </form>
           {props.error ? <p className="mt-2 text-xs font-medium text-red-600">{props.error}</p> : null}
-        </div>
-
-        <div className="flex min-h-[150px] min-w-0 gap-2 overflow-x-auto">
-          {pendingActions.length > 0 ? (
-            pendingActions.map((action) => (
-              <AgentActionCard
-                key={action.id}
-                action={action}
-                diffDetails={actionDiffsById.get(action.id) ?? []}
-                busy={props.busy}
-                onConfirm={props.onConfirm}
-                onCancel={props.onCancel}
-                onUpdate={props.onUpdate}
-              />
-            ))
-          ) : (
-            <div className="flex min-h-full flex-1 items-center justify-center rounded-md border border-dashed border-stone-300 bg-white/70 px-4 text-center text-xs text-stone-500">
-              写入动作会在这里显示确认卡。
-            </div>
-          )}
         </div>
       </div>
     </section>

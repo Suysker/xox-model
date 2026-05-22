@@ -66,7 +66,7 @@
 - [x] API 集成测试覆盖通用 OpenAI-compatible Chat Completions `tool_calls` 协议；假 provider 分别以 `qwen`、`doubao`、`openai-compatible` 配置接入，证明业务工具不特调 DeepSeek；当 provider 已配置或被选择时，模型未返回 tool call 不会回退规则规划
 - [x] 当前用户 / 当前工作区可保存 OpenAI-compatible provider 设置，运行时优先使用该设置；API 测试覆盖用户隔离、key 不回传、无 key fail-closed 和删除后回到环境变量兜底
 - [x] Provider 调用错误不会再伪装成“模型未返回工具调用”；API 测试覆盖 HTTP 401 认证失败会提示重新保存当前 provider 的 API key
-- [x] Provider 超时不会误报为 base URL 不可达；复杂结构化目标会使用长请求预算，stream 已暴露工具名后超时会用同一工具非流式重试，运行图记录 `requestTimeoutMs` 和 `provider_retrying`
+- [x] Provider 超时不会误报为 base URL 不可达；复杂结构化目标会使用长请求预算，stream 已暴露工具名后超时会用同一工具非流式重试，技术日志记录 `requestTimeoutMs` 和 `provider_retrying`
 - [x] OpenAI-compatible provider retry 不发送 forced named `tool_choice`；如果 provider 连 `tool_choice: auto` 也拒绝，会保留工具列表并去掉 `tool_choice` 重试；API 测试覆盖 DeepSeek reasoner 风格的 `does not support this tool_choice` 400
 - [x] OpenClaw-inspired provider runtime 兼容层已落地：ProviderModelRef、ProviderModelProfile、ProviderRequestShaper、ToolSchemaNormalizer、ToolCallRepair、ProviderErrorClassifier、ProviderFailoverPolicy 和 ProviderProbe 均有独立模块；新增 `provider-runtime.test.ts` 覆盖 DeepSeek/Qwen/Kimi/Gemini/vLLM 风格 profile、`tool_choice` shaping、thinking disable payload、schema cleanup、provider 输出修复、错误分类和 retry policy
 - [x] 当前用户 / 工作区的 provider 配置支持手动 probe：`POST /api/v1/agent/provider-settings/probe` 返回脱敏 `auth / model / chat / tools / stream` 检查结果，不保存表单值，不返回 API key；API 测试覆盖显式 key probe、复用已保存 key probe 和 Qwen-shaped tool-call 请求
@@ -74,7 +74,7 @@
 - [x] Agent prompts、tool catalog、memory/context 模块有独立代码边界，不把系统提示词散在路由代码里
 - [x] 普通对话、问候、身份说明和能力说明通过 provider assistant 文本直接返回；`agent_reply` 废弃工具已删除，真实 DeepSeek smoke 覆盖“你好，告诉我你是谁”，不会把基础对话误判为规划失败
 - [x] Agent memory 按用户和工作区隔离，支持查询、搜索、过滤和删除；长对话会生成同租户上下文摘要，并把压缩结果作为带证据的 working memory 候选
-- [x] OpenClaw-inspired Memory Kernel 已落地：`active-memory-recall.ts` 在 provider planning 前做当前用户/工作区 ranked recall，`memory-retriever.ts` 做中文友好的 token/bigram 排名，`agent_memory_events` 记录 captured/recalled/injected/promoted/archived 事件，run graph 展示 `memory_recall_*`、`memory_injected`、`memory_candidate_stored` 和 `memory_promoted`
+- [x] OpenClaw-inspired Memory Kernel 已落地：`active-memory-recall.ts` 在 provider planning 前做当前用户/工作区 ranked recall，`memory-retriever.ts` 做中文友好的 token/bigram 排名，`agent_memory_events` 记录 captured/recalled/injected/promoted/archived 事件，统一时间线/技术日志展示 `memory_recall_*`、`memory_injected`、`memory_candidate_stored` 和 `memory_promoted`
 - [x] 新建对话后，真实 provider 请求只注入同用户 / 同工作区的相关 memory；注入内容以 `memory_context trust="untrusted"` 进入 Context Pack，不能覆盖当前用户指令、确认卡策略、租户隔离或工具 schema
 - [x] 记账类命令会生成确认卡，确认后过账并刷新工作台
 - [x] 线上系数试算类命令只读执行，不修改草稿
@@ -161,10 +161,11 @@
 - [x] Tool policy / permission hooks 覆盖账号动作拒绝、写入确认、确认卡编辑后的必需导航、跨租户 payload 禁止、锁账禁止、派生提成禁止直接编辑
 - [x] 多步骤消息中如果同时包含合法业务动作和账号禁用动作，合法业务动作仍会生成确认卡，账号动作只作为该步骤的只读拒绝项展示
 - [x] Memory list/search/delete/context injection 有测试证明不会跨用户或跨工作区，并且不会保存 secrets；memory 写入由模型显式调用 `memory_remember`，message submission 不再用正则捕获“记住”意图；当前 secret-like 消息会在 provider prompt 中 redaction，后续新线程不再注入
-- [x] Active memory recall 有 API 测试证明会在新线程注入相关记忆、记录 recalled/injected events、在 run graph 暴露 memory ids；候选记忆被重复有效召回后会确定性晋升为 semantic/procedural 长期记忆
+- [x] Active memory recall 有 API 测试证明会在新线程注入相关记忆、记录 recalled/injected events、在统一时间线/技术日志暴露 memory ids；候选记忆被重复有效召回后会确定性晋升为 semantic/procedural 长期记忆
 - [x] Context compaction 有测试证明 summary 只来自同一 thread / user / workspace，并且 summary 不包含 API key/token 原文；压缩摘要会进入 memory candidate 生命周期而不只是丢进 thread-local summary
-- [x] React Agent OS 展示 action graph、导航事件、确认卡状态、确认卡编辑、取消、失败和执行后刷新；当前为后端状态刷新式 timeline，web 测试覆盖同一 run 的导航事件不会因 SSE 重放重复执行，后续 run 打开同一页面也不会被旧 replay 状态误吞
-- [x] ADR 0008 的 AG-UI-compatible Agent Execution Transcript 已落地：`AgentThreadState` 和 `AgentSendResponse` 同时返回 `agUiEvents` 与 `transcriptItems`，后端从 server-owned run/action/thread state 投影，前端默认展示业务步骤、工具调用、等待状态、导航、确认卡、编辑 diff、工具结果、memory/evaluation 行
+- [x] React Agent OS 展示 unified timeline、导航事件、确认卡状态、确认卡编辑、取消、失败和执行后刷新；当前为后端状态刷新式 timeline，web 测试覆盖同一 run 的导航事件不会因 SSE 重放重复执行，后续 run 打开同一页面也不会被旧 replay 状态误吞
+- [x] ADR 0008 的 AG-UI-compatible Agent Execution Transcript 已落地：`AgentThreadState` 和 `AgentSendResponse` 同时返回 `agUiEvents` 与 `transcriptItems`，后端从 server-owned run/action/thread state 投影，兼容层保留给协议恢复和调试
+- [x] ADR 0009 的 OpenClaw-style Unified Agent Chat Transcript 已落地：`AgentThreadState` 和 `AgentSendResponse` 返回 `timelineItems`，前端默认只用 `AgentChatTimeline` 展示用户消息、模型回复、工具调用、工具结果、导航、内联可编辑确认卡、编辑 diff、memory/evaluation 行；旧 `AgentExecutionTranscript` / `AgentPlanTimeline` 主界面组件已删除
 - [x] 默认 Agent Transcript 不再暴露 `Run 已入队`、`Worker 已认领`、`run lease`、`目标契约已建立`、`目标循环`、`Completion Evaluator` 等 harness 内部标签；这些仅进入显式展开的技术日志，API/web 测试均覆盖该可见性边界
 - [x] Agent 历史对话和当前线程恢复已由 `/api/v1/agent/threads` 与 `/api/v1/agent/threads/{threadId}` 提供；API 测试覆盖 messages、runs、planSteps、actionRequests、navigationEvents、跨用户隔离和确认后状态恢复，React hook 会用本地 threadId 指针恢复服务端状态
 - [x] Agent thread store 已从 `apps/api/src/modules/agent.ts` 拆到 `apps/api/src/agent/thread-store.ts`，集中处理 thread ownership、message 写入、ThreadState 恢复和 DTO 序列化，避免 routes 自己拼恢复状态
@@ -175,7 +176,7 @@
 - [x] `agent_runs` 持久化输入消息，API 启动时会恢复可安全重跑的 `running` run；如果重启前已经产生部分 `planSteps/actionRequests`，系统 fail-closed 标记 run failed 并取消未执行确认卡，防止重复确认或重复执行
 - [x] 后台 run 支持 worker lease：API 测试覆盖未租约/过期租约可恢复、其他 worker 的未过期租约不会被抢占、旧 worker 在失去租约后收到迟到模型结果也不能写 assistant message、plan step 或 pending confirmation card
 - [x] 后台 run 支持周期 worker sweep：background 请求只入队，API 测试覆盖未显式调用 recovery 时，worker 也会按队列扫描认领 unleased running run 并完成真实 provider-compatible tool call 规划
-- [x] 后台 run 有持久化 `agent_run_events` 运行轨迹：API、SSE、React 运行图和真实 provider smoke 均覆盖 run 入队、worker 认领、模型规划、工具计划、确认卡生成、确认卡编辑、执行、取消和失败等用户可见步骤
+- [x] 后台 run 有持久化 `agent_run_events` 运行轨迹：API、SSE、React 统一时间线和真实 provider smoke 均覆盖 run 入队、worker 认领、模型规划、工具计划、确认卡生成、确认卡编辑、执行、取消和失败等用户可见步骤
 - [x] Run trace 写入和序列化已从 `apps/api/src/modules/agent.ts` 拆到 `apps/api/src/agent/run-events.ts`，作为后续 routes/kernel/Approval Executor 继续切分的独立服务边界
 - [x] Provider stream trace 投影已从 `planner.ts` 抽到 `apps/api/src/agent/runtime-trace-events.ts`：runtime adapter 只输出 provider-neutral `RuntimeStreamEvent`，trace service 负责脱敏、截断并写入 `provider_stream_*` run events，planner 不再拼 raw stream payload
 - [x] Agent run worker lifecycle 已从 `apps/api/src/modules/agent.ts` 拆到 `apps/api/src/agent/run-worker.ts`，集中处理 run controller、worker lease heartbeat、completion、cancellation、进程重启恢复和 queue sweep；route module 不再直接持有后台 run 队列状态
