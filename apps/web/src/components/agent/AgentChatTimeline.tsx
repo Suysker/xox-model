@@ -3,6 +3,7 @@ import { useState } from 'react'
 import type { AgentActionUpdatePayload, AgentTimelineItem } from '../../lib/api'
 import { formatAgentNavigationTarget } from './agentNavigation'
 import { AgentActionCard } from './AgentActionCard'
+import { AgentMarkdown } from './AgentMarkdown'
 
 const statusLabels: Record<AgentTimelineItem['status'], string> = {
   pending: '待开始',
@@ -126,16 +127,26 @@ function TimelineStatusBadge(props: { status: AgentTimelineItem['status'] }) {
 function TimelineMessage(props: { item: AgentTimelineItem }) {
   const isUser = props.item.kind === 'user_message'
   const isStream = props.item.kind === 'assistant_stream'
+  const source = props.item.content ?? props.item.summary ?? ''
+  if (!isUser) {
+    return (
+      <div className="flex justify-start">
+        <AgentMarkdown
+          source={source}
+          streaming={isStream}
+          className={isStream ? 'border-l-2 border-stone-300 pl-2 text-stone-600' : ''}
+        />
+      </div>
+    )
+  }
   return (
-    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+    <div className="flex justify-end">
       <p
         className={[
-          'max-w-[92%] whitespace-pre-wrap break-words text-sm leading-6',
-          isUser ? 'rounded-lg bg-stone-950 px-3 py-1.5 text-right font-medium text-white shadow-sm' : 'text-stone-800',
-          isStream ? 'border-l-2 border-stone-300 pl-2 text-stone-600' : '',
+          'max-w-[92%] whitespace-pre-wrap break-words rounded-lg bg-stone-950 px-3 py-1.5 text-right text-sm font-medium leading-6 text-white shadow-sm',
         ].join(' ')}
       >
-        {props.item.content ?? props.item.summary}
+        {source}
       </p>
     </div>
   )

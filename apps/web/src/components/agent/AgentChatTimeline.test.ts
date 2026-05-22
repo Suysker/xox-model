@@ -1,5 +1,8 @@
+// @vitest-environment jsdom
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import type { AgentTimelineItem } from '../../lib/api'
-import { formatTimelineStatus, shouldShowTimelineThinking, summarizeAgentChatTimeline, technicalTimelineItems, userTimelineItems } from './AgentChatTimeline'
+import { AgentChatTimeline, formatTimelineStatus, shouldShowTimelineThinking, summarizeAgentChatTimeline, technicalTimelineItems, userTimelineItems } from './AgentChatTimeline'
 
 function item(overrides: Partial<AgentTimelineItem> = {}): AgentTimelineItem {
   return {
@@ -63,5 +66,47 @@ describe('AgentChatTimeline helpers', () => {
       userMessage,
       item({ id: 'tool', kind: 'tool_call', title: '调用工具：workspace_rename', summary: '准备修改工作区。', status: 'running' }),
     ], true)).toBe(false)
+  })
+
+  it('renders assistant markdown but keeps user bubbles and tool rows structured', () => {
+    const html = renderToStaticMarkup(createElement(AgentChatTimeline, {
+      items: [
+        item({
+          id: 'user-message',
+          kind: 'user_message',
+          title: '用户',
+          summary: '**不要渲染用户输入**',
+          status: 'completed',
+        }),
+        item({
+          id: 'assistant',
+          kind: 'assistant_message',
+          title: '回复',
+          content: '我是 **Agent**\n\n- 可以查数据',
+          summary: '我是 **Agent**',
+          status: 'completed',
+        }),
+        item({
+          id: 'tool',
+          kind: 'tool_call',
+          title: '调用工具：workspace_rename',
+          summary: '**workspace_rename** 准备执行。',
+          status: 'running',
+          toolName: 'workspace_rename',
+        }),
+      ],
+      busy: false,
+      actionDiffsById: new Map(),
+      onCancel: () => undefined,
+      onConfirm: () => undefined,
+      onUpdate: () => undefined,
+    }))
+
+    expect(html).toContain('<strong>Agent</strong>')
+    expect(html).toContain('<li>可以查数据</li>')
+    expect(html).toContain('**不要渲染用户输入**')
+    expect(html).not.toContain('<strong>不要渲染用户输入</strong>')
+    expect(html).toContain('**workspace_rename** 准备执行。')
+    expect(html).not.toContain('<strong>workspace_rename</strong>')
   })
 })

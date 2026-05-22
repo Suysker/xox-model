@@ -43,3 +43,163 @@ textarea {
   margin: 0;
   -webkit-appearance: none;
 }
+
+.agent-markdown {
+  min-width: 0;
+}
+
+.agent-markdown :where(p, ul, ol, blockquote, pre, table, hr) {
+  margin-bottom: 0.5rem;
+}
+
+.agent-markdown :where(p, ul, ol, blockquote, pre, table, hr):last-child {
+  margin-bottom: 0;
+}
+
+.agent-markdown :where(h1, h2, h3, h4) {
+  margin: 0.6rem 0 0.35rem;
+  color: #1c1917;
+  font-weight: 750;
+  letter-spacing: 0;
+  line-height: 1.35;
+}
+
+.agent-markdown :where(h1) {
+  font-size: 1.05rem;
+}
+
+.agent-markdown :where(h2) {
+  font-size: 0.98rem;
+}
+
+.agent-markdown :where(h3, h4) {
+  font-size: 0.92rem;
+}
+
+.agent-markdown :where(ul, ol) {
+  padding-left: 1.2rem;
+}
+
+.agent-markdown :where(li) {
+  margin: 0.15rem 0;
+}
+
+.agent-markdown :where(blockquote) {
+  border-left: 2px solid #d6d3d1;
+  padding-left: 0.7rem;
+  color: #57534e;
+}
+
+.agent-markdown :where(hr) {
+  height: 1px;
+  border: 0;
+  background: #e7e5e4;
+}
+
+.agent-markdown :where(a) {
+  color: #047857;
+  font-weight: 650;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.agent-markdown :where(code):not(pre code) {
+  border-radius: 5px;
+  background: #ece8df;
+  padding: 0.08rem 0.28rem;
+  color: #292524;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.86em;
+}
+
+.agent-markdown :where(table) {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  white-space: nowrap;
+}
+
+.agent-markdown :where(th, td) {
+  border: 1px solid #e7e5e4;
+  padding: 0.25rem 0.45rem;
+  text-align: left;
+}
+
+.agent-markdown :where(th) {
+  background: #f5f2ea;
+  color: #44403c;
+  font-weight: 700;
+}
+
+.agent-markdown :where(.task-list-item) {
+  list-style: none;
+}
+
+.agent-markdown :where(.task-list-item input) {
+  margin-right: 0.35rem;
+}
+
+.agent-code-block {
+  max-width: 100%;
+  overflow: hidden;
+  border: 1px solid #292524;
+  border-radius: 7px;
+  background: #1c1917;
+}
+
+.agent-code-header {
+  display: flex;
+  min-height: 1.8rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 0.25rem 0.55rem;
+  color: #d6d3d1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.68rem;
+}
+
+.agent-code-lang {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-code-copy {
+  flex: 0 0 auto;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 0.1rem 0.35rem;
+  color: #fafaf9;
+  cursor: pointer;
+  font-size: 0.68rem;
+}
+
+.agent-code-copy:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.agent-code-pre {
+  margin: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 0.65rem 0.75rem;
+  color: #f5f5f4;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.76rem;
+  line-height: 1.55;
+  tab-size: 2;
+}
+
+.agent-code-pre code {
+  background: transparent;
+}
+
+.agent-markdown-plain-fallback,
+.agent-markdown-stream-tail {
+  white-space: pre-wrap;
+}

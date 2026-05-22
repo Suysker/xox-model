@@ -139,6 +139,10 @@
 - Mature Agent UI should render model replies, tool calls, tool results, inline confirmation interrupts, action edits, and final summaries inside one chronological conversation timeline. Do not split chat, execution process, and confirmation cards into separate primary regions; use compact collapsed tool rows by default and keep technical logs behind an explicit disclosure.
 - When replacing Agent UI surfaces, remove deprecated primary components and prop paths in the same change. Keeping old chat/transcript/card regions beside a unified timeline creates duplicate state ownership and makes later Agent OS behavior harder to reason about.
 - A user-facing Agent timeline is not a run log. For simple chat such as "你好", show only the user message and one model reply; route planning, goal setup, memory recall, provider completion, and run lifecycle rows to the technical log unless they produce a business tool row, confirmation card, failure, or explicit user-facing interruption.
+- Assistant Markdown quality is a frontend renderer boundary, not a prompt workaround. Render assistant prose through one scoped, sanitized Markdown component; keep user bubbles escaped and keep tool rows/confirmation cards structured.
+- When reusing OpenClaw's Markdown renderer, port only small MIT-attributed pure parsing/sanitization/fallback logic. Do not import OpenClaw's Lit chat shell, control UI, channel runtime, plugin registry, i18n runtime, or local-session assumptions into xox-model.
+- Streaming Markdown should avoid rendering unstable partial syntax as final UI. Prefer newline/block-boundary commits inspired by Codex's stream collector, with an escaped or debounced volatile tail and parser-failure fallback.
+- For transcript Markdown security tests, escaping raw HTML is necessary but not always sufficient. Strip event-handler attributes from raw HTML tokens before escaping, and assert dangerous URL schemes by active `href/src` attributes rather than harmless visible plaintext.
 
 ## Testing
 
