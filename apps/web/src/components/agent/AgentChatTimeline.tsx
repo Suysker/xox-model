@@ -160,6 +160,50 @@ function compactRowSummary(node: AgentTranscriptNode) {
   return visibleSummary(summary)
 }
 
+const workGroupTitlePattern = /^Worked for (?<elapsed>[^/]+) \/ (?<tools>\d+) tools \/ (?<pending>\d+) pending$/
+
+const toolDisplayLabels: Record<string, string> = {
+  data_query_workspace: '查询工作区数据',
+  ui_navigate: '打开页面',
+  workspace_rename: '重命名工作区',
+  workspace_configure_operating_model: '配置经营模型',
+  workspace_update_online_factor: '试算线上系数',
+  workspace_patch_config: '修改模型参数',
+  ledger_create_entry: '新增分录',
+  ledger_update_entry: '修改分录',
+  ledger_void_entry: '作废分录',
+  ledger_restore_entry: '恢复分录',
+  version_publish: '发布版本',
+  version_restore: '恢复版本',
+  share_create: '创建分享链接',
+}
+
+function displayNodeTitle(node: AgentTranscriptNode) {
+  if (node.kind === 'work_group') {
+    const match = node.title.match(workGroupTitlePattern)
+    const tools = match?.groups?.tools ? Number(match.groups.tools) : 0
+    const pending = match?.groups?.pending ? Number(match.groups.pending) : 0
+    if (node.status === 'failed') return '执行遇到问题'
+    if (pending > 0) return `${pending} 项待确认`
+    if (tools > 0) return `已完成 ${tools} 个工具`
+    return node.status === 'running' ? '正在执行' : '执行完成'
+  }
+  if ((node.kind === 'tool_call' || node.kind === 'tool_result') && node.tool?.name) {
+    const toolName = node.tool.name
+    if (!node.title.includes(toolName) && !node.title.startsWith('调用工具')) return node.title
+    const label = toolDisplayLabels[toolName]
+    if (label) return label
+    return node.title.includes(toolName) ? '调用工具' : node.title
+  }
+  return node.title
+}
+
+function shouldShowKindBadge(node: AgentTranscriptNode) {
+  if (node.kind === 'work_group' || node.kind === 'tool_group') return false
+  if ((node.kind === 'tool_call' || node.kind === 'tool_result') && node.tool?.name) return false
+  return true
+}
+
 function hasRenderableContent(node: AgentTranscriptNode): boolean {
   return Boolean(
     visibleSummary(node.summary) ||
@@ -345,6 +389,7 @@ function NodeRow(props: {
 }) {
   const expandable = canExpand(props.node)
   const rowSummary = compactRowSummary(props.node)
+  const title = displayNodeTitle(props.node)
   return (
     <div className="grid min-h-7 grid-cols-[18px_20px_minmax(0,1fr)_auto] items-center gap-1.5">
       {expandable ? (
@@ -364,10 +409,12 @@ function NodeRow(props: {
         <KindIcon kind={props.node.kind} />
       </span>
       <div className="flex min-w-0 items-center gap-1.5">
-        <span className="shrink-0 text-xs font-semibold text-stone-950">{props.node.title}</span>
-        <span className="shrink-0 rounded-full bg-stone-100 px-1.5 py-0.5 text-[10px] font-semibold text-stone-500">
-          {kindLabels[props.node.kind]}
-        </span>
+        <span className="shrink-0 text-xs font-semibold text-stone-950">{title}</span>
+        {shouldShowKindBadge(props.node) ? (
+          <span className="shrink-0 rounded-full bg-stone-100 px-1.5 py-0.5 text-[10px] font-semibold text-stone-500">
+            {kindLabels[props.node.kind]}
+          </span>
+        ) : null}
         {props.node.tool?.name ? (
           <span className="max-w-[220px] shrink truncate rounded-full bg-emerald-50 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-emerald-700">
             {props.node.tool.name}

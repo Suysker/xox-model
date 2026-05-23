@@ -194,7 +194,7 @@ describe('AgentChatTimeline helpers', () => {
                 item({
                   id: 'tool',
                   kind: 'tool_call',
-                  title: '查询数据',
+                  title: '调用工具：data_query_workspace',
                   summary: '工具已选择，参数可展开查看。',
                   status: 'completed',
                   defaultOpen: true,
@@ -255,9 +255,15 @@ describe('AgentChatTimeline helpers', () => {
     }))
 
     expect(html).toContain('我现在几个月回本')
-    expect(html).toContain('Worked for 3s / 1 tools / 0 pending')
+    expect(html).toContain('已完成 1 个工具')
+    expect(html).not.toContain('Worked for 3s / 1 tools / 0 pending')
     expect(html).toContain('调用 1 个工具')
+    expect(html).toContain('查询工作区数据')
     expect(html).toContain('data_query_workspace')
+    expect(html.match(/data_query_workspace/g)?.length).toBe(1)
+    expect(html).not.toContain('调用工具：data_query_workspace')
+    expect(html).not.toContain('工作组')
+    expect(html).not.toContain('工具调用')
     expect(html).toContain('已打开：看测算')
     expect(html).not.toContain('工具已选择，参数可展开查看')
     expect(html).not.toContain('工作区数据问答需要打开经营总览页面')
