@@ -277,3 +277,5 @@
 - Agent transcript renderers should translate backend engineering titles into product-facing labels. Do not expose `Worked for ... / tools / pending` strings or repeat the same raw tool name in both the title and a chip.
 - Agent turn timers should start when the user message enters the transcript, not when the first tool row arrives. Show a lightweight running timer during thinking/tool setup and preserve elapsed time on the completed work cycle.
 - Generic tool completion text is not a user-facing result. Hide `Result Preview` sections whose only content is a boilerplate "tool call completed / used for reply" message; render result previews only for real business output.
+- Codex-style Agent tool details should combine parameters and real returns in one expanded tool body. Do not split `参数`, `返回`, and `Raw JSON` into separate nested boxes in the main transcript; reserve standalone card chrome for editable confirmation interrupts.
+- Read-only Agent plan results should attach to the producing tool row as the tool return. If the data answer only appears as the final assistant message, the transcript cannot show tool-call evidence in the Codex/OpenClaw style.

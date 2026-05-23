@@ -310,6 +310,7 @@ describe('Agent execution transcript projection', () => {
     const navigationNode = toolGroup?.children?.find((node) => node.kind === 'navigation')
     const checkNode = workGroup?.children?.find((node) => node.kind === 'evaluation')
     const sections = flattenSections(toolNode?.sections)
+    const resultSection = toolNode?.sections?.find((section) => section.kind === 'result')
 
     expect(visible.map((node) => node.kind)).toEqual(['user_message', 'work_group', 'assistant_message'])
     expect(workGroup?.title).toMatch(/^Worked for .* \/ 1 tools \/ 0 pending$/)
@@ -321,9 +322,11 @@ describe('Agent execution transcript projection', () => {
     expect(toolNode?.summary).not.toContain('workspace_summary')
     expect(toolNode?.sections?.some((section) => section.kind === 'arguments' && section.title === 'Arguments')).toBe(true)
     expect(toolNode?.sections?.some((section) => section.kind === 'result' && section.title === 'Result Preview')).toBe(true)
+    expect(resultSection?.content).toBe('已读取当前工作区测算结果。')
     expect(sections.some((section) => section.kind === 'raw' && section.content?.includes('"question"'))).toBe(true)
     expect(navigationNode?.title).toBe('已打开：看测算')
     expect(checkNode?.summary).toContain('本次只读取当前工作区数据，未修改业务数据')
+    expect(workGroup?.children?.some((node) => node.title === '查询回本周期')).toBe(false)
     expect(nodes.filter((node) => node.kind === 'navigation')).toHaveLength(0)
   })
 

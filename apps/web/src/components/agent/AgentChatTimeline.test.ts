@@ -302,16 +302,67 @@ describe('AgentChatTimeline helpers', () => {
     expect(html).not.toContain('本次只读取当前工作区数据，未修改业务数据')
     expect(html).not.toContain('结果已用于本轮回复')
     expect(html).toContain('当前还未回本。')
-    expect(html).toContain('Arguments')
+    expect(html).toContain('参数')
+    expect(html).toContain('&quot;question&quot;')
+    expect(html).toContain('workspace_summary')
+    expect(html).toContain('data-transcript-tool-body="true"')
+    expect(html).not.toContain('data-transcript-section-kind="arguments"')
+    expect(html).not.toContain('data-transcript-section-kind="result"')
+    expect(html).not.toContain('Arguments')
     expect(html).not.toContain('Result Preview')
-    expect(html).toContain('Raw JSON')
-    expect(html).not.toContain('"question"')
-    expect(html).not.toContain('workspace_summary')
+    expect(html).not.toContain('Raw JSON')
     expect(html).toContain('border-t border-stone-200 py-2')
     expect(html).toContain('ml-5 border-l border-stone-200 py-1 pl-3')
     expect(html).toContain('grid-cols-[18px_20px_minmax(0,1fr)_auto]')
     expect(html).not.toContain('rounded-md border border-stone-900/10 bg-white')
     expect(html).not.toContain('rounded-md border border-stone-900/10 bg-stone-50')
+  })
+
+  it('renders tool arguments and returns in one expanded tool body', () => {
+    const html = renderToStaticMarkup(createElement(AgentChatTimeline, {
+      nodes: [
+        item({
+          id: 'tool',
+          kind: 'tool_call',
+          title: '调用工具：data_query_workspace',
+          status: 'completed',
+          defaultOpen: true,
+          tool: { name: 'data_query_workspace' },
+          sections: [
+            {
+              id: 'tool:arguments',
+              kind: 'arguments',
+              title: 'Arguments',
+              content: '{"question":"当前工作区利润","scope":"workspace_summary"}',
+              defaultOpen: true,
+            },
+            {
+              id: 'tool:result',
+              kind: 'result',
+              title: 'Result Preview',
+              content: '总收入 ¥12,000，总成本 ¥8,000，总利润 ¥4,000。',
+              defaultOpen: true,
+            },
+          ],
+        }),
+      ],
+      busy: false,
+      actionDiffsById: new Map(),
+      onCancel: () => undefined,
+      onConfirm: () => undefined,
+      onUpdate: () => undefined,
+    }))
+
+    expect(html.match(/data-transcript-tool-body="true"/g)?.length).toBe(1)
+    expect(html).toContain('参数')
+    expect(html).toContain('&quot;question&quot;')
+    expect(html).toContain('返回')
+    expect(html).toContain('总利润 ¥4,000')
+    expect(html).not.toContain('Arguments')
+    expect(html).not.toContain('Result Preview')
+    expect(html).not.toContain('Raw JSON')
+    expect(html).not.toContain('data-transcript-section-kind="arguments"')
+    expect(html).not.toContain('data-transcript-section-kind="result"')
   })
 
   it('hides generic result previews but keeps real tool result summaries', () => {
@@ -372,7 +423,9 @@ describe('AgentChatTimeline helpers', () => {
       onUpdate: () => undefined,
     }))
 
-    expect(realHtml).toContain('Result Preview')
+    expect(realHtml).toContain('返回')
+    expect(realHtml).toContain('data-transcript-tool-body="true"')
+    expect(realHtml).not.toContain('Result Preview')
     expect(realHtml).toContain('命中 3 笔分录，总收入 ¥12,000。')
   })
 

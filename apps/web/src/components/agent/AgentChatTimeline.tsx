@@ -123,14 +123,8 @@ function isMessage(node: AgentTranscriptNode) {
   return node.kind === 'user_message' || node.kind === 'assistant_message' || node.kind === 'assistant_stream' || node.kind === 'summary'
 }
 
-function canExpand(node: AgentTranscriptNode) {
-  return Boolean(
-    node.children?.some(shouldRenderTranscriptNode) ||
-    node.sections?.some(shouldRenderSection) ||
-    node.details?.length ||
-    node.payload ||
-    node.navigation,
-  )
+function isToolNode(node: AgentTranscriptNode) {
+  return node.kind === 'tool_call' || node.kind === 'tool_result'
 }
 
 const decorativeSummaryPatterns = [
@@ -161,14 +155,59 @@ function visibleSectionContent(section: AgentTranscriptSection) {
   return visibleSummary(section.content)
 }
 
+function sectionInlineContent(section: AgentTranscriptSection) {
+  const ownContent = visibleSectionContent(section)
+  if (ownContent) return ownContent
+  if (section.kind === 'arguments') {
+    const rawChild = section.children?.find((child) => child.kind === 'raw')
+    return rawChild ? visibleSectionContent(rawChild) : ''
+  }
+  return ''
+}
+
 function shouldRenderSection(section: AgentTranscriptSection): boolean {
+  if (section.kind === 'raw') return false
   if (section.kind === 'confirmation' && section.actionRequest) return true
   return Boolean(
     visibleSummary(section.summary) ||
-    visibleSectionContent(section) ||
+    sectionInlineContent(section) ||
     section.details?.length ||
     section.navigation ||
     section.children?.some(shouldRenderSection),
+  )
+}
+
+function shouldRenderStandaloneSection(section: AgentTranscriptSection): boolean {
+  if (section.kind === 'arguments' || section.kind === 'result' || section.kind === 'raw') return false
+  return shouldRenderSection(section)
+}
+
+function toolBodyParts(node: AgentTranscriptNode) {
+  if (!isToolNode(node)) return { argumentsContent: '', resultContent: '' }
+  const sections = node.sections ?? []
+  const argumentSection = sections.find((section) => section.kind === 'arguments')
+  const resultSection = sections.find((section) => section.kind === 'result')
+  return {
+    argumentsContent: argumentSection ? sectionInlineContent(argumentSection) : node.tool?.argumentsPreview ?? '',
+    resultContent: resultSection ? sectionInlineContent(resultSection) : node.tool?.resultPreview ?? '',
+  }
+}
+
+function hasToolBody(node: AgentTranscriptNode) {
+  const parts = toolBodyParts(node)
+  return Boolean(parts.argumentsContent || parts.resultContent)
+}
+
+function canExpand(node: AgentTranscriptNode) {
+  const hasSections = isToolNode(node)
+    ? hasToolBody(node) || node.sections?.some(shouldRenderStandaloneSection)
+    : node.sections?.some(shouldRenderSection)
+  return Boolean(
+    node.children?.some(shouldRenderTranscriptNode) ||
+    hasSections ||
+    node.details?.length ||
+    node.payload ||
+    node.navigation,
   )
 }
 
@@ -260,7 +299,7 @@ function hasRenderableContent(node: AgentTranscriptNode): boolean {
   return Boolean(
     visibleSummary(node.summary) ||
     node.content ||
-    node.sections?.some(shouldRenderSection) ||
+    (isToolNode(node) ? hasToolBody(node) || node.sections?.some(shouldRenderStandaloneSection) : node.sections?.some(shouldRenderSection)) ||
     node.details?.length ||
     node.payload ||
     node.navigation ||
@@ -322,6 +361,13 @@ function ThinkingRow(props: { startedAt: string | null; nowMs: number }) {
   )
 }
 
+function SectionLabel(props: { kind: AgentTranscriptSection['kind']; title: string }) {
+  if (props.kind === 'arguments') return <>参数</>
+  if (props.kind === 'result') return <>返回</>
+  if (props.kind === 'details') return <>详情</>
+  return <>{props.title}</>
+}
+
 function SectionBody(props: {
   section: AgentTranscriptSection
   busy: boolean
@@ -331,7 +377,7 @@ function SectionBody(props: {
   onUpdate: (id: string, payload: AgentActionUpdatePayload) => void
 }) {
   const navigationLabel = formatAgentNavigationTarget(props.section.navigation ?? null)
-  const sectionContent = visibleSectionContent(props.section)
+  const sectionContent = sectionInlineContent(props.section)
   if (props.section.kind === 'confirmation' && props.section.actionRequest) {
     return (
       <AgentActionCard
@@ -364,9 +410,9 @@ function SectionBody(props: {
         </dl>
       ) : null}
       {sectionContent ? (
-        props.section.kind === 'raw' || props.section.kind === 'arguments'
+        props.section.kind === 'arguments'
           ? (
-              <pre className="max-h-48 overflow-auto rounded-md bg-stone-950 px-2 py-1.5 text-[10px] leading-4 text-stone-100">
+              <pre className="max-h-48 overflow-auto rounded-md bg-stone-950 px-2 py-1.5 text-[10px] leading-4 text-stone-100 shadow-inner">
                 {sectionContent}
               </pre>
             )
@@ -376,60 +422,70 @@ function SectionBody(props: {
   )
 }
 
-function DisclosureSection(props: {
+function InlineSection(props: {
   node: AgentTranscriptNode
   section: AgentTranscriptSection
-  expanded: boolean
-  onToggle: () => void
-  isSectionExpanded: (sectionId: string) => boolean
-  onToggleSection: (sectionId: string) => void
   busy: boolean
   diffDetails: Array<{ label: string; value: string }>
   onConfirm: (id: string) => void
   onCancel: (id: string) => void
   onUpdate: (id: string, payload: AgentActionUpdatePayload) => void
 }) {
-  const sectionSummary = visibleSummary(props.section.summary)
+  if (props.section.kind === 'raw') return null
+  if (props.section.kind === 'confirmation') {
+    return (
+      <div className="border-t border-stone-100 py-1 first:border-t-0" data-transcript-section-kind={props.section.kind} data-transcript-section-id={props.section.id}>
+        <SectionBody
+          section={props.section}
+          busy={props.busy}
+          diffDetails={props.diffDetails}
+          onConfirm={props.onConfirm}
+          onCancel={props.onCancel}
+          onUpdate={props.onUpdate}
+        />
+      </div>
+    )
+  }
   return (
     <div className="border-t border-stone-100 py-1 first:border-t-0" data-transcript-section-kind={props.section.kind} data-transcript-section-id={props.section.id}>
-      <button
-        type="button"
-        onClick={props.onToggle}
-        className="grid w-full grid-cols-[16px_minmax(0,1fr)] items-center gap-1.5 py-1 text-left text-stone-600 transition hover:text-stone-900"
-        aria-expanded={props.expanded}
-      >
-        {props.expanded ? <ChevronDown className="h-3.5 w-3.5 text-stone-500" /> : <ChevronRight className="h-3.5 w-3.5 text-stone-500" />}
-        <span className="min-w-0 truncate text-[11px] font-semibold text-stone-700">
-          {props.section.title}
-          {sectionSummary ? <span className="ml-2 font-normal text-stone-500">{sectionSummary}</span> : null}
+      <div className="grid grid-cols-[44px_minmax(0,1fr)] gap-2 py-1">
+        <span className="pt-0.5 text-[11px] font-semibold text-stone-500">
+          <SectionLabel kind={props.section.kind} title={props.section.title} />
         </span>
-      </button>
-      {props.expanded ? (
-        <div className="ml-2 grid gap-1.5 border-l border-stone-200 py-1 pl-3">
-          <SectionBody
-            section={props.section}
-            busy={props.busy}
-            diffDetails={props.diffDetails}
-            onConfirm={props.onConfirm}
-            onCancel={props.onCancel}
-            onUpdate={props.onUpdate}
-          />
-          {props.section.children?.filter(shouldRenderSection).map((child) => (
-            <DisclosureSection
-              key={child.id}
-              node={props.node}
-              section={child}
-              expanded={props.isSectionExpanded(child.id)}
-              onToggle={() => props.onToggleSection(child.id)}
-              isSectionExpanded={props.isSectionExpanded}
-              onToggleSection={props.onToggleSection}
-              busy={props.busy}
-              diffDetails={props.diffDetails}
-              onConfirm={props.onConfirm}
-              onCancel={props.onCancel}
-              onUpdate={props.onUpdate}
-            />
-          ))}
+        <SectionBody
+          section={props.section}
+          busy={props.busy}
+          diffDetails={props.diffDetails}
+          onConfirm={props.onConfirm}
+          onCancel={props.onCancel}
+          onUpdate={props.onUpdate}
+        />
+      </div>
+    </div>
+  )
+}
+
+function ToolBody(props: { node: AgentTranscriptNode }) {
+  const { argumentsContent, resultContent } = toolBodyParts(props.node)
+  if (!argumentsContent && !resultContent) return null
+
+  return (
+    <div
+      className="grid max-h-56 gap-1.5 overflow-auto border-l border-stone-200 py-1 pl-3 text-[11px] leading-5"
+      data-transcript-tool-body="true"
+    >
+      {argumentsContent ? (
+        <div className="grid grid-cols-[36px_minmax(0,1fr)] gap-2">
+          <span className="font-semibold text-stone-500">参数</span>
+          <pre className="min-w-0 whitespace-pre-wrap break-words font-mono text-[10px] leading-5 text-stone-700">
+            {argumentsContent}
+          </pre>
+        </div>
+      ) : null}
+      {resultContent ? (
+        <div className="grid grid-cols-[36px_minmax(0,1fr)] gap-2">
+          <span className="font-semibold text-stone-500">返回</span>
+          <p className="min-w-0 whitespace-pre-wrap break-words text-stone-600">{resultContent}</p>
         </div>
       ) : null}
     </div>
@@ -525,15 +581,12 @@ function TranscriptNodeView(props: {
       />
       {nodeOpen ? (
         <div className={nodeDetailsClass(props.node.kind)}>
-          {props.node.sections?.filter(shouldRenderSection).map((section) => (
-            <DisclosureSection
+          {isToolNode(props.node) ? <ToolBody node={props.node} /> : null}
+          {props.node.sections?.filter(isToolNode(props.node) ? shouldRenderStandaloneSection : shouldRenderSection).map((section) => (
+            <InlineSection
               key={section.id}
               node={props.node}
               section={section}
-              expanded={props.expanded.isSectionExpanded(props.node, section.id)}
-              onToggle={() => props.expanded.toggleSection(props.node, section.id)}
-              isSectionExpanded={(sectionId) => props.expanded.isSectionExpanded(props.node, sectionId)}
-              onToggleSection={(sectionId) => props.expanded.toggleSection(props.node, sectionId)}
               busy={props.busy}
               diffDetails={diffDetails}
               onConfirm={props.onConfirm}

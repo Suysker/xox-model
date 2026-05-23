@@ -303,6 +303,14 @@ function isMessageTimelineItem(item: AgentTimelineItem) {
   return item.kind === 'user_message' || item.kind === 'assistant_message' || item.kind === 'assistant_stream' || item.kind === 'summary'
 }
 
+function isMergeableReadResultTimelineItem(item: AgentTimelineItem) {
+  return item.sourceType === 'plan_step' &&
+    !item.actionRequestId &&
+    !item.actionRequest &&
+    (item.status === 'completed' || item.status === 'info') &&
+    Boolean(item.summary)
+}
+
 function transcriptNodeKind(item: AgentTimelineItem): AgentTranscriptNode['kind'] {
   if (item.kind === 'action_edit') return 'action_update'
   if (item.kind === 'technical') return 'technical'
@@ -703,6 +711,79 @@ function mergeProviderToolCallsIntoActionNodes(nodes: PendingTranscriptNode[]): 
     .filter((node) => !consumedProviderNodeIds.has(node.id))
 }
 
+function isReadResultNode(node: PendingTranscriptNode) {
+  return node.sourceType === 'plan_step' &&
+    !node.actionRequest &&
+    !node.actionRequestId &&
+    !toolGroupChild(node) &&
+    node.status === 'completed' &&
+    Boolean(node.summary)
+}
+
+function upsertToolResultSection(
+  sections: AgentTranscriptSection[],
+  ownerId: string,
+  result: string,
+): AgentTranscriptSection[] {
+  const next = [...sections]
+  const existingIndex = next.findIndex((section) => section.kind === 'result')
+  const section: AgentTranscriptSection = {
+    id: existingIndex >= 0 ? next[existingIndex]!.id : `${ownerId}:result`,
+    kind: 'result',
+    title: 'Result Preview',
+    summary: result.replace(/\s+/g, ' ').slice(0, 180),
+    content: result,
+    defaultOpen: false,
+  }
+  if (existingIndex >= 0) {
+    next[existingIndex] = section
+    return next
+  }
+  next.push(section)
+  return next
+}
+
+function attachReadResultToToolNode(toolNode: PendingTranscriptNode, readNode: PendingTranscriptNode): PendingTranscriptNode {
+  const result = readNode.summary ?? ''
+  const sections = upsertToolResultSection(toolNode.sections ?? [], toolNode.id, result)
+  return {
+    ...toolNode,
+    ...(toolNode.navigation ? {} : readNode.navigation ? { navigation: readNode.navigation } : {}),
+    sections,
+    ...(toolNode.tool ? { tool: { ...toolNode.tool, resultPreview: result } } : {}),
+  }
+}
+
+function mergeReadResultPlanStepsIntoToolNodes(nodes: PendingTranscriptNode[]): PendingTranscriptNode[] {
+  const next: PendingTranscriptNode[] = []
+
+  for (const node of nodes) {
+    if (isReadResultNode(node)) {
+      let targetIndex = -1
+      for (let index = next.length - 1; index >= 0; index -= 1) {
+        const candidate = next[index]
+        if (
+          candidate &&
+          !candidate.actionRequest &&
+          candidate.runId === node.runId &&
+          (candidate.kind === 'tool_call' || candidate.kind === 'tool_result')
+        ) {
+          targetIndex = index
+          break
+        }
+      }
+      if (targetIndex >= 0) {
+        const target = next[targetIndex]
+        if (target) next[targetIndex] = attachReadResultToToolNode(target, node)
+        continue
+      }
+    }
+    next.push(node)
+  }
+
+  return next
+}
+
 function navigationKey(navigation: AgentTimelineItem['navigation']) {
   if (!navigation) return ''
   return JSON.stringify({
@@ -771,11 +852,14 @@ function attachNavigationRows(nodes: PendingTranscriptNode[]): PendingTranscript
   const seen = new Set<string>()
   const next: PendingTranscriptNode[] = []
   nodes.forEach((node, index) => {
-    next.push(node)
     if (node.kind === 'navigation' && node.navigation) {
-      seen.add(navigationKey(node.navigation))
+      const key = navigationKey(node.navigation)
+      if (seen.has(key)) return
+      seen.add(key)
+      next.push(node)
       return
     }
+    next.push(node)
     if (!node.navigation) return
     const key = navigationKey(node.navigation)
     if (seen.has(key)) return
@@ -868,7 +952,9 @@ function toolGroupChild(node: AgentTranscriptNode) {
 }
 
 function groupRunSegment(items: AgentTimelineItem[]): PendingTranscriptNode[] {
-  const nodes = attachNavigationRows(mergeProviderToolCallsIntoActionNodes(items.map(timelineItemToNode)))
+  const nodes = attachNavigationRows(mergeReadResultPlanStepsIntoToolNodes(mergeProviderToolCallsIntoActionNodes(items.map(timelineItemToNode))))
+    .filter((node) => node.visibility === 'user')
+  if (nodes.length === 0) return []
   const runKey = items[0]?.runId ?? items[0]?.threadId ?? 'no-run'
   const toolGroupChildren = nodes.filter(toolGroupChild)
   const otherChildren = nodes.filter((node) => !toolGroupChild(node) && node.kind !== 'evaluation')
@@ -902,7 +988,7 @@ export function buildAgentTranscriptNodes(state: AgentProjectionState): AgentTra
 
   for (const item of timelineItems) {
     if (!item) continue
-    if (isMessageTimelineItem(item) || item.visibility === 'technical') continue
+    if ((isMessageTimelineItem(item) || item.visibility === 'technical') && !isMergeableReadResultTimelineItem(item)) continue
     const runKey = item.runId ?? `${item.threadId}:no-run`
     const items = operationalItemsByRun.get(runKey) ?? []
     items.push(item)
@@ -912,11 +998,11 @@ export function buildAgentTranscriptNodes(state: AgentProjectionState): AgentTra
   const emittedRuns = new Set<string>()
   for (const item of timelineItems) {
     if (!item) continue
-    if (item.visibility === 'technical') {
+    if (item.visibility === 'technical' && !isMergeableReadResultTimelineItem(item)) {
       nodes.push(timelineItemToNode(item))
       continue
     }
-    if (isMessageTimelineItem(item)) {
+    if (isMessageTimelineItem(item) && !isMergeableReadResultTimelineItem(item)) {
       nodes.push(timelineItemToNode(item))
       continue
     }

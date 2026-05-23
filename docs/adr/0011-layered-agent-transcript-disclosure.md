@@ -12,6 +12,8 @@ Revision: 2026-05-23 strict work-cycle transcript contract
 
 Implemented: 2026-05-23
 
+Latest revision: 2026-05-24 Codex-style combined tool body
+
 ## Context
 
 ADR 0009 unified the Agent conversation surface: model replies, tool calls, tool results, navigation and confirmation cards now live in one transcript lane. ADR 0010 fixed assistant Markdown rendering.
@@ -21,7 +23,7 @@ The remaining issue is information architecture. The current transcript is still
 - `packages/contracts/src/index.ts` exposes a flat `AgentTimelineItem[]`.
 - `apps/api/src/agent/agent-timeline-projector.ts` merges and deduplicates flat items.
 - `apps/web/src/components/agent/AgentChatTimeline.tsx` renders all non-message rows through one `TimelineEventRow`.
-- frontend expansion state is one `expandedIds` set, so it cannot distinguish group expansion, tool body expansion, raw JSON expansion and confirmation-card expansion.
+- frontend expansion state is one `expandedIds` set, so it cannot distinguish group expansion, tool body expansion and confirmation-card expansion.
 
 This cannot produce the mature Codex / Claude Code / OpenClaw style interaction where users see a compact work summary first, then expand progressively:
 
@@ -29,9 +31,7 @@ This cannot produce the mature Codex / Claude Code / OpenClaw style interaction 
 Worked for 12s
   Ran 3 tools
     data_query_workspace
-      arguments
-      result preview
-      raw JSON
+      tool body: arguments + return
     ui.navigate
     confirmation card
 Assistant summary
@@ -55,9 +55,7 @@ Agent Transcript
 ├─ Work Cycle Group              Worked for 12s / 3 tools / 1 pending
 │  ├─ Tool Group                 调用 3 个工具
 │  │  ├─ Tool Row                data_query_workspace · completed
-│  │  │  ├─ Arguments            折叠
-│  │  │  ├─ Result Preview       折叠
-│  │  │  └─ Raw JSON             二级折叠
+│  │  │  └─ Tool Body            展开后同一区域展示参数和返回
 │  │  ├─ Navigation Row          已打开：看测算
 │  │  └─ Confirmation Card       可编辑，等待确认
 │  └─ Evaluation/Check Row       只展示业务检查，不展示 harness 内部
@@ -69,7 +67,7 @@ The design error was that ADR 0011 allowed conditional grouping:
 - a single tool could render without a `Work Cycle Group`
 - a single tool could render without a `Tool Group`
 - navigation rows could remain sibling rows in the top-level transcript
-- tool arguments could leak into the compact row instead of living only inside `Arguments`
+- tool arguments could leak into the compact row instead of living only inside the expanded tool body
 - the evaluator/check concept was defined mostly as hidden technical state, not as a business-facing check row
 
 This revision makes the tree shape mandatory. Passing tests that only prove "harness internals are hidden" and "some rows are collapsible" is no longer enough.
@@ -155,9 +153,7 @@ Inside the work cycle, visible operational state is also fixed:
 Work Cycle Group
 Tool Group
 Tool Row
-Arguments Section
-Result Preview Section
-Raw JSON Section
+Tool Body
 Navigation Row
 Confirmation Card
 Evaluation/Check Row
@@ -172,9 +168,7 @@ flowchart TD
   Work[Work Cycle Group]
   ToolGroup[Tool Group]
   ToolRow[Tool Row]
-  ToolArgs[Arguments Section]
-  ToolResult[Result Section]
-  Raw[Raw Details Section]
+  ToolBody[Tool Body: parameters + return]
   Confirm[Editable Confirmation Card]
   Nav[Navigation Row]
   Check[Business Check Row]
@@ -185,9 +179,7 @@ flowchart TD
   Thread --> Work
   Work --> ToolGroup
   ToolGroup --> ToolRow
-  ToolRow --> ToolArgs
-  ToolRow --> ToolResult
-  ToolResult --> Raw
+  ToolRow --> ToolBody
   ToolGroup --> Nav
   ToolGroup --> Confirm
   Work --> Check
@@ -209,6 +201,8 @@ The visible default should be:
 - final assistant summary after tool loops
 - technical logs behind an explicit disclosure only
 
+The 2026-05-24 refinement changes tool detail disclosure from "separate Arguments / Result Preview / Raw JSON boxes" to a single Codex-style tool body. When the user expands a tool row, parameters and real return text appear in one lightweight inline area. `Raw JSON` is no longer a normal second-level visual element in the main transcript; raw provider details belong in technical logs or explicit debug/evidence surfaces.
+
 Layering is a semantic and interaction contract, not permission to draw nested cards. The renderer must not show work group, tool group, tool row and disclosure sections as stacked rounded boxes. The preferred visual language is:
 
 - one transcript lane
@@ -216,8 +210,7 @@ Layering is a semantic and interaction contract, not permission to draw nested c
 - indentation and a subtle vertical rule for tool groups
 - row-level expand/collapse controls at the start of the row, before the icon and title
 - one-line collapsed tool/navigation/check rows
-- first-level disclosure rows for arguments and result preview
-- second-level disclosure for raw JSON
+- one inline tool body per expanded tool row; parameters and real return previews live together in that body, not in separate frames
 - real card chrome only for editable confirmation interrupts
 - no generic status slogans such as "tools selected", "parameters can be expanded", or "opened page for checking"; keep those facts in structure, status badges and technical details instead of prose
 - hide successful check rows when their only content is a generic success/read-only assertion; show check rows only when they contain an actionable failure, pending item, incomplete goal, or specific business finding
@@ -236,9 +229,9 @@ This keeps the exact tree inspectable while matching mature command/transcript U
 | Tool display registry | `apps/web/src/components/agent/agentToolDisplay.ts` or shared `packages/contracts` metadata if needed | Map tool names to compact labels, icons, risk display and default disclosure behavior. | Local business labels; no regex intent routing. |
 | Expansion state hook | `apps/web/src/hooks/useAgentTranscriptExpansion.ts` | Track expansion by `threadId / runId / nodeId / sectionId`, with defaults and auto-open rules. | Port/adapt OpenClaw `tool-expansion-state.ts` shape with attribution if code is copied. |
 | Transcript renderer | `apps/web/src/components/agent/AgentChatTimeline.tsx` | Render transcript tree, route node kinds to specialized components, remove flat `TimelineEventRow` as the primary abstraction. | Local React renderer. |
-| Tool row | `apps/web/src/components/agent/AgentToolRow.tsx` | One-line collapsed tool row; expanded arguments/result/raw/confirmation sections. | Port/adapt OpenClaw `tool-cards.ts` concepts, not Lit templates. |
+| Tool row | `apps/web/src/components/agent/AgentToolRow.tsx` | One-line collapsed tool row; expanded single tool body containing parameters and real return, plus inline confirmation interrupts. | Port/adapt OpenClaw `tool-cards.ts` concepts, not Lit templates. |
 | Work group | `apps/web/src/components/agent/AgentWorkGroup.tsx` | Codex-style top-level run/work group such as `Worked for 12s`, counts and status. | Local React implementation inspired by Codex separators. |
-| Raw/details block | `apps/web/src/components/agent/AgentDisclosureBlock.tsx` | Reusable disclosure block for arguments, result preview, raw JSON, audit detail and terminal-like output. | May reuse OpenClaw thresholds/constants. |
+| Tool body/details block | `apps/web/src/components/agent/AgentDisclosureBlock.tsx` | Reusable inline block for tool parameters, real return preview, audit detail and terminal-like output. Normal tool params/results are combined, not split into nested boxes. | May reuse OpenClaw thresholds/constants. |
 | Markdown | `apps/web/src/components/agent/AgentMarkdown.tsx` and `apps/web/src/lib/agentMarkdown.ts` | Continue assistant-only Markdown rendering from ADR 0010. | Already implemented. |
 | Tests | `apps/web/src/components/agent/*.test.tsx`, `apps/api/tests/*agent*` | Verify tree projection, grouping, defaults, expand/collapse, hidden technical logs and confirmation-card ownership. | Add fixtures based on Codex/OpenClaw behavior. |
 
@@ -358,9 +351,8 @@ Default open/closed behavior should be deterministic and test-backed:
 | confirmation card | open while pending | Editable card is attached to the producing tool/action, not rendered as a separate primary region. |
 | business check row | visible when useful | Show only business checks such as `只读，未修改业务数据`, `已打开看测算`, `等待 1 张确认卡`; never expose evaluator class names. |
 | failed tool row | open | Show concise error and relevant retry/correction hint. |
-| arguments | closed | Open from tool body. |
-| result preview | closed unless short and business-readable | Avoid raw data floods. |
-| raw JSON/provider details | second-level closed | Raw JSON is under arguments/result/details, not the first expanded body. Only for debugging/evidence. |
+| tool body | closed through the tool row after completion | Expanding the tool row shows one inline body with `参数` and real `返回` together. Generic completion placeholders are hidden. |
+| raw provider details | technical/debug only | Raw provider payloads are not a normal second-level visual block in the main transcript. Use technical logs or explicit evidence/debug views when needed. |
 | technical log | always closed, separate explicit entry | No harness internals in default transcript. |
 
 ## Grouping Rules
@@ -386,9 +378,9 @@ Tool rows must be compact, but not lossy:
 
 - The collapsed row may show: icon, business title, canonical tool name, status, short natural-language summary.
 - The collapsed row must not show long JSON, raw provider arguments, raw provider output or stack traces.
-- `Arguments` is the first-level disclosure for model/server arguments.
-- `Result Preview` is the first-level disclosure for concise business-readable result text.
-- `Raw JSON` is always a second-level disclosure inside arguments/result/details.
+- The expanded row shows one combined tool body. `参数` and `返回` are labels inside the same body, not separate cards or disclosure boxes.
+- `返回` appears only when it contains real business-readable output. Boilerplate such as "tool call completed and used for reply" is suppressed.
+- Raw JSON/provider detail is not part of the normal main-lane tool body.
 - If content exceeds the preview threshold, show a truncated summary plus an explicit expand affordance.
 - A screenshot-level acceptance check must verify that JSON strings such as `{"question":...}` are not visible in the collapsed tool row.
 
@@ -453,16 +445,14 @@ For a read-only question:
 ▸ Worked for 3s / 1 tool / 0 pending
   ▸ 调用 1 个工具
     ▸ 查询数据  data_query_workspace  completed
-      Arguments        折叠
-      Result Preview   折叠
-        Raw JSON       二级折叠
+      参数 + 返回      同一展开区域
     ▸ 已打开：看测算
   ✓ 本次只读取当前工作区数据，未修改业务数据
 
 基准场景尚未回本。总收入 ... 总成本 ...
 ```
 
-The collapsed `查询数据` row must not show raw JSON arguments inline. Expanding it shows `Arguments` and `Result Preview`; expanding those sections can reveal `Raw JSON`.
+The collapsed `查询数据` row must not show raw JSON arguments inline. Expanding it shows one lightweight tool body with `参数` and real `返回` together. It must not create separate `Arguments`, `Result Preview`, or `Raw JSON` frames in the normal transcript.
 
 For a write action:
 
@@ -472,9 +462,7 @@ For a write action:
 ▾ Worked for 5s / 1 tool / 1 pending
   ▾ 调用 1 个工具
     ▾ 修改模型  workspace_update_online_factor  waiting
-      Arguments        折叠
-      Result Preview   折叠
-      Raw JSON         二级折叠
+      参数 + 返回      同一展开区域
       确认卡：4 月线上系数 0.35 -> 0.3
       [编辑] [确认执行] [取消]
     ▸ 已打开：调模型
@@ -518,8 +506,8 @@ The first screen should be compact. Expansion reveals detail, not another page o
 - Every work cycle that has tools/actions/navigation/confirmations renders a `Tool Group`, even when there is only one tool.
 - Navigation rows are children of the relevant work cycle/tool group, not top-level transcript siblings.
 - Completed read-only tool calls render as one-line collapsed rows with status and no inline raw JSON arguments.
-- Expanding a tool row reveals at least `Arguments` and `Result Preview`.
-- Raw JSON/provider detail is a second-level disclosure under arguments/result/details and is closed by default.
+- Expanding a tool row reveals one combined inline tool body; `参数` and real `返回` appear together when present.
+- The normal main transcript does not create a separate `Raw JSON` second-level fold for tool arguments/results.
 - Pending write actions render inline editable confirmation cards attached to the producing tool/action row inside the same tool group.
 - Failed tool rows auto-open to a concise error summary.
 - Single-tool and multi-tool turns both render compact tool groups with counts.
@@ -538,10 +526,11 @@ The first screen should be compact. Expansion reveals detail, not another page o
 - `packages/contracts/src/index.ts` exposes recursive `AgentTranscriptNode.children` and `AgentTranscriptSection.children` so the API can send a true transcript tree instead of a flat row list.
 - `apps/api/src/agent/agent-timeline-projector.ts` now builds the strict top-level order for visible operational runs: user message, one work cycle, assistant Markdown summary. Pure chat remains only user message plus assistant summary.
 - The backend projector always creates a `Work Cycle Group` and `Tool Group` for non-chat runs, including single-tool runs.
-- Provider tool-call argument rows are merged into server-owned confirmation rows by canonical tool identity. For example, `workspace_update_online_factor` and the resulting `workspace.update_draft` confirmation render as one tool row with arguments, raw details and the editable card.
+- Provider tool-call argument rows are merged into server-owned confirmation rows by canonical tool identity. For example, `workspace_update_online_factor` and the resulting `workspace.update_draft` confirmation render as one tool row with a combined tool body and the editable card.
+- Read-only plan-step results are attached back to the nearest producing provider tool row as that row's `返回`. The same text may still be summarized by the assistant afterward, but the tool row itself must carry the evidence of what came back.
 - Navigation rows are attached inside the relevant tool group and no longer appear as top-level transcript siblings.
 - Business check rows are generated from structured node state and use business wording such as read-only/no-write or pending confirmation counts; harness/evaluator implementation labels remain technical.
-- Raw provider arguments/results are moved under first-level `Arguments` / `Result Preview` sections, with `Raw JSON` as second-level disclosure.
+- Raw provider arguments/results are projected into one combined frontend tool body; raw provider detail remains technical/debug evidence rather than a second visual fold in the normal lane.
 - `apps/web/src/components/agent/AgentChatTimeline.tsx` renders the nested transcript directly and exposes stable `data-transcript-kind` / `data-transcript-section-kind` markers for browser-level structural verification.
 - `apps/web/src/hooks/useAgentTranscriptExpansion.ts` handles recursive section expansion without leaking expansion state across nodes or threads.
 
@@ -550,14 +539,14 @@ The first screen should be compact. Expansion reveals detail, not another page o
 - `npm.cmd run test:web` passed: 9 files, 50 tests.
 - `npm.cmd run test:api` passed: 5 files, 99 tests.
 - `npm.cmd run build` passed: web `tsc --noEmit` + Vite production build, API `tsc --noEmit`.
-- Targeted API transcript tests cover pure chat, single read-only tool run, pending write confirmation, provider-tool/action-row merge, navigation nesting, no top-level navigation, business check wording and raw JSON second-level disclosure.
-- Targeted web tests cover strict work cycle/tool group hierarchy, recursive disclosure sections, Markdown ownership, user bubble escaping and collapsed tool rows without inline JSON.
+- Targeted API transcript tests cover pure chat, single read-only tool run, pending write confirmation, provider-tool/action-row merge, navigation nesting, no top-level navigation and business check wording.
+- Targeted web tests cover strict work cycle/tool group hierarchy, combined tool body rendering, Markdown ownership, user bubble escaping and collapsed tool rows without inline JSON.
 - Browser DOM verification passed against a built web bundle and local API with an OpenAI-compatible fake provider. The script verified:
   - greeting renders only `user_message -> assistant_message`
   - read-only query renders `user_message -> work_group -> assistant_message`
   - the work group contains `Tool Group`, `data_query_workspace`, nested navigation and business check
   - collapsed tool rows do not expose `{"question":...}` or `workspace_summary`
-  - expanding the tool reveals `Arguments` and `Result Preview`; expanding `Arguments` reveals `Raw JSON` while raw content remains hidden
+  - expanding the tool reveals one combined tool body with `参数` and real `返回`, while generic completion placeholders stay hidden
   - pending write renders one merged `workspace_update_online_factor` row with inline editable confirmation, nested navigation and `1 pending`
   - a multi-step run renders one work cycle with `2 tools / 1 pending`
 
