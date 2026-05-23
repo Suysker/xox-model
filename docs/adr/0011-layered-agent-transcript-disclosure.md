@@ -214,10 +214,12 @@ Layering is a semantic and interaction contract, not permission to draw nested c
 - one transcript lane
 - a lightweight work-cycle separator
 - indentation and a subtle vertical rule for tool groups
+- row-level expand/collapse controls at the start of the row, before the icon and title
 - one-line collapsed tool/navigation/check rows
 - first-level disclosure rows for arguments and result preview
 - second-level disclosure for raw JSON
 - real card chrome only for editable confirmation interrupts
+- no generic status slogans such as "tools selected", "parameters can be expanded", or "opened page for checking"; keep those facts in structure, status badges and technical details instead of prose
 
 This keeps the exact tree inspectable while matching mature command/transcript UIs such as Codex, Claude Code and OpenClaw.
 

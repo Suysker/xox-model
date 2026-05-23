@@ -127,12 +127,37 @@ function canExpand(node: AgentTranscriptNode) {
   return Boolean(node.children?.length || node.sections?.length || node.details?.length || node.payload || node.navigation)
 }
 
+const decorativeSummaryPatterns = [
+  /^\d+ 个工具\s*\/\s*\d+ 个可见步骤$/,
+  /^\d+ 个可见步骤$/,
+  /^\d+ 个步骤$/,
+  /^工具已选择，参数可展开查看。?$/,
+  /^参数和结果可展开查看。?$/,
+  /^参数可展开查看。?$/,
+  /^结果已用于本轮回复。?$/,
+  /^工具调用已完成，结果已用于本轮回复。?$/,
+  /^本次只读取当前工作区数据，未修改业务数据。?(?:\s*已打开 \d+ 个相关页面用于核对。?)?$/,
+  /便于核对/,
+]
+
+function isDecorativeSummary(summary: string) {
+  return decorativeSummaryPatterns.some((pattern) => pattern.test(summary.trim()))
+}
+
+function visibleSummary(summary: string | null | undefined) {
+  if (!summary) return ''
+  return isDecorativeSummary(summary) ? '' : summary
+}
+
 function compactRowSummary(node: AgentTranscriptNode) {
   const summary = node.summary ?? ''
-  if ((node.kind === 'tool_call' || node.kind === 'tool_result') && /^[\s{[]/.test(summary)) {
-    return '参数和结果可展开查看'
+  if (node.kind === 'navigation' && node.status === 'completed') {
+    return ''
   }
-  return summary
+  if ((node.kind === 'tool_call' || node.kind === 'tool_result') && /^[\s{[]/.test(summary)) {
+    return ''
+  }
+  return visibleSummary(summary)
 }
 
 function TimelineStatusBadge(props: { status: AgentTranscriptNode['status'] }) {
@@ -246,6 +271,7 @@ function DisclosureSection(props: {
   onCancel: (id: string) => void
   onUpdate: (id: string, payload: AgentActionUpdatePayload) => void
 }) {
+  const sectionSummary = visibleSummary(props.section.summary)
   return (
     <div className="border-t border-stone-100 py-1 first:border-t-0" data-transcript-section-kind={props.section.kind} data-transcript-section-id={props.section.id}>
       <button
@@ -257,7 +283,7 @@ function DisclosureSection(props: {
         {props.expanded ? <ChevronDown className="h-3.5 w-3.5 text-stone-500" /> : <ChevronRight className="h-3.5 w-3.5 text-stone-500" />}
         <span className="min-w-0 truncate text-[11px] font-semibold text-stone-700">
           {props.section.title}
-          {props.section.summary ? <span className="ml-2 font-normal text-stone-500">{props.section.summary}</span> : null}
+          {sectionSummary ? <span className="ml-2 font-normal text-stone-500">{sectionSummary}</span> : null}
         </span>
       </button>
       {props.expanded ? (
@@ -298,8 +324,22 @@ function NodeRow(props: {
   onToggle: () => void
 }) {
   const expandable = canExpand(props.node)
+  const rowSummary = compactRowSummary(props.node)
   return (
-    <div className="grid min-h-7 grid-cols-[20px_minmax(0,1fr)_auto] items-center gap-2">
+    <div className="grid min-h-7 grid-cols-[18px_20px_minmax(0,1fr)_auto] items-center gap-1.5">
+      {expandable ? (
+        <button
+          type="button"
+          onClick={props.onToggle}
+          className="inline-flex h-5 w-5 items-center justify-center rounded-md text-stone-400 transition hover:bg-stone-100 hover:text-stone-700"
+          title={props.expanded ? '收起详情' : '展开详情'}
+          aria-expanded={props.expanded}
+        >
+          {props.expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+        </button>
+      ) : (
+        <span aria-hidden="true" />
+      )}
       <span className="flex h-5 w-5 items-center justify-center text-stone-500">
         <KindIcon kind={props.node.kind} />
       </span>
@@ -313,20 +353,9 @@ function NodeRow(props: {
             {props.node.tool.name}
           </span>
         ) : null}
-        <span className="min-w-0 truncate text-[11px] text-stone-500">{compactRowSummary(props.node)}</span>
+        {rowSummary ? <span className="min-w-0 truncate text-[11px] text-stone-500">{rowSummary}</span> : null}
       </div>
       <div className="flex items-center gap-1">
-        {expandable ? (
-          <button
-            type="button"
-            onClick={props.onToggle}
-            className="inline-flex h-6 w-6 items-center justify-center rounded-md text-stone-400 transition hover:bg-stone-100 hover:text-stone-700"
-            title={props.expanded ? '收起详情' : '展开详情'}
-            aria-expanded={props.expanded}
-          >
-            {props.expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-          </button>
-        ) : null}
         <TimelineStatusBadge status={props.node.status} />
       </div>
     </div>
