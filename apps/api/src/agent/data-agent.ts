@@ -30,8 +30,28 @@ export type DataAgentQueryStep = {
 export type DataAgentRead = {
   title: string
   message: string
+  readKind: 'tool_observation'
+  modelContent: string
+  displayPreview: string
   navigation: AgentNavigationEvent
   status: 'executed'
+}
+
+function dataRead(input: {
+  title: string
+  message: string
+  navigation: AgentNavigationEvent
+  data: Record<string, unknown>
+}): DataAgentRead {
+  return {
+    title: input.title,
+    message: input.message,
+    readKind: 'tool_observation',
+    modelContent: JSON.stringify({ ...input.data, displayPreview: input.message }),
+    displayPreview: input.message,
+    navigation: input.navigation,
+    status: 'executed',
+  }
 }
 
 function money(value: number) {
@@ -133,16 +153,16 @@ export async function answerWorkspaceDataQuestion(ctx: DataAgentContext, step: D
     const names = members.map((member) => member.name).filter((name) => name.trim().length > 0)
     const includeNames = metrics.length === 0 || metrics.includes('teamMemberNames')
     const nameText = includeNames && names.length > 0 ? `，分别是：${names.join('、')}` : ''
-    return {
+    return dataRead({
       title: '回答团队成员问题',
-      message: `当前工作区共有 ${members.length} 个成员${nameText}。本次只读取当前工作区数据，未修改业务数据。`,
+      message: `当前工作区共有 ${members.length} 个成员${nameText}。`,
       navigation: {
         type: 'navigation',
         route: { mainTab: 'dashboard', secondaryTab: 'members' },
         reason: '团队成员问答需要打开成员分析页面，便于核对成员口径。',
       },
-      status: 'executed',
-    }
+      data: { scope, memberCount: members.length, names },
+    })
   }
 
   if (scope === 'period_summary') {
@@ -167,16 +187,16 @@ export async function answerWorkspaceDataQuestion(ctx: DataAgentContext, step: D
     const route: AgentNavigationEvent['route'] = includeActual
       ? { mainTab: 'variance', secondaryTab: 'analysis', selectedPeriodId: period.id }
       : { mainTab: 'dashboard', secondaryTab: 'months', selectedPeriodId: period.id }
-    return {
+    return dataRead({
       title: '回答单月数据问题',
-      message: `${parts.join('，')}。本次只读取当前工作区数据，未修改业务数据。`,
+      message: `${parts.join('，')}。`,
       navigation: {
         type: 'navigation',
         route,
         reason: '数据问答需要打开对应月份的分析页面，便于核对口径。',
       },
-      status: 'executed',
-    }
+      data: { scope, monthLabel: period.month_label, plannedRevenue, plannedCost, plannedProfit, actualRevenue, actualCost, actualProfit, metrics },
+    })
   }
 
   if (scope === 'member_summary') {
@@ -199,16 +219,16 @@ export async function answerWorkspaceDataQuestion(ctx: DataAgentContext, step: D
       { revenue: 0, commission: 0, contribution: 0 },
     )
     const label = step.monthLabel ? `${step.monthLabel}${member.name}` : `${member.name}全周期`
-    return {
+    return dataRead({
       title: '回答成员数据问题',
-      message: `${label}计划收入 ${money(totals.revenue)}，计划提成 ${money(totals.commission)}，公司净贡献 ${money(totals.contribution)}。本次只读取当前工作区数据，未修改业务数据。`,
+      message: `${label}计划收入 ${money(totals.revenue)}，计划提成 ${money(totals.commission)}，公司净贡献 ${money(totals.contribution)}。`,
       navigation: {
         type: 'navigation',
         route: { mainTab: 'dashboard', secondaryTab: 'members' },
         reason: '成员数据问答需要打开成员分析页面，便于核对口径。',
       },
-      status: 'executed',
-    }
+      data: { scope, memberId: member.id, memberName: member.name, monthLabel: step.monthLabel ?? null, totals },
+    })
   }
 
   if (scope === 'top_months') {
@@ -225,16 +245,16 @@ export async function answerWorkspaceDataQuestion(ctx: DataAgentContext, step: D
       .map((month) => ({ month, value: metricValue(month) }))
       .sort((a, b) => (order === 'asc' ? a.value - b.value : b.value - a.value))
       .slice(0, limit)
-    return {
+    return dataRead({
       title: '回答月份排行问题',
-      message: `按${metric === 'plannedRevenue' ? '计划收入' : metric === 'plannedCost' ? '计划成本' : metric === 'cash' ? '累计现金' : '计划利润'}${order === 'asc' ? '升序' : '降序'}，前 ${limit} 个月份是：${ranked.map((item) => `${item.month.label} ${money(item.value)}`).join('；')}。本次只读取当前工作区数据，未修改业务数据。`,
+      message: `按${metric === 'plannedRevenue' ? '计划收入' : metric === 'plannedCost' ? '计划成本' : metric === 'cash' ? '累计现金' : '计划利润'}${order === 'asc' ? '升序' : '降序'}，前 ${limit} 个月份是：${ranked.map((item) => `${item.month.label} ${money(item.value)}`).join('；')}。`,
       navigation: {
         type: 'navigation',
         route: { mainTab: 'dashboard', secondaryTab: 'months' },
         reason: '月份排行问答需要打开按月分析页面，便于核对口径。',
       },
-      status: 'executed',
-    }
+      data: { scope, metric, order, limit, ranked: ranked.map((item) => ({ monthLabel: item.month.label, value: item.value })) },
+    })
   }
 
   if (scope === 'variance_detail') {
@@ -256,16 +276,16 @@ export async function answerWorkspaceDataQuestion(ctx: DataAgentContext, step: D
     const detail = lines.length > 0
       ? lines.map((line) => `${line.subjectName}：计划 ${money(line.plannedAmount)}，实际 ${money(line.actualAmount)}，差异 ${money(line.varianceAmount)}`).join('；')
       : '没有找到匹配科目的预实差异明细'
-    return {
+    return dataRead({
       title: '回答预实差异追问',
-      message: `${variance.monthLabel}收入差异 ${money(variance.revenueVarianceAmount)}，成本差异 ${money(variance.costVarianceAmount)}。${detail}。本次只读取当前工作区数据，未修改业务数据。`,
+      message: `${variance.monthLabel}收入差异 ${money(variance.revenueVarianceAmount)}，成本差异 ${money(variance.costVarianceAmount)}。${detail}。`,
       navigation: {
         type: 'navigation',
         route: { mainTab: 'variance', secondaryTab: 'analysis', selectedPeriodId: period.id },
         reason: '预实分析追问需要打开对应月份偏差页，便于核对科目明细。',
       },
-      status: 'executed',
-    }
+      data: { scope, monthLabel: variance.monthLabel, revenueVarianceAmount: variance.revenueVarianceAmount, costVarianceAmount: variance.costVarianceAmount, lines },
+    })
   }
 
   if (scope === 'ledger_history') {
@@ -317,27 +337,35 @@ export async function answerWorkspaceDataQuestion(ctx: DataAgentContext, step: D
       keyword,
     ].filter(Boolean).join(' / ') || '全部记录'
 
-    return {
+    return dataRead({
       title: '筛选账本历史',
-      message: `已按“${filterText}”筛选账本历史，命中 ${rows.length} 笔${preview.length > 0 ? `：${preview.join('；')}` : ''}。本次只读取当前工作区数据，未修改业务数据。`,
+      message: `已按“${filterText}”筛选账本历史，命中 ${rows.length} 笔${preview.length > 0 ? `：${preview.join('；')}` : ''}。`,
       navigation: {
         type: 'navigation',
         route: { mainTab: 'bookkeeping', secondaryTab: 'entries', selectedPeriodId },
         ledgerFilters: filters,
         reason: '账本历史筛选需要打开记实际页面，并同步方向、状态、日期和关键词过滤器。',
       },
-      status: 'executed',
-    }
+      data: { scope, filterText, count: rows.length, preview, filters },
+    })
   }
 
-  return {
+  return dataRead({
     title: '回答工作区数据问题',
-    message: `基准场景总收入 ${money(baseScenario.grossSales)}，总成本 ${money(baseScenario.totalCost)}，总利润 ${money(baseScenario.totalProfit)}，期末现金 ${money(baseScenario.netCashAfterInvestment)}，投资回报率 ${pct(baseScenario.roi)}，回本周期 ${baseScenario.paybackMonthLabel ?? '未回本'}。本次只读取当前工作区数据，未修改业务数据。`,
+    message: `基准场景总收入 ${money(baseScenario.grossSales)}，总成本 ${money(baseScenario.totalCost)}，总利润 ${money(baseScenario.totalProfit)}，期末现金 ${money(baseScenario.netCashAfterInvestment)}，投资回报率 ${pct(baseScenario.roi)}，回本周期 ${baseScenario.paybackMonthLabel ?? '未回本'}。`,
     navigation: {
       type: 'navigation',
       route: { mainTab: 'dashboard', secondaryTab: 'overview' },
       reason: '工作区数据问答需要打开经营总览页面，便于核对口径。',
     },
-    status: 'executed',
-  }
+    data: {
+      scope,
+      grossSales: baseScenario.grossSales,
+      totalCost: baseScenario.totalCost,
+      totalProfit: baseScenario.totalProfit,
+      netCashAfterInvestment: baseScenario.netCashAfterInvestment,
+      roi: baseScenario.roi,
+      paybackMonthLabel: baseScenario.paybackMonthLabel ?? null,
+    },
+  })
 }

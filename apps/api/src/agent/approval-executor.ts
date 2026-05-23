@@ -24,6 +24,10 @@ import {
   consolidateExecutedActionMemory,
 } from './memory-kernel.js'
 import {
+  actionExecutionObservation,
+  continueModelAfterToolObservations,
+} from './tool-observation-continuation.js'
+import {
   memoryCandidateFromCancelledAction,
   memoryCandidateFromEditedAction,
 } from './memory-candidate-detector.js'
@@ -104,6 +108,11 @@ async function nextEvaluationIteration(db: Kysely<Database>, runId: string) {
     .where('run_id', '=', runId)
     .executeTakeFirst()
   return Number(row?.maxIteration ?? 0) + 1
+}
+
+async function runInputMessage(db: Kysely<Database>, runId: string, fallback: string) {
+  const run = await db.selectFrom('agent_runs').select(['input_message']).where('id', '=', runId).executeTakeFirst()
+  return run?.input_message?.trim() || fallback
 }
 
 function assertActionOwnedByWorkspace(action: Row<'agent_action_requests'>, workspace: Row<'workspaces'>, user: CurrentUser) {
@@ -214,8 +223,6 @@ export async function confirmAgentActionRequest(db: Kysely<Database>, settings: 
     actionRows: [updated],
     message: '已从确认卡执行结果沉淀记忆候选。',
   })
-  const planSteps = await listPlanStepsForRun(db, action.run_id)
-  const assistant = await addMessage(db, action.thread_id, 'assistant', `已执行：${action.title}`)
   await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', action.thread_id).execute()
   await addRunEvent(db, {
     threadId: action.thread_id,
@@ -226,12 +233,24 @@ export async function confirmAgentActionRequest(db: Kysely<Database>, settings: 
     status: 'completed',
     data: { actionRequestId: action.id, actionKind: action.kind },
   })
+  const continuation = await continueModelAfterToolObservations({
+    db,
+    settings,
+    workspace,
+    user,
+    threadId: action.thread_id,
+    runId: action.run_id,
+    message: await runInputMessage(db, action.run_id, action.title),
+  }, [actionExecutionObservation({ action: updated, result })])
+  const assistant = continuation.status === 'answered'
+    ? await addMessage(db, action.thread_id, 'assistant', continuation.assistantText)
+    : null
   return {
     actionRequest: updated,
     result,
-    messages: [assistant],
+    messages: assistant ? [assistant] : [],
     runEvents: await listSerializedRunEvents(db, action.run_id),
-    planSteps,
+    planSteps: await listPlanStepsForRun(db, action.run_id),
     threadId: action.thread_id,
   }
 }

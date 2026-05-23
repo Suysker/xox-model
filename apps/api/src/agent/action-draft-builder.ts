@@ -5,6 +5,12 @@ import type { RuntimePlanResult } from './runtime/runtime-adapter.js'
 export type ReadDraft = {
   title: string
   message: string
+  readKind?: 'assistant_message' | 'tool_observation' | 'status'
+  toolName?: string
+  toolCallId?: string
+  toolArguments?: Record<string, unknown>
+  modelContent?: string
+  displayPreview?: string
   navigation?: AgentNavigationEvent | null
   status?: AgentPlanStepStatus
 }
@@ -29,7 +35,8 @@ export function isActionDraft(item: PlannedItem): item is AgentActionDraft {
 export function accountForbiddenRead(): ReadDraft {
   return {
     title: '账号动作需要手动完成',
-    message: '账号登录、退出、注销、删除账号和密码类动作不能由 Agent 自动执行，请在账号入口手动操作。',
+    message: '账号登录、退出、注销、删除账号和改密等动作不能由 Agent 自动执行，请在账号入口手动操作。',
+    readKind: 'tool_observation',
     status: 'info',
   }
 }
@@ -51,6 +58,7 @@ function clarificationRead(step: RuntimePlannerStep): ReadDraft {
   return {
     title: '需要补充信息',
     message: `${question}${suffix ? `（${suffix}）` : ''}`,
+    readKind: 'tool_observation',
     status: 'info',
   }
 }
@@ -60,12 +68,27 @@ function uiNavigateRead(step: RuntimePlannerStep): ReadDraft | null {
   return {
     title: '打开页面',
     message: '已打开相关页面。',
+    readKind: 'tool_observation',
     navigation: {
       type: 'navigation',
       route: { mainTab: step.mainTab, secondaryTab: step.secondaryTab as never },
       reason: '用户要求切换工作台页面。',
     },
     status: 'executed',
+  }
+}
+
+function attachToolMetadata(item: PlannedItemResult, step: RuntimePlannerStep): PlannedItemResult {
+  if (!item) return item
+  if (Array.isArray(item)) return item.map((entry) => attachToolMetadata(entry, step) as PlannedItem)
+  if (isActionDraft(item)) return item
+  const toolName = step.providerToolName
+  return {
+    ...item,
+    readKind: item.readKind ?? (toolName ? 'tool_observation' : 'status'),
+    ...(toolName ? { toolName } : {}),
+    ...(step.providerToolCallId ? { toolCallId: step.providerToolCallId } : {}),
+    ...(step.providerToolArguments ? { toolArguments: step.providerToolArguments } : {}),
   }
 }
 
@@ -79,5 +102,5 @@ export async function buildPlannedItemFromRuntimeStep<TContext>(
   if (step.intent === 'ui.navigate') return uiNavigateRead(step)
   if (!step.intent) return null
   const handler = handlers[step.intent]
-  return handler ? handler(ctx, step) : null
+  return handler ? attachToolMetadata(await handler(ctx, step), step) : null
 }

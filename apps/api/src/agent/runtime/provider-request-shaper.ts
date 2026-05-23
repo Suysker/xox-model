@@ -54,7 +54,7 @@ export function shapeOpenAICompatibleChatRequest(
   const tools = normalizedTools(input, profile)
   const body: Record<string, unknown> = {
     model: profile.requestModel,
-    messages: [
+    messages: input.messages ?? [
       { role: 'system', content: input.systemPrompt ?? plannerSystemPrompt() },
       { role: 'user', content: `上下文：${JSON.stringify(input.context)}\n用户指令：${input.message}` },
     ],

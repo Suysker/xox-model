@@ -14,6 +14,7 @@ function modelToolCallRequiredRead(error?: RuntimePlanError | null): ReadDraft {
     return {
       title: '模型 API key 未配置',
       message: '当前已选择真实模型 provider，但没有可用 API key。请在模型配置里重新填写该 provider 的 API key；如果刚从 qwen 切到 DeepSeek，不要留空沿用旧 key。',
+      readKind: 'status',
       status: 'failed',
     }
   }
@@ -24,6 +25,7 @@ function modelToolCallRequiredRead(error?: RuntimePlanError | null): ReadDraft {
       return {
         title: '模型参数不兼容',
         message: `当前 provider 拒绝了本轮 Chat Completions 参数。系统会按 provider profile 省略不兼容参数；如果仍失败，请检查 model 是否支持 tools/tool_calls。${error.message ? ` Provider 提示：${error.message}` : ''}`,
+        readKind: 'status',
         status: 'failed',
       }
     }
@@ -31,6 +33,7 @@ function modelToolCallRequiredRead(error?: RuntimePlanError | null): ReadDraft {
       return {
         title: error.classification === 'billing' ? '模型服务额度不足' : '模型服务限流',
         message: `模型服务返回 HTTP ${error.statusCode ?? '错误'}。请检查该 provider 的余额、额度或请求频率。${error.message ? ` Provider 提示：${error.message}` : ''}`,
+        readKind: 'status',
         status: 'failed',
       }
     }
@@ -38,6 +41,7 @@ function modelToolCallRequiredRead(error?: RuntimePlanError | null): ReadDraft {
       return {
         title: '模型上下文超限',
         message: `当前上下文超过了 provider/model 可接受长度。请缩短输入或切换更大上下文模型。${error.message ? ` Provider 提示：${error.message}` : ''}`,
+        readKind: 'status',
         status: 'failed',
       }
     }
@@ -46,6 +50,7 @@ function modelToolCallRequiredRead(error?: RuntimePlanError | null): ReadDraft {
       message: authFailed
         ? `模型服务认证失败：模型服务返回 HTTP ${error.statusCode}，当前保存的 API key 可能不是这个 provider 的 key，或已经失效。请重新保存 DeepSeek/Qwen/Doubao 对应的 API key。${error.message ? ` Provider 提示：${error.message}` : ''}`
         : `模型服务返回 HTTP ${error.statusCode ?? '错误'}。请检查 base URL、model 名称和 provider 配置。${error.message ? ` Provider 提示：${error.message}` : ''}`,
+      readKind: 'status',
       status: 'failed',
     }
   }
@@ -54,6 +59,7 @@ function modelToolCallRequiredRead(error?: RuntimePlanError | null): ReadDraft {
     return {
       title: '无法连接模型服务',
       message: `无法连接当前 provider 的 Chat Completions 接口。请检查 base URL 是否可访问，以及本地代理/网络设置。${error.message ? ` 错误：${error.message}` : ''}`,
+      readKind: 'status',
       status: 'failed',
     }
   }
@@ -62,6 +68,7 @@ function modelToolCallRequiredRead(error?: RuntimePlanError | null): ReadDraft {
     return {
       title: '模型服务响应超时',
       message: `当前 provider 在本轮规划预算内没有完成响应。复杂经营模型会自动使用更长预算并重试；如果仍失败，请稍后重试或检查 provider 负载。${error.message ? ` 错误：${error.message}` : ''}`,
+      readKind: 'status',
       status: 'failed',
     }
   }
@@ -70,6 +77,7 @@ function modelToolCallRequiredRead(error?: RuntimePlanError | null): ReadDraft {
     return {
       title: '模型响应格式不可用',
       message: `模型服务返回了无法解析的工具调用或流式片段，系统没有生成写入动作。${error.message ? ` 错误：${error.message}` : ''}`,
+      readKind: 'status',
       status: 'failed',
     }
   }
@@ -77,6 +85,7 @@ function modelToolCallRequiredRead(error?: RuntimePlanError | null): ReadDraft {
   return {
     title: '模型没有返回内容',
     message: '模型这轮没有返回可展示内容，也没有调用工具。系统没有生成任何写入动作；请换一种说法重试。',
+    readKind: 'status',
     status: 'info',
   }
 }
@@ -86,6 +95,7 @@ function providerAssistantTextRead(text: string): ReadDraft {
   return {
     title: '模型回复',
     message: message || '模型这轮没有返回可展示内容。',
+    readKind: 'assistant_message',
     status: 'executed',
   }
 }

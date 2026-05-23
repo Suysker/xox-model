@@ -125,7 +125,10 @@ export async function submitAgentMessageRun(input: SubmitAgentMessageRunInput): 
     })
     if (!completed) return buildThreadState(input.db, input.workspace, input.user, thread.id)
     const runEvents = await listSerializedRunEvents(input.db, runId)
-    const messages = [serializeMessage(userMessage), serializeMessage(completed.assistantMessage)]
+    const messages = [
+      serializeMessage(userMessage),
+      ...(completed.assistantMessage ? [serializeMessage(completed.assistantMessage)] : []),
+    ]
     const planSteps = completed.planRows.map(serializePlanStep)
     const actionRequests = completed.actionRows.map(serializeAction)
     const projection = {

@@ -10,6 +10,21 @@ function previewToolArguments(args: Record<string, unknown>) {
   return JSON.stringify(args).slice(0, TOOL_ARGUMENT_PREVIEW_LIMIT)
 }
 
+function promptFromMessages(input: RuntimePlanningInput) {
+  if (!input.messages || input.messages.length === 0) {
+    return `上下文：${JSON.stringify(input.context)}\n用户指令：${input.message}`
+  }
+  return input.messages
+    .map((message) => {
+      if (message.role === 'assistant' && message.tool_calls && message.tool_calls.length > 0) {
+        return `assistant tool_calls: ${JSON.stringify(message.tool_calls)}`
+      }
+      if (message.role === 'tool') return `tool ${message.name ?? message.tool_call_id}: ${message.content}`
+      return `${message.role}: ${message.content ?? ''}`
+    })
+    .join('\n')
+}
+
 function buildPlannerTools(tools: ChatTool[], collectedSteps: AgentToolCallStep[], runtimeInput: RuntimePlanningInput) {
   return tools.map((descriptor) => {
     const name = descriptor.function.name
@@ -21,7 +36,12 @@ function buildPlannerTools(tools: ChatTool[], collectedSteps: AgentToolCallStep[
       execute: async (args) => {
         const toolInput = args && typeof args === 'object' ? args as Record<string, unknown> : {}
         const step = toolCallToPlannerStep(name, toolInput)
-        if (step) collectedSteps.push(step)
+        if (step) {
+          step.providerToolName = name
+          step.providerToolArguments = toolInput
+          step.providerToolCallIndex = collectedSteps.length
+          collectedSteps.push(step)
+        }
         await runtimeInput.onStreamEvent?.({
           kind: 'tool_call_delta',
           toolCallIndex: step ? collectedSteps.length - 1 : collectedSteps.length,
@@ -79,7 +99,7 @@ export class OpenAIAgentsAdapter implements RuntimeAdapter {
       })
       const result = await runner.run(
         planner,
-        `上下文：${JSON.stringify(input.context)}\n用户指令：${input.message}`,
+        promptFromMessages(input),
         {
           maxTurns: 2,
           toolExecution: { maxFunctionToolConcurrency: 1 },

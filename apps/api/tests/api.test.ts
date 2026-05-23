@@ -26,6 +26,7 @@ type FakeCapability = 'data' | 'draft' | 'import_export' | 'ledger' | 'memory' |
 type FakeProviderOptions = {
   autoSelectCapabilities?: boolean
   capabilities?: FakeCapability[]
+  finalizerResponse?: (body: any, request: IncomingMessage) => unknown | Promise<unknown>
 }
 
 const DEFAULT_FAKE_CAPABILITIES: FakeCapability[] = ['data', 'draft', 'import_export', 'ledger', 'memory', 'navigation', 'share', 'version']
@@ -103,9 +104,19 @@ async function withFakeOpenAICompatibleProvider(
       return
     }
     const body = JSON.parse(rawBody)
-    const payload = (options.autoSelectCapabilities ?? true) && isCapabilityRouterRequest(body)
-      ? fakeCapabilitySelectionResponse(options.capabilities ?? DEFAULT_FAKE_CAPABILITIES)
-      : await handler(body, request)
+    const bodyText = JSON.stringify(body)
+    const isObservationFinalizerRequest =
+      (!Array.isArray(body?.tools) || body.tools.length === 0) &&
+      Array.isArray(body?.messages) &&
+      (body.messages.some((message: any) => message?.role === 'tool') ||
+        bodyText.includes('上一轮模型自己选择的 tool_calls'))
+    const payload = isObservationFinalizerRequest
+      ? options.finalizerResponse
+        ? await options.finalizerResponse(body, request)
+        : fakeObservationFinalizerResponse(body)
+      : (options.autoSelectCapabilities ?? true) && isCapabilityRouterRequest(body)
+        ? fakeCapabilitySelectionResponse(options.capabilities ?? DEFAULT_FAKE_CAPABILITIES)
+        : await handler(body, request)
     if (payload && typeof payload === 'object' && '__statusCode' in payload) {
       const statusPayload = payload as { __statusCode: number; body: unknown }
       response.writeHead(statusPayload.__statusCode, { 'Content-Type': 'application/json' })
@@ -221,6 +232,23 @@ function fakeAssistantTextResponse(content: string) {
       },
     }],
   }
+}
+
+function fakeObservationFinalizerResponse(body: any) {
+  const toolMessages = Array.isArray(body?.messages)
+    ? body.messages.filter((message: any) => message?.role === 'tool')
+    : []
+  const previews = toolMessages.map((message: any) => {
+    const content = typeof message?.content === 'string' ? message.content : ''
+    try {
+      const parsed = JSON.parse(content)
+      if (typeof parsed?.displayPreview === 'string') return parsed.displayPreview
+    } catch {
+      // Use the raw tool content below when the observation is not JSON.
+    }
+    return content
+  }).filter((item: string) => item.trim().length > 0)
+  return fakeAssistantTextResponse(previews.join('\n') || '已根据工具结果完成回复。')
 }
 
 function fakeToolResponses(calls: Array<{ name: string; args?: Record<string, unknown> }>) {
@@ -951,8 +979,8 @@ describe('xox TypeScript API', () => {
       expect(planned.json.actionRequests).toHaveLength(1)
       expect(planned.json.actionRequests[0].kind).toBe('ledger.create_entry')
       expect(planned.json.planSteps.map((step: any) => step.status)).toEqual(['ready', 'info'])
-      expect(planned.json.messages.at(-1).content).toContain('2 个步骤')
-      expect(planned.json.messages.at(-1).content).toContain('账号登录、退出、注销')
+      expect(planned.json.messages.map((message: any) => message.role)).toEqual(['user'])
+      expect(planned.json.planSteps[1].description).toContain('账号登录、退出、注销')
 
       const restored = await client.get(`/api/v1/agent/threads/${planned.json.threadId}`)
       expect(restored.statusCode).toBe(200)
@@ -1615,7 +1643,7 @@ describe('xox TypeScript API', () => {
       expect(callCount).toBe(1)
       expect(planned.json.planner).toBe('openai_compatible_tool_calls')
       expect(planned.json.actionRequests).toHaveLength(0)
-      expect(planned.json.planSteps[0].status).toBe('executed')
+      expect(planned.json.planSteps).toHaveLength(0)
       expect(planned.json.messages.at(-1).content).toContain('xox-model Agent OS')
       const visibleTimeline = planned.json.timelineItems.filter((item: any) => item.visibility === 'user')
       expect(visibleTimeline.map((item: any) => item.kind)).toEqual(['user_message', 'assistant_message'])
@@ -1647,7 +1675,7 @@ describe('xox TypeScript API', () => {
       expect(callCount).toBe(1)
       expect(planned.json.planner).toBe('openai_compatible_tool_calls')
       expect(planned.json.actionRequests).toHaveLength(0)
-      expect(planned.json.planSteps[0].status).toBe('executed')
+      expect(planned.json.planSteps).toHaveLength(0)
       expect(planned.json.messages.at(-1).content).toContain('这不是 tool call')
       const entries = await client.get(`/api/v1/ledger/entries?periodId=${(await client.get('/api/v1/ledger/periods')).json[0].id}`)
       expect(entries.json).toHaveLength(0)
@@ -1676,8 +1704,9 @@ describe('xox TypeScript API', () => {
       expect(planned.json.planner).toBe('openai_compatible_tool_calls')
       expect(planned.json.actionRequests).toHaveLength(0)
       expect(planned.json.planSteps[0].status).toBe('failed')
-      expect(planned.json.messages.at(-1).content).toContain('认证失败')
-      expect(planned.json.messages.at(-1).content).toContain('HTTP 401')
+      expect(planned.json.messages.map((message: any) => message.role)).toEqual(['user'])
+      expect(planned.json.planSteps[0].description).toContain('认证失败')
+      expect(planned.json.planSteps[0].description).toContain('HTTP 401')
       await closeHarness(harness)
     })
   })
@@ -1697,7 +1726,8 @@ describe('xox TypeScript API', () => {
     expect(planned.json.planner).toBe('openai_compatible_tool_calls')
     expect(planned.json.actionRequests).toHaveLength(0)
     expect(planned.json.planSteps[0].status).toBe('failed')
-    expect(planned.json.messages.at(-1).content).toContain('API key')
+    expect(planned.json.messages.map((message: any) => message.role)).toEqual(['user'])
+    expect(planned.json.planSteps[0].description).toContain('API key')
     await closeHarness(harness)
   })
 
@@ -1948,7 +1978,9 @@ describe('xox TypeScript API', () => {
   })
 
   it('answers read-only data questions only through a model-selected data tool call', async () => {
+    const requests: any[] = []
     await withFakeOpenAICompatibleProvider((body) => {
+      requests.push(body)
       expect(body.tools.some((tool: any) => tool.function.name === 'data_query_workspace')).toBe(true)
       return fakeToolResponse('data_query_workspace', {
         question: '3 月计划收入和计划成本是多少',
@@ -1976,7 +2008,49 @@ describe('xox TypeScript API', () => {
       expect(response.json.navigationEvents[0].route.mainTab).toBe('dashboard')
       expect(response.json.messages.at(-1).content).toContain('3月计划收入')
       expect(response.json.messages.at(-1).content).toContain('计划成本')
+      expect(response.json.messages.at(-1).content).not.toContain('本次只读取当前工作区数据')
+      expect(response.json.runEvents.some((event: any) => event.type === 'model_continuation')).toBe(true)
+      expect(response.json.runEvents.some((event: any) => event.type === 'model_continuation_completed')).toBe(true)
+      expect(requests).toHaveLength(1)
+      const transcriptText = JSON.stringify(response.json.transcriptNodes)
+      expect(transcriptText).toContain('data_query_workspace')
+      expect(transcriptText).toContain('3月计划收入')
       await closeHarness(harness)
+    })
+  })
+
+  it('fails the run when tool observations cannot be continued into a model answer', async () => {
+    await withFakeOpenAICompatibleProvider((body) => {
+      expect(body.tools.some((tool: any) => tool.function.name === 'data_query_workspace')).toBe(true)
+      return fakeToolResponse('data_query_workspace', {
+        question: '3 月计划收入和计划成本是多少',
+        scope: 'period_summary',
+        monthLabel: '3月',
+        metrics: ['plannedRevenue', 'plannedCost'],
+      })
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-observation-continuation-failure', {
+        llmProvider: 'openai-compatible',
+        openaiCompatibleProvider: 'test-compatible',
+        openaiCompatibleBaseUrl: baseUrl,
+        openaiCompatibleApiKey: 'test-key',
+      })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-observation-continuation-failure@example.com')
+
+      const response = await client.post('/api/v1/agent/messages', {
+        message: '3 月计划收入和计划成本是多少？',
+      })
+      expect(response.statusCode).toBe(200)
+      expect(response.json.messages.map((message: any) => message.role)).toEqual(['user'])
+      expect(response.json.planSteps.map((step: any) => step.status)).toEqual(['executed', 'failed'])
+      expect(response.json.planSteps.at(-1).title).toBe('模型回复失败')
+      const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
+      expect(state.json.evaluations.at(-1).status).toBe('failed')
+      expect(response.json.runEvents.some((event: any) => event.type === 'model_continuation_failed')).toBe(true)
+      await closeHarness(harness)
+    }, {
+      finalizerResponse: () => fakeAssistantTextResponse(''),
     })
   })
 
@@ -2595,7 +2669,7 @@ describe('xox TypeScript API', () => {
 
       const restored = await firstClient.get(`/api/v1/agent/threads/${planned.json.threadId}`)
       expect(restored.statusCode).toBe(200)
-      expect(restored.json.messages.map((message: any) => message.role)).toEqual(['user', 'assistant'])
+      expect(restored.json.messages.map((message: any) => message.role)).toEqual(['user'])
       expect(restored.json.runs[0].status).toBe('completed')
       expect(restored.json.runs[0].planner).toBe('openai_compatible_tool_calls')
       expect(restored.json.planSteps).toHaveLength(1)

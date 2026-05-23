@@ -53,11 +53,36 @@ export type RuntimeStreamEvent =
       source?: RuntimePlannerSource
     }
 
+export type RuntimeChatMessage =
+  | {
+      role: 'system' | 'user'
+      content: string
+    }
+  | {
+      role: 'assistant'
+      content: string | null
+      tool_calls?: Array<{
+        id: string
+        type: 'function'
+        function: {
+          name: string
+          arguments: string
+        }
+      }>
+    }
+  | {
+      role: 'tool'
+      content: string
+      tool_call_id: string
+      name?: string
+    }
+
 export type RuntimePlanningInput = {
   settings: Settings
   message: string
   context: unknown
   tools: ChatTool[]
+  messages?: RuntimeChatMessage[]
   systemPrompt?: string
   stream?: boolean
   maxTokens?: number

@@ -48,7 +48,7 @@ export function plannerStepsFromProviderToolCalls(input: {
   if (!Array.isArray(input.toolCalls)) return []
   const steps: AgentToolCallStep[] = []
   const observedNames: string[] = []
-  for (const toolCall of input.toolCalls as ProviderToolCall[]) {
+  for (const [index, toolCall] of (input.toolCalls as ProviderToolCall[]).entries()) {
     const repairedName = repairToolName(
       toolCall?.function?.name,
       input.allowedToolNames,
@@ -67,7 +67,13 @@ export function plannerStepsFromProviderToolCalls(input: {
       }
       const args = parsedArguments.args
       const step = toolCallToPlannerStep(repairedName, args)
-      if (step) steps.push(step)
+      if (step) {
+        step.providerToolName = repairedName
+        step.providerToolArguments = args
+        step.providerToolCallIndex = index
+        if (typeof toolCall?.id === 'string' && toolCall.id.trim()) step.providerToolCallId = toolCall.id
+        steps.push(step)
+      }
       observedNames.push(repairedName)
     } catch (error) {
       const toolNames = [

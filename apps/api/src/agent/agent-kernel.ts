@@ -5,7 +5,7 @@ import { executeAgentGoalRun } from './goal-run-engine.js'
 
 export type AgentKernelRunResult = {
   plannerSource: AgentPlannerSource
-  assistantMessage: Row<'agent_messages'>
+  assistantMessage: Row<'agent_messages'> | null
   navigationEvents: AgentNavigationEvent[]
   actionRows: Row<'agent_action_requests'>[]
   planRows: Row<'agent_plan_steps'>[]

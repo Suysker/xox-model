@@ -19,3 +19,7 @@ export function plannerSystemPrompt() {
 export function memorySystemPrompt() {
   return readPrompt('./prompts/memory.system.md')
 }
+
+export function toolObservationFinalizerSystemPrompt() {
+  return readPrompt('./prompts/tool-observation-finalizer.system.md')
+}

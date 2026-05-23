@@ -15,10 +15,11 @@ import {
 import { planResponse } from './planner.js'
 import { addRunEvent } from './run-events.js'
 import { addMessage } from './thread-store.js'
+import { continueModelAfterToolObservations } from './tool-observation-continuation.js'
 
 export type AgentGoalRunResult = {
   plannerSource: AgentPlannerSource
-  assistantMessage: Row<'agent_messages'>
+  assistantMessage: Row<'agent_messages'> | null
   navigationEvents: AgentNavigationEvent[]
   actionRows: Row<'agent_action_requests'>[]
   planRows: Row<'agent_plan_steps'>[]
@@ -90,7 +91,17 @@ export async function executeAgentGoalRun(
     navigationEvents.push(...planned.navigationEvents)
     actionRows.push(...planned.actionRows)
     planRows.push(...planned.planRows)
-    if (planned.assistant.trim()) assistantParts.push(planned.assistant.trim())
+    if (planned.assistantText?.trim()) {
+      assistantParts.push(planned.assistantText.trim())
+    } else if (planned.observations.length > 0 && planned.actionRows.every((row) => row.status !== 'pending')) {
+      const continuation = await continueModelAfterToolObservations(ctx, planned.observations)
+      if (!(await options.beforeStateWrite())) return null
+      if (continuation.status === 'answered') {
+        assistantParts.push(continuation.assistantText.trim())
+      } else if (continuation.status === 'failed') {
+        planRows.push(continuation.planStep)
+      }
+    }
 
     const evaluationRow = await evaluateAgentGoal({
       db: ctx.db,
@@ -164,9 +175,6 @@ export async function executeAgentGoalRun(
     break
   }
 
-  const assistantText = assistantParts.length > 0
-    ? assistantParts.join(' ')
-    : 'Goal Run Engine 已完成本轮评估，但没有生成新的可见回复。'
   await consolidateExecutedActionMemory({
     db: ctx.db,
     workspace: ctx.workspace,
@@ -176,7 +184,9 @@ export async function executeAgentGoalRun(
     actionRows,
     message: `已从本轮执行结果沉淀记忆候选。`,
   })
-  const assistantMessage = await addMessage(ctx.db, ctx.thread.id, 'assistant', assistantText)
+  const assistantMessage = assistantParts.length > 0
+    ? await addMessage(ctx.db, ctx.thread.id, 'assistant', assistantParts.join('\n\n'))
+    : null
   await flushThreadContextToMemoryIfNeeded({ db: ctx.db, workspace: ctx.workspace, user: ctx.user, threadId: ctx.thread.id, runId: ctx.runId })
   if (!(await options.beforeStateWrite())) return null
   return {

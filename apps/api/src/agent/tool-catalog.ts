@@ -11,6 +11,10 @@ export type AgentToolCapability =
   | 'version'
 
 export type AgentToolCallStep = {
+  providerToolCallId?: string
+  providerToolName?: string
+  providerToolArguments?: Record<string, unknown>
+  providerToolCallIndex?: number
   intent?: string
   capabilities?: AgentToolCapability[]
   reason?: string

@@ -11,6 +11,7 @@ import { isActionDraft, type PlannedItem } from './action-draft-builder.js'
 import { addRunEvent } from './run-events.js'
 import { assertAgentRunLease } from './run-lease.js'
 import { agentThreadEvents } from './thread-events.js'
+import { actionExecutionObservation, type AgentToolObservation } from './tool-observation-continuation.js'
 import { canAutoExecuteRisk } from './tool-policy.js'
 import type { AgentAutomationLevel } from './tool-policy.js'
 import { redactSecretLikeContent } from './memory.js'
@@ -26,11 +27,32 @@ type ActionGraphContext = {
 }
 
 export type StoredActionGraph = {
-  assistant: string
+  assistantText: string | null
+  observations: AgentToolObservation[]
   navigationEvents: AgentNavigationEvent[]
   actionRows: Row<'agent_action_requests'>[]
   planRows: Row<'agent_plan_steps'>[]
   plannerSource: AgentPlannerSource
+}
+
+function toolNameForRead(item: PlannedItem, sequence: number) {
+  if (!('toolName' in item) || !item.toolName) return `read_observation_${sequence}`
+  return item.toolName
+}
+
+function observationFromRead(item: PlannedItem, sequence: number): AgentToolObservation | null {
+  if (!('readKind' in item) || item.readKind !== 'tool_observation') return null
+  const toolName = toolNameForRead(item, sequence)
+  const displayPreview = item.displayPreview ?? item.message
+  return {
+    title: item.title,
+    toolName,
+    toolCallId: item.toolCallId ?? `call_observation_${sequence}_${toolName}`,
+    toolArguments: item.toolArguments ?? {},
+    displayPreview,
+    modelContent: item.modelContent ?? displayPreview,
+    status: item.status === 'failed' ? 'failed' : item.status === 'cancelled' ? 'cancelled' : 'completed',
+  }
 }
 
 type AddAgentPlanStepInput = {
@@ -129,7 +151,8 @@ export async function storePlannedActionGraph(
   const navigationEvents: AgentNavigationEvent[] = []
   const actionRows: Row<'agent_action_requests'>[] = []
   const planRows: Row<'agent_plan_steps'>[] = []
-  const messages: string[] = []
+  const assistantTexts: string[] = []
+  const observations: AgentToolObservation[] = []
 
   await assertAgentRunLease(ctx.db, ctx.settings, ctx.runId)
   const existing = await ctx.db
@@ -158,6 +181,14 @@ export async function storePlannedActionGraph(
       actionRows.push(updatedAction)
       planRows.push(step)
       navigationEvents.push(item.navigation)
+      if (updatedAction.status === 'executed' || updatedAction.status === 'failed') {
+        observations.push(actionExecutionObservation({ action: updatedAction }))
+      }
+      continue
+    }
+
+    if (item.readKind === 'assistant_message') {
+      assistantTexts.push(item.message)
       continue
     }
 
@@ -170,7 +201,8 @@ export async function storePlannedActionGraph(
       navigation: item.navigation ?? null,
     })
     planRows.push(step)
-    messages.push(item.message)
+    const observation = observationFromRead(item, sequence)
+    if (observation) observations.push(observation)
   }
 
   const failedCount = planRows.filter((row) => row.status === 'failed').length
@@ -201,18 +233,9 @@ export async function storePlannedActionGraph(
     })
   }
   agentThreadEvents.publish(ctx.threadId, 'plan_ready')
-  if (input.items.length > 0) {
-    const assistant =
-      pendingActionCount > 0
-        ? `我已拆成 ${input.items.length} 个步骤，其中 ${pendingActionCount} 个写入动作需要你确认，${executedActionCount} 个已按自动化策略执行。你可以先编辑未执行确认卡，再逐项执行。${messages.length > 0 ? ` ${messages.join(' ')}` : ''}`
-        : executedActionCount > 0
-          ? `我已拆成 ${input.items.length} 个步骤，并按自动化策略执行了 ${executedActionCount} 个写入动作。${messages.length > 0 ? ` ${messages.join(' ')}` : ''}`
-        : messages.join(' ')
-    return { assistant, navigationEvents, actionRows, planRows, plannerSource: input.plannerSource }
-  }
-
   return {
-    assistant: '我可以操作测算、调模型、记实际、看偏差、版本发布/恢复、分享和锁账。请告诉我要执行的业务动作；写入前我会先给确认卡。',
+    assistantText: assistantTexts.length > 0 ? assistantTexts.join('\n\n') : null,
+    observations,
     navigationEvents,
     actionRows,
     planRows,
