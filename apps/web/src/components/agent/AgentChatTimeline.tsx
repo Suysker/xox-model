@@ -47,7 +47,7 @@ function flattenNodes(nodes: AgentTranscriptNode[]): AgentTranscriptNode[] {
 }
 
 export function userTimelineItems(nodes: AgentTranscriptNode[]) {
-  return nodes.filter((node) => node.visibility === 'user')
+  return nodes.filter((node) => node.visibility === 'user' && shouldRenderTranscriptNode(node))
 }
 
 export function technicalTimelineItems(nodes: AgentTranscriptNode[]) {
@@ -55,7 +55,7 @@ export function technicalTimelineItems(nodes: AgentTranscriptNode[]) {
 }
 
 export function summarizeAgentChatTimeline(nodes: AgentTranscriptNode[]): AgentChatTimelineSummary {
-  const flattened = flattenNodes(nodes)
+  const flattened = flattenNodes(nodes).filter(shouldRenderTranscriptNode)
   const visible = flattened.filter((node) => node.visibility === 'user')
   return {
     visibleCount: visible.length,
@@ -158,6 +158,26 @@ function compactRowSummary(node: AgentTranscriptNode) {
     return ''
   }
   return visibleSummary(summary)
+}
+
+function hasRenderableContent(node: AgentTranscriptNode): boolean {
+  return Boolean(
+    visibleSummary(node.summary) ||
+    node.content ||
+    node.sections?.length ||
+    node.details?.length ||
+    node.payload ||
+    node.navigation ||
+    node.actionRequest ||
+    node.children?.some(shouldRenderTranscriptNode),
+  )
+}
+
+export function shouldRenderTranscriptNode(node: AgentTranscriptNode) {
+  if (node.kind === 'evaluation' && node.status === 'completed' && !hasRenderableContent(node)) {
+    return false
+  }
+  return true
 }
 
 function TimelineStatusBadge(props: { status: AgentTranscriptNode['status'] }) {
@@ -410,7 +430,7 @@ function TranscriptNodeView(props: {
               onUpdate={props.onUpdate}
             />
           ))}
-          {props.node.children?.map((child) => (
+          {props.node.children?.filter(shouldRenderTranscriptNode).map((child) => (
             <TranscriptNodeView
               key={child.id}
               node={child}

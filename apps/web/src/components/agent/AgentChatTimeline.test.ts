@@ -2,7 +2,7 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { AgentActionRequest, AgentTranscriptNode } from '../../lib/api'
-import { AgentChatTimeline, formatTimelineStatus, shouldShowTimelineThinking, summarizeAgentChatTimeline, technicalTimelineItems, userTimelineItems } from './AgentChatTimeline'
+import { AgentChatTimeline, formatTimelineStatus, shouldRenderTranscriptNode, shouldShowTimelineThinking, summarizeAgentChatTimeline, technicalTimelineItems, userTimelineItems } from './AgentChatTimeline'
 
 function item(overrides: Partial<AgentTranscriptNode> = {}): AgentTranscriptNode {
   return {
@@ -261,6 +261,7 @@ describe('AgentChatTimeline helpers', () => {
     expect(html).toContain('已打开：看测算')
     expect(html).not.toContain('工具已选择，参数可展开查看')
     expect(html).not.toContain('工作区数据问答需要打开经营总览页面')
+    expect(html).not.toContain('业务检查')
     expect(html).not.toContain('本次只读取当前工作区数据，未修改业务数据')
     expect(html).not.toContain('结果已用于本轮回复')
     expect(html).toContain('当前还未回本。')
@@ -274,6 +275,39 @@ describe('AgentChatTimeline helpers', () => {
     expect(html).toContain('grid-cols-[18px_20px_minmax(0,1fr)_auto]')
     expect(html).not.toContain('rounded-md border border-stone-900/10 bg-white')
     expect(html).not.toContain('rounded-md border border-stone-900/10 bg-stone-50')
+  })
+
+  it('hides empty successful business checks but keeps actionable checks', () => {
+    const emptyCheck = item({
+      id: 'empty-check',
+      kind: 'evaluation',
+      title: '业务检查',
+      summary: '本次只读取当前工作区数据，未修改业务数据。',
+      status: 'completed',
+    })
+    const failedCheck = item({
+      id: 'failed-check',
+      kind: 'evaluation',
+      title: '业务检查',
+      summary: '有 1 个步骤失败，请展开查看并修复。',
+      status: 'failed',
+    })
+
+    expect(shouldRenderTranscriptNode(emptyCheck)).toBe(false)
+    expect(shouldRenderTranscriptNode(failedCheck)).toBe(true)
+
+    const html = renderToStaticMarkup(createElement(AgentChatTimeline, {
+      nodes: [emptyCheck, failedCheck],
+      busy: false,
+      actionDiffsById: new Map(),
+      onCancel: () => undefined,
+      onConfirm: () => undefined,
+      onUpdate: () => undefined,
+    }))
+
+    expect(html).toContain('有 1 个步骤失败，请展开查看并修复。')
+    expect(html.match(/业务检查/g)?.length).toBe(1)
+    expect(summarizeAgentChatTimeline([emptyCheck, failedCheck]).visibleCount).toBe(1)
   })
 
   it('opens pending confirmation sections inline by default', () => {
