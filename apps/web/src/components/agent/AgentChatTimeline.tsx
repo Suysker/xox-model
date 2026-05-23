@@ -127,6 +127,14 @@ function canExpand(node: AgentTranscriptNode) {
   return Boolean(node.children?.length || node.sections?.length || node.details?.length || node.payload || node.navigation)
 }
 
+function compactRowSummary(node: AgentTranscriptNode) {
+  const summary = node.summary ?? ''
+  if ((node.kind === 'tool_call' || node.kind === 'tool_result') && /^[\s{[]/.test(summary)) {
+    return '参数和结果可展开查看'
+  }
+  return summary
+}
+
 function TimelineStatusBadge(props: { status: AgentTranscriptNode['status'] }) {
   return (
     <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${statusClass(props.status)}`}>
@@ -142,7 +150,7 @@ function TimelineMessage(props: { node: AgentTranscriptNode }) {
   const source = props.node.content ?? props.node.summary ?? ''
   if (!isUser) {
     return (
-      <div className="flex justify-start">
+      <div className="flex justify-start" data-transcript-kind={props.node.kind} data-transcript-id={props.node.id}>
         <AgentMarkdown
           source={source}
           streaming={isStream}
@@ -152,7 +160,7 @@ function TimelineMessage(props: { node: AgentTranscriptNode }) {
     )
   }
   return (
-    <div className="flex justify-end">
+    <div className="flex justify-end" data-transcript-kind={props.node.kind} data-transcript-id={props.node.id}>
       <p className="max-w-[92%] whitespace-pre-wrap break-words rounded-lg bg-stone-950 px-3 py-1.5 text-right text-sm font-medium leading-6 text-white shadow-sm">
         {source}
       </p>
@@ -230,6 +238,8 @@ function DisclosureSection(props: {
   section: AgentTranscriptSection
   expanded: boolean
   onToggle: () => void
+  isSectionExpanded: (sectionId: string) => boolean
+  onToggleSection: (sectionId: string) => void
   busy: boolean
   diffDetails: Array<{ label: string; value: string }>
   onConfirm: (id: string) => void
@@ -237,7 +247,7 @@ function DisclosureSection(props: {
   onUpdate: (id: string, payload: AgentActionUpdatePayload) => void
 }) {
   return (
-    <div className="rounded-md border border-stone-900/10 bg-stone-50">
+    <div className="rounded-md border border-stone-900/10 bg-stone-50" data-transcript-section-kind={props.section.kind} data-transcript-section-id={props.section.id}>
       <button
         type="button"
         onClick={props.onToggle}
@@ -251,7 +261,7 @@ function DisclosureSection(props: {
         </span>
       </button>
       {props.expanded ? (
-        <div className="border-t border-stone-200 px-2 py-2">
+        <div className="grid gap-1.5 border-t border-stone-200 px-2 py-2">
           <SectionBody
             section={props.section}
             busy={props.busy}
@@ -260,6 +270,22 @@ function DisclosureSection(props: {
             onCancel={props.onCancel}
             onUpdate={props.onUpdate}
           />
+          {props.section.children?.map((child) => (
+            <DisclosureSection
+              key={child.id}
+              node={props.node}
+              section={child}
+              expanded={props.isSectionExpanded(child.id)}
+              onToggle={() => props.onToggleSection(child.id)}
+              isSectionExpanded={props.isSectionExpanded}
+              onToggleSection={props.onToggleSection}
+              busy={props.busy}
+              diffDetails={props.diffDetails}
+              onConfirm={props.onConfirm}
+              onCancel={props.onCancel}
+              onUpdate={props.onUpdate}
+            />
+          ))}
         </div>
       ) : null}
     </div>
@@ -287,7 +313,7 @@ function NodeRow(props: {
             {props.node.tool.name}
           </span>
         ) : null}
-        <span className="min-w-0 truncate text-[11px] text-stone-500">{props.node.summary}</span>
+        <span className="min-w-0 truncate text-[11px] text-stone-500">{compactRowSummary(props.node)}</span>
       </div>
       <div className="flex items-center gap-1">
         {expandable ? (
@@ -323,7 +349,7 @@ function TranscriptNodeView(props: {
   const diffDetails = props.node.actionRequestId ? props.actionDiffsById.get(props.node.actionRequestId) ?? [] : []
   const indentClass = props.depth ? 'ml-5 border-l border-stone-200 pl-2' : ''
   return (
-    <div className={`${indentClass} rounded-md border border-stone-900/10 bg-white px-2 py-1 shadow-sm`}>
+    <div className={`${indentClass} rounded-md border border-stone-900/10 bg-white px-2 py-1 shadow-sm`} data-transcript-kind={props.node.kind} data-transcript-id={props.node.id}>
       <NodeRow node={props.node} expanded={nodeOpen} onToggle={() => props.expanded.toggleNode(props.node)} />
       {nodeOpen ? (
         <div className="mt-2 grid gap-1.5 border-t border-stone-100 pt-2">
@@ -334,6 +360,8 @@ function TranscriptNodeView(props: {
               section={section}
               expanded={props.expanded.isSectionExpanded(props.node, section.id)}
               onToggle={() => props.expanded.toggleSection(props.node, section.id)}
+              isSectionExpanded={(sectionId) => props.expanded.isSectionExpanded(props.node, sectionId)}
+              onToggleSection={(sectionId) => props.expanded.toggleSection(props.node, sectionId)}
               busy={props.busy}
               diffDetails={diffDetails}
               onConfirm={props.onConfirm}

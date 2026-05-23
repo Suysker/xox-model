@@ -315,7 +315,7 @@ function finiteTime(value: string) {
 }
 
 function nodeOrder(item: AgentTimelineItem) {
-  return finiteTime(item.createdAt) * 1000 + item.sequence
+  return item.sequence * 1000
 }
 
 function groupStatus(nodes: AgentTranscriptNode[]): AgentTimelineItem['status'] {
@@ -325,6 +325,28 @@ function groupStatus(nodes: AgentTranscriptNode[]): AgentTimelineItem['status'] 
   if (nodes.some((node) => node.status === 'cancelled')) return 'cancelled'
   if (nodes.length > 0 && nodes.every((node) => node.status === 'completed')) return 'completed'
   return 'info'
+}
+
+function flattenTranscriptChildren(nodes: AgentTranscriptNode[]): AgentTranscriptNode[] {
+  return nodes.flatMap((node): AgentTranscriptNode[] => [node, ...flattenTranscriptChildren(node.children ?? [])])
+}
+
+function pendingNodeCount(nodes: AgentTranscriptNode[]) {
+  const flattened = flattenTranscriptChildren(nodes)
+  const pendingActionIds = new Set(
+    flattened
+      .map((node) => node.actionRequest?.status === 'pending' ? node.actionRequest.id : null)
+      .filter((id): id is string => Boolean(id)),
+  )
+  const waitingWithoutAction = flattened.filter((node) => (
+    node.status === 'waiting' &&
+    !node.actionRequest &&
+    !node.actionRequestId &&
+    node.kind !== 'work_group' &&
+    node.kind !== 'tool_group' &&
+    node.kind !== 'evaluation'
+  )).length
+  return pendingActionIds.size + waitingWithoutAction
 }
 
 function sectionPayload(value: unknown): Record<string, unknown> | null {
@@ -341,6 +363,22 @@ function compactJson(value: unknown) {
   }
 }
 
+function parseJsonPayload(value: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(value) as unknown
+    return sectionPayload(parsed)
+  } catch {
+    return null
+  }
+}
+
+function compactArgumentSummary(value: string) {
+  const parsed = parseJsonPayload(value)
+  if (!parsed) return '参数可展开查看'
+  const keys = Object.keys(parsed).slice(0, 4)
+  return keys.length > 0 ? `参数：${keys.join(', ')}` : '参数可展开查看'
+}
+
 function toolArgumentsPreview(item: AgentTimelineItem) {
   const payload = item.payload ?? {}
   const preview = typeof payload.argumentsPreview === 'string'
@@ -354,6 +392,53 @@ function toolArgumentsPreview(item: AgentTimelineItem) {
 function toolResultPreview(item: AgentTimelineItem) {
   if (item.kind === 'tool_result') return item.summary
   if (item.actionRequest) return item.actionRequest.summary
+  if (item.kind === 'tool_call' && item.status === 'completed') return '工具调用已完成，结果已用于本轮回复或后续业务步骤。'
+  return item.summary
+}
+
+function rawSection(id: string, content: string, payload: Record<string, unknown> | null = null): AgentTranscriptSection {
+  return {
+    id,
+    kind: 'raw',
+    title: 'Raw JSON',
+    summary: '二级折叠',
+    content,
+    ...(payload ? { payload } : {}),
+    defaultOpen: false,
+  }
+}
+
+function appendRawSection(
+  sections: AgentTranscriptSection[],
+  ownerId: string,
+  rawPayload: Record<string, unknown> | null,
+) {
+  if (!rawPayload || sections.some((section) => section.children?.some((child) => child.kind === 'raw'))) return
+  const target = sections.find((section) => section.kind === 'result')
+    ?? sections.find((section) => section.kind === 'details')
+    ?? sections.find((section) => section.kind === 'confirmation')
+  const content = compactJson(rawPayload)
+  if (target) {
+    target.children = [
+      ...(target.children ?? []),
+      rawSection(`${target.id}:raw`, content, rawPayload),
+    ]
+    return
+  }
+  sections.push({
+    id: `${ownerId}:details`,
+    kind: 'details',
+    title: 'Details',
+    summary: '更多详情',
+    defaultOpen: false,
+    children: [rawSection(`${ownerId}:details:raw`, content, rawPayload)],
+  })
+}
+
+function toolNodeSummary(item: AgentTimelineItem) {
+  if (item.actionRequest) return item.actionRequest.summary
+  if (item.kind === 'tool_call') return '工具已选择，参数可展开查看。'
+  if (item.kind === 'tool_result') return item.summary
   return item.summary
 }
 
@@ -364,9 +449,11 @@ function timelineItemSections(item: AgentTimelineItem): AgentTranscriptSection[]
     sections.push({
       id: `${item.id}:arguments`,
       kind: 'arguments',
-      title: '参数',
-      summary: argumentsPreview.replace(/\s+/g, ' ').slice(0, 180),
-      content: argumentsPreview,
+      title: 'Arguments',
+      summary: compactArgumentSummary(argumentsPreview),
+      children: [
+        rawSection(`${item.id}:arguments:raw`, argumentsPreview, parseJsonPayload(argumentsPreview)),
+      ],
       defaultOpen: false,
     })
   }
@@ -374,19 +461,9 @@ function timelineItemSections(item: AgentTimelineItem): AgentTranscriptSection[]
     sections.push({
       id: `${item.id}:details`,
       kind: 'details',
-      title: '明细',
+      title: 'Details',
       summary: `${item.details.length} 项`,
       details: item.details,
-      defaultOpen: item.status === 'waiting',
-    })
-  }
-  if (item.navigation) {
-    sections.push({
-      id: `${item.id}:navigation`,
-      kind: 'navigation',
-      title: '页面',
-      summary: item.navigation.reason,
-      navigation: item.navigation,
       defaultOpen: item.status === 'waiting',
     })
   }
@@ -396,7 +473,7 @@ function timelineItemSections(item: AgentTimelineItem): AgentTranscriptSection[]
       sections.push({
         id: `${item.id}:result`,
         kind: 'result',
-        title: item.kind === 'tool_result' ? '结果' : '预览',
+        title: 'Result Preview',
         summary: result.replace(/\s+/g, ' ').slice(0, 180),
         content: result,
         defaultOpen: item.status === 'failed',
@@ -418,17 +495,7 @@ function timelineItemSections(item: AgentTimelineItem): AgentTranscriptSection[]
     targetLabel: item.actionRequest.targetLabel,
     payload: item.actionRequest.payload,
   } : null)
-  if (rawPayload) {
-    sections.push({
-      id: `${item.id}:raw`,
-      kind: 'raw',
-      title: '原始数据',
-      summary: 'JSON',
-      content: compactJson(rawPayload),
-      payload: rawPayload,
-      defaultOpen: false,
-    })
-  }
+  appendRawSection(sections, item.id, rawPayload)
   return sections
 }
 
@@ -460,7 +527,7 @@ function timelineItemToNode(item: AgentTimelineItem): PendingTranscriptNode {
     sequence: item.sequence,
     kind: item.actionRequest ? 'tool_call' : transcriptNodeKind(item),
     title: item.title,
-    summary: item.summary,
+    summary: item.kind === 'tool_call' || item.kind === 'tool_result' ? toolNodeSummary(item) : item.summary,
     ...(item.content ? { content: item.content } : {}),
     status: item.status,
     visibility: item.visibility,
@@ -499,7 +566,7 @@ function readableElapsed(items: AgentTimelineItem[]) {
 
 function toolGroupNode(runKey: string, children: AgentTranscriptNode[], order: number): PendingTranscriptNode {
   const toolCount = children.filter((node) => node.kind === 'tool_call' || node.kind === 'tool_result').length
-  const pendingCount = children.filter((node) => node.actionRequest?.status === 'pending' || node.status === 'waiting').length
+  const pendingCount = pendingNodeCount(children)
   const failedCount = children.filter((node) => node.status === 'failed').length
   const status = groupStatus(children)
   return {
@@ -516,10 +583,10 @@ function toolGroupNode(runKey: string, children: AgentTranscriptNode[], order: n
     ].filter(Boolean).join(' / '),
     status,
     visibility: 'user',
-    defaultOpen: status === 'failed' || status === 'waiting' || status === 'running',
+    defaultOpen: true,
     disclosure: {
       kind: 'group',
-      defaultOpen: status === 'failed' || status === 'waiting' || status === 'running',
+      defaultOpen: true,
     },
     children,
     createdAt: children[0]?.createdAt ?? new Date(0).toISOString(),
@@ -529,6 +596,48 @@ function toolGroupNode(runKey: string, children: AgentTranscriptNode[], order: n
 
 function comparableToolName(value: string | null | undefined) {
   return value?.replaceAll('.', '_').replaceAll('-', '_') ?? ''
+}
+
+const toolActionKindAliases: Record<string, string[]> = {
+  ledger_create_member_income: ['ledger.create_entry'],
+  ledger_create_entry: ['ledger.create_entry'],
+  ledger_create_planned_member_income_batch: ['ledger.create_entry'],
+  ledger_create_planned_related_expense_batch: ['ledger.create_entry'],
+  ledger_update_entry: ['ledger.update_entry'],
+  ledger_void_entry: ['ledger.void_entry'],
+  ledger_restore_entry: ['ledger.restore_entry'],
+  ledger_set_period_lock: ['ledger.set_period_lock'],
+  workspace_update_online_factor: ['workspace.update_draft'],
+  workspace_patch_config: ['workspace.update_draft'],
+  workspace_configure_operating_model: ['workspace.update_draft'],
+  team_member_add: ['workspace.update_draft'],
+  team_member_delete: ['workspace.update_draft'],
+  employee_add: ['workspace.update_draft'],
+  employee_delete: ['workspace.update_draft'],
+  shareholder_add: ['workspace.update_draft'],
+  shareholder_delete: ['workspace.update_draft'],
+  cost_item_add: ['workspace.update_draft'],
+  cost_item_delete: ['workspace.update_draft'],
+  stage_cost_type_add: ['workspace.update_draft'],
+  stage_cost_type_delete: ['workspace.update_draft'],
+  workspace_rename: ['workspace.rename'],
+  workspace_save_snapshot: ['workspace.save_snapshot'],
+  workspace_publish_release: ['workspace.publish_release'],
+  workspace_promote_version: ['workspace.promote_version'],
+  workspace_rollback_version: ['workspace.rollback_version'],
+  workspace_delete_version: ['workspace.delete_version'],
+  workspace_reset_draft: ['workspace.reset_draft'],
+  workspace_import_bundle: ['workspace.import_bundle'],
+  share_create: ['share.create'],
+  share_revoke: ['share.revoke'],
+}
+
+function providerToolMatchesAction(providerToolName: string | null | undefined, actionKind: string | null | undefined) {
+  const provider = comparableToolName(providerToolName)
+  const action = actionKind ?? ''
+  if (!provider || !action) return false
+  if (provider === comparableToolName(action)) return true
+  return toolActionKindAliases[provider]?.includes(action) ?? false
 }
 
 function mergeNodeSections(
@@ -551,7 +660,7 @@ function mergeProviderToolCallsIntoActionNodes(nodes: PendingTranscriptNode[]): 
   return nodes
     .map((node, index) => {
       if (node.kind !== 'tool_call' || !node.actionRequest) return node
-      const actionToolName = comparableToolName(node.tool?.name ?? node.actionRequest.kind)
+      const actionToolName = node.tool?.name ?? node.actionRequest.kind
       if (!actionToolName) return node
 
       let providerIndex = -1
@@ -562,7 +671,7 @@ function mergeProviderToolCallsIntoActionNodes(nodes: PendingTranscriptNode[]): 
           candidate.kind === 'tool_call' &&
           !candidate.actionRequest &&
           !consumedProviderNodeIds.has(candidate.id) &&
-          comparableToolName(candidate.tool?.name) === actionToolName
+          providerToolMatchesAction(candidate.tool?.name, actionToolName)
         ) {
           providerIndex = candidateIndex
           break
@@ -577,6 +686,7 @@ function mergeProviderToolCallsIntoActionNodes(nodes: PendingTranscriptNode[]): 
       const mergedTool = node.tool
         ? {
             ...node.tool,
+            ...(providerNode.tool?.name ? { name: providerNode.tool.name } : {}),
             ...(providerNode.tool?.argumentsPreview ? { argumentsPreview: providerNode.tool.argumentsPreview } : {}),
             ...(providerNode.tool?.resultPreview && !node.tool.resultPreview ? { resultPreview: providerNode.tool.resultPreview } : {}),
           }
@@ -584,6 +694,7 @@ function mergeProviderToolCallsIntoActionNodes(nodes: PendingTranscriptNode[]): 
 
       return {
         ...node,
+        title: node.actionRequest?.title ?? node.title,
         order: Math.min(providerNode.order, node.order),
         ...(mergedTool ? { tool: mergedTool } : {}),
         ...(mergedSections ? { sections: mergedSections } : {}),
@@ -592,13 +703,135 @@ function mergeProviderToolCallsIntoActionNodes(nodes: PendingTranscriptNode[]): 
     .filter((node) => !consumedProviderNodeIds.has(node.id))
 }
 
+function navigationKey(navigation: AgentTimelineItem['navigation']) {
+  if (!navigation) return ''
+  return JSON.stringify({
+    route: navigation.route,
+    panel: navigation.panel ?? null,
+    focusRecordId: navigation.focusRecordId ?? null,
+    ledgerFilters: navigation.ledgerFilters ?? null,
+  })
+}
+
+function dedupeAttachedNavigationItems(items: AgentTimelineItem[]) {
+  const attachedNavigationKeys = new Set(
+    items
+      .filter((item) => (
+        item.navigation &&
+        (item.kind === 'tool_call' || item.kind === 'tool_result' || item.kind === 'confirmation' || item.kind === 'action_edit')
+      ))
+      .map((item) => navigationKey(item.navigation)),
+  )
+  const emittedStandaloneNavigationKeys = new Set<string>()
+  return items.filter((item) => {
+    if (item.kind !== 'navigation' || !item.navigation) return true
+    const key = navigationKey(item.navigation)
+    if (attachedNavigationKeys.has(key)) return false
+    if (emittedStandaloneNavigationKeys.has(key)) return false
+    emittedStandaloneNavigationKeys.add(key)
+    return true
+  })
+}
+
+function navigationTitleFromEvent(navigation: AgentTimelineItem['navigation']) {
+  if (!navigation) return '已打开对应页面'
+  const tab = navigation.route.mainTab === 'bookkeeping'
+    ? '记实际'
+    : navigation.route.mainTab === 'inputs'
+      ? '调模型'
+      : navigation.route.mainTab === 'variance'
+        ? '看偏差'
+        : '看测算'
+  return `已打开：${tab}`
+}
+
+function navigationNodeFromSource(source: PendingTranscriptNode, navigation: NonNullable<AgentTimelineItem['navigation']>, offset: number): PendingTranscriptNode {
+  return {
+    id: `node-navigation-${source.id}-${offset}`,
+    threadId: source.threadId,
+    runId: source.runId,
+    sequence: source.sequence,
+    kind: 'navigation',
+    title: navigationTitleFromEvent(navigation),
+    summary: navigation.reason,
+    status: source.status === 'failed' ? 'failed' : 'completed',
+    visibility: 'user',
+    defaultOpen: false,
+    disclosure: {
+      kind: 'navigation',
+      defaultOpen: false,
+    },
+    navigation,
+    createdAt: source.createdAt,
+    order: source.order + 0.1 + offset / 100,
+  }
+}
+
+function attachNavigationRows(nodes: PendingTranscriptNode[]): PendingTranscriptNode[] {
+  const seen = new Set<string>()
+  const next: PendingTranscriptNode[] = []
+  nodes.forEach((node, index) => {
+    next.push(node)
+    if (node.kind === 'navigation' && node.navigation) {
+      seen.add(navigationKey(node.navigation))
+      return
+    }
+    if (!node.navigation) return
+    const key = navigationKey(node.navigation)
+    if (seen.has(key)) return
+    seen.add(key)
+    next.push(navigationNodeFromSource(node, node.navigation, index))
+  })
+  return next
+}
+
+function businessCheckNode(runKey: string, children: AgentTranscriptNode[], order: number): PendingTranscriptNode {
+  const flattened = flattenTranscriptChildren(children)
+  const pendingCount = pendingNodeCount(children)
+  const failedCount = flattened.filter((node) => node.status === 'failed').length
+  const executedCount = flattened.filter((node) => node.kind === 'tool_result' && node.status === 'completed' && node.actionRequestId).length
+  const navigationCount = flattened.filter((node) => node.kind === 'navigation').length
+  const hasWrites = flattened.some((node) => node.actionRequest || node.actionRequestId)
+  const status = failedCount > 0 ? 'failed' : pendingCount > 0 ? 'waiting' : 'completed'
+  const summary = failedCount > 0
+    ? `有 ${failedCount} 个步骤失败，请展开查看并修复。`
+    : pendingCount > 0
+      ? `等待 ${pendingCount} 张确认卡，确认前不会写入业务数据。`
+      : executedCount > 0
+        ? `已执行 ${executedCount} 个动作，业务数据已刷新。`
+        : hasWrites
+          ? '本轮涉及业务动作，当前没有待确认写入。'
+          : [
+              '本次只读取当前工作区数据，未修改业务数据。',
+              navigationCount > 0 ? `已打开 ${navigationCount} 个相关页面用于核对。` : null,
+            ].filter(Boolean).join(' ')
+
+  return {
+    id: `node-business-check-${runKey}`,
+    threadId: children[0]?.threadId ?? '',
+    runId: children[0]?.runId ?? null,
+    sequence: children[0]?.sequence ?? 0,
+    kind: 'evaluation',
+    title: '业务检查',
+    summary,
+    status,
+    visibility: 'user',
+    defaultOpen: false,
+    disclosure: {
+      kind: 'audit',
+      defaultOpen: false,
+    },
+    createdAt: children.at(-1)?.createdAt ?? children[0]?.createdAt ?? new Date(0).toISOString(),
+    order,
+  }
+}
+
 function workGroupNode(runKey: string, items: AgentTimelineItem[], children: AgentTranscriptNode[], order: number): PendingTranscriptNode {
   const status = groupStatus(children)
-  const toolCount = children.flatMap((node) => node.kind === 'tool_group' ? node.children ?? [] : [node])
+  const toolCount = flattenTranscriptChildren(children)
     .filter((node) => node.kind === 'tool_call' || node.kind === 'tool_result').length
-  const pendingCount = children.flatMap((node) => node.kind === 'tool_group' ? node.children ?? [] : [node])
-    .filter((node) => node.actionRequest?.status === 'pending' || node.status === 'waiting').length
-  const failedCount = children.flatMap((node) => node.kind === 'tool_group' ? node.children ?? [] : [node])
+  const pendingCount = pendingNodeCount(children)
+  const failedCount = flattenTranscriptChildren(children)
     .filter((node) => node.status === 'failed').length
   return {
     id: `node-work-group-${runKey}`,
@@ -606,7 +839,7 @@ function workGroupNode(runKey: string, items: AgentTimelineItem[], children: Age
     runId: children[0]?.runId ?? null,
     sequence: children[0]?.sequence ?? 0,
     kind: 'work_group',
-    title: `本轮工作 ${readableElapsed(items)}`,
+    title: `Worked for ${readableElapsed(items)} / ${toolCount} tools / ${pendingCount} pending`,
     summary: [
       toolCount ? `${toolCount} 个工具` : null,
       pendingCount ? `${pendingCount} 个待确认` : null,
@@ -615,10 +848,10 @@ function workGroupNode(runKey: string, items: AgentTimelineItem[], children: Age
     ].filter(Boolean).join(' / '),
     status,
     visibility: 'user',
-    defaultOpen: status === 'failed' || status === 'waiting' || status === 'running',
+    defaultOpen: true,
     disclosure: {
       kind: 'group',
-      defaultOpen: status === 'failed' || status === 'waiting' || status === 'running',
+      defaultOpen: true,
     },
     children,
     createdAt: children[0]?.createdAt ?? new Date(0).toISOString(),
@@ -626,19 +859,26 @@ function workGroupNode(runKey: string, items: AgentTimelineItem[], children: Age
   }
 }
 
+function toolGroupChild(node: AgentTranscriptNode) {
+  return node.kind === 'tool_call' ||
+    node.kind === 'tool_result' ||
+    node.kind === 'navigation' ||
+    node.kind === 'confirmation' ||
+    node.kind === 'action_update'
+}
+
 function groupRunSegment(items: AgentTimelineItem[]): PendingTranscriptNode[] {
-  const nodes = mergeProviderToolCallsIntoActionNodes(items.map(timelineItemToNode))
-  const toolLike = nodes.filter((node) => node.kind === 'tool_call' || node.kind === 'tool_result')
-  const shouldUseWorkGroup = nodes.length > 3 || toolLike.length > 1
-  if (!shouldUseWorkGroup) return nodes
+  const nodes = attachNavigationRows(mergeProviderToolCallsIntoActionNodes(items.map(timelineItemToNode)))
   const runKey = items[0]?.runId ?? items[0]?.threadId ?? 'no-run'
-  const nonToolNodes = nodes.filter((node) => node.kind !== 'tool_call' && node.kind !== 'tool_result')
-  const groupedChildren = toolLike.length > 1
-    ? [
-        toolGroupNode(runKey, toolLike, Math.min(...toolLike.map((node) => node.order))),
-        ...nonToolNodes,
-      ].sort((left, right) => left.order - right.order)
-    : nodes
+  const toolGroupChildren = nodes.filter(toolGroupChild)
+  const otherChildren = nodes.filter((node) => !toolGroupChild(node) && node.kind !== 'evaluation')
+  const groupedChildren: PendingTranscriptNode[] = [
+    ...(toolGroupChildren.length > 0
+      ? [toolGroupNode(runKey, toolGroupChildren, Math.min(...toolGroupChildren.map((node) => node.order)))]
+      : []),
+    ...otherChildren,
+  ].sort((left, right) => left.order - right.order)
+  groupedChildren.push(businessCheckNode(runKey, groupedChildren, Math.max(...nodes.map((node) => node.order)) + 0.5))
   return [
     workGroupNode(runKey, items, groupedChildren, Math.min(...nodes.map((node) => node.order))),
   ]
@@ -656,27 +896,34 @@ function stripTranscriptNodeOrder(node: PendingTranscriptNode, sequence: number)
 }
 
 export function buildAgentTranscriptNodes(state: AgentProjectionState): AgentTranscriptNode[] {
-  const timelineItems = buildAgentTimelineItems(state)
+  const timelineItems = dedupeAttachedNavigationItems(buildAgentTimelineItems(state))
+  const operationalItemsByRun = new Map<string, AgentTimelineItem[]>()
   const nodes: PendingTranscriptNode[] = []
 
-  for (let index = 0; index < timelineItems.length; index += 1) {
-    const item = timelineItems[index]
+  for (const item of timelineItems) {
     if (!item) continue
-    if (isMessageTimelineItem(item) || item.visibility === 'technical') {
+    if (isMessageTimelineItem(item) || item.visibility === 'technical') continue
+    const runKey = item.runId ?? `${item.threadId}:no-run`
+    const items = operationalItemsByRun.get(runKey) ?? []
+    items.push(item)
+    operationalItemsByRun.set(runKey, items)
+  }
+
+  const emittedRuns = new Set<string>()
+  for (const item of timelineItems) {
+    if (!item) continue
+    if (item.visibility === 'technical') {
       nodes.push(timelineItemToNode(item))
       continue
     }
-    const segment: AgentTimelineItem[] = [item]
-    const runKey = item.runId ?? ''
-    while (index + 1 < timelineItems.length) {
-      const next = timelineItems[index + 1]
-      if (!next || isMessageTimelineItem(next) || next.visibility === 'technical') break
-      const nextRunKey = next.runId ?? ''
-      if (nextRunKey !== runKey) break
-      segment.push(next)
-      index += 1
+    if (isMessageTimelineItem(item)) {
+      nodes.push(timelineItemToNode(item))
+      continue
     }
-    nodes.push(...groupRunSegment(segment))
+    const runKey = item.runId ?? `${item.threadId}:no-run`
+    if (emittedRuns.has(runKey)) continue
+    emittedRuns.add(runKey)
+    nodes.push(...groupRunSegment(operationalItemsByRun.get(runKey) ?? [item]))
   }
 
   return nodes

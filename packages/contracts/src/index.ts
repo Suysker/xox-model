@@ -409,6 +409,7 @@ export type AgentTranscriptSection = {
   navigation?: AgentNavigationEvent | null
   actionRequest?: AgentActionRequest | null
   payload?: Record<string, unknown> | null
+  children?: AgentTranscriptSection[]
 }
 
 export type AgentTranscriptNode = {

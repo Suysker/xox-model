@@ -171,6 +171,103 @@ describe('AgentChatTimeline helpers', () => {
     expect(html).not.toContain('workspace_summary')
   })
 
+  it('renders expanded strict work cycle and tool group hierarchy without inline JSON', () => {
+    const html = renderToStaticMarkup(createElement(AgentChatTimeline, {
+      nodes: [
+        item({ id: 'user-message', kind: 'user_message', title: '用户', summary: '我现在几个月回本', status: 'completed' }),
+        item({
+          id: 'work',
+          kind: 'work_group',
+          title: 'Worked for 3s / 1 tools / 0 pending',
+          summary: '1 个工具 / 2 个可见步骤',
+          status: 'completed',
+          defaultOpen: true,
+          children: [
+            item({
+              id: 'tool-group',
+              kind: 'tool_group',
+              title: '调用 1 个工具',
+              summary: '2 个步骤',
+              status: 'completed',
+              defaultOpen: true,
+              children: [
+                item({
+                  id: 'tool',
+                  kind: 'tool_call',
+                  title: '查询数据',
+                  summary: '工具已选择，参数可展开查看。',
+                  status: 'completed',
+                  defaultOpen: true,
+                  tool: { name: 'data_query_workspace', argumentsPreview: '{"question":"当前工作区几个月回本","scope":"workspace_summary"}' },
+                  sections: [
+                    {
+                      id: 'tool:arguments',
+                      kind: 'arguments',
+                      title: 'Arguments',
+                      summary: '参数：question, scope',
+                      defaultOpen: true,
+                      children: [
+                        {
+                          id: 'tool:arguments:raw',
+                          kind: 'raw',
+                          title: 'Raw JSON',
+                          summary: '二级折叠',
+                          content: '{"question":"当前工作区几个月回本","scope":"workspace_summary"}',
+                          defaultOpen: false,
+                        },
+                      ],
+                    },
+                    {
+                      id: 'tool:result',
+                      kind: 'result',
+                      title: 'Result Preview',
+                      summary: '结果已用于本轮回复',
+                      content: '工具调用已完成，结果已用于本轮回复。',
+                      defaultOpen: false,
+                    },
+                  ],
+                }),
+                item({
+                  id: 'navigation',
+                  kind: 'navigation',
+                  title: '已打开：看测算',
+                  summary: '工作区数据问答需要打开经营总览页面。',
+                  status: 'completed',
+                }),
+              ],
+            }),
+            item({
+              id: 'check',
+              kind: 'evaluation',
+              title: '业务检查',
+              summary: '本次只读取当前工作区数据，未修改业务数据。',
+              status: 'completed',
+            }),
+          ],
+        }),
+        item({ id: 'assistant', kind: 'assistant_message', title: '回复', summary: '当前还未回本。', content: '当前还未回本。', status: 'completed' }),
+      ],
+      busy: false,
+      actionDiffsById: new Map(),
+      onCancel: () => undefined,
+      onConfirm: () => undefined,
+      onUpdate: () => undefined,
+    }))
+
+    expect(html).toContain('我现在几个月回本')
+    expect(html).toContain('Worked for 3s / 1 tools / 0 pending')
+    expect(html).toContain('调用 1 个工具')
+    expect(html).toContain('data_query_workspace')
+    expect(html).toContain('已打开：看测算')
+    expect(html).toContain('本次只读取当前工作区数据，未修改业务数据')
+    expect(html).toContain('当前还未回本。')
+    expect(html).toContain('Arguments')
+    expect(html).toContain('Result Preview')
+    expect(html).toContain('Raw JSON')
+    expect(html).not.toContain('"question"')
+    expect(html).not.toContain('workspace_summary')
+  })
+
   it('opens pending confirmation sections inline by default', () => {
     const pending = action()
     const html = renderToStaticMarkup(createElement(AgentChatTimeline, {

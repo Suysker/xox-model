@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { AgentActionRequest, AgentMessage, AgentNavigationEvent, AgentPlanStep, AgentRunEvent } from '@xox/contracts'
+import type { AgentActionRequest, AgentMessage, AgentNavigationEvent, AgentPlanStep, AgentRunEvent, AgentTranscriptSection } from '@xox/contracts'
 import { buildAgentAgUiEvents } from '../src/agent/ag-ui-projection.js'
 import { buildAgentTranscriptItems } from '../src/agent/agent-transcript-projector.js'
 import { buildAgentTimelineItems, buildAgentTranscriptNodes } from '../src/agent/agent-timeline-projector.js'
@@ -105,6 +105,10 @@ function projectionState(input: { runEvents: AgentRunEvent[]; planSteps?: AgentP
 
 function flattenNodes(nodes: ReturnType<typeof buildAgentTranscriptNodes>) {
   return nodes.flatMap((node): ReturnType<typeof buildAgentTranscriptNodes> => [node, ...flattenNodes(node.children ?? [])])
+}
+
+function flattenSections(sections: AgentTranscriptSection[] = []): AgentTranscriptSection[] {
+  return sections.flatMap((section) => [section, ...flattenSections(section.children ?? [])])
 }
 
 describe('Agent execution transcript projection', () => {
@@ -242,13 +246,162 @@ describe('Agent execution transcript projection', () => {
       actionRequests: [action()],
     }))
 
+    const visible = nodes.filter((node) => node.visibility === 'user')
+    const workGroup = visible.find((node) => node.kind === 'work_group')
+    const toolGroup = workGroup?.children?.find((node) => node.kind === 'tool_group')
     const toolNode = flattenNodes(nodes).find((node) => node.kind === 'tool_call' && node.actionRequest?.id === 'action-1')
+    const navigationNode = toolGroup?.children?.find((node) => node.kind === 'navigation')
+    const checkNode = workGroup?.children?.find((node) => node.kind === 'evaluation')
+    const sections = flattenSections(toolNode?.sections)
 
+    expect(visible.map((node) => node.kind)).toEqual(['user_message', 'work_group', 'assistant_message'])
+    expect(workGroup).toBeTruthy()
+    expect(toolGroup).toBeTruthy()
     expect(toolNode).toBeTruthy()
     expect(toolNode?.defaultOpen).toBe(true)
-    expect(toolNode?.sections?.some((section) => section.kind === 'confirmation' && section.actionRequest?.id === 'action-1' && section.defaultOpen)).toBe(true)
-    expect(toolNode?.sections?.some((section) => section.kind === 'arguments' && section.content?.includes('"amount":176'))).toBe(true)
-    expect(toolNode?.sections?.some((section) => section.kind === 'raw' && section.defaultOpen === false)).toBe(true)
+    expect(navigationNode?.title).toContain('已打开')
+    expect(checkNode?.summary).toContain('等待 1 张确认卡')
+    expect(toolNode?.summary).not.toContain('"amount"')
+    expect(sections.some((section) => section.kind === 'confirmation' && section.actionRequest?.id === 'action-1' && section.defaultOpen)).toBe(true)
+    expect(toolNode?.sections?.some((section) => section.kind === 'arguments')).toBe(true)
+    expect(sections.some((section) => section.kind === 'raw' && section.content?.includes('"amount":176') && section.defaultOpen === false)).toBe(true)
+  })
+
+  it('wraps a single read-only tool in mandatory work and tool groups', () => {
+    const nodes = buildAgentTranscriptNodes(projectionState({
+      messages: [
+        { id: 'message-user-payback', threadId: 'thread-1', role: 'user', content: '我现在几个月回本', createdAt },
+        { id: 'message-assistant-payback', threadId: 'thread-1', role: 'assistant', content: '当前按资金回报率计算还未回本。', createdAt },
+      ],
+      runEvents: [
+        runEvent({
+          sequence: 1,
+          type: 'provider_stream_delta',
+          title: '工具调用片段',
+          message: 'data_query_workspace',
+          status: 'running',
+          data: {
+            kind: 'tool_call_delta',
+            toolCallIndex: 0,
+            toolName: 'data_query_workspace',
+            argumentsPreview: '{"question":"当前工作区几个月回本","scope":"workspace_summary","metrics":["payback"]}',
+          },
+        }),
+        runEvent({ sequence: 2, type: 'provider_stream_completed', title: 'Provider 流已结束', message: '模型流已结束。', status: 'completed', data: { toolCallCount: 1 } }),
+        runEvent({ sequence: 3, type: 'run_completed', title: '运行完成', message: '模型规划和只读回答已完成。', status: 'completed' }),
+      ],
+      planSteps: [
+        planStep({
+          id: 'step-read',
+          actionRequestId: null,
+          title: '查询回本周期',
+          description: '已读取当前工作区测算结果。',
+          status: 'executed',
+          navigation: { ...navigation(), route: { mainTab: 'dashboard', secondaryTab: 'overview', selectedPeriodId: null }, reason: '工作区数据问答需要打开经营总览页面，便于核对口径。' },
+        }),
+      ],
+      actionRequests: [],
+    }))
+
+    const visible = nodes.filter((node) => node.visibility === 'user')
+    const workGroup = visible.find((node) => node.kind === 'work_group')
+    const toolGroup = workGroup?.children?.find((node) => node.kind === 'tool_group')
+    const toolNode = toolGroup?.children?.find((node) => node.kind === 'tool_call')
+    const navigationNode = toolGroup?.children?.find((node) => node.kind === 'navigation')
+    const checkNode = workGroup?.children?.find((node) => node.kind === 'evaluation')
+    const sections = flattenSections(toolNode?.sections)
+
+    expect(visible.map((node) => node.kind)).toEqual(['user_message', 'work_group', 'assistant_message'])
+    expect(workGroup?.title).toMatch(/^Worked for .* \/ 1 tools \/ 0 pending$/)
+    expect(workGroup?.defaultOpen).toBe(true)
+    expect(toolGroup?.title).toBe('调用 1 个工具')
+    expect(toolGroup?.defaultOpen).toBe(true)
+    expect(toolNode).toMatchObject({ tool: { name: 'data_query_workspace' }, status: 'completed' })
+    expect(toolNode?.summary).not.toContain('"question"')
+    expect(toolNode?.summary).not.toContain('workspace_summary')
+    expect(toolNode?.sections?.some((section) => section.kind === 'arguments' && section.title === 'Arguments')).toBe(true)
+    expect(toolNode?.sections?.some((section) => section.kind === 'result' && section.title === 'Result Preview')).toBe(true)
+    expect(sections.some((section) => section.kind === 'raw' && section.content?.includes('"question"'))).toBe(true)
+    expect(navigationNode?.title).toBe('已打开：看测算')
+    expect(checkNode?.summary).toContain('本次只读取当前工作区数据，未修改业务数据')
+    expect(nodes.filter((node) => node.kind === 'navigation')).toHaveLength(0)
+  })
+
+  it('merges provider draft tool calls into the generic workspace confirmation row', () => {
+    const draftNavigation: AgentNavigationEvent = {
+      type: 'navigation',
+      route: { mainTab: 'inputs', secondaryTab: 'revenue' },
+      panel: null,
+      focusRecordId: null,
+      reason: '线上系数属于收入引擎设置，先打开调模型页面供核对。',
+    }
+    const nodes = buildAgentTranscriptNodes(projectionState({
+      messages: [
+        { id: 'message-user-write', threadId: 'thread-1', role: 'user', content: '把 4 月线上系数改成 0.3 并保存', createdAt },
+        { id: 'message-assistant-write', threadId: 'thread-1', role: 'assistant', content: '我已生成确认卡。', createdAt },
+      ],
+      runEvents: [
+        runEvent({
+          sequence: 1,
+          type: 'provider_stream_delta',
+          title: '工具调用片段',
+          message: 'workspace_update_online_factor',
+          status: 'running',
+          data: {
+            kind: 'tool_call_delta',
+            toolCallIndex: 0,
+            toolName: 'workspace_update_online_factor',
+            argumentsPreview: '{"monthLabel":"4月","onlineSalesFactor":0.3}',
+          },
+        }),
+        runEvent({ sequence: 2, type: 'provider_stream_completed', title: 'Provider 流已结束', message: '模型流已结束。', status: 'completed', data: { toolCallCount: 1 } }),
+        runEvent({ sequence: 3, type: 'tool_plan_ready', title: '模型工具调用已解析', message: '模型规划生成 1 个步骤。', status: 'blocked', data: { stepCount: 1, pendingActionCount: 1 } }),
+      ],
+      planSteps: [
+        planStep({
+          id: 'step-online-factor',
+          actionRequestId: 'action-online-factor',
+          title: '确认修改线上系数',
+          description: '将4月线上系数改为 0.3 并保存到当前草稿。',
+          navigation: draftNavigation,
+        }),
+      ],
+      actionRequests: [
+        action({
+          id: 'action-online-factor',
+          kind: 'workspace.update_draft',
+          title: '确认修改线上系数',
+          summary: '将4月线上系数改为 0.3 并保存到当前草稿。',
+          targetLabel: '4月',
+          details: [
+            { label: '月份', value: '4月' },
+            { label: '原线上系数', value: '0' },
+            { label: '新线上系数', value: '0.3' },
+          ],
+          navigation: draftNavigation,
+          payload: { revision: 1, workspaceName: '默认工作区', config: { months: [] } },
+        }),
+      ],
+    }))
+
+    const visible = nodes.filter((node) => node.visibility === 'user')
+    const workGroup = visible.find((node) => node.kind === 'work_group')
+    const toolGroup = workGroup?.children?.find((node) => node.kind === 'tool_group')
+    const toolNodes = toolGroup?.children?.filter((node) => node.kind === 'tool_call') ?? []
+    const toolNode = toolNodes[0]
+    const sections = flattenSections(toolNode?.sections)
+
+    expect(visible.map((node) => node.kind)).toEqual(['user_message', 'work_group', 'assistant_message'])
+    expect(workGroup?.title).toMatch(/^Worked for .* \/ 1 tools \/ 1 pending$/)
+    expect(toolGroup?.title).toBe('调用 1 个工具')
+    expect(toolNodes).toHaveLength(1)
+    expect(toolNode?.tool?.name).toBe('workspace_update_online_factor')
+    expect(toolNode?.actionRequest?.kind).toBe('workspace.update_draft')
+    expect(toolNode?.summary).toContain('线上系数')
+    expect(sections.some((section) => section.kind === 'arguments')).toBe(true)
+    expect(sections.some((section) => section.kind === 'raw' && section.content?.includes('onlineSalesFactor'))).toBe(true)
+    expect(sections.some((section) => section.kind === 'confirmation' && section.actionRequest?.id === 'action-online-factor')).toBe(true)
+    expect(workGroup?.children?.find((node) => node.kind === 'evaluation')?.summary).toContain('等待 1 张确认卡')
   })
 
   it('groups multi-tool turns into a work group and a compact tool group', () => {
@@ -271,7 +424,7 @@ describe('Agent execution transcript projection', () => {
     expect(workGroup).toBeTruthy()
     expect(toolGroup).toBeTruthy()
     expect(toolGroup?.children?.filter((node) => node.kind === 'tool_call')).toHaveLength(2)
-    expect(toolGroup?.defaultOpen).toBe(false)
+    expect(toolGroup?.defaultOpen).toBe(true)
   })
 
   it('shows one live assistant stream row before the final assistant message exists', () => {

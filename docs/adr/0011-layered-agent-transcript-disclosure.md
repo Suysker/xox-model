@@ -6,6 +6,10 @@ Date: 2026-05-23
 
 Refines: ADR 0009 OpenClaw-Style Unified Agent Chat Transcript, ADR 0010 OpenClaw-Inspired Markdown Transcript Rendering
 
+Initial partial implementation: 2026-05-23
+
+Revision: 2026-05-23 strict work-cycle transcript contract
+
 Implemented: 2026-05-23
 
 ## Context
@@ -40,6 +44,35 @@ The product requirement is not "show more logs". It is the opposite:
 - keep each visible step compact by default
 - let users expand one level at a time when they want evidence
 - keep editable confirmation cards inline with the tool/action that produced them
+
+## Revision Note
+
+The initial implementation was accepted too early. It satisfied a weaker "unified transcript with some collapsible rows" interpretation, but it did not satisfy the product contract below:
+
+```text
+Agent Transcript
+├─ User Bubble
+├─ Work Cycle Group              Worked for 12s / 3 tools / 1 pending
+│  ├─ Tool Group                 调用 3 个工具
+│  │  ├─ Tool Row                data_query_workspace · completed
+│  │  │  ├─ Arguments            折叠
+│  │  │  ├─ Result Preview       折叠
+│  │  │  └─ Raw JSON             二级折叠
+│  │  ├─ Navigation Row          已打开：看测算
+│  │  └─ Confirmation Card       可编辑，等待确认
+│  └─ Evaluation/Check Row       只展示业务检查，不展示 harness 内部
+└─ Assistant Markdown Summary
+```
+
+The design error was that ADR 0011 allowed conditional grouping:
+
+- a single tool could render without a `Work Cycle Group`
+- a single tool could render without a `Tool Group`
+- navigation rows could remain sibling rows in the top-level transcript
+- tool arguments could leak into the compact row instead of living only inside `Arguments`
+- the evaluator/check concept was defined mostly as hidden technical state, not as a business-facing check row
+
+This revision makes the tree shape mandatory. Passing tests that only prove "harness internals are hidden" and "some rows are collapsible" is no longer enough.
 
 ## Research Notes
 
@@ -107,7 +140,30 @@ For xox-model, Claude Code is a UX reference only.
 
 Replace the flat Agent timeline renderer with a **layered transcript disclosure model**.
 
-The final user-facing transcript should be a tree, not a list of unrelated rows:
+The final user-facing transcript must be a tree, not a list of unrelated rows. For any run that performs visible work, the top-level order is fixed:
+
+```text
+User Bubble
+Work Cycle Group
+Assistant Markdown Summary
+Technical Log Disclosure
+```
+
+Inside the work cycle, visible operational state is also fixed:
+
+```text
+Work Cycle Group
+Tool Group
+Tool Row
+Arguments Section
+Result Preview Section
+Raw JSON Section
+Navigation Row
+Confirmation Card
+Evaluation/Check Row
+```
+
+The tree is a product contract, not an optimization. A single tool still gets a work cycle and a tool group. Compactness comes from collapsed rows, not from removing structural levels.
 
 ```mermaid
 flowchart TD
@@ -121,6 +177,7 @@ flowchart TD
   Raw[Raw Details Section]
   Confirm[Editable Confirmation Card]
   Nav[Navigation Row]
+  Check[Business Check Row]
   Assistant[Assistant Markdown Summary]
   Tech[Technical Log Disclosure]
 
@@ -130,9 +187,10 @@ flowchart TD
   ToolGroup --> ToolRow
   ToolRow --> ToolArgs
   ToolRow --> ToolResult
-  ToolRow --> Raw
-  ToolRow --> Confirm
-  Work --> Nav
+  ToolResult --> Raw
+  ToolGroup --> Nav
+  ToolGroup --> Confirm
+  Work --> Check
   Thread --> Assistant
   Thread -. explicit only .-> Tech
 ```
@@ -141,9 +199,13 @@ The visible default should be:
 
 - user messages as right-aligned bubbles
 - assistant messages as Markdown prose, no assistant bubble chrome
-- active turn status as a small `Thinking` or compact work row
-- tool calls as one-line collapsed rows
+- active turn status as a small `Thinking`, then a compact `Work Cycle Group`
+- every visible run with tool/navigation/confirmation/check state as one `Work Cycle Group`
+- every visible run with one or more tools/actions/navigation as one `Tool Group`, even if there is only one tool
+- tool calls as one-line collapsed rows with only a short summary, tool name and status
 - writes as inline editable confirmation interrupts
+- navigation rows inside the same work cycle/tool group, never as unrelated top-level rows
+- business checks inside the work cycle; harness evaluator implementation labels remain hidden in technical logs
 - final assistant summary after tool loops
 - technical logs behind an explicit disclosure only
 
@@ -270,29 +332,47 @@ Default open/closed behavior should be deterministic and test-backed:
 | user message | visible | Bubble only. |
 | assistant message | visible | Markdown prose, no assistant label bubble. |
 | assistant stream | visible while active | Shows stable streaming text plus thinking indicator. |
-| work group | closed after completion, open while running if useful | Summary row like `Worked for 12s`, with counts. |
-| tool group | closed after completion, open while running or failed | Shows `调用 3 个工具` / `查询 6 项数据`. |
-| read-only tool row | closed after completion | One line with label, tool name chip, status. |
-| write tool row with pending confirmation | open to confirmation card | User must inspect/edit before execution. |
+| work group | visible for every visible run | Summary row like `Worked for 12s / 3 tools / 1 pending`; closed after completion, open while running/waiting/failed. |
+| tool group | present for every visible tool/action/navigation run | Shows `调用 1 个工具` or `调用 3 个工具`; closed after completion, open while running/waiting/failed. |
+| read-only tool row | closed after completion | One line with business label, tool name chip and status. No JSON argument body in the compact row. |
+| write tool row with pending confirmation | open to confirmation card path | User must inspect/edit before execution; the row is attached to the same tool group that produced the write. |
+| navigation row | closed after completion | Lives inside the work cycle/tool group, close to the related tool/action. It must not appear as a top-level transcript sibling. |
+| confirmation card | open while pending | Editable card is attached to the producing tool/action, not rendered as a separate primary region. |
+| business check row | visible when useful | Show only business checks such as `只读，未修改业务数据`, `已打开看测算`, `等待 1 张确认卡`; never expose evaluator class names. |
 | failed tool row | open | Show concise error and relevant retry/correction hint. |
 | arguments | closed | Open from tool body. |
 | result preview | closed unless short and business-readable | Avoid raw data floods. |
-| raw JSON/provider details | always closed | Only for debugging/evidence. |
+| raw JSON/provider details | second-level closed | Raw JSON is under arguments/result/details, not the first expanded body. Only for debugging/evidence. |
 | technical log | always closed, separate explicit entry | No harness internals in default transcript. |
 
 ## Grouping Rules
 
 The projector should group by server-owned identifiers, not text heuristics:
 
-- group nodes by `runId` into work cycles
-- group provider tool calls emitted in the same planning turn into a tool group
-- group read-only query/navigation pairs when they are part of the same data answer
-- attach a pending `AgentActionRequest` to the tool/action row that produced it
-- attach navigation rows to the nearest related tool/action when possible
-- keep memory/evaluator rows technical unless they are directly user-actionable
-- collapse repeated technical rows in the technical log only
+- Create one `Work Cycle Group` for every run that has visible operational work: provider tool calls, read results, navigation, confirmation cards, action edits, execution results, failures, or business checks.
+- Do not create a work cycle for pure chat. A greeting remains `User Bubble -> Assistant Markdown Summary`.
+- Create one `Tool Group` inside each work cycle whenever the run has any tool/action/navigation/confirmation state. This is mandatory even for a single tool.
+- Group provider tool calls emitted in the same planning turn into the same tool group.
+- Attach pending `AgentActionRequest` cards to the producing tool/action row. If the provider tool-call argument stream and the server confirmation card represent the same canonical tool, merge them into one tool row.
+- Attach navigation rows to the same work cycle/tool group as the related tool/action. Navigation rows must not be top-level siblings between the user bubble and tool row.
+- Create a business `Evaluation/Check Row` from structured run/action/domain state, not from harness labels. Examples: `本次只读，未修改业务数据`, `等待 1 张确认卡`, `已打开看测算`.
+- Keep memory/evaluator/provider lifecycle rows technical unless they are transformed into a business check.
+- Collapse repeated technical rows in the technical log only.
+- Preserve chronological order at the top level: user message, work cycle, assistant summary. Assistant final summary should not appear before visible tool/work rows from the same run.
 
 No regex or keyword routing should be introduced. Grouping is display projection over already-known server state.
+
+## Compact Row Rules
+
+Tool rows must be compact, but not lossy:
+
+- The collapsed row may show: icon, business title, canonical tool name, status, short natural-language summary.
+- The collapsed row must not show long JSON, raw provider arguments, raw provider output or stack traces.
+- `Arguments` is the first-level disclosure for model/server arguments.
+- `Result Preview` is the first-level disclosure for concise business-readable result text.
+- `Raw JSON` is always a second-level disclosure inside arguments/result/details.
+- If content exceeds the preview threshold, show a truncated summary plus an explicit expand affordance.
+- A screenshot-level acceptance check must verify that JSON strings such as `{"question":...}` are not visible in the collapsed tool row.
 
 ## Reuse Plan
 
@@ -352,34 +432,48 @@ For a read-only question:
 ```text
 你: 我现在几个月回本？
 
-▸ 查询数据  data_query_workspace  ✓
+▸ Worked for 3s / 1 tool / 0 pending
+  ▸ 调用 1 个工具
+    ▸ 查询数据  data_query_workspace  completed
+      Arguments        折叠
+      Result Preview   折叠
+        Raw JSON       二级折叠
+    ▸ 已打开：看测算
+  ✓ 本次只读取当前工作区数据，未修改业务数据
 
 基准场景尚未回本。总收入 ... 总成本 ...
 ```
 
-Expanding `查询数据` shows arguments, result preview and raw JSON.
+The collapsed `查询数据` row must not show raw JSON arguments inline. Expanding it shows `Arguments` and `Result Preview`; expanding those sections can reveal `Raw JSON`.
 
 For a write action:
 
 ```text
 你: 把 4 月线上系数改成 0.3 并保存
 
-▾ 修改模型  workspace_update_online_factor  待确认
-  已打开：调模型
-  确认卡：4 月线上系数 0.35 -> 0.3
-  [编辑] [确认执行] [取消]
+▾ Worked for 5s / 1 tool / 1 pending
+  ▾ 调用 1 个工具
+    ▾ 修改模型  workspace_update_online_factor  waiting
+      Arguments        折叠
+      Result Preview   折叠
+      Raw JSON         二级折叠
+      确认卡：4 月线上系数 0.35 -> 0.3
+      [编辑] [确认执行] [取消]
+    ▸ 已打开：调模型
+  ! 等待 1 张确认卡，确认前不会写入草稿
 ```
 
 For a complex multi-step goal:
 
 ```text
-Worked for 34s
-▸ 配置经营模型  5 个动作 / 2 个待确认
-  ▸ 工作区改名
-  ▸ 配置股东和投资
-  ▸ 建立 50 个成员
-  ▸ 设置成本和节奏
-  ▸ 生成 12 个月预测
+▸ Worked for 34s / 5 tools / 2 pending
+  ▸ 调用 5 个工具
+    ▸ 工作区改名  workspace_rename  waiting
+    ▸ 配置股东和投资  workspace_configure_operating_model  waiting
+    ▸ 建立 50 个成员  workspace_configure_operating_model  waiting
+    ▸ 设置成本和节奏  workspace_configure_operating_model  waiting
+    ▸ 生成 12 个月预测  data_query_workspace  completed
+  ! 等待 2 张确认卡；不会发布正式版本
 
 我已生成可编辑确认卡。你确认后我会保存草稿，但不会发布正式版本。
 ```
@@ -402,36 +496,52 @@ The first screen should be compact. Expansion reveals detail, not another page o
 
 - Simple greeting shows only the user bubble, optional thinking state while running, and one assistant Markdown reply.
 - Harness internals such as queue, worker lease, goal contract, evaluator loop and provider lifecycle are hidden from the default transcript.
-- Completed read-only tool calls render as one-line collapsed rows with status.
-- Expanding a tool row reveals at least arguments and result preview.
-- Raw JSON/provider detail is a second-level disclosure and closed by default.
-- Pending write actions render inline editable confirmation cards attached to the producing tool/action row.
+- Every non-chat run with visible operational work renders exactly one top-level `Work Cycle Group` between the user bubble and assistant summary.
+- Every work cycle that has tools/actions/navigation/confirmations renders a `Tool Group`, even when there is only one tool.
+- Navigation rows are children of the relevant work cycle/tool group, not top-level transcript siblings.
+- Completed read-only tool calls render as one-line collapsed rows with status and no inline raw JSON arguments.
+- Expanding a tool row reveals at least `Arguments` and `Result Preview`.
+- Raw JSON/provider detail is a second-level disclosure under arguments/result/details and is closed by default.
+- Pending write actions render inline editable confirmation cards attached to the producing tool/action row inside the same tool group.
 - Failed tool rows auto-open to a concise error summary.
-- Multi-tool turns render a compact tool group with counts.
-- Complex multi-step goals render as a work group plus child action/tool rows, not as a wall of flat events.
+- Single-tool and multi-tool turns both render compact tool groups with counts.
+- Work cycle headers show elapsed/work summary and counts such as `Worked for 12s / 3 tools / 1 pending`.
+- Business evaluation/check rows are visible when relevant and use business wording only, not harness/evaluator class names.
+- Complex multi-step goals render as `Work Cycle Group -> Tool Group -> Tool Rows -> Sections/Cards/Checks`, not as a wall of flat events.
+- Assistant final summary appears after the work cycle for the same run.
 - Expansion state persists while switching within the same thread and does not leak across threads.
 - Technical log remains accessible through explicit disclosure.
-- Web tests cover collapsed vs expanded states, default visibility rules and confirmation-card ownership.
-- API tests cover tree projection from existing server-owned state.
-- Browser verification confirms one-line collapsed tool rows and multi-level expansion in the real Agent console.
+- Web tests cover mandatory work group, mandatory tool group, collapsed vs expanded states, default visibility rules, no inline collapsed JSON, navigation nesting and confirmation-card ownership.
+- API tests cover strict tree projection from existing server-owned state, including single-tool read-only runs and write runs.
+- Browser verification confirms the exact structural contract in the real Agent console for at least greeting, read-only query, pending write and multi-step goal.
 
 ## Implementation Notes
 
-- `packages/contracts/src/index.ts` now exposes `AgentTranscriptNode` and `AgentTranscriptSection`; `AgentThreadState` and `AgentSendResponse` include `transcriptNodes`.
-- `apps/api/src/agent/agent-timeline-projector.ts` still keeps the flat timeline DTO as a compatibility/debug projection, but the frontend primary surface consumes the nested tree.
-- Provider streamed tool-call argument rows are merged into the related server-owned confirmation tool node when both refer to the same canonical tool identity, so write actions render as one compact row with arguments, raw details and inline confirmation card.
-- `apps/web/src/components/agent/AgentChatTimeline.tsx` renders the nested transcript directly: user bubbles, assistant Markdown prose, collapsed tool/work rows, nested disclosure sections, and explicit technical-log disclosure.
-- `apps/web/src/hooks/useAgentTranscriptExpansion.ts` owns per-thread/per-run expansion state, separate from server-owned transcript data.
-- The deprecated frontend provider stream preview helper and its old test were removed; provider stream visibility now comes through server-owned transcript nodes.
+- `packages/contracts/src/index.ts` exposes recursive `AgentTranscriptNode.children` and `AgentTranscriptSection.children` so the API can send a true transcript tree instead of a flat row list.
+- `apps/api/src/agent/agent-timeline-projector.ts` now builds the strict top-level order for visible operational runs: user message, one work cycle, assistant Markdown summary. Pure chat remains only user message plus assistant summary.
+- The backend projector always creates a `Work Cycle Group` and `Tool Group` for non-chat runs, including single-tool runs.
+- Provider tool-call argument rows are merged into server-owned confirmation rows by canonical tool identity. For example, `workspace_update_online_factor` and the resulting `workspace.update_draft` confirmation render as one tool row with arguments, raw details and the editable card.
+- Navigation rows are attached inside the relevant tool group and no longer appear as top-level transcript siblings.
+- Business check rows are generated from structured node state and use business wording such as read-only/no-write or pending confirmation counts; harness/evaluator implementation labels remain technical.
+- Raw provider arguments/results are moved under first-level `Arguments` / `Result Preview` sections, with `Raw JSON` as second-level disclosure.
+- `apps/web/src/components/agent/AgentChatTimeline.tsx` renders the nested transcript directly and exposes stable `data-transcript-kind` / `data-transcript-section-kind` markers for browser-level structural verification.
+- `apps/web/src/hooks/useAgentTranscriptExpansion.ts` handles recursive section expansion without leaking expansion state across nodes or threads.
 
 ## Validation
 
-- `npm.cmd run test:web` passed: 9 files, 49 tests.
-- `npm.cmd run test:api` passed: 5 files, 97 tests.
-- `npm.cmd run build:web` passed.
-- `npm.cmd run build:api` passed.
-- `npm.cmd run test` passed: web + api.
-- Browser verification used a temporary Edge headless profile against `http://127.0.0.1:5174` and existing API on `127.0.0.1:8000`; checks confirmed the Agent console rendered, the simple send path showed user-visible progress, and default transcript text did not expose `对话时间线`, `Run 已入队`, `Worker 已认领`, or `目标契约`.
+- `npm.cmd run test:web` passed: 9 files, 50 tests.
+- `npm.cmd run test:api` passed: 5 files, 99 tests.
+- `npm.cmd run build` passed: web `tsc --noEmit` + Vite production build, API `tsc --noEmit`.
+- Targeted API transcript tests cover pure chat, single read-only tool run, pending write confirmation, provider-tool/action-row merge, navigation nesting, no top-level navigation, business check wording and raw JSON second-level disclosure.
+- Targeted web tests cover strict work cycle/tool group hierarchy, recursive disclosure sections, Markdown ownership, user bubble escaping and collapsed tool rows without inline JSON.
+- Browser DOM verification passed against a built web bundle and local API with an OpenAI-compatible fake provider. The script verified:
+  - greeting renders only `user_message -> assistant_message`
+  - read-only query renders `user_message -> work_group -> assistant_message`
+  - the work group contains `Tool Group`, `data_query_workspace`, nested navigation and business check
+  - collapsed tool rows do not expose `{"question":...}` or `workspace_summary`
+  - expanding the tool reveals `Arguments` and `Result Preview`; expanding `Arguments` reveals `Raw JSON` while raw content remains hidden
+  - pending write renders one merged `workspace_update_online_factor` row with inline editable confirmation, nested navigation and `1 pending`
+  - a multi-step run renders one work cycle with `2 tools / 1 pending`
 
 ## Risks
 
