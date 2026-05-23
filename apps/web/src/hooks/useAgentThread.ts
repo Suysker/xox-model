@@ -20,7 +20,7 @@ import {
   type AgentThreadEvent,
   type AgentThreadState,
   type AgentThreadSummary,
-  type AgentTimelineItem,
+  type AgentTranscriptNode,
 } from '../lib/api'
 
 const CURRENT_THREAD_STORAGE_KEY = 'xox.agent.currentThreadId'
@@ -62,9 +62,9 @@ export function takeUnreplayedNavigationEvents(input: {
   return nextEvents
 }
 
-export function buildOptimisticUserTimelineItem(message: AgentMessage): AgentTimelineItem {
+export function buildOptimisticUserTranscriptNode(message: AgentMessage): AgentTranscriptNode {
   return {
-    id: `timeline-${message.id}`,
+    id: `node-timeline-${message.id}`,
     threadId: message.threadId,
     runId: null,
     sequence: Number.MAX_SAFE_INTEGER,
@@ -91,7 +91,7 @@ export function useAgentThread(props: {
   const [evaluations, setEvaluations] = useState<AgentEvaluationResult[]>([])
   const [navigationEvents, setNavigationEvents] = useState<AgentNavigationEvent[]>([])
   const [agUiEvents, setAgUiEvents] = useState<AgentAgUiEvent[]>([])
-  const [timelineItems, setTimelineItems] = useState<AgentTimelineItem[]>([])
+  const [transcriptNodes, setTranscriptNodes] = useState<AgentTranscriptNode[]>([])
   const [planner, setPlanner] = useState<AgentSendResponse['planner'] | null>(null)
   const [memories, setMemories] = useState<AgentMemoryRecord[]>([])
   const [providerSetting, setProviderSetting] = useState<AgentProviderSettingRecord | null>(null)
@@ -115,7 +115,7 @@ export function useAgentThread(props: {
     setEvaluations(state.evaluations)
     setNavigationEvents(state.navigationEvents)
     setAgUiEvents(state.agUiEvents)
-    setTimelineItems(state.timelineItems)
+    setTranscriptNodes(state.transcriptNodes)
     setPlanner(state.planner)
     setRunningRunId(latestRun?.status === 'running' ? latestRun.id : null)
     writeCurrentThreadId(state.thread.id)
@@ -282,8 +282,8 @@ export function useAgentThread(props: {
       createdAt: new Date().toISOString(),
     }
     setMessages((current) => [...current, optimisticMessage])
-    const optimisticTimelineItem = buildOptimisticUserTimelineItem(optimisticMessage)
-    setTimelineItems((current) => [...current.filter((item) => item.id !== optimisticTimelineItem.id), optimisticTimelineItem])
+    const optimisticTranscriptNode = buildOptimisticUserTranscriptNode(optimisticMessage)
+    setTranscriptNodes((current) => [...current.filter((item) => item.id !== optimisticTranscriptNode.id), optimisticTranscriptNode])
     try {
       const response = await api.sendAgentMessage({ threadId, message, background: true, automationLevel })
       setThreadId(response.threadId)
@@ -294,7 +294,7 @@ export function useAgentThread(props: {
       setPlanSteps(response.planSteps)
       setRunEvents(response.runEvents)
       setAgUiEvents(response.agUiEvents)
-      setTimelineItems(response.timelineItems)
+      setTranscriptNodes(response.transcriptNodes)
       setGoals([])
       setEvaluations([])
       setNavigationEvents(response.navigationEvents)
@@ -309,7 +309,7 @@ export function useAgentThread(props: {
       void refreshThreads()
     } catch (sendError) {
       setMessages((current) => current.filter((item) => item.id !== optimisticId))
-      setTimelineItems((current) => current.filter((item) => item.id !== optimisticTimelineItem.id))
+      setTranscriptNodes((current) => current.filter((item) => item.id !== optimisticTranscriptNode.id))
       setError(sendError instanceof Error ? sendError.message : String(sendError))
     } finally {
       setBusy(false)
@@ -401,7 +401,7 @@ export function useAgentThread(props: {
     setEvaluations([])
     setNavigationEvents([])
     setAgUiEvents([])
-    setTimelineItems([])
+    setTranscriptNodes([])
     setPlanner(null)
     setRunningRunId(null)
     setError(null)
@@ -476,7 +476,7 @@ export function useAgentThread(props: {
     evaluations,
     navigationEvents,
     agUiEvents,
-    timelineItems,
+    transcriptNodes,
     planner,
     memories,
     providerSetting,

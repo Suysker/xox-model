@@ -22,7 +22,7 @@ import { serializeRunEvent } from './run-events.js'
 import { normalizeGoalStatus, serializeEvaluation, serializeGoal } from './goal-contract.js'
 import { buildAgentAgUiEvents } from './ag-ui-projection.js'
 import { buildAgentTranscriptItems } from './agent-transcript-projector.js'
-import { buildAgentTimelineItems } from './agent-timeline-projector.js'
+import { buildAgentTimelineItems, buildAgentTranscriptNodes } from './agent-timeline-projector.js'
 
 export type AgentThreadUser = {
   id: string
@@ -249,6 +249,7 @@ export async function buildThreadState(
     agUiEvents: buildAgentAgUiEvents(baseState),
     transcriptItems: buildAgentTranscriptItems(baseState),
     timelineItems: buildAgentTimelineItems(baseState),
+    transcriptNodes: buildAgentTranscriptNodes(baseState),
   }
 }
 

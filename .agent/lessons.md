@@ -143,6 +143,8 @@
 - When reusing OpenClaw's Markdown renderer, port only small MIT-attributed pure parsing/sanitization/fallback logic. Do not import OpenClaw's Lit chat shell, control UI, channel runtime, plugin registry, i18n runtime, or local-session assumptions into xox-model.
 - Streaming Markdown should avoid rendering unstable partial syntax as final UI. Prefer newline/block-boundary commits inspired by Codex's stream collector, with an escaped or debounced volatile tail and parser-failure fallback.
 - For transcript Markdown security tests, escaping raw HTML is necessary but not always sufficient. Strip event-handler attributes from raw HTML tokens before escaping, and assert dangerous URL schemes by active `href/src` attributes rather than harmless visible plaintext.
+- Mature Agent transcripts need layered disclosure, not a flat row list with one expansion set. Model the UI as work groups, tool groups, tool rows, details sections, raw output and inline confirmation interrupts; port only small MIT-attributed OpenClaw expansion/tool-card/threshold logic, and keep xox-model's SaaS state, confirmations and audit server-owned.
+- When provider stream tool-call arguments later produce a server-owned confirmation card, merge them in the transcript projector by canonical tool identity. Showing one provider argument row plus a separate confirmation row makes writes look duplicated; the user-facing unit is one tool row with arguments, raw details, and the editable interrupt.
 
 ## Testing
 

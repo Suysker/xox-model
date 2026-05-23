@@ -28,7 +28,7 @@ export function AgentShell(props: {
       <AgentConsole
         threadId={agent.threadId}
         planner={agent.planner}
-        timelineItems={agent.timelineItems}
+        transcriptNodes={agent.transcriptNodes}
         memories={agent.memories}
         providerSetting={agent.providerSetting}
         providerProbe={agent.providerProbe}

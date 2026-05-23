@@ -1,12 +1,10 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Bot, Database, History, KeyRound, Plus, RefreshCw, Save, SendHorizontal, Trash2, XCircle } from 'lucide-react'
-import type { AgentActionUpdatePayload, AgentAutomationLevel, AgentMemoryRecord, AgentProviderProbePayload, AgentProviderProbeResult, AgentProviderSettingRecord, AgentProviderSettingUpdatePayload, AgentRunEvent, AgentSendResponse, AgentThreadSummary, AgentTimelineItem } from '../../lib/api'
+import type { AgentActionUpdatePayload, AgentAutomationLevel, AgentMemoryRecord, AgentProviderProbePayload, AgentProviderProbeResult, AgentProviderSettingRecord, AgentProviderSettingUpdatePayload, AgentSendResponse, AgentThreadSummary, AgentTranscriptNode } from '../../lib/api'
 import { AgentChatTimeline } from './AgentChatTimeline'
 
-export type ProviderStreamPreview = {
-  content: string
-  tools: Array<{ index: number; name: string; argumentsPreview: string }>
-  completed: boolean
+function flattenTranscriptNodes(nodes: AgentTranscriptNode[]): AgentTranscriptNode[] {
+  return nodes.flatMap((node) => [node, ...flattenTranscriptNodes(node.children ?? [])])
 }
 
 function formatThreadTime(value: string | null) {
@@ -16,65 +14,10 @@ function formatThreadTime(value: string | null) {
   return date.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
 
-function dataString(data: Record<string, unknown> | null, key: string) {
-  const value = data?.[key]
-  return typeof value === 'string' ? value : ''
-}
-
-function dataNumber(data: Record<string, unknown> | null, key: string) {
-  const value = data?.[key]
-  return typeof value === 'number' && Number.isFinite(value) ? value : null
-}
-
-export function buildProviderStreamPreview(runEvents: AgentRunEvent[]): ProviderStreamPreview | null {
-  let content = ''
-  let sawStream = false
-  let completed = false
-  const tools = new Map<number, { index: number; name: string; argumentsPreview: string }>()
-
-  for (const event of [...runEvents].sort((left, right) => left.sequence - right.sequence)) {
-    if (event.type === 'provider_stream_started') {
-      sawStream = true
-      completed = false
-      continue
-    }
-    if (event.type === 'provider_stream_completed') {
-      sawStream = true
-      completed = true
-      continue
-    }
-    if (event.type !== 'provider_stream_delta') continue
-
-    const kind = dataString(event.data, 'kind')
-    if (kind === 'content_delta') {
-      sawStream = true
-      const preview = dataString(event.data, 'preview')
-      const delta = dataString(event.data, 'delta')
-      content = preview || `${content}${delta}`
-      continue
-    }
-    if (kind === 'tool_call_delta') {
-      sawStream = true
-      const index = dataNumber(event.data, 'toolCallIndex') ?? tools.size
-      const current = tools.get(index)
-      const name = dataString(event.data, 'toolName') || current?.name || `工具 ${index + 1}`
-      const argumentsPreview = dataString(event.data, 'argumentsPreview') || `${current?.argumentsPreview ?? ''}${dataString(event.data, 'argumentsDelta')}`
-      tools.set(index, { index, name, argumentsPreview })
-    }
-  }
-
-  if (!sawStream) return null
-  return {
-    content,
-    tools: [...tools.values()].sort((left, right) => left.index - right.index),
-    completed,
-  }
-}
-
 export function AgentConsole(props: {
   threadId: string | null
   planner: AgentSendResponse['planner'] | null
-  timelineItems: AgentTimelineItem[]
+  transcriptNodes: AgentTranscriptNode[]
   memories: AgentMemoryRecord[]
   providerSetting: AgentProviderSettingRecord | null
   providerProbe: AgentProviderProbeResult | null
@@ -119,8 +62,8 @@ export function AgentConsole(props: {
     return `${memory.value} ${memory.key} ${memory.kind} ${memory.memoryType ?? ''} ${memory.status ?? ''}`.toLowerCase().includes(query)
   })
   const actionDiffsById = new Map<string, Array<{ label: string; value: string }>>()
-  props.timelineItems
-    .filter((item) => item.kind === 'action_edit' && item.actionRequestId && item.details?.length)
+  flattenTranscriptNodes(props.transcriptNodes)
+    .filter((item) => item.kind === 'action_update' && item.actionRequestId && item.details?.length)
     .forEach((item) => actionDiffsById.set(item.actionRequestId!, item.details ?? []))
   const plannerLabel =
     props.planner === 'openai_agents'
@@ -517,7 +460,7 @@ export function AgentConsole(props: {
           ) : null}
 
           <AgentChatTimeline
-            items={props.timelineItems}
+            nodes={props.transcriptNodes}
             busy={props.busy}
             actionDiffsById={actionDiffsById}
             onConfirm={props.onConfirm}

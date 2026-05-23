@@ -116,7 +116,7 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
       const workspace = await getWorkspaceForUser(db, user)
       const { threadId } = request.params as { threadId: string }
       const state = await buildThreadState(db, workspace, user, threadId)
-      return { events: state.agUiEvents, transcriptItems: state.transcriptItems, timelineItems: state.timelineItems }
+      return { events: state.agUiEvents, transcriptItems: state.transcriptItems, timelineItems: state.timelineItems, transcriptNodes: state.transcriptNodes }
     } catch (error) {
       const { sendError } = await import('../core/http.js')
       return sendError(reply, error)

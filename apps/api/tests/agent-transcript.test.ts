@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { AgentActionRequest, AgentMessage, AgentNavigationEvent, AgentPlanStep, AgentRunEvent } from '@xox/contracts'
 import { buildAgentAgUiEvents } from '../src/agent/ag-ui-projection.js'
 import { buildAgentTranscriptItems } from '../src/agent/agent-transcript-projector.js'
-import { buildAgentTimelineItems } from '../src/agent/agent-timeline-projector.js'
+import { buildAgentTimelineItems, buildAgentTranscriptNodes } from '../src/agent/agent-timeline-projector.js'
 import type { AgentProjectionState } from '../src/agent/ag-ui-projection.js'
 
 const createdAt = '2026-05-22T00:00:00.000Z'
@@ -101,6 +101,10 @@ function projectionState(input: { runEvents: AgentRunEvent[]; planSteps?: AgentP
     planSteps: input.planSteps ?? [],
     actionRequests: input.actionRequests ?? [],
   }
+}
+
+function flattenNodes(nodes: ReturnType<typeof buildAgentTranscriptNodes>) {
+  return nodes.flatMap((node): ReturnType<typeof buildAgentTranscriptNodes> => [node, ...flattenNodes(node.children ?? [])])
 }
 
 describe('Agent execution transcript projection', () => {
@@ -204,6 +208,70 @@ describe('Agent execution transcript projection', () => {
     expect(visible.map((item) => `${item.title}\n${item.summary}`).join('\n')).not.toContain('正在规划下一步')
     expect(visible.map((item) => `${item.title}\n${item.summary}`).join('\n')).not.toContain('正在查找相关记忆')
     expect(technical.some((item) => item.title === '正在查找相关记忆')).toBe(true)
+  })
+
+  it('projects simple greetings as only user and assistant transcript nodes', () => {
+    const nodes = buildAgentTranscriptNodes(projectionState({
+      messages: [
+        { id: 'message-user-greeting', threadId: 'thread-1', role: 'user', content: '你好', createdAt },
+        { id: 'message-assistant-greeting', threadId: 'thread-1', role: 'assistant', content: '你好！我是 xox-model Agent OS。', createdAt },
+      ],
+      runEvents: [
+        runEvent({ sequence: 1, type: 'run_queued', title: 'Run 已入队', message: '用户指令已持久化，等待 Agent worker 认领执行。' }),
+        runEvent({ sequence: 2, type: 'goal_contract_created', title: '目标契约已建立', message: 'Goal Run Engine 已建立目标契约。', status: 'info' }),
+        runEvent({ sequence: 3, type: 'memory_recall_started', title: '正在查找相关记忆', message: '正在查找与本次任务相关的工作区记忆。', status: 'running' }),
+        runEvent({ sequence: 4, type: 'run_completed', title: '运行完成', message: '模型规划和只读回答已完成。', status: 'completed' }),
+      ],
+    }))
+
+    const visible = nodes.filter((node) => node.visibility === 'user')
+    const technical = nodes.filter((node) => node.visibility === 'technical')
+
+    expect(visible.map((node) => node.kind)).toEqual(['user_message', 'assistant_message'])
+    expect(visible.map((node) => `${node.title}\n${node.summary}`).join('\n')).not.toContain('Run 已入队')
+    expect(technical.map((node) => node.title)).toContain('正在查找相关记忆')
+  })
+
+  it('attaches pending confirmation cards to the producing tool node', () => {
+    const nodes = buildAgentTranscriptNodes(projectionState({
+      runEvents: [
+        runEvent({ sequence: 1, type: 'provider_stream_delta', title: '工具调用片段', message: 'ledger_create_entry', status: 'running', data: { kind: 'tool_call_delta', toolCallIndex: 0, toolName: 'ledger_create_entry', argumentsPreview: '{"amount":176}' } }),
+        runEvent({ sequence: 2, type: 'tool_plan_ready', title: '模型工具调用已解析', message: '模型规划生成 1 个步骤。', status: 'running', data: { stepCount: 1, pendingActionCount: 1 } }),
+      ],
+      planSteps: [planStep()],
+      actionRequests: [action()],
+    }))
+
+    const toolNode = flattenNodes(nodes).find((node) => node.kind === 'tool_call' && node.actionRequest?.id === 'action-1')
+
+    expect(toolNode).toBeTruthy()
+    expect(toolNode?.defaultOpen).toBe(true)
+    expect(toolNode?.sections?.some((section) => section.kind === 'confirmation' && section.actionRequest?.id === 'action-1' && section.defaultOpen)).toBe(true)
+    expect(toolNode?.sections?.some((section) => section.kind === 'arguments' && section.content?.includes('"amount":176'))).toBe(true)
+    expect(toolNode?.sections?.some((section) => section.kind === 'raw' && section.defaultOpen === false)).toBe(true)
+  })
+
+  it('groups multi-tool turns into a work group and a compact tool group', () => {
+    const nodes = buildAgentTranscriptNodes(projectionState({
+      messages: [
+        { id: 'message-user-multi', threadId: 'thread-1', role: 'user', content: '查回本并打开偏差页', createdAt },
+        { id: 'message-assistant-multi', threadId: 'thread-1', role: 'assistant', content: '已完成查询。', createdAt },
+      ],
+      runEvents: [
+        runEvent({ sequence: 1, type: 'provider_stream_delta', title: '工具调用片段', message: 'data_query_workspace', status: 'running', data: { kind: 'tool_call_delta', toolCallIndex: 0, toolName: 'data_query_workspace', argumentsPreview: '{"scope":"workspace_summary"}' } }),
+        runEvent({ sequence: 2, type: 'provider_stream_delta', title: '工具调用片段', message: 'ui_navigate', status: 'running', data: { kind: 'tool_call_delta', toolCallIndex: 1, toolName: 'ui_navigate', argumentsPreview: '{"mainTab":"variance"}' } }),
+        runEvent({ sequence: 3, type: 'provider_stream_completed', title: 'Provider 流已结束', message: '模型流已结束。', status: 'completed', data: { toolCallCount: 2 } }),
+        runEvent({ sequence: 4, type: 'run_completed', title: '运行完成', message: '模型规划和只读回答已完成。', status: 'completed' }),
+      ],
+    }))
+
+    const workGroup = nodes.find((node) => node.kind === 'work_group')
+    const toolGroup = workGroup?.children?.find((node) => node.kind === 'tool_group')
+
+    expect(workGroup).toBeTruthy()
+    expect(toolGroup).toBeTruthy()
+    expect(toolGroup?.children?.filter((node) => node.kind === 'tool_call')).toHaveLength(2)
+    expect(toolGroup?.defaultOpen).toBe(false)
   })
 
   it('shows one live assistant stream row before the final assistant message exists', () => {

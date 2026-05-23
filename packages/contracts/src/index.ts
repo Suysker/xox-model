@@ -370,6 +370,82 @@ export type AgentTimelineItem = {
   createdAt: string
 }
 
+export type AgentTranscriptNodeKind =
+  | 'user_message'
+  | 'assistant_message'
+  | 'assistant_stream'
+  | 'work_group'
+  | 'tool_group'
+  | 'tool_call'
+  | 'tool_result'
+  | 'navigation'
+  | 'confirmation'
+  | 'action_update'
+  | 'memory'
+  | 'evaluation'
+  | 'summary'
+  | 'technical_group'
+  | 'technical'
+
+export type AgentTranscriptDisclosureKind =
+  | 'group'
+  | 'tool_body'
+  | 'arguments'
+  | 'result'
+  | 'raw'
+  | 'confirmation'
+  | 'audit'
+  | 'navigation'
+  | 'details'
+
+export type AgentTranscriptSection = {
+  id: string
+  kind: AgentTranscriptDisclosureKind
+  title: string
+  summary?: string
+  content?: string
+  defaultOpen: boolean
+  details?: Array<{ label: string; value: string }>
+  navigation?: AgentNavigationEvent | null
+  actionRequest?: AgentActionRequest | null
+  payload?: Record<string, unknown> | null
+}
+
+export type AgentTranscriptNode = {
+  id: string
+  threadId: string
+  runId: string | null
+  sequence: number
+  kind: AgentTranscriptNodeKind
+  title: string
+  summary: string
+  content?: string
+  status: AgentTimelineItemStatus
+  visibility: AgentTimelineItemVisibility
+  defaultOpen?: boolean
+  disclosure?: {
+    kind: AgentTranscriptDisclosureKind
+    defaultOpen: boolean
+    reason?: string
+  }
+  tool?: {
+    name: string
+    callId?: string | null
+    argumentsPreview?: string
+    resultPreview?: string
+  }
+  sourceType?: string
+  agUiEventType?: AgentAgUiEventType
+  actionRequestId?: string | null
+  actionRequest?: AgentActionRequest | null
+  navigation?: AgentNavigationEvent | null
+  details?: Array<{ label: string; value: string }>
+  sections?: AgentTranscriptSection[]
+  children?: AgentTranscriptNode[]
+  payload?: Record<string, unknown> | null
+  createdAt: string
+}
+
 export type AgentThreadSummary = {
   id: string
   title: string
@@ -506,6 +582,7 @@ export type AgentThreadState = {
   agUiEvents: AgentAgUiEvent[]
   transcriptItems: AgentTranscriptItem[]
   timelineItems: AgentTimelineItem[]
+  transcriptNodes: AgentTranscriptNode[]
   planSteps: AgentPlanStep[]
   actionRequests: AgentActionRequest[]
 }
@@ -581,6 +658,7 @@ export type AgentSendResponse = {
   agUiEvents: AgentAgUiEvent[]
   transcriptItems: AgentTranscriptItem[]
   timelineItems: AgentTimelineItem[]
+  transcriptNodes: AgentTranscriptNode[]
   planSteps: AgentPlanStep[]
   actionRequests: AgentActionRequest[]
 }

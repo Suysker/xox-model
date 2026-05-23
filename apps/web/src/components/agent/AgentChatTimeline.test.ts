@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { AgentTimelineItem } from '../../lib/api'
+import type { AgentActionRequest, AgentTranscriptNode } from '../../lib/api'
 import { AgentChatTimeline, formatTimelineStatus, shouldShowTimelineThinking, summarizeAgentChatTimeline, technicalTimelineItems, userTimelineItems } from './AgentChatTimeline'
 
-function item(overrides: Partial<AgentTimelineItem> = {}): AgentTimelineItem {
+function item(overrides: Partial<AgentTranscriptNode> = {}): AgentTranscriptNode {
   return {
     id: overrides.id ?? 'item-1',
     threadId: 'thread-1',
@@ -16,6 +16,33 @@ function item(overrides: Partial<AgentTimelineItem> = {}): AgentTimelineItem {
     status: overrides.status ?? 'running',
     visibility: overrides.visibility ?? 'user',
     createdAt: '2026-05-22T00:00:00.000Z',
+    ...overrides,
+  }
+}
+
+function action(overrides: Partial<AgentActionRequest> = {}): AgentActionRequest {
+  return {
+    id: 'action-1',
+    threadId: 'thread-1',
+    runId: 'run-1',
+    kind: 'ledger.create_entry',
+    status: 'pending',
+    title: '新增收入入账',
+    summary: '把 3 月成员 A 收入入账。',
+    targetLabel: '3 月账本',
+    riskLevel: 'medium',
+    details: [{ label: '金额', value: '176' }],
+    navigation: {
+      type: 'navigation',
+      route: { mainTab: 'bookkeeping', secondaryTab: 'entries', selectedPeriodId: 'period-1' },
+      panel: null,
+      focusRecordId: null,
+      reason: '打开记账工作台',
+    },
+    payload: { amount: 176 },
+    createdAt: '2026-05-22T00:00:00.000Z',
+    executedAt: null,
+    errorMessage: null,
     ...overrides,
   }
 }
@@ -70,7 +97,7 @@ describe('AgentChatTimeline helpers', () => {
 
   it('renders assistant markdown but keeps user bubbles and tool rows structured', () => {
     const html = renderToStaticMarkup(createElement(AgentChatTimeline, {
-      items: [
+      nodes: [
         item({
           id: 'user-message',
           kind: 'user_message',
@@ -92,7 +119,7 @@ describe('AgentChatTimeline helpers', () => {
           title: '调用工具：workspace_rename',
           summary: '**workspace_rename** 准备执行。',
           status: 'running',
-          toolName: 'workspace_rename',
+          tool: { name: 'workspace_rename' },
         }),
       ],
       busy: false,
@@ -108,5 +135,77 @@ describe('AgentChatTimeline helpers', () => {
     expect(html).not.toContain('<strong>不要渲染用户输入</strong>')
     expect(html).toContain('**workspace_rename** 准备执行。')
     expect(html).not.toContain('<strong>workspace_rename</strong>')
+  })
+
+  it('keeps completed tool details collapsed by default', () => {
+    const html = renderToStaticMarkup(createElement(AgentChatTimeline, {
+      nodes: [
+        item({
+          id: 'tool',
+          kind: 'tool_call',
+          title: '查询数据',
+          summary: '读取当前工作区。',
+          status: 'completed',
+          tool: { name: 'data_query_workspace', argumentsPreview: '{"scope":"workspace_summary"}' },
+          sections: [
+            {
+              id: 'tool:arguments',
+              kind: 'arguments',
+              title: '参数',
+              summary: 'workspace_summary',
+              content: '{"scope":"workspace_summary"}',
+              defaultOpen: false,
+            },
+          ],
+        }),
+      ],
+      busy: false,
+      actionDiffsById: new Map(),
+      onCancel: () => undefined,
+      onConfirm: () => undefined,
+      onUpdate: () => undefined,
+    }))
+
+    expect(html).toContain('查询数据')
+    expect(html).toContain('data_query_workspace')
+    expect(html).not.toContain('workspace_summary')
+  })
+
+  it('opens pending confirmation sections inline by default', () => {
+    const pending = action()
+    const html = renderToStaticMarkup(createElement(AgentChatTimeline, {
+      nodes: [
+        item({
+          id: 'tool-write',
+          kind: 'tool_call',
+          title: '调用工具：ledger.create_entry',
+          summary: pending.summary,
+          status: 'waiting',
+          defaultOpen: true,
+          tool: { name: pending.kind },
+          actionRequestId: pending.id,
+          actionRequest: pending,
+          sections: [
+            {
+              id: 'tool-write:confirmation',
+              kind: 'confirmation',
+              title: '确认卡',
+              summary: pending.summary,
+              actionRequest: pending,
+              defaultOpen: true,
+            },
+          ],
+        }),
+      ],
+      busy: false,
+      actionDiffsById: new Map(),
+      onCancel: () => undefined,
+      onConfirm: () => undefined,
+      onUpdate: () => undefined,
+    }))
+
+    expect(html).toContain('确认执行')
+    expect(html).toContain('新增收入入账')
+    expect(html).toContain('176')
   })
 })
