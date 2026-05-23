@@ -222,6 +222,8 @@ Layering is a semantic and interaction contract, not permission to draw nested c
 - no generic status slogans such as "tools selected", "parameters can be expanded", or "opened page for checking"; keep those facts in structure, status badges and technical details instead of prose
 - hide successful check rows when their only content is a generic success/read-only assertion; show check rows only when they contain an actionable failure, pending item, incomplete goal, or specific business finding
 - normalize backend engineering titles in the renderer: do not show raw strings such as `Worked for 0s / 1 tools / 0 pending`, and do not show a tool name twice in the same row
+- start turn timing as soon as the user message appears in the transcript; show a lightweight running timer before tool rows exist, then keep the elapsed duration on the completed work cycle
+- suppress generic `Result Preview` placeholders such as "tool call completed and used for reply"; render result preview only when it contains real business output
 
 This keeps the exact tree inspectable while matching mature command/transcript UIs such as Codex, Claude Code and OpenClaw.
 

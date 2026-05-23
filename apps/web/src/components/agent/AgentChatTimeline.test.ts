@@ -2,7 +2,7 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { AgentActionRequest, AgentTranscriptNode } from '../../lib/api'
-import { AgentChatTimeline, formatTimelineStatus, shouldRenderTranscriptNode, shouldShowTimelineThinking, summarizeAgentChatTimeline, technicalTimelineItems, userTimelineItems } from './AgentChatTimeline'
+import { AgentChatTimeline, formatAgentElapsed, formatTimelineStatus, shouldRenderTranscriptNode, shouldShowTimelineThinking, summarizeAgentChatTimeline, technicalTimelineItems, userTimelineItems } from './AgentChatTimeline'
 
 function item(overrides: Partial<AgentTranscriptNode> = {}): AgentTranscriptNode {
   return {
@@ -71,6 +71,8 @@ describe('AgentChatTimeline helpers', () => {
     expect(formatTimelineStatus('waiting')).toBe('待确认')
     expect(formatTimelineStatus('running')).toBe('进行中')
     expect(formatTimelineStatus('completed')).toBe('完成')
+    expect(formatAgentElapsed(5)).toBe('5秒')
+    expect(formatAgentElapsed(272)).toBe('4分 32秒')
   })
 
   it('shows Thinking after a submitted user message until visible work appears', () => {
@@ -93,6 +95,34 @@ describe('AgentChatTimeline helpers', () => {
       userMessage,
       item({ id: 'tool', kind: 'tool_call', title: '调用工具：workspace_rename', summary: '准备修改工作区。', status: 'running' }),
     ], true)).toBe(false)
+  })
+
+  it('starts a visible timer immediately after user submission', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-05-22T00:00:05.000Z'))
+    try {
+      const html = renderToStaticMarkup(createElement(AgentChatTimeline, {
+        nodes: [
+          item({
+            id: 'user-message',
+            kind: 'user_message',
+            title: '用户',
+            summary: '我们几个月可以回本？',
+            status: 'completed',
+            createdAt: '2026-05-22T00:00:00.000Z',
+          }),
+        ],
+        busy: true,
+        actionDiffsById: new Map(),
+        onCancel: () => undefined,
+        onConfirm: () => undefined,
+        onUpdate: () => undefined,
+      }))
+
+      expect(html).toContain('正在处理 5秒')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('renders assistant markdown but keeps user bubbles and tool rows structured', () => {
@@ -222,7 +252,7 @@ describe('AgentChatTimeline helpers', () => {
                       kind: 'result',
                       title: 'Result Preview',
                       summary: '结果已用于本轮回复',
-                      content: '工具调用已完成，结果已用于本轮回复。',
+                      content: '工具调用已完成，结果已用于本轮回复或后续业务步骤。',
                       defaultOpen: false,
                     },
                   ],
@@ -255,6 +285,7 @@ describe('AgentChatTimeline helpers', () => {
     }))
 
     expect(html).toContain('我现在几个月回本')
+    expect(html).toContain('用时 3秒')
     expect(html).toContain('已完成 1 个工具')
     expect(html).not.toContain('Worked for 3s / 1 tools / 0 pending')
     expect(html).toContain('调用 1 个工具')
@@ -272,7 +303,7 @@ describe('AgentChatTimeline helpers', () => {
     expect(html).not.toContain('结果已用于本轮回复')
     expect(html).toContain('当前还未回本。')
     expect(html).toContain('Arguments')
-    expect(html).toContain('Result Preview')
+    expect(html).not.toContain('Result Preview')
     expect(html).toContain('Raw JSON')
     expect(html).not.toContain('"question"')
     expect(html).not.toContain('workspace_summary')
@@ -281,6 +312,68 @@ describe('AgentChatTimeline helpers', () => {
     expect(html).toContain('grid-cols-[18px_20px_minmax(0,1fr)_auto]')
     expect(html).not.toContain('rounded-md border border-stone-900/10 bg-white')
     expect(html).not.toContain('rounded-md border border-stone-900/10 bg-stone-50')
+  })
+
+  it('hides generic result previews but keeps real tool result summaries', () => {
+    const genericHtml = renderToStaticMarkup(createElement(AgentChatTimeline, {
+      nodes: [
+        item({
+          id: 'generic-tool',
+          kind: 'tool_call',
+          title: '调用工具：data_query_workspace',
+          status: 'completed',
+          defaultOpen: true,
+          tool: { name: 'data_query_workspace' },
+          sections: [
+            {
+              id: 'generic-tool:result',
+              kind: 'result',
+              title: 'Result Preview',
+              content: '工具调用已完成，结果已用于本轮回复或后续业务步骤。',
+              defaultOpen: true,
+            },
+          ],
+        }),
+      ],
+      busy: false,
+      actionDiffsById: new Map(),
+      onCancel: () => undefined,
+      onConfirm: () => undefined,
+      onUpdate: () => undefined,
+    }))
+
+    expect(genericHtml).not.toContain('Result Preview')
+    expect(genericHtml).not.toContain('工具调用已完成')
+
+    const realHtml = renderToStaticMarkup(createElement(AgentChatTimeline, {
+      nodes: [
+        item({
+          id: 'real-tool',
+          kind: 'tool_call',
+          title: '调用工具：data_query_workspace',
+          status: 'completed',
+          defaultOpen: true,
+          tool: { name: 'data_query_workspace' },
+          sections: [
+            {
+              id: 'real-tool:result',
+              kind: 'result',
+              title: 'Result Preview',
+              content: '命中 3 笔分录，总收入 ¥12,000。',
+              defaultOpen: true,
+            },
+          ],
+        }),
+      ],
+      busy: false,
+      actionDiffsById: new Map(),
+      onCancel: () => undefined,
+      onConfirm: () => undefined,
+      onUpdate: () => undefined,
+    }))
+
+    expect(realHtml).toContain('Result Preview')
+    expect(realHtml).toContain('命中 3 笔分录，总收入 ¥12,000。')
   })
 
   it('hides empty successful business checks but keeps actionable checks', () => {
