@@ -209,6 +209,18 @@ The visible default should be:
 - final assistant summary after tool loops
 - technical logs behind an explicit disclosure only
 
+Layering is a semantic and interaction contract, not permission to draw nested cards. The renderer must not show work group, tool group, tool row and disclosure sections as stacked rounded boxes. The preferred visual language is:
+
+- one transcript lane
+- a lightweight work-cycle separator
+- indentation and a subtle vertical rule for tool groups
+- one-line collapsed tool/navigation/check rows
+- first-level disclosure rows for arguments and result preview
+- second-level disclosure for raw JSON
+- real card chrome only for editable confirmation interrupts
+
+This keeps the exact tree inspectable while matching mature command/transcript UIs such as Codex, Claude Code and OpenClaw.
+
 ## Target Module Division
 
 | Module | Target path | Responsibility | Reuse stance |

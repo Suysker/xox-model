@@ -266,6 +266,10 @@ describe('AgentChatTimeline helpers', () => {
     expect(html).toContain('Raw JSON')
     expect(html).not.toContain('"question"')
     expect(html).not.toContain('workspace_summary')
+    expect(html).toContain('border-t border-stone-200 py-2')
+    expect(html).toContain('ml-5 border-l border-stone-200 py-1 pl-3')
+    expect(html).not.toContain('rounded-md border border-stone-900/10 bg-white')
+    expect(html).not.toContain('rounded-md border border-stone-900/10 bg-stone-50')
   })
 
   it('opens pending confirmation sections inline by default', () => {

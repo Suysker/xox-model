@@ -137,7 +137,7 @@ function compactRowSummary(node: AgentTranscriptNode) {
 
 function TimelineStatusBadge(props: { status: AgentTranscriptNode['status'] }) {
   return (
-    <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${statusClass(props.status)}`}>
+    <span className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold ${statusClass(props.status)}`}>
       <StatusIcon status={props.status} />
       {formatTimelineStatus(props.status)}
     </span>
@@ -203,7 +203,7 @@ function SectionBody(props: {
     )
   }
   return (
-    <div className="grid gap-2 text-[11px]">
+    <div className="grid gap-1.5 text-[11px]">
       {navigationLabel ? (
         <p className="inline-flex max-w-full items-center gap-1 text-stone-500">
           <Navigation className="h-3 w-3 shrink-0" />
@@ -247,11 +247,11 @@ function DisclosureSection(props: {
   onUpdate: (id: string, payload: AgentActionUpdatePayload) => void
 }) {
   return (
-    <div className="rounded-md border border-stone-900/10 bg-stone-50" data-transcript-section-kind={props.section.kind} data-transcript-section-id={props.section.id}>
+    <div className="border-t border-stone-100 py-1 first:border-t-0" data-transcript-section-kind={props.section.kind} data-transcript-section-id={props.section.id}>
       <button
         type="button"
         onClick={props.onToggle}
-        className="grid w-full grid-cols-[16px_minmax(0,1fr)] items-center gap-1.5 px-2 py-1 text-left"
+        className="grid w-full grid-cols-[16px_minmax(0,1fr)] items-center gap-1.5 py-1 text-left text-stone-600 transition hover:text-stone-900"
         aria-expanded={props.expanded}
       >
         {props.expanded ? <ChevronDown className="h-3.5 w-3.5 text-stone-500" /> : <ChevronRight className="h-3.5 w-3.5 text-stone-500" />}
@@ -261,7 +261,7 @@ function DisclosureSection(props: {
         </span>
       </button>
       {props.expanded ? (
-        <div className="grid gap-1.5 border-t border-stone-200 px-2 py-2">
+        <div className="ml-2 grid gap-1.5 border-l border-stone-200 py-1 pl-3">
           <SectionBody
             section={props.section}
             busy={props.busy}
@@ -300,7 +300,7 @@ function NodeRow(props: {
   const expandable = canExpand(props.node)
   return (
     <div className="grid min-h-7 grid-cols-[20px_minmax(0,1fr)_auto] items-center gap-2">
-      <span className="flex h-5 w-5 items-center justify-center rounded-full bg-stone-100 text-stone-600">
+      <span className="flex h-5 w-5 items-center justify-center text-stone-500">
         <KindIcon kind={props.node.kind} />
       </span>
       <div className="flex min-w-0 items-center gap-1.5">
@@ -333,6 +333,19 @@ function NodeRow(props: {
   )
 }
 
+function nodeShellClass(kind: AgentTranscriptNode['kind']) {
+  if (kind === 'work_group') return 'border-t border-stone-200 py-2'
+  if (kind === 'tool_group') return 'ml-5 border-l border-stone-200 py-1 pl-3'
+  if (kind === 'tool_call' || kind === 'tool_result') return 'border-t border-stone-100 py-1 first:border-t-0'
+  if (kind === 'navigation' || kind === 'evaluation' || kind === 'memory' || kind === 'action_update') return 'border-t border-stone-100 py-1 first:border-t-0'
+  return 'border-t border-stone-100 py-1 first:border-t-0'
+}
+
+function nodeDetailsClass(kind: AgentTranscriptNode['kind']) {
+  if (kind === 'work_group' || kind === 'tool_group') return 'mt-1 grid gap-1'
+  return 'ml-7 mt-1 grid gap-1.5'
+}
+
 function TranscriptNodeView(props: {
   node: AgentTranscriptNode
   depth?: number
@@ -347,12 +360,11 @@ function TranscriptNodeView(props: {
 
   const nodeOpen = props.expanded.isNodeExpanded(props.node)
   const diffDetails = props.node.actionRequestId ? props.actionDiffsById.get(props.node.actionRequestId) ?? [] : []
-  const indentClass = props.depth ? 'ml-5 border-l border-stone-200 pl-2' : ''
   return (
-    <div className={`${indentClass} rounded-md border border-stone-900/10 bg-white px-2 py-1 shadow-sm`} data-transcript-kind={props.node.kind} data-transcript-id={props.node.id}>
+    <div className={nodeShellClass(props.node.kind)} data-transcript-kind={props.node.kind} data-transcript-id={props.node.id}>
       <NodeRow node={props.node} expanded={nodeOpen} onToggle={() => props.expanded.toggleNode(props.node)} />
       {nodeOpen ? (
-        <div className="mt-2 grid gap-1.5 border-t border-stone-100 pt-2">
+        <div className={nodeDetailsClass(props.node.kind)}>
           {props.node.sections?.map((section) => (
             <DisclosureSection
               key={section.id}
