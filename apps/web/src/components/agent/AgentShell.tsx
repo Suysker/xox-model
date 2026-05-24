@@ -4,11 +4,14 @@ import { useAgentThread } from '../../hooks/useAgentThread'
 import { AgentConsole } from './AgentConsole'
 import {
   FALLBACK_VIEWPORT,
+  AGENT_BOTTOM_DRAWER_COLLAPSED_HEIGHT,
+  AGENT_SHELL_CONTENT_MAX_WIDTH,
   type AgentShellLayoutMode,
   type AgentShellLayoutPreference,
   type AgentShellViewport,
   clampBottomDrawerHeight,
   clampSidePanelWidth,
+  bottomDrawerPageInsetHeight,
   defaultBottomDrawerHeight,
   defaultSidePanelWidth,
   effectiveAgentShellLayoutMode,
@@ -52,6 +55,7 @@ export function AgentShell(props: {
     readAgentShellLayoutPreference(safeLocalStorage(), currentViewport()),
   )
   const [dragTarget, setDragTarget] = useState<DragTarget>(null)
+  const [conversationOpen, setConversationOpen] = useState(true)
 
   useEffect(() => {
     const handleResize = () => setViewport(currentViewport())
@@ -72,6 +76,8 @@ export function AgentShell(props: {
     () => clampBottomDrawerHeight(layoutPreference.bottomHeightPx, viewport),
     [layoutPreference.bottomHeightPx, viewport],
   )
+  const visibleBottomDrawerHeight = conversationOpen ? bottomHeight : AGENT_BOTTOM_DRAWER_COLLAPSED_HEIGHT
+  const bottomDrawerPageInset = bottomDrawerPageInsetHeight(visibleBottomDrawerHeight)
   const sideWidth = useMemo(
     () => clampSidePanelWidth(layoutPreference.sideWidthPx, viewport),
     [layoutPreference.sideWidthPx, viewport],
@@ -155,9 +161,11 @@ export function AgentShell(props: {
     automationLevel: agent.automationLevel,
     layoutMode: effectiveMode,
     surface: effectiveMode === 'sidePanel' ? 'side' as const : 'drawer' as const,
+    conversationOpen,
     busy: agent.busy,
     error: agent.error,
     onLayoutModeChange: setLayoutMode,
+    onConversationOpenChange: setConversationOpen,
     onSend: (message: string) => void agent.sendMessage(message),
     onCancelRun: () => void agent.cancelRun(),
     onConfirm: (id: string) => void agent.confirmAction(id),
@@ -210,26 +218,35 @@ export function AgentShell(props: {
     <div className="min-h-screen bg-stone-100">
       <main>
         {props.children}
+        <div aria-hidden="true" className="pointer-events-none" style={{ height: bottomDrawerPageInset }} />
       </main>
-      <section className="fixed inset-x-3 bottom-3 z-50 md:inset-x-6" style={{ height: bottomHeight }}>
-        <div
-          role="separator"
-          aria-orientation="horizontal"
-          aria-valuemin={clampBottomDrawerHeight(0, viewport)}
-          aria-valuemax={clampBottomDrawerHeight(Number.MAX_SAFE_INTEGER, viewport)}
-          aria-valuenow={bottomHeight}
-          tabIndex={0}
-          onPointerDown={(event) => {
-            event.preventDefault()
-            setDragTarget('bottomDrawer')
-          }}
-          onKeyDown={handleBottomResizeKey}
-          onDoubleClick={() => updateLayoutPreference((current) => ({ ...current, bottomHeightPx: defaultBottomDrawerHeight(viewport) }))}
-          className="absolute inset-x-0 -top-3 z-10 h-5 cursor-ns-resize outline-none focus-visible:bg-emerald-500/10"
-          title="拖动调整 Agent 高度"
-        >
-          <span className="absolute left-1/2 top-2 h-1 w-12 -translate-x-1/2 rounded-full bg-stone-300 shadow-sm" />
-        </div>
+      <section
+        className="fixed bottom-3 left-1/2 z-50 w-[calc(100vw-1.5rem)] -translate-x-1/2 md:w-[calc(100vw-3rem)]"
+        style={{
+          height: visibleBottomDrawerHeight,
+          maxWidth: AGENT_SHELL_CONTENT_MAX_WIDTH,
+        }}
+      >
+        {conversationOpen ? (
+          <div
+            role="separator"
+            aria-orientation="horizontal"
+            aria-valuemin={clampBottomDrawerHeight(0, viewport)}
+            aria-valuemax={clampBottomDrawerHeight(Number.MAX_SAFE_INTEGER, viewport)}
+            aria-valuenow={bottomHeight}
+            tabIndex={0}
+            onPointerDown={(event) => {
+              event.preventDefault()
+              setDragTarget('bottomDrawer')
+            }}
+            onKeyDown={handleBottomResizeKey}
+            onDoubleClick={() => updateLayoutPreference((current) => ({ ...current, bottomHeightPx: defaultBottomDrawerHeight(viewport) }))}
+            className="absolute inset-x-0 -top-3 z-10 h-5 cursor-ns-resize outline-none focus-visible:bg-emerald-500/10"
+            title="拖动调整 Agent 高度"
+          >
+            <span className="absolute left-1/2 top-2 h-1 w-12 -translate-x-1/2 rounded-full bg-stone-300 shadow-sm" />
+          </div>
+        ) : null}
         <AgentConsole {...consoleProps} />
       </section>
     </div>

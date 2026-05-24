@@ -1,5 +1,5 @@
-import { useEffect, useState, type FormEvent } from 'react'
-import { Bot, Database, History, KeyRound, PanelBottom, PanelRight, Plus, RefreshCw, Save, SendHorizontal, Trash2, XCircle } from 'lucide-react'
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
+import { Bot, ChevronDown, ChevronUp, Database, History, KeyRound, PanelBottom, PanelRight, Plus, RefreshCw, SendHorizontal, Save, Trash2, XCircle } from 'lucide-react'
 import type { AgentActionUpdatePayload, AgentAutomationLevel, AgentMemoryRecord, AgentProviderProbePayload, AgentProviderProbeResult, AgentProviderSettingRecord, AgentProviderSettingUpdatePayload, AgentSendResponse, AgentThreadSummary, AgentTranscriptNode } from '../../lib/api'
 import type { AgentShellLayoutMode, AgentShellSurface } from './agentShellLayout'
 import { AgentChatTimeline } from './AgentChatTimeline'
@@ -28,9 +28,11 @@ export function AgentConsole(props: {
   automationLevel: AgentAutomationLevel
   layoutMode: AgentShellLayoutMode
   surface: AgentShellSurface
+  conversationOpen: boolean
   busy: boolean
   error: string | null
   onLayoutModeChange: (mode: AgentShellLayoutMode) => void
+  onConversationOpenChange: (open: boolean) => void
   onSend: (message: string) => void
   onCancelRun: () => void
   onConfirm: (id: string) => void
@@ -48,6 +50,7 @@ export function AgentConsole(props: {
   onDeleteProviderSetting: () => void
 }) {
   const [draft, setDraft] = useState('')
+  const draftRef = useRef<HTMLTextAreaElement | null>(null)
   const [memoryOpen, setMemoryOpen] = useState(false)
   const [memorySearch, setMemorySearch] = useState('')
   const [memoryTypeFilter, setMemoryTypeFilter] = useState('all')
@@ -107,12 +110,30 @@ export function AgentConsole(props: {
     })
   }, [providerOpen, props.providerSetting])
 
-  function handleSubmit(event: FormEvent) {
-    event.preventDefault()
+  useEffect(() => {
+    const textarea = draftRef.current
+    if (!textarea) return
+    textarea.style.height = '0px'
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 128)}px`
+  }, [draft])
+
+  function submitDraft() {
     const message = draft.trim()
-    if (!message || props.busy) return
+    if (!message || props.busy) return false
     setDraft('')
     props.onSend(message)
+    return true
+  }
+
+  function handleSubmit(event: FormEvent) {
+    event.preventDefault()
+    submitDraft()
+  }
+
+  function handleDraftKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
+    event.preventDefault()
+    submitDraft()
   }
 
   async function handleProviderSubmit(event: FormEvent) {
@@ -198,6 +219,16 @@ export function AgentConsole(props: {
             </div>
             <button
               type="button"
+              onClick={() => props.onConversationOpenChange(!props.conversationOpen)}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-stone-900/10 bg-white text-stone-500 transition hover:bg-stone-100 hover:text-stone-800"
+              title={props.conversationOpen ? '收起对话' : '展开对话'}
+              aria-label={props.conversationOpen ? '收起对话' : '展开对话'}
+              aria-expanded={props.conversationOpen}
+            >
+              {props.conversationOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronUp className="h-3.5 w-3.5" />}
+            </button>
+            <button
+              type="button"
               onClick={props.onNewThread}
               disabled={props.busy}
               className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-stone-900/10 bg-white px-2 text-xs font-semibold text-stone-700 transition hover:bg-stone-100 disabled:opacity-50"
@@ -265,7 +296,7 @@ export function AgentConsole(props: {
             </button>
           </div>
 
-          {historyOpen ? (
+          {props.conversationOpen && historyOpen ? (
             <div className="mt-2 rounded-md border border-stone-900/10 bg-white px-3 py-2 text-xs">
               <div className="flex items-center justify-between gap-2">
                 <span className="font-semibold text-stone-800">历史对话</span>
@@ -309,7 +340,7 @@ export function AgentConsole(props: {
             </div>
           ) : null}
 
-          {memoryOpen ? (
+          {props.conversationOpen && memoryOpen ? (
             <div className="mt-2 rounded-md border border-stone-900/10 bg-white px-3 py-2 text-xs">
               <div className="flex items-center justify-between gap-2">
                 <span className="font-semibold text-stone-800">当前工作区记忆</span>
@@ -382,7 +413,7 @@ export function AgentConsole(props: {
             </div>
           ) : null}
 
-          {providerOpen ? (
+          {props.conversationOpen && providerOpen ? (
             <form onSubmit={handleProviderSubmit} className="mt-2 rounded-md border border-stone-900/10 bg-white px-3 py-2 text-xs">
               <div className="flex items-center justify-between gap-2">
                 <span className="font-semibold text-stone-800">模型配置</span>
@@ -499,38 +530,44 @@ export function AgentConsole(props: {
 
         </div>
 
-        <AgentChatTimeline
-          nodes={props.transcriptNodes}
-          busy={props.busy}
-          actionDiffsById={actionDiffsById}
-          onConfirm={props.onConfirm}
-          onCancel={props.onCancel}
-          onUpdate={props.onUpdate}
-          className="min-h-0 flex-1"
-        />
+        {props.conversationOpen ? (
+          <AgentChatTimeline
+            nodes={props.transcriptNodes}
+            busy={props.busy}
+            actionDiffsById={actionDiffsById}
+            onConfirm={props.onConfirm}
+            onCancel={props.onCancel}
+            onUpdate={props.onUpdate}
+            className="min-h-0 flex-1"
+          />
+        ) : null}
 
         <form
           onSubmit={handleSubmit}
           className={[
-            'mt-2 flex shrink-0 gap-2 border-t border-stone-900/10 pt-2',
+            'mt-2 flex shrink-0 items-end gap-2 border-t border-stone-900/10 pt-2',
             isSideSurface
               ? 'bg-stone-50/95 pb-1'
-              : 'sticky bottom-0 -mx-3 bg-stone-50/80 px-3 pb-3 backdrop-blur',
+              : 'sticky bottom-0 -mx-3 rounded-b-lg bg-stone-50/80 px-3 pb-3 backdrop-blur',
           ].join(' ')}
         >
-          <input
+          <textarea
+            ref={draftRef}
+            rows={1}
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
-            className="h-10 min-w-0 flex-1 rounded-md border border-stone-900/10 bg-white px-3 text-sm outline-none transition focus:border-emerald-500"
+            onKeyDown={handleDraftKeyDown}
+            className="max-h-32 min-h-10 min-w-0 flex-1 resize-none rounded-xl border border-stone-900/10 bg-white/90 px-3 py-2 text-sm leading-6 outline-none transition focus:border-emerald-500"
             placeholder="输入指令"
           />
           <button
             type="submit"
             disabled={props.busy || !draft.trim()}
-            className="inline-flex h-10 items-center justify-center gap-1 rounded-md bg-stone-950 px-4 text-sm font-semibold text-white transition hover:bg-stone-800 disabled:opacity-50"
+            className="inline-flex h-10 w-12 shrink-0 items-center justify-center rounded-xl bg-stone-950 text-sm font-semibold text-white transition hover:bg-stone-800 disabled:opacity-50"
+            title="发送"
+            aria-label="发送"
           >
             <SendHorizontal className="h-4 w-4" />
-            发送
           </button>
         </form>
         {props.error ? <p className="mt-2 text-xs font-medium text-red-600">{props.error}</p> : null}

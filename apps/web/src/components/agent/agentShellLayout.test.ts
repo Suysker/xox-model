@@ -4,6 +4,7 @@ import {
   AGENT_SIDE_PANEL_DEFAULT_WIDTH,
   AGENT_SIDE_PANEL_MIN_VIEWPORT_WIDTH,
   AGENT_SIDE_PANEL_MIN_WIDTH,
+  bottomDrawerPageInsetHeight,
   clampBottomDrawerHeight,
   clampSidePanelWidth,
   defaultAgentShellLayoutPreference,
@@ -79,5 +80,10 @@ describe('agent shell layout helpers', () => {
     expect(clampBottomDrawerHeight(2000, { width: 1280, height: 900 })).toBe(738)
     expect(clampSidePanelWidth(50, { width: 1280, height: 900 })).toBe(AGENT_SIDE_PANEL_MIN_WIDTH)
     expect(clampSidePanelWidth(2000, { width: 1280, height: 900 })).toBe(704)
+  })
+
+  it('adds scroll inset behind the fixed bottom drawer', () => {
+    expect(bottomDrawerPageInsetHeight(0)).toBe(24)
+    expect(bottomDrawerPageInsetHeight(396)).toBe(420)
   })
 })

@@ -17,6 +17,9 @@ export const AGENT_SHELL_LAYOUT_STORAGE_KEY = 'xox.agent.shell.layout.v1'
 export const AGENT_BOTTOM_DRAWER_DEFAULT_RATIO = 0.44
 export const AGENT_BOTTOM_DRAWER_MIN_HEIGHT = 280
 export const AGENT_BOTTOM_DRAWER_MAX_RATIO = 0.82
+export const AGENT_BOTTOM_DRAWER_COLLAPSED_HEIGHT = 118
+export const AGENT_BOTTOM_DRAWER_SCROLL_GAP = 24
+export const AGENT_SHELL_CONTENT_MAX_WIDTH = 1520
 export const AGENT_SIDE_PANEL_DEFAULT_WIDTH = 420
 export const AGENT_SIDE_PANEL_MIN_WIDTH = 360
 export const AGENT_SIDE_PANEL_MAX_WIDTH = 720
@@ -64,6 +67,10 @@ export function defaultSidePanelWidth(viewport: AgentShellViewport) {
 export function clampBottomDrawerHeight(value: number, viewport: AgentShellViewport) {
   const bounds = bottomDrawerBounds(viewport)
   return clamp(value, bounds.min, bounds.max)
+}
+
+export function bottomDrawerPageInsetHeight(drawerHeightPx: number) {
+  return Math.max(0, Math.round(drawerHeightPx + AGENT_BOTTOM_DRAWER_SCROLL_GAP))
 }
 
 export function clampSidePanelWidth(value: number, viewport: AgentShellViewport) {

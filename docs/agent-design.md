@@ -542,7 +542,8 @@ React Agent OS：
 - 依赖图：`useAgentThread -> api/contracts -> AgentConsole -> AgentChatTimeline -> AgentActionCard`。展示层不得重新推导业务权限，也不得维护第二套动作状态。
 - 复用与抽象：`AgentChatTimeline` 只消费后端 `AgentTimelineItem`，用 `actionRequestId` 关联编辑 diff，用 `agentNavigation` 渲染“打开页面 / 面板 / 定位记录”，并导出纯函数供测试覆盖。
 - 命名与样式：用户可见运行态统一叫 `timeline / tool row / confirmation / technical log`；中文界面使用 `对话时间线 / 工具调用 / 导航 / 确认 / 执行 / 失败`；紧凑 SaaS 工作台样式保持 8px 以内圆角、信息密度优先，不做营销式大卡片。
-- Agent 容器：底部抽屉覆盖页面但不缩放主工作台，输入区保持半透明 sticky；右侧栏让出主页面宽度，窄屏临时回退到底部抽屉但保留用户布局偏好。
+- Agent 容器：底部抽屉覆盖页面但不缩放主工作台，宽度与主页面 `max-w-[1520px]` 内容容器对齐，输入区保持半透明 sticky；对话区可收起但输入区常驻；主页面尾部按抽屉可见高度追加滚动预留空间，避免用户滚到底仍被覆盖。右侧栏让出主页面宽度，窄屏临时回退到底部抽屉但保留用户布局偏好。
+- Agent 输入：使用多行 textarea；Enter 发送，Shift+Enter 换行，发送按钮只是同一路径的显式触发。
 - 验收：一条多步骤消息必须在同一条前端时间线展示用户消息、模型回复、工具行、导航目标、内联确认卡、编辑 diff、失败原因和取消状态；执行或取消后，timeline 必须随后端返回的 `timelineItems` 刷新。
 
 ## Agent 协议
