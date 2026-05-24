@@ -169,6 +169,7 @@
 - SaaS entity references should be inspectable through first-class tenant-scoped read tools. For references such as "第一个股东" or "成员 A", expose current members/shareholders/investments to the model before asking the user for facts already stored in the workspace.
 - A Goal Run Engine must fail closed when repair iterations are exhausted. Do not mark a run successful while the goal contract is still `repairing`; surface the unfinished criteria instead.
 - Goal fact extraction must distinguish read-only inspections from writes. Ledger history filters, variance questions, and explicit no-write checks should not require missing write confirmation cards, and no-op patch observations should not be repaired as failed writes.
+- Agent automation level means execution authority, not planning effort. The planner/evaluator loop must always pursue the full goal; `manual / low / medium / high` only decides whether eligible action requests auto-execute or remain editable pending cards. Even auto-executed writes must first create a server-owned action request and then reuse the same policy, domain-service, audit, observation, and transcript path as user-confirmed writes.
 
 ## Testing
 

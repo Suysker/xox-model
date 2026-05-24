@@ -951,7 +951,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     assertSmoke(complexOperatingModelMemberCount === 50, 'confirmed complex operating model did not persist 50 members')
     assertSmoke(complexDraft.json.workspaceName === '星河 50 期启动测算', 'confirmed complex operating model did not update workspace name')
     rememberCoverage(coveredDirections, 'complex_operating_model_high_level_tool')
-    rememberCoverage(coveredDirections, 'automation_high_requires_confirmation')
+    rememberCoverage(coveredDirections, 'high_risk_requires_confirmation_under_high_automation')
     rememberCoverage(coveredDirections, 'unified_timeline_complex_tool_rows')
 
     const auditCount = await db

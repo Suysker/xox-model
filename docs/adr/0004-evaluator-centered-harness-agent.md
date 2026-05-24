@@ -10,7 +10,7 @@ Accepted as the target Agent OS architecture.
 
 2026-05-19 实现切片：已落地 `AgentGoalContract`、`agent_goals`、`agent_evaluations`、run `goal_status`、`goal-run-engine.ts`、`completion-evaluator.ts`、`observation-collector.ts`、主动 memory candidate detector/consolidator，以及 React Goal/Evaluation 面板。OpenAI-compatible provider stream trace 已改为 redacted/coalesced chunk events：adapter 仍实时读取 token/chunk，但按时间和长度合并写入 `provider_stream_delta`，避免长 tool-call 参数被每 token DB trace 拖慢甚至中断。当前实现以 deterministic policy/domain/action-graph evaluator 为主，LLM rubric evaluator、独立 memory promotion scheduler 和更细粒度 evaluator 子模块仍是后续演进项。
 
-2026-05-24 约束修订：`automationLevel` 只表示 planner 推进力度，不再表示自动确认权限。复杂经营模型、记账、版本、分享、导入和草稿修改等所有写入都必须保持可编辑确认卡，用户确认后才执行。
+2026-05-24 约束修订已被 ADR 0015 取代。最新设计中，`automationLevel` 表示执行授权程度，不表示 planner 推进力度；复杂目标的规划、观察、评估和修复循环始终全力推进，eligible 写入动作由 Automation Policy Engine 决定自动执行或等待用户编辑/确认。
 
 ## 背景
 
@@ -18,7 +18,7 @@ Accepted as the target Agent OS architecture.
 
 - 用户可以用自然语言完成页面上可手动完成的业务动作。
 - 多步骤目标必须可视化为 action graph，而不是隐藏在一次模型回复里。
-- 读操作可以自动执行；写操作必须显式导航、生成可编辑确认卡、确认后执行。
+- 读操作可以自动执行；写操作必须显式导航、生成 server-owned action request 和可编辑确认卡，并按 ADR 0015 的 Automation Policy Engine 自动执行或等待用户确认。
 - 复杂目标不能假设模型一次性吐出全部 tool calls；模型应该在 harness 中小步调用工具、观察结果、继续规划，直到目标完成或明确阻塞。
 - SaaS 多用户、多工作区、provider settings、memory、审计和版本不可变性都必须是架构事实，不是 prompt 约定。
 
@@ -398,7 +398,7 @@ Evaluator 的设计原则：
 
 1. Goal Interpreter 把用户输入转成经营模型目标 contract。
 2. 第一轮 planner 选择经营模型配置、必要的只读查询或澄清工具。
-3. 写入 draft 时生成可编辑确认卡；若用户选择 `automationLevel=high`，仍先落卡，再自动确认执行。
+3. 写入 draft 时先生成 server-owned action request；若用户选择的 `automationLevel` 授权该 action kind/risk 自动执行，则由 Automation Policy Engine 触发同一条执行路径，否则保持可编辑确认卡等待用户确认。
 4. Observation Collector 读取当前 draft 和 projection。
 5. Domain Evaluator 检查成员数量、股东、成本项、12 个月、projectModel 结果、audit 和 action graph。
 6. 若缺口存在，Repair Planner 把缺口压成下一轮 brief，例如“补齐员工专项成本和 12 月营销节奏，不要重建已有成员”。
@@ -707,7 +707,7 @@ frontend -/-> local action truth
 - Action Graph 显示阶段、依赖、工具调用、确认卡、执行、失败和 evaluator findings。
 - Goal Panel 显示当前目标、验收标准、已满足项、未满足项、阻塞项和下一步。
 - 确认卡可编辑；编辑后 server 重新校验并同步 action graph。
-- 自动化级别显示在 run 上，用户能看到本轮 planner 为什么会主动补齐更多步骤。
+- 自动化级别显示在 run 上，用户能看到本轮写入动作为什么被自动执行或停在待确认状态；planner/evaluator 推进力度不受自动化级别影响。
 - 新对话能注入 scoped memory；用户可以查看和删除 memory。
 
 ## 验收标准
@@ -726,7 +726,7 @@ frontend -/-> local action truth
 - `before_stop` 必须运行 Completion Evaluator；模型 final text 不能绕过 evaluator。
 - Action Graph 展示每轮 planner、每个动作、每次执行、每次 evaluator finding。
 - 所有写入仍满足显式导航、可编辑确认卡、policy 二次校验、domain service 执行和 audit log。
-- 自动化级别不决定 pending card 是否可自动确认；所有写入卡都必须由用户确认。
+- 自动化级别只决定 eligible action request 是否可自动执行，不影响 planner/evaluator 推进力度；所有写入仍必须具备显式导航、可编辑 action request、policy 二次校验和 audit log。
 - DeepSeek real smoke 对复杂经营目标检查最终 domain outcome，而不是只检查 tool_call 存在。
 - 多用户、多 workspace、memory 注入和 provider settings 不串线。
 - 账号影响类动作即使在复杂目标中出现，也由 policy/evaluator 阻断。

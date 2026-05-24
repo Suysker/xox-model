@@ -713,7 +713,7 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
     type: 'function',
     function: {
       name: 'workspace_reset_draft',
-      description: '规划用默认模型覆盖当前草稿。',
+      description: '必须用于“重置当前草稿/恢复默认模型/用默认模型覆盖当前草稿”。这是高风险草稿写入规划工具，会生成 workspace.reset_draft action request；不要用 assistant 文本声称已生成确认卡。',
       parameters: objectSchema({}),
     },
   },

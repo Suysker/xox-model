@@ -48,7 +48,7 @@ React Agent Surface
 - 模型只规划和解释，不拥有执行权。
 - 后端拥有 thread/run/action state。
 - 工具选择由模型的原生 tool_call 语义完成；后端不使用关键词或正则伪装语义路由。
-- 写入动作是可编辑 action draft，确认后才执行。
+- 写入动作是可编辑 action request；ADR 0015 之后，eligible action 可按自动化授权自动执行，否则等待用户确认。
 - 所有执行复用同一套 domain services。
 - memory/context 按 user/workspace/thread 隔离。
 

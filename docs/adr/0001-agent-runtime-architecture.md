@@ -19,7 +19,7 @@ Implemented for current runtime adapter core; target Agent OS architecture is no
 - SaaS 多租户隔离必须优先于模型能力，任何工具参数都不能让模型选择 `userId`、`workspaceId` 或跨租户范围。
 - 页面上能手动修改的业务能力，原则上都必须能通过 Agent 对话完成；账号登录、退出、注销、删除账号、改密码除外。
 - Agent 执行业务动作前必须显式导航到对应页面或面板，不能静默后台写入。
-- 所有写入动作必须先产生可编辑确认卡，用户确认后才执行。
+- 所有写入动作必须先产生 server-owned action request 和可编辑确认卡；ADR 0015 之后，eligible action 可按自动化授权自动执行，否则等待用户确认。
 - 用户一次说多个动作时，系统必须展示多个步骤，支持逐步确认、取消、编辑和失败定位。
 - Tool calling 只表示“模型请求调用工具”，不是执行事实。服务端必须重新校验权限、状态、锁账、revision、派生分录和审计。
 - Memory 必须按 `tenant/workspace/user/thread` 分层管理，支持查看、删除、压缩和敏感信息过滤。

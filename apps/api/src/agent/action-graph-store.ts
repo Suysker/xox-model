@@ -6,13 +6,13 @@ import type { Settings } from '../core/settings.js'
 import { newId } from '../core/security.js'
 import { utcNow } from '../core/time.js'
 import type { CurrentUser } from '../modules/auth.js'
-import { addAgentActionRequest } from './approval-executor.js'
+import { addAgentActionRequest, autoExecuteAgentActionRequest } from './approval-executor.js'
 import { isActionDraft, type PlannedItem } from './action-draft-builder.js'
 import { addRunEvent } from './run-events.js'
 import { assertAgentRunLease } from './run-lease.js'
 import { agentThreadEvents } from './thread-events.js'
-import { actionPreviewObservation, type AgentToolObservation } from './tool-observation-continuation.js'
-import type { AgentAutomationLevel } from './tool-policy.js'
+import { actionExecutionObservation, actionPreviewObservation, type AgentToolObservation } from './tool-observation-continuation.js'
+import { resolveActionAuthority, type AgentAutomationLevel } from './tool-policy.js'
 
 type ActionGraphContext = {
   db: Kysely<Database>
@@ -90,6 +90,37 @@ async function addAgentPlanStep(ctx: ActionGraphContext, input: AddAgentPlanStep
   return ctx.db.selectFrom('agent_plan_steps').selectAll().where('id', '=', id).executeTakeFirstOrThrow()
 }
 
+async function getPlanStep(ctx: ActionGraphContext, id: string) {
+  return ctx.db.selectFrom('agent_plan_steps').selectAll().where('id', '=', id).executeTakeFirstOrThrow()
+}
+
+function failedActionObservation(input: {
+  action: Row<'agent_action_requests'>
+  reason: string
+  error?: string | null
+}): AgentToolObservation {
+  const displayPreview = input.error
+    ? `自动执行失败：${input.action.title}：${input.error}`
+    : `动作被策略阻止：${input.action.title}`
+  return {
+    title: input.action.title,
+    toolName: input.action.kind,
+    toolCallId: `action_${input.action.id}`,
+    toolArguments: {},
+    displayPreview,
+    modelContent: JSON.stringify({
+      displayPreview,
+      actionRequestId: input.action.id,
+      actionKind: input.action.kind,
+      title: input.action.title,
+      status: input.action.status,
+      reason: input.reason,
+      error: input.error ?? null,
+    }),
+    status: 'failed',
+  }
+}
+
 export async function storePlannedActionGraph(
   ctx: ActionGraphContext,
   input: { items: PlannedItem[]; plannerSource: AgentPlannerSource },
@@ -111,8 +142,8 @@ export async function storePlannedActionGraph(
     const sequence = sequenceOffset + index + 1
     await assertAgentRunLease(ctx.db, ctx.settings, ctx.runId)
     if (isActionDraft(item)) {
-      const action = await addAgentActionRequest(ctx, item)
-      const step = await addAgentPlanStep(ctx, {
+      let action = await addAgentActionRequest(ctx, item)
+      let step = await addAgentPlanStep(ctx, {
         sequence,
         title: item.title,
         description: item.summary,
@@ -120,10 +151,45 @@ export async function storePlannedActionGraph(
         actionRequestId: action.id,
         navigation: item.navigation,
       })
+      const authority = resolveActionAuthority({
+        automationLevel: ctx.automationLevel,
+        kind: item.kind,
+        riskLevel: item.riskLevel,
+      })
+      if (authority.mode === 'auto_execute') {
+        const executed = await autoExecuteAgentActionRequest(ctx.db, ctx.settings, ctx.user, action, authority.reason)
+        action = executed.actionRequest
+        step = await getPlanStep(ctx, step.id)
+        observations.push(executed.error
+          ? failedActionObservation({ action, reason: authority.reason, error: executed.error })
+          : actionExecutionObservation({ action, result: executed.result }))
+      } else if (authority.mode === 'forbidden') {
+        await ctx.db.updateTable('agent_action_requests')
+          .set({ status: 'failed', error_message: authority.reason })
+          .where('id', '=', action.id)
+          .execute()
+        await ctx.db.updateTable('agent_plan_steps')
+          .set({ status: 'failed', updated_at: utcNow() })
+          .where('id', '=', step.id)
+          .execute()
+        await addRunEvent(ctx.db, {
+          threadId: ctx.threadId,
+          runId: ctx.runId,
+          type: 'action_auto_execution_failed',
+          title: '动作被策略阻止',
+          message: `${item.title}：${authority.reason}`,
+          status: 'failed',
+          data: { actionRequestId: action.id, actionKind: action.kind, reason: authority.reason },
+        })
+        action = await ctx.db.selectFrom('agent_action_requests').selectAll().where('id', '=', action.id).executeTakeFirstOrThrow()
+        step = await getPlanStep(ctx, step.id)
+        observations.push(failedActionObservation({ action, reason: authority.reason }))
+      } else {
+        observations.push(actionPreviewObservation({ action }))
+      }
       actionRows.push(action)
       planRows.push(step)
       navigationEvents.push(item.navigation)
-      observations.push(actionPreviewObservation({ action }))
       continue
     }
 
@@ -152,6 +218,9 @@ export async function storePlannedActionGraph(
   const actionCount = actionRows.length
   const pendingActionCount = actionRows.filter((row) => row.status === 'pending').length
   const executedActionCount = actionRows.filter((row) => row.status === 'executed').length
+  const actionSummary = actionCount > 0
+    ? `，其中 ${pendingActionCount} 个写入动作需要确认，${executedActionCount} 个已按自动化策略执行。`
+    : '。'
   await addRunEvent(ctx.db, {
     threadId: ctx.threadId,
     runId: ctx.runId,
@@ -159,7 +228,7 @@ export async function storePlannedActionGraph(
     title: failedCount > 0 ? '模型规划需要处理' : actionCount > 0 ? '模型工具调用已解析' : '模型回复已生成',
     message:
       input.items.length > 0
-        ? `模型规划生成 ${input.items.length} 个步骤，其中 ${pendingActionCount} 个写入动作需要确认。`
+        ? `模型规划生成 ${input.items.length} 个步骤${actionSummary}`
         : '模型没有生成可执行步骤。',
     status: failedCount > 0 ? 'failed' : pendingActionCount > 0 ? 'blocked' : executedActionCount > 0 ? 'completed' : 'info',
     data: { plannerSource: input.plannerSource, stepCount: input.items.length, actionCount, pendingActionCount, executedActionCount, failedCount, automationLevel: ctx.automationLevel },

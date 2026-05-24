@@ -7,6 +7,13 @@ type RiskLevel = 'low' | 'medium' | 'high'
 export type AgentAutomationLevel = 'manual' | RiskLevel
 
 const riskRank: Record<RiskLevel, number> = { low: 1, medium: 2, high: 3 }
+const automationRank: Record<AgentAutomationLevel, number> = { manual: 0, low: 1, medium: 2, high: 3 }
+const autoExecutableHighRiskActions = new Set<AgentActionKind>()
+
+export type AgentActionAuthorityDecision =
+  | { mode: 'auto_execute'; reason: string }
+  | { mode: 'require_confirmation'; reason: string }
+  | { mode: 'forbidden'; reason: string }
 
 type AgentActionPolicy = {
   kind: AgentActionKind
@@ -56,6 +63,38 @@ function actionPolicy(kind: AgentActionKind) {
 export function coerceAgentActionKind(kind: string): AgentActionKind {
   if (!(kind in ACTION_POLICIES)) throw unprocessable(`Unsupported agent action: ${kind}`)
   return kind as AgentActionKind
+}
+
+export function resolveActionAuthority(input: {
+  automationLevel: AgentAutomationLevel
+  kind: AgentActionKind | string
+  riskLevel: RiskLevel | string
+}): AgentActionAuthorityDecision {
+  const kind = String(input.kind)
+  if (kind.startsWith('account.')) {
+    return { mode: 'forbidden', reason: '账号影响类动作不能由 Agent 执行。' }
+  }
+
+  const actionKind = coerceAgentActionKind(kind)
+  assertRisk(actionKind, input.riskLevel)
+  const riskLevel = input.riskLevel as RiskLevel
+
+  if (input.automationLevel === 'manual') {
+    return { mode: 'require_confirmation', reason: '当前为手动确认模式，写入动作必须等待用户确认。' }
+  }
+
+  if (riskLevel === 'high' && !autoExecutableHighRiskActions.has(actionKind)) {
+    return { mode: 'require_confirmation', reason: '该动作为高风险写入，高自动化也需要显式确认。' }
+  }
+
+  if (riskRank[riskLevel] <= automationRank[input.automationLevel]) {
+    return { mode: 'auto_execute', reason: `${input.automationLevel} 自动化授权允许自动执行 ${riskLevel} 风险动作。` }
+  }
+
+  return {
+    mode: 'require_confirmation',
+    reason: `${input.automationLevel} 自动化授权不足以自动执行 ${riskLevel} 风险动作。`,
+  }
 }
 
 function parsePayload(value: string) {

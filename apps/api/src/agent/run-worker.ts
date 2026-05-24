@@ -177,6 +177,7 @@ export async function completeAgentRun(ctx: PlannerContext & { thread: Row<'agen
       .execute()
     await touchThreadAfterRun(ctx.db, ctx.thread, ctx.message)
     const pendingActionCount = kernelResult.actionRows.filter((row) => row.status === 'pending').length
+    const executedActionCount = kernelResult.actionRows.filter((row) => row.status === 'executed').length
     await addRunEvent(ctx.db, {
       threadId: ctx.thread.id,
       runId: ctx.runId,
@@ -186,9 +187,11 @@ export async function completeAgentRun(ctx: PlannerContext & { thread: Row<'agen
         ? '目标循环未能完成所有要求，请查看失败步骤或补充信息后重试。'
         : pendingActionCount > 0
           ? '模型规划已完成，等待用户处理确认卡。'
-          : '模型规划和只读回答已完成。',
+          : executedActionCount > 0
+            ? '模型规划和自动执行已完成。'
+            : '模型规划和只读回答已完成。',
       status: goalFailed ? 'failed' : 'completed',
-      data: { actionCount: kernelResult.actionRows.length, pendingActionCount, executedActionCount: 0, planStepCount: kernelResult.planRows.length },
+      data: { actionCount: kernelResult.actionRows.length, pendingActionCount, executedActionCount, planStepCount: kernelResult.planRows.length },
     })
     agentThreadEvents.publish(ctx.thread.id, goalFailed ? 'run_failed' : 'run_completed')
     return kernelResult

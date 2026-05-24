@@ -82,10 +82,10 @@ export function AgentConsole(props: {
         ? '轮询'
         : '待机'
   const automationOptions: Array<{ level: AgentAutomationLevel; label: string; title: string }> = [
-    { level: 'manual', label: '手动', title: '所有写入都停在确认卡' },
-    { level: 'low', label: '低', title: '自动执行低风险动作' },
-    { level: 'medium', label: '中', title: '自动执行低/中风险动作' },
-    { level: 'high', label: '高', title: '自动执行低/中/高风险动作' },
+    { level: 'manual', label: '手动', title: '全力规划；所有写入都停在确认卡' },
+    { level: 'low', label: '低', title: '全力规划；自动执行低风险动作' },
+    { level: 'medium', label: '中', title: '全力规划；自动执行低/中风险动作' },
+    { level: 'high', label: '高', title: '全力规划；自动执行低/中风险，高风险仍按策略确认' },
   ]
 
   useEffect(() => {

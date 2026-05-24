@@ -76,7 +76,7 @@
 - [x] Agent memory 按用户和工作区隔离，支持查询、搜索、过滤和删除；长对话会生成同租户上下文摘要，并把压缩结果作为带证据的 working memory 候选
 - [x] OpenClaw-inspired Memory Kernel 已落地：`active-memory-recall.ts` 在 provider planning 前做当前用户/工作区 ranked recall，`memory-retriever.ts` 做中文友好的 token/bigram 排名，`agent_memory_events` 记录 captured/recalled/injected/promoted/archived 事件，统一时间线/技术日志展示 `memory_recall_*`、`memory_injected`、`memory_candidate_stored` 和 `memory_promoted`
 - [x] 新建对话后，真实 provider 请求只注入同用户 / 同工作区的相关 memory；注入内容以 `memory_context trust="untrusted"` 进入 Context Pack，不能覆盖当前用户指令、确认卡策略、租户隔离或工具 schema
-- [x] 记账类命令会生成确认卡，确认后过账并刷新工作台
+- [x] 记账类命令会生成 server-owned action request；manual 下停在可编辑确认卡，medium/high 下 eligible 中风险记账可自动执行并刷新工作台
 - [x] 线上系数试算类命令只读执行，不修改草稿
 - [x] 团队成员新增/删除通过 `team_member_add / team_member_delete` 专用 tool call 生成可编辑草稿确认卡；删除最后一个成员会被服务端拒绝，不生成破坏模型可计算性的确认卡
 - [x] 员工新增/删除通过 `employee_add / employee_delete` 专用 tool call 生成可编辑草稿确认卡，进入成本工作台，确认后更新当前草稿
@@ -86,10 +86,10 @@
 - [x] 历史分录修改、精确作废、取消作废/恢复通过 `ledger_update_entry / ledger_void_entry / ledger_restore_entry` 覆盖；定位不唯一时返回只读澄清/失败步骤，不猜测执行
 - [x] “把某快照发布为正式版”通过 `workspace_promote_version` 覆盖：先恢复该快照到草稿，再发布新的不可变正式版本，历史版本不改写
 - [x] 预实分析深度追问和账本历史按日/周/状态/关键词筛选通过 `data_query_workspace` 只读工具覆盖，并把 React 页面切到偏差页或账本页且带入筛选条件
-- [x] 草稿修改、发布、恢复、分享、锁账等写入动作采用确认卡协议
+- [x] 草稿修改、发布、恢复、分享、锁账等写入动作先生成 action request 和可编辑确认卡；随后按 ADR 0015 的 Automation Policy Engine 自动执行或等待用户确认，高风险动作在 high 自动化下仍按 action kind 策略确认
 - [x] 账号登录、退出、注销、删除账号和密码类动作不允许 Agent 自动执行
 - [x] Agent 写入动作会记录 `agent_action_requests` 和 `audit_logs`
-- [x] `npm.cmd run smoke:agent` 提供受控真实 OpenAI-compatible provider smoke：默认使用 DeepSeek，但通过 `OPENAI_COMPATIBLE_*` 可切换豆包、Qwen 等兼容服务；不允许无 key 回退，本轮真实 DeepSeek `deepseek-v4-pro` 覆盖 50 个方向，包括 provider setting、普通对话、只读预测、Data agent 单月/团队问题、团队成员/员工/股东/成本/专项成本新增删除、工作区改名、缺信息澄清、memory 写入、新对话记忆注入、多步骤、账号动作拒绝、可编辑确认卡、通用收入/支出/员工支出、批量确认卡、历史分录修改/精确作废/恢复、预实深度追问、账本历史筛选、草稿保存/patch、bundle 导入导出、锁账/解锁、快照、快照发布、发布分享、撤销分享、恢复版本、删除版本、重置草稿和审计
+- [x] `npm.cmd run smoke:agent` 提供受控真实 OpenAI-compatible provider smoke：默认使用 DeepSeek，但通过 `OPENAI_COMPATIBLE_*` 可切换豆包、Qwen 等兼容服务；不允许无 key 回退，本轮真实 DeepSeek `deepseek-v4-pro` 覆盖 50 个方向，包括 provider setting、普通对话、只读预测、Data agent 单月/团队问题、团队成员/员工/股东/成本/专项成本新增删除、工作区改名、缺信息澄清、memory 写入、新对话记忆注入、多步骤、账号动作拒绝、可编辑确认卡、通用收入/支出/员工支出、批量确认卡、历史分录修改/精确作废/恢复、预实深度追问、账本历史筛选、草稿保存/patch、bundle 导入导出、锁账/解锁、快照、快照发布、发布分享、撤销分享、恢复版本、删除版本、重置草稿、复杂 50 人经营模型、高自动化下高风险仍待确认和审计
 - [x] 真实 DeepSeek smoke 已验证锁账/解锁不是后端规则推断：planner source 为 `openai_compatible_tool_calls`，模型会根据 tool catalog 和 planner prompt 调用 `ledger_set_period_lock` 并生成确认卡
 - [x] 后端接口级 Agent capability matrix 覆盖超过 10 个不同方向的复杂任务，并全部通过：
   - 记忆写入

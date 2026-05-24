@@ -174,6 +174,52 @@ export async function executeAgentActionRequest(db: Kysely<Database>, settings: 
   return result
 }
 
+export async function autoExecuteAgentActionRequest(
+  db: Kysely<Database>,
+  settings: Settings,
+  user: CurrentUser,
+  action: Row<'agent_action_requests'>,
+  reason: string,
+) {
+  try {
+    const result = await executeAgentActionRequest(db, settings, user, action)
+    const updated = await db.selectFrom('agent_action_requests').selectAll().where('id', '=', action.id).executeTakeFirstOrThrow()
+    await addRunEvent(db, {
+      threadId: action.thread_id,
+      runId: action.run_id,
+      type: 'action_auto_executed',
+      title: '动作已自动执行',
+      message: `已自动执行：${action.title}`,
+      status: 'completed',
+      data: { actionRequestId: action.id, actionKind: action.kind, reason },
+    })
+    return { actionRequest: updated, result, error: null as string | null }
+  } catch (executionError) {
+    const message = safeActionErrorMessage(executionError)
+    await db.updateTable('agent_action_requests')
+      .set({ status: 'failed', executed_at: null, error_message: message })
+      .where('id', '=', action.id)
+      .execute()
+      .catch(() => undefined)
+    await db.updateTable('agent_plan_steps')
+      .set({ status: 'failed', updated_at: utcNow() })
+      .where('action_request_id', '=', action.id)
+      .execute()
+      .catch(() => undefined)
+    await addRunEvent(db, {
+      threadId: action.thread_id,
+      runId: action.run_id,
+      type: 'action_auto_execution_failed',
+      title: '自动执行失败',
+      message: `${action.title}：${message}`,
+      status: 'failed',
+      data: { actionRequestId: action.id, actionKind: action.kind, reason },
+    }).catch(() => undefined)
+    const updated = await db.selectFrom('agent_action_requests').selectAll().where('id', '=', action.id).executeTakeFirstOrThrow()
+    return { actionRequest: updated, result: null as unknown, error: message }
+  }
+}
+
 export async function confirmAgentActionRequest(db: Kysely<Database>, settings: Settings, user: CurrentUser, actionRequestId: string) {
   const action = await getActionRequest(db, actionRequestId)
   const workspace = await getWorkspaceForUser(db, user)

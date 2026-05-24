@@ -37,7 +37,7 @@ apps/api/agent/planner -> apps/api/agent/action-graph-store -> apps/api/agent/ap
 apps/api/agent/tool-executor -> apps/api/modules -> packages/domain -> apps/api/db
 ```
 
-Agent 只能通过领域服务执行动作，不能直接写数据库。所有会改变草稿、版本、分享、账务或锁账状态的 Agent 工具必须先生成确认卡，用户确认后才执行并写入审计日志。账号影响类动作不开放给 Agent。
+Agent 只能通过领域服务执行动作，不能直接写数据库。所有会改变草稿、版本、分享、账务或锁账状态的 Agent 工具必须先生成 server-owned action request 和可编辑确认卡；随后由 ADR 0015 的 Automation Policy Engine 按 `automationLevel + riskLevel + actionKind` 判定自动执行还是等待用户确认。无论自动执行还是用户确认执行，都必须走同一条 Tool Policy、领域服务和审计路径。账号影响类动作不开放给 Agent。
 
 Agent runtime 采用“成熟 runtime + 本项目 SaaS Agent Kernel”的策略：
 
