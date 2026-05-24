@@ -43,15 +43,33 @@ function dataRead(input: {
   navigation: AgentNavigationEvent
   data: Record<string, unknown>
 }): DataAgentRead {
+  const displayPreview = compactObservationPreview(input.data)
   return {
     title: input.title,
-    message: input.message,
+    message: displayPreview,
     readKind: 'tool_observation',
-    modelContent: JSON.stringify({ ...input.data, displayPreview: input.message }),
-    displayPreview: input.message,
+    modelContent: JSON.stringify(input.data),
+    displayPreview,
     navigation: input.navigation,
     status: 'executed',
   }
+}
+
+function compactObservationPreview(data: Record<string, unknown>) {
+  const preview: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(data).slice(0, 12)) {
+    if (Array.isArray(value)) {
+      preview[key] = value.length <= 5 ? value : { count: value.length, sample: value.slice(0, 3) }
+      continue
+    }
+    if (value && typeof value === 'object') {
+      const entries = Object.entries(value as Record<string, unknown>)
+      preview[key] = entries.length <= 8 ? value : Object.fromEntries(entries.slice(0, 8))
+      continue
+    }
+    preview[key] = value
+  }
+  return JSON.stringify(preview, null, 2)
 }
 
 function money(value: number) {

@@ -362,7 +362,7 @@ Key paths:
 
 - `apps/api/src/agent/tool-observation-continuation.ts`
   - Introduces the internal `AgentToolObservation` representation.
-  - Builds a provider-compatible continuation transcript: assistant tool calls followed by matching `role: tool` observations.
+  - Builds a provider-compatible continuation transcript from an observation packet rather than relying on a second provider-specific `role: tool` replay. This keeps the harness invariant while avoiding compatibility gaps in OpenAI-compatible providers that accept tool calls but mishandle standalone tool-result replay turns.
   - Emits continuation run events and creates a failed plan step when the model cannot produce a final assistant message.
 - `apps/api/src/agent/action-graph-store.ts`
   - Stops synthesizing assistant replies from read-tool strings.
@@ -373,7 +373,7 @@ Key paths:
 - `apps/api/src/agent/approval-executor.ts`
   - Feeds confirmed-write execution observations back into the model before adding a post-confirmation assistant message.
 - `apps/api/src/agent/data-agent.ts`
-  - Converts read tools to structured observations plus display previews, removing canned read-only final-answer prose.
+  - Converts read tools to structured observations plus JSON-like display previews, removing canned read-only final-answer prose from tool rows.
 - `apps/api/src/agent/runtime/*`
   - Accepts explicit chat-message transcripts for continuation turns while keeping provider-specific formatting below the harness boundary.
 - `apps/api/tests/api.test.ts`

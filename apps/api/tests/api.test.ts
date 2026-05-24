@@ -234,6 +234,48 @@ function fakeAssistantTextResponse(content: string) {
   }
 }
 
+function fakeMoney(value: unknown) {
+  const numberValue = typeof value === 'number' && Number.isFinite(value) ? value : 0
+  return `¥${Math.round(numberValue).toLocaleString('zh-CN')}`
+}
+
+function parseJsonObject(value: string): any | null {
+  try {
+    const firstBrace = value.indexOf('{')
+    const lastBrace = value.lastIndexOf('}')
+    if (firstBrace < 0 || lastBrace <= firstBrace) return null
+    return JSON.parse(value.slice(firstBrace, lastBrace + 1))
+  } catch {
+    return null
+  }
+}
+
+function fakeObservationTextFromStructuredData(data: any) {
+  if (!data || typeof data !== 'object') return ''
+  if (data.scope === 'period_summary') {
+    return `${data.monthLabel}计划收入 ${fakeMoney(data.plannedRevenue)}，计划成本 ${fakeMoney(data.plannedCost)}。`
+  }
+  if (data.scope === 'team_summary') {
+    const names = Array.isArray(data.names) && data.names.length > 0 ? `，分别是：${data.names.join('、')}` : ''
+    return `当前工作区共有 ${data.memberCount} 个成员${names}。`
+  }
+  if (data.scope === 'workspace_summary') {
+    return `基准场景总收入 ${fakeMoney(data.grossSales)}，总成本 ${fakeMoney(data.totalCost)}，总利润 ${fakeMoney(data.totalProfit)}，期末现金 ${fakeMoney(data.netCashAfterInvestment)}，回本周期 ${data.paybackMonthLabel ?? '未回本'}。`
+  }
+  if (data.scope === 'ledger_history') {
+    const preview = Array.isArray(data.preview) && data.preview.length > 0 ? `：${data.preview.join('；')}` : ''
+    return `已按“${data.filterText}”筛选账本历史，命中 ${data.count} 笔${preview}。`
+  }
+  if (data.scope === 'variance_detail') {
+    const lines = Array.isArray(data.lines) && data.lines.length > 0
+      ? ` ${data.lines.map((line: any) => `${line.subjectName ?? line.subjectKey} 差异 ${fakeMoney(line.varianceAmount)}`).join('；')}。`
+      : ''
+    return `${data.monthLabel}收入差异 ${fakeMoney(data.revenueVarianceAmount)}，成本差异 ${fakeMoney(data.costVarianceAmount)}。${lines}`
+  }
+  if (typeof data.displayPreview === 'string') return data.displayPreview
+  return ''
+}
+
 function fakeObservationFinalizerResponse(body: any) {
   const toolMessages = Array.isArray(body?.messages)
     ? body.messages.filter((message: any) => message?.role === 'tool')
@@ -242,12 +284,28 @@ function fakeObservationFinalizerResponse(body: any) {
     const content = typeof message?.content === 'string' ? message.content : ''
     try {
       const parsed = JSON.parse(content)
+      const structuredText = fakeObservationTextFromStructuredData(parsed)
+      if (structuredText) return structuredText
       if (typeof parsed?.displayPreview === 'string') return parsed.displayPreview
     } catch {
       // Use the raw tool content below when the observation is not JSON.
     }
     return content
   }).filter((item: string) => item.trim().length > 0)
+  if (previews.length === 0 && Array.isArray(body?.messages)) {
+    for (const message of body.messages) {
+      const content = typeof message?.content === 'string' ? message.content : ''
+      const packet = parseJsonObject(content)
+      const observations = Array.isArray(packet?.observations) ? packet.observations : []
+      for (const observation of observations) {
+        const modelContent = typeof observation?.modelContent === 'string' ? observation.modelContent : ''
+        const parsedModelContent = parseJsonObject(modelContent)
+        const structuredText = fakeObservationTextFromStructuredData(parsedModelContent)
+        if (structuredText) previews.push(structuredText)
+        else if (typeof observation?.displayPreview === 'string') previews.push(observation.displayPreview)
+      }
+    }
+  }
   return fakeAssistantTextResponse(previews.join('\n') || '已根据工具结果完成回复。')
 }
 
@@ -268,6 +326,10 @@ function fakeToolResponses(calls: Array<{ name: string; args?: Record<string, un
       },
     }],
   }
+}
+
+function flattenTranscriptNodes(nodes: any[]): any[] {
+  return nodes.flatMap((node) => [node, ...flattenTranscriptNodes(Array.isArray(node?.children) ? node.children : [])])
 }
 
 function fakeOpenAIChatToolResponse(name: string, args: Record<string, unknown> = {}) {
@@ -2012,9 +2074,11 @@ describe('xox TypeScript API', () => {
       expect(response.json.runEvents.some((event: any) => event.type === 'model_continuation')).toBe(true)
       expect(response.json.runEvents.some((event: any) => event.type === 'model_continuation_completed')).toBe(true)
       expect(requests).toHaveLength(1)
-      const transcriptText = JSON.stringify(response.json.transcriptNodes)
-      expect(transcriptText).toContain('data_query_workspace')
-      expect(transcriptText).toContain('3月计划收入')
+      const visibleNodes = flattenTranscriptNodes(response.json.transcriptNodes).filter((node: any) => node.visibility === 'user')
+      const assistantNode = visibleNodes.find((node: any) => node.kind === 'assistant_message')
+      expect(assistantNode?.content ?? assistantNode?.summary).toContain('3月计划收入')
+      expect(response.json.planSteps[0].description).toContain('plannedRevenue')
+      expect(response.json.planSteps[0].description).not.toContain('3月计划收入 ¥')
       await closeHarness(harness)
     })
   })

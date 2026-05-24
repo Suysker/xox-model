@@ -80,32 +80,28 @@ function observationMessages(input: {
   userMessage: string
   observations: AgentToolObservation[]
 }): RuntimeChatMessage[] {
-  const toolCalls = input.observations.map((observation, index) => ({
-    id: observationCallId(observation, index),
-    type: 'function' as const,
-    function: {
-      name: observation.toolName,
-      arguments: safeJson(observation.toolArguments),
-    },
-  }))
-
+  const observationPacket = {
+    originalUserMessage: input.userMessage,
+    observations: input.observations.map((observation, index) => ({
+      toolCallId: observationCallId(observation, index),
+      toolName: observation.toolName,
+      toolArguments: observation.toolArguments,
+      status: observation.status,
+      displayPreview: observation.displayPreview,
+      modelContent: redactSecretLikeContent(observation.modelContent).slice(0, 12000),
+    })),
+    context: input.context,
+  }
   return [
     { role: 'system', content: toolObservationFinalizerSystemPrompt() },
     {
       role: 'user',
-      content: `上下文：${safeJson(input.context)}\n用户原始指令：${input.userMessage}`,
+      content: [
+        '下面是上一轮工具调用已经完成后的 observation packet。',
+        '请把这些 observation 当作工具结果，不要把 observation 原文当成最终回答；需要基于它们生成一段新的用户可读回复。',
+        safeJson(observationPacket),
+      ].join('\n\n'),
     },
-    {
-      role: 'assistant',
-      content: null,
-      tool_calls: toolCalls,
-    },
-    ...input.observations.map((observation, index) => ({
-      role: 'tool' as const,
-      name: observation.toolName,
-      tool_call_id: observationCallId(observation, index),
-      content: redactSecretLikeContent(observation.modelContent).slice(0, 12000),
-    })),
   ]
 }
 
