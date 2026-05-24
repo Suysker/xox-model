@@ -106,8 +106,14 @@ function forbiddenActionsFromObjective(text: string): AgentGoalFacts['forbiddenA
 export function extractAgentGoalFacts(objective: string): AgentGoalFacts {
   const requiredCapabilities = new Set<NonNullable<AgentGoalFacts['requiredCapabilities']>[number]>()
   const isMemoryObjective = objective.includes('记住') || objective.includes('以后默认') || objective.includes('以后都')
+  const isExplicitReadOnlyObjective =
+    objective.includes('只读') ||
+    objective.includes('不要写入') ||
+    objective.includes('不需要写入') ||
+    objective.includes('不要修改') ||
+    objective.includes('不修改')
   const workspaceName = workspaceNameFromObjective(objective)
-  if (workspaceName) requiredCapabilities.add('workspace_rename')
+  if (workspaceName && !isExplicitReadOnlyObjective) requiredCapabilities.add('workspace_rename')
 
   const expectedMemberCount = positiveInteger(firstNumberBefore(objective, '个成员'))
   const expectedHorizonMonths = positiveInteger(
@@ -122,11 +128,17 @@ export function extractAgentGoalFacts(objective: string): AgentGoalFacts {
   if (expectedMemberCount || expectedHorizonMonths || objective.includes('经营测算') || objective.includes('经营模型')) {
     requiredCapabilities.add('operating_model')
   }
-  if (!isMemoryObjective && (objective.includes('入账') || objective.includes('记账') || objective.includes('账本') || objective.includes('记一笔'))) {
+  const requiresLedgerWrite =
+    objective.includes('入账') ||
+    objective.includes('记账') ||
+    objective.includes('记一笔') ||
+    objective.includes('普通支出') ||
+    objective.includes('其他收入')
+  if (!isMemoryObjective && !isExplicitReadOnlyObjective && requiresLedgerWrite) {
     requiredCapabilities.add('ledger')
   }
   if (isMemoryObjective) requiredCapabilities.add('memory')
-  if (objective.includes('股东') && (objective.includes('注资') || objective.includes('投资') || objective.includes('投资额'))) {
+  if (!isExplicitReadOnlyObjective && objective.includes('股东') && (objective.includes('注资') || objective.includes('投资') || objective.includes('投资额'))) {
     requiredCapabilities.add('draft')
   }
   if (objective.includes('版本') || objective.includes('快照') || objective.includes('发布')) {

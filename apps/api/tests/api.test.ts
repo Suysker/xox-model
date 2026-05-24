@@ -260,6 +260,12 @@ function fakeObservationTextFromStructuredData(data: any) {
     const names = Array.isArray(data.names) && data.names.length > 0 ? `，分别是：${data.names.join('、')}` : ''
     return `当前工作区共有 ${data.memberCount} 个成员${names}。`
   }
+  if (data.scope === 'entity_summary') {
+    const shareholders = Array.isArray(data.shareholders)
+      ? data.shareholders.map((shareholder: any) => `${shareholder.index}. ${shareholder.name} ${fakeMoney(shareholder.investmentAmount)}`).join('、')
+      : ''
+    return `当前工作区有 ${data.memberCount} 个成员、${data.shareholderCount} 个股东。${shareholders ? `股东：${shareholders}。` : ''}`
+  }
   if (data.scope === 'workspace_summary') {
     return `基准场景总收入 ${fakeMoney(data.grossSales)}，总成本 ${fakeMoney(data.totalCost)}，总利润 ${fakeMoney(data.totalProfit)}，期末现金 ${fakeMoney(data.netCashAfterInvestment)}，回本周期 ${data.paybackMonthLabel ?? '未回本'}。`
   }
@@ -1049,7 +1055,7 @@ describe('xox TypeScript API', () => {
       expect(prompt).toContain('第一个股东是股东 A')
       expect(prompt).toContain('[same-thread')
       expect(body.messages[0].content).not.toContain('shareholders[0].investmentAmount')
-      expect(body.messages[0].content).not.toContain('首位股东')
+      expect(body.messages[0].content).not.toContain('第一个股东是股东 A')
 
       goalPlanningCalls += 1
       if (goalPlanningCalls === 1) {
@@ -2439,6 +2445,130 @@ describe('xox TypeScript API', () => {
       expect(response.json.navigationEvents[0].route.secondaryTab).toBe('members')
       expect(response.json.messages.at(-1).content).toContain('共有 7 个成员')
       expect(response.json.messages.at(-1).content).toContain('成员 A')
+      await closeHarness(harness)
+    })
+  })
+
+  it('exposes current business entities through a read-only entity summary tool call', async () => {
+    await withFakeOpenAICompatibleProvider((body) => {
+      const dataTool = body.tools.find((tool: any) => tool.function.name === 'data_query_workspace')
+      expect(dataTool).toBeTruthy()
+      expect(dataTool.function.parameters.properties.scope.enum).toContain('entity_summary')
+      expect(dataTool.function.parameters.properties.metrics.items.enum).toContain('shareholderInvestments')
+      return fakeToolResponse('data_query_workspace', {
+        question: '先看看当前成员和股东',
+        scope: 'entity_summary',
+        metrics: ['teamMemberNames', 'shareholderNames', 'shareholderInvestments'],
+      })
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-entity-summary-read', {
+        llmProvider: 'openai-compatible',
+        openaiCompatibleProvider: 'test-compatible',
+        openaiCompatibleBaseUrl: baseUrl,
+        openaiCompatibleApiKey: 'test-key',
+      })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-entity-summary-read@example.com')
+
+      const response = await client.post('/api/v1/agent/messages', {
+        message: '先看看当前成员和股东都有谁',
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(response.json.actionRequests).toHaveLength(0)
+      expect(response.json.planSteps[0].toolName).toBe('data_query_workspace')
+      expect(response.json.planSteps[0].description).toContain('"scope": "entity_summary"')
+      expect(response.json.planSteps[0].description).toContain('"shareholders"')
+      expect(response.json.navigationEvents[0].route).toMatchObject({ mainTab: 'inputs', secondaryTab: 'capital' })
+      expect(response.json.messages.at(-1).content).toContain('股东')
+      await closeHarness(harness)
+    })
+  })
+
+  it('feeds read observations back into repair planning so the model can inspect then write', async () => {
+    let planningCalls = 0
+    let secondPlanningBody: any = null
+    const finalizerRequests: any[] = []
+
+    await withFakeOpenAICompatibleProvider((body) => {
+      planningCalls += 1
+      if (planningCalls === 1) {
+        expect(body.messages.some((message: any) => message.role === 'tool')).toBe(false)
+        return fakeToolResponse('data_query_workspace', {
+          question: '检查当前股东和投资额',
+          scope: 'entity_summary',
+          metrics: ['shareholderNames', 'shareholderInvestments'],
+        })
+      }
+
+      secondPlanningBody = body
+      const toolMessages = body.messages.filter((message: any) => message.role === 'tool')
+      expect(toolMessages.some((message: any) => String(message.content).includes('"scope":"entity_summary"'))).toBe(true)
+      expect(JSON.stringify(toolMessages)).toContain('shareholders')
+      return fakeToolResponse('workspace_patch_config', {
+        patches: [
+          { path: 'shareholders[0].investmentAmount', value: 1065000, label: '股东 1 投资额' },
+        ],
+      })
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-observation-driven-planning-loop', fakeProviderSettings(baseUrl))
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-observation-driven-planning-loop@example.com')
+
+      const response = await client.post('/api/v1/agent/messages', {
+        message: '帮我第一个股东注资100w',
+        automationLevel: 'high',
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(planningCalls).toBe(2)
+      expect(secondPlanningBody).toBeTruthy()
+      expect(finalizerRequests).toHaveLength(1)
+      expect(response.json.actionRequests).toHaveLength(1)
+      expect(response.json.actionRequests[0].kind).toBe('workspace.update_draft')
+      expect(response.json.actionRequests[0].status).toBe('pending')
+      expect(response.json.actionRequests[0].payload.config.shareholders[0].investmentAmount).toBe(1065000)
+      expect(response.json.planSteps.map((step: any) => step.toolName)).toContain('data_query_workspace')
+      expect(response.json.planSteps.some((step: any) => step.actionRequestId === response.json.actionRequests[0].id)).toBe(true)
+      expect(response.json.runEvents.filter((event: any) => event.type === 'memory_recall_started')).toHaveLength(1)
+      expect(response.json.messages.at(-1).content).toContain('确认卡')
+      await closeHarness(harness)
+    }, {
+      finalizerResponse: (body) => {
+        finalizerRequests.push(body)
+        return fakeAssistantTextResponse('已检查当前股东并准备 1 张确认卡：把第一个股东投资额追加 100 万。')
+      },
+    })
+  })
+
+  it('fails closed when the repair loop is exhausted without satisfying the goal', async () => {
+    let planningCalls = 0
+    await withFakeOpenAICompatibleProvider(() => {
+      planningCalls += 1
+      return fakeToolResponse('data_query_workspace', {
+        question: '我们几个月才能回本',
+        scope: 'workspace_summary',
+        metrics: ['payback'],
+      })
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-repair-loop-exhaustion', fakeProviderSettings(baseUrl))
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-repair-loop-exhaustion@example.com')
+
+      const response = await client.post('/api/v1/agent/messages', {
+        message: '我们几个月才能回本？然后帮我第一个股东注资100w',
+        automationLevel: 'high',
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(planningCalls).toBe(5)
+      const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
+      expect(state.json.runs[0].status).toBe('failed')
+      expect(state.json.goals[0].status).toBe('failed')
+      expect(state.json.runEvents.some((event: any) => event.type === 'goal_iteration_exhausted')).toBe(true)
+      expect(state.json.runEvents.some((event: any) => event.type === 'run_failed')).toBe(true)
+      expect(state.json.runEvents.some((event: any) => event.type === 'run_completed')).toBe(false)
+      expect(response.json.messages.at(-1).content).toContain('这轮没有完成所有目标')
       await closeHarness(harness)
     })
   })

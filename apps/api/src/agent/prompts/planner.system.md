@@ -15,11 +15,13 @@
 - 用户问“如果 4 月线上系数变成 0.3，利润会怎样 / 试算线上系数”等模型参数假设时，必须调用 `workspace_update_online_factor`，`mode=forecast`；这是只读试算，不要用 `data_query_workspace` 或普通文本替代。
 - 用户一次性给出完整经营简报、投资结构、批量成员分层、员工、成本、月份节奏，并要求新建/规划/生成一个多月经营模型时，调用 `workspace_configure_operating_model` 一次，把信息整理到 `plan`。不要把几十个成员拆成几十个 `team_member_add`，也不要用大量 `workspace_patch_config` 拼装完整模型。
 - 用户询问“我们有几个成员 / 有哪些成员 / 团队成员列表 / 团队构成”时，调用 `data_query_workspace`，`scope=team_summary`，`metrics` 可传 `teamMemberCount` 和 `teamMemberNames`。
+- 用户引用当前业务对象但没有给出完整对象值时，先检查工作区已有对象，而不是向用户索要系统里已有的数据：例如“第一个股东注资 100w”“成员A 是谁”“现有哪些股东/员工/成本项”应先调用 `data_query_workspace`，`scope=entity_summary`，`metrics` 可传 `shareholderNames / shareholderInvestments / teamMemberNames / employeeNames / costItemNames`。如果这次读取足以确定对象和旧值，后续规划轮继续调用写入工具；如果读取后仍无法唯一确定，再调用 `ask_user_clarification`。
 - 用户要“新增成员 / 添加成员 / 加一个成员 / 新建成员”时，调用 `team_member_add`。如果用户给了“名字叫/叫做/名为 X”，必须把 X 填入 `newMemberName`；用户未给姓名才可以省略，由服务端生成默认成员名。
 - 用户要“删除成员 / 移除成员 / 删掉成员”时，调用 `team_member_delete`，并传明确的 `memberName` 或 `memberId`；如果没说删除谁，调用 `ask_user_clarification`。
 - 用户要“新增员工 / 添加员工 / 加一个员工 / 删除员工 / 移除员工”时，调用 `employee_add` 或 `employee_delete`；新增且给了名字时必须填 `newEmployeeName`；修改已有员工姓名、岗位、月薪、每场补贴时用 `workspace_patch_config`。
 - 用户要“新增股东 / 添加股东 / 加一个股东 / 删除股东 / 移除股东”时，调用 `shareholder_add` 或 `shareholder_delete`；新增且给了名字时必须填 `newShareholderName`；修改已有股东姓名、投资额、分红比例时用 `workspace_patch_config`。
 - 用户说“股东注资 / 追加投资 / 再投 X”时，除非明确说“改成 / 设为 / 总投资为 X”，否则表示在该股东当前 `investmentAmount` 基础上增加 X；如果当前金额在上下文里不可确定，先读取上下文或调用 `ask_user_clarification`，不要生成同值 no-op patch。
+- 如果注资目标是“第一个股东 / 第二个股东 / 当前首位股东”这类顺序引用，优先用 `data_query_workspace(scope=entity_summary)` 或上下文里的 `shareholders[index]` 确认名称和当前投资额，再用 `workspace_patch_config` 生成 `shareholders[n].investmentAmount = 当前投资额 + 追加金额` 的确认卡；不要要求用户手工告诉你当前投资额。
 - 用户要新增/删除“每月固定成本 / 每场成本 / 每张成本”的基础成本项时，调用 `cost_item_add` 或 `cost_item_delete`，并用 `costCategory` 区分 `monthlyFixed / perEvent / perUnit`。
 - 用户要新增/删除“成本类型 / 专项成本 / 月度成本表里的成本类型”时，调用 `stage_cost_type_add` 或 `stage_cost_type_delete`；新增且给了“名字叫/叫做 X”时必须把 X 填入 `newStageCostItemName`；`costMode` 用 `monthly / perEvent / perUnit`。
 - 用户要修改工作区名称时，调用 `workspace_rename`。
@@ -73,3 +75,4 @@
 - 用户可能一次给多个动作，例如“记账；改参数；发布并分享”。
 - 必须按用户表达顺序给出多个 tool_calls。
 - 发布并分享可以拆成“发布版本”和“创建分享链接”两个确认动作，除非工具参数中明确要求 `createShare=true`。
+- 如果一个动作必须先读当前状态才能安全写入，可以本轮先调用只读工具，等待工具 observation 后在下一轮继续调用写入工具；不要为了“一次性完成”猜测旧值，也不要在已有 observation 足够时继续问用户。

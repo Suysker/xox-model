@@ -167,9 +167,10 @@ export async function completeAgentRun(ctx: PlannerContext & { thread: Row<'agen
       beforeStateWrite: () => refreshAgentRunLease(ctx.db, runtimeSettings, ctx.runId),
     })
     if (!kernelResult) return null
+    const goalFailed = kernelResult.goalStatus === 'failed' || kernelResult.goalStatus === 'blocked'
     await ctx.db
       .updateTable('agent_runs')
-      .set({ status: 'completed', planner_source: kernelResult.plannerSource, completed_at: utcNow(), lease_expires_at: null })
+      .set({ status: goalFailed ? 'failed' : 'completed', planner_source: kernelResult.plannerSource, completed_at: utcNow(), lease_expires_at: null })
       .where('id', '=', ctx.runId)
       .where('status', '=', 'running')
       .where('worker_id', '=', runtimeSettings.agentWorkerId)
@@ -179,15 +180,17 @@ export async function completeAgentRun(ctx: PlannerContext & { thread: Row<'agen
     await addRunEvent(ctx.db, {
       threadId: ctx.thread.id,
       runId: ctx.runId,
-      type: 'run_completed',
-      title: '运行完成',
-      message: pendingActionCount > 0
-        ? '模型规划已完成，等待用户处理确认卡。'
-        : '模型规划和只读回答已完成。',
-      status: 'completed',
+      type: goalFailed ? 'run_failed' : 'run_completed',
+      title: goalFailed ? '运行未完成' : '运行完成',
+      message: goalFailed
+        ? '目标循环未能完成所有要求，请查看失败步骤或补充信息后重试。'
+        : pendingActionCount > 0
+          ? '模型规划已完成，等待用户处理确认卡。'
+          : '模型规划和只读回答已完成。',
+      status: goalFailed ? 'failed' : 'completed',
       data: { actionCount: kernelResult.actionRows.length, pendingActionCount, executedActionCount: 0, planStepCount: kernelResult.planRows.length },
     })
-    agentThreadEvents.publish(ctx.thread.id, 'run_completed')
+    agentThreadEvents.publish(ctx.thread.id, goalFailed ? 'run_failed' : 'run_completed')
     return kernelResult
   } catch (error) {
     if (error instanceof AgentRunLeaseLostError) return null

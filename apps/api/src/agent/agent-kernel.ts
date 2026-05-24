@@ -1,4 +1,4 @@
-import type { AgentNavigationEvent, AgentPlannerSource } from '@xox/contracts'
+import type { AgentGoalStatus, AgentNavigationEvent, AgentPlannerSource } from '@xox/contracts'
 import type { Row } from '../db/schema.js'
 import type { PlannerContext } from './planning-context.js'
 import { executeAgentGoalRun } from './goal-run-engine.js'
@@ -9,6 +9,7 @@ export type AgentKernelRunResult = {
   navigationEvents: AgentNavigationEvent[]
   actionRows: Row<'agent_action_requests'>[]
   planRows: Row<'agent_plan_steps'>[]
+  goalStatus: AgentGoalStatus | null
 }
 
 export async function executeAgentKernelRun(

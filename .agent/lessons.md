@@ -165,6 +165,10 @@
 - Clarification should interrupt only the action that depends on the missing field. If a cross-domain goal also has independent missing actions, the evaluator should continue preparing those confirmation cards before waiting for the user's clarification.
 - A user's answer to a pending clarification in the same thread should resume the previous goal scope, not start a new standalone objective. Build a scoped resume objective from the previous evaluation and existing pending cards so the harness completes missing work without duplicating confirmations.
 - Model-selected tool builders should return visible validation observations for unmatched domain objects. A selected tool that silently returns `null` hides the failure from both evaluator and user; normalized lookups plus explicit clarification rows keep the action graph honest.
+- Tool observations from read steps must feed the next planning turn while tools remain enabled. If observations only go to a final-answer pass, complex goals cannot do the Codex-style inspect -> observe -> act loop and will repeat guesses or clarifications.
+- SaaS entity references should be inspectable through first-class tenant-scoped read tools. For references such as "第一个股东" or "成员 A", expose current members/shareholders/investments to the model before asking the user for facts already stored in the workspace.
+- A Goal Run Engine must fail closed when repair iterations are exhausted. Do not mark a run successful while the goal contract is still `repairing`; surface the unfinished criteria instead.
+- Goal fact extraction must distinguish read-only inspections from writes. Ledger history filters, variance questions, and explicit no-write checks should not require missing write confirmation cards, and no-op patch observations should not be repaired as failed writes.
 
 ## Testing
 

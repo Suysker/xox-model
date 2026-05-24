@@ -98,7 +98,7 @@ export type AgentToolCallStep = {
   key?: string
   value?: string
   confidence?: number
-  scope?: 'workspace_summary' | 'period_summary' | 'member_summary' | 'team_summary' | 'top_months' | 'variance_detail' | 'ledger_history'
+  scope?: 'workspace_summary' | 'period_summary' | 'member_summary' | 'team_summary' | 'entity_summary' | 'top_months' | 'variance_detail' | 'ledger_history'
   metrics?: string[]
   order?: 'asc' | 'desc'
   limit?: number
@@ -633,7 +633,7 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
     type: 'function',
     function: {
       name: 'workspace_patch_config',
-      description: '规划通用模型草稿字段修改，用于覆盖页面上可手动编辑但没有专用工具的字段。股东“注资/追加投资 X”应传当前投资额加 X 后的新 investmentAmount；只有用户明确说“改成/设为 X”时才传 X 本身。',
+      description: '规划通用模型草稿字段修改，用于覆盖页面上可手动编辑但没有专用工具的字段。股东“注资/追加投资 X”应传当前投资额加 X 后的新 investmentAmount；只有用户明确说“改成/设为 X”时才传 X 本身。若不确定当前股东列表或当前投资额，先调用 data_query_workspace(scope=entity_summary) 检查，不要向用户索要工作区已有数据。',
       parameters: objectSchema({
         patches: {
           type: 'array',
@@ -767,13 +767,13 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
     type: 'function',
     function: {
       name: 'data_query_workspace',
-      description: '回答当前工作区的只读数据问题，例如团队成员数量/成员名单、某月计划/实际收入成本利润、成员贡献、回本、最佳月份。用户问“3月计划收入和计划成本是多少/某月实际收入成本利润”时必须用 scope=period_summary 并填写 monthLabel，不要用 workspace_summary。只读，不生成确认卡，不修改业务数据。',
+      description: '回答当前工作区的只读数据问题，例如团队成员数量/成员名单、股东列表和当前投资额、员工和成本对象、某月计划/实际收入成本利润、成员贡献、回本、最佳月份。用户要写入但引用“第一个股东/某成员/当前投资额”等现有对象时，可先用 scope=entity_summary 检查现有对象，再继续规划后续工具。只读，不生成确认卡，不修改业务数据。',
       parameters: objectSchema({
         question: { type: 'string', description: '用户原始问题的简短复述。' },
         scope: {
           type: 'string',
-          enum: ['workspace_summary', 'period_summary', 'member_summary', 'team_summary', 'top_months', 'variance_detail', 'ledger_history'],
-          description: '查询范围：整体工作区、单月汇总、指定成员汇总、团队成员数量/名单、月份排行、预实科目差异、账本历史筛选。用户问“几个成员/有哪些成员/团队构成”时用 team_summary；用户问“3月/4月/某月计划收入、计划成本、计划利润、实际收入、实际成本、实际利润”时必须用 period_summary。',
+          enum: ['workspace_summary', 'period_summary', 'member_summary', 'team_summary', 'entity_summary', 'top_months', 'variance_detail', 'ledger_history'],
+          description: '查询范围：整体工作区、单月汇总、指定成员汇总、团队成员数量/名单、工作区业务对象清单、月份排行、预实科目差异、账本历史筛选。用户问“几个成员/有哪些成员/团队构成”时用 team_summary；用户要先确认成员、股东、员工、成本项是谁或当前投资额是多少时用 entity_summary；用户问“3月/4月/某月计划收入、计划成本、计划利润、实际收入、实际成本、实际利润”时必须用 period_summary。',
         },
         monthLabel: { ...monthLabel, description: '目标月份，例如 3月；scope=period_summary、variance_detail、ledger_history 涉及月份时必须填写。' },
         memberName: { type: 'string', description: '可选成员名称；scope=member_summary 时优先提供。' },
@@ -781,7 +781,7 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
           type: 'array',
           items: {
             type: 'string',
-            enum: ['plannedRevenue', 'plannedCost', 'actualRevenue', 'actualCost', 'plannedProfit', 'actualProfit', 'cash', 'roi', 'payback', 'memberRevenue', 'memberCommission', 'memberContribution', 'teamMemberCount', 'teamMemberNames'],
+            enum: ['plannedRevenue', 'plannedCost', 'actualRevenue', 'actualCost', 'plannedProfit', 'actualProfit', 'cash', 'roi', 'payback', 'memberRevenue', 'memberCommission', 'memberContribution', 'teamMemberCount', 'teamMemberNames', 'shareholderNames', 'shareholderInvestments', 'employeeNames', 'costItemNames'],
           },
           description: '需要回答的指标；例如“3月计划收入和计划成本”传 ["plannedRevenue","plannedCost"]。不确定时传空数组或省略，由服务端返回该范围的核心指标。',
         },

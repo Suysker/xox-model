@@ -89,6 +89,7 @@ function normalizedDataScope(step: DataAgentQueryStep, metrics: string[]) {
     step.scope === 'period_summary' ||
     step.scope === 'member_summary' ||
     step.scope === 'team_summary' ||
+    step.scope === 'entity_summary' ||
     step.scope === 'top_months' ||
     step.scope === 'variance_detail' ||
     step.scope === 'ledger_history'
@@ -165,6 +166,62 @@ export async function answerWorkspaceDataQuestion(ctx: DataAgentContext, step: D
 
   const metrics = normalizeDataMetrics(step.metrics)
   const scope = normalizedDataScope(step, metrics)
+
+  if (scope === 'entity_summary') {
+    const members = config.teamMembers.map((member, index) => ({
+      index: index + 1,
+      id: member.id,
+      name: member.name,
+      employmentType: member.employmentType,
+      monthlyBasePay: member.monthlyBasePay,
+      commissionRate: member.commissionRate,
+    }))
+    const shareholders = config.shareholders.map((shareholder, index) => ({
+      index: index + 1,
+      id: shareholder.id,
+      name: shareholder.name,
+      investmentAmount: shareholder.investmentAmount,
+      dividendRate: shareholder.dividendRate,
+    }))
+    const employees = config.employees.map((employee, index) => ({
+      index: index + 1,
+      id: employee.id,
+      name: employee.name,
+      role: employee.role,
+      monthlyBasePay: employee.monthlyBasePay,
+      perEventCost: employee.perEventCost,
+    }))
+    const costItems = {
+      monthlyFixed: config.operating.monthlyFixedCosts.map((item, index) => ({ index: index + 1, id: item.id, name: item.name, amount: item.amount })),
+      perEvent: config.operating.perEventCosts.map((item, index) => ({ index: index + 1, id: item.id, name: item.name, amount: item.amount })),
+      perUnit: config.operating.perUnitCosts.map((item, index) => ({ index: index + 1, id: item.id, name: item.name, amount: item.amount })),
+      stage: config.stageCostItems.map((item, index) => ({ index: index + 1, id: item.id, name: item.name, mode: item.mode })),
+    }
+    const firstShareholder = shareholders[0]
+    const memberSample = members.slice(0, 8).map((member) => member.name).join('、')
+    const shareholderText = shareholders.length > 0
+      ? `首位股东是 ${firstShareholder?.name}，当前投资额 ${money(firstShareholder?.investmentAmount ?? 0)}；股东列表：${shareholders.map((shareholder) => `${shareholder.index}. ${shareholder.name} ${money(shareholder.investmentAmount)}`).join('、')}`
+      : '当前没有股东。'
+    return dataRead({
+      title: '检查工作区业务对象',
+      message: `当前工作区有 ${members.length} 个成员、${shareholders.length} 个股东、${employees.length} 位员工。${memberSample ? `成员示例：${memberSample}。` : ''}${shareholderText}`,
+      navigation: {
+        type: 'navigation',
+        route: { mainTab: 'inputs', secondaryTab: 'capital' },
+        reason: '成员、股东和成本结构检查需要打开调模型页面，便于核对现有对象。',
+      },
+      data: {
+        scope,
+        memberCount: members.length,
+        members,
+        shareholderCount: shareholders.length,
+        shareholders,
+        employeeCount: employees.length,
+        employees,
+        costItems,
+      },
+    })
+  }
 
   if (scope === 'team_summary') {
     const members = config.teamMembers

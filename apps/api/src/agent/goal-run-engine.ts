@@ -1,7 +1,7 @@
-import type { AgentNavigationEvent, AgentPlannerSource } from '@xox/contracts'
+import type { AgentGoalStatus, AgentNavigationEvent, AgentPlannerSource } from '@xox/contracts'
 import type { Row } from '../db/schema.js'
 import type { PlannerContext } from './planning-context.js'
-import { createGoalContract, serializeEvaluation } from './goal-contract.js'
+import { createGoalContract, serializeEvaluation, updateGoalStatus } from './goal-contract.js'
 import { evaluateAgentGoal } from './completion-evaluator.js'
 import {
   consolidateAgentMemoryCandidates,
@@ -24,6 +24,7 @@ export type AgentGoalRunResult = {
   navigationEvents: AgentNavigationEvent[]
   actionRows: Row<'agent_action_requests'>[]
   planRows: Row<'agent_plan_steps'>[]
+  goalStatus: AgentGoalStatus | null
 }
 
 function evaluationSummary(evaluation: ReturnType<typeof serializeEvaluation>) {
@@ -92,6 +93,7 @@ export async function executeAgentGoalRun(
   const observations: AgentToolObservation[] = []
   let nextMessage = objective
   let pendingAssistantText: string | null = null
+  let lastEvaluation: ReturnType<typeof serializeEvaluation> | null = null
   const maxIterations = Math.max(1, Math.min(8, Number(JSON.parse(goal.contract_json).maxIterations ?? 5)))
 
   for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
@@ -114,7 +116,12 @@ export async function executeAgentGoalRun(
       data: { provider: ctx.settings.llmProvider, iteration },
     })
 
-    const planned = await planResponse({ ...planningCtx, message: nextMessage, planningTurn: iteration === 1 ? 'user_objective' : 'evaluator_repair' })
+    const planned = await planResponse({
+      ...planningCtx,
+      message: nextMessage,
+      planningTurn: iteration === 1 ? 'user_objective' : 'evaluator_repair',
+      priorObservations: iteration === 1 ? [] : observations,
+    })
     if (!(await options.beforeStateWrite())) return null
     plannerSource = planned.plannerSource
     navigationEvents.push(...planned.navigationEvents)
@@ -142,6 +149,7 @@ export async function executeAgentGoalRun(
     })
     if (!(await options.beforeStateWrite())) return null
     const evaluation = serializeEvaluation(evaluationRow)
+    lastEvaluation = evaluation
     await addRunEvent(ctx.db, {
       threadId: ctx.thread.id,
       runId: ctx.runId,
@@ -201,13 +209,38 @@ export async function executeAgentGoalRun(
       break
     }
     if (evaluation.status === 'continue' && evaluation.nextPlannerBrief) {
-      nextMessage = `${evaluation.nextPlannerBrief}\n\n当前目标：${objective}`
+      nextMessage = [
+        evaluation.nextPlannerBrief,
+        '上一轮工具观察结果会随本次规划一起提供；不要重复已经完成的只读查询或确认卡。',
+        '如果观察结果已足够确定对象和值，继续调用对应业务工具；仍无法唯一确定时再询问用户。',
+        `当前目标：${objective}`,
+      ].join('\n\n')
       continue
     }
     break
   }
 
-  if (assistantParts.length === 0 && observations.length > 0) {
+  if (lastEvaluation?.status === 'continue') {
+    const blockedReason = lastEvaluation.nextPlannerBrief ?? '目标修复循环已耗尽，但仍有未满足项。'
+    await updateGoalStatus(ctx.db, goal, 'failed', { blockedReason })
+    await addRunEvent(ctx.db, {
+      threadId: ctx.thread.id,
+      runId: ctx.runId,
+      type: 'goal_iteration_exhausted',
+      title: '目标循环已耗尽',
+      message: `Agent 已达到本轮最大修复次数，但目标仍未完成：${blockedReason}`,
+      status: 'failed',
+      data: {
+        goalId: goal.id,
+        maxIterations,
+        evaluationStatus: lastEvaluation.status,
+        unsatisfiedCount: lastEvaluation.unsatisfiedCriteria.length,
+      },
+    })
+    if (assistantParts.length === 0) {
+      assistantParts.push(`这轮没有完成所有目标：${blockedReason}`)
+    }
+  } else if (assistantParts.length === 0 && observations.length > 0) {
     const continuation = await continueModelAfterToolObservations(planningCtx, observations)
     if (!(await options.beforeStateWrite())) return null
     if (continuation.status === 'answered') {
@@ -255,6 +288,7 @@ export async function executeAgentGoalRun(
     ? await addMessage(ctx.db, ctx.thread.id, 'assistant', assistantParts.join('\n\n'))
     : null
   await flushThreadContextToMemoryIfNeeded({ db: ctx.db, workspace: ctx.workspace, user: ctx.user, threadId: ctx.thread.id, runId: ctx.runId })
+  const finalGoal = await ctx.db.selectFrom('agent_goals').select('status').where('id', '=', goal.id).executeTakeFirst()
   if (!(await options.beforeStateWrite())) return null
   return {
     plannerSource,
@@ -262,5 +296,6 @@ export async function executeAgentGoalRun(
     navigationEvents,
     actionRows,
     planRows,
+    goalStatus: finalGoal?.status as AgentGoalStatus | null ?? null,
   }
 }

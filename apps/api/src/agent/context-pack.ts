@@ -73,6 +73,19 @@ export async function buildAgentContextPack(input: AgentContextPackInput) {
     months: config.months.map((month, index) => ({ label: month.label, index, id: month.id })),
     teamMembers: config.teamMembers.map((member) => ({ id: member.id, name: member.name })),
     employees: config.employees.map((employee) => ({ id: employee.id, name: employee.name, role: employee.role })),
+    shareholders: config.shareholders.map((shareholder, index) => ({
+      index: index + 1,
+      id: shareholder.id,
+      name: shareholder.name,
+      investmentAmount: shareholder.investmentAmount,
+      dividendRate: shareholder.dividendRate,
+    })),
+    costItems: {
+      monthlyFixed: config.operating.monthlyFixedCosts.map((item) => ({ id: item.id, name: item.name, amount: item.amount })),
+      perEvent: config.operating.perEventCosts.map((item) => ({ id: item.id, name: item.name, amount: item.amount })),
+      perUnit: config.operating.perUnitCosts.map((item) => ({ id: item.id, name: item.name, amount: item.amount })),
+      stage: config.stageCostItems.map((item) => ({ id: item.id, name: item.name, mode: item.mode })),
+    },
     versions: versions.map((version) => ({ versionNo: version.version_no, name: version.name, kind: version.kind })),
     periods: periods.map((period) => ({ id: period.id, monthLabel: period.monthLabel })),
     ledgerSubjects: periods[0]

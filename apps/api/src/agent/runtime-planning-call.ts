@@ -17,6 +17,7 @@ import {
 } from './runtime/high-volume-tool-policy.js'
 import { addRunEvent } from './run-events.js'
 import { plannerSystemPrompt } from './prompt-registry.js'
+import type { AgentToolObservation } from './tool-observation-continuation.js'
 import { provideRuntimeToolCatalog } from './tool-gateway.js'
 import {
   contextWithoutThreadConversationLog,
@@ -71,8 +72,60 @@ function runtimeRequestTimeoutMs(input: {
   return plannerRequestTimeoutMs(input)
 }
 
-function plannerRuntimeMessages(input: { context: unknown; message: string }): RuntimeChatMessage[] {
+function safeJson(value: unknown) {
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return JSON.stringify(String(value))
+  }
+}
+
+function observationCallId(observation: AgentToolObservation, index: number) {
+  const base = observation.toolCallId || `call_observation_${index}_${observation.toolName}`
+  return `${base}_planning_observation_${index}`
+}
+
+function priorObservationMessages(observations: AgentToolObservation[] | undefined): RuntimeChatMessage[] {
+  const usable = (observations ?? []).slice(-12)
+  if (usable.length === 0) return []
+  const toolCalls = usable.map((observation, index) => ({
+    id: observationCallId(observation, index),
+    type: 'function' as const,
+    function: {
+      name: observation.toolName,
+      arguments: safeJson(observation.toolArguments),
+    },
+  }))
   return [
+    {
+      role: 'assistant',
+      content: '我已经完成了上一轮工具调用，下面是可用于继续规划的观察结果。',
+      tool_calls: toolCalls,
+    },
+    ...usable.map((observation, index) => ({
+      role: 'tool' as const,
+      tool_call_id: observationCallId(observation, index),
+      name: observation.toolName,
+      content: redactSecretLikeContent(observation.modelContent).slice(0, 12000),
+    })),
+    {
+      role: 'user',
+      content: [
+        '继续完成当前目标。',
+        '上面的 tool observations 是已完成事实：不要重复已经完成的只读查询或已创建的确认卡。',
+        '如果观察结果已经足以确定成员、股东、金额或月份，请继续调用对应业务工具生成确认卡。',
+        '只有观察结果和当前上下文仍无法唯一确定时，才调用 ask_user_clarification。',
+      ].join('\n'),
+    },
+  ]
+}
+
+function plannerRuntimeMessages(input: {
+  context: unknown
+  message: string
+  priorObservations?: AgentToolObservation[] | undefined
+}): RuntimeChatMessage[] {
+  const messages: RuntimeChatMessage[] = [
     { role: 'system', content: plannerSystemPrompt() },
     ...runtimeMessagesFromThreadConversationLog(threadConversationLogFromContext(input.context)),
     {
@@ -80,6 +133,8 @@ function plannerRuntimeMessages(input: { context: unknown; message: string }): R
       content: `上下文：${JSON.stringify(contextWithoutThreadConversationLog(input.context))}\n用户指令：${input.message}`,
     },
   ]
+  messages.push(...priorObservationMessages(input.priorObservations))
+  return messages
 }
 
 async function addNonStreamPlanningPreface(ctx: PlannerContext, result: RuntimePlanResult | null) {
@@ -121,7 +176,11 @@ export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePl
     message: redactSecretLikeContent(ctx.message),
     context,
     tools: toolCatalog.tools,
-    messages: plannerRuntimeMessages({ context, message: redactSecretLikeContent(ctx.message) }),
+    messages: plannerRuntimeMessages({
+      context,
+      message: redactSecretLikeContent(ctx.message),
+      priorObservations: ctx.priorObservations,
+    }),
     maxTokens,
     ...(stableLongToolMode ? { stream: false } : {}),
     requestTimeoutMs: runtimeRequestTimeoutMs({
