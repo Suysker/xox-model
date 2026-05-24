@@ -161,6 +161,10 @@
 - Preserve the first model-authored planning preface across repair turns. Later unrelated planning fragments should not overwrite the initial user-facing "I will handle X/Y/Z" sentence, while final-answer stream duplicates should still collapse behind the persisted assistant message.
 - Generic `workspace_patch_config` must filter same-value patches before creating confirmation cards. A no-op patch is an observation for the model/evaluator, not an editable write action.
 - For shareholder capital language, model instructions and tool descriptions should distinguish "注资/追加投资 X" from "改成/设为 X": the former means current investment plus X, while the latter means setting the total value.
+- Ordinal business references such as `第一个股东` are not cardinal goal facts. Goal fact extraction must not convert ordinal references into expected entity counts; otherwise the evaluator will repair toward the wrong domain state.
+- Clarification should interrupt only the action that depends on the missing field. If a cross-domain goal also has independent missing actions, the evaluator should continue preparing those confirmation cards before waiting for the user's clarification.
+- A user's answer to a pending clarification in the same thread should resume the previous goal scope, not start a new standalone objective. Build a scoped resume objective from the previous evaluation and existing pending cards so the harness completes missing work without duplicating confirmations.
+- Model-selected tool builders should return visible validation observations for unmatched domain objects. A selected tool that silently returns `null` hides the failure from both evaluator and user; normalized lookups plus explicit clarification rows keep the action graph honest.
 
 ## Testing
 

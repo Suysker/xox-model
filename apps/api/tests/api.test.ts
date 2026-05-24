@@ -12,6 +12,7 @@ import type { Settings } from '../src/core/settings.js'
 import { AGENT_MANUAL_CAPABILITY_COVERAGE, agentWritableConfigPatterns, buildAgentWritableConfigCatalog } from '../src/agent/tool-coverage.js'
 import { AGENT_TOOL_CATALOG, AGENT_TOOL_REGISTRY } from '../src/agent/tool-catalog.js'
 import { buildRuntimeToolCatalogProjection } from '../src/agent/tool-gateway.js'
+import { extractAgentGoalFacts } from '../src/agent/goal-fact-extractor.js'
 import { createProductDefaultModel, projectModel } from '@xox/domain'
 import { recoverRunningAgentRuns } from '../src/agent/run-worker.js'
 import { rememberAgentMemory } from '../src/agent/memory.js'
@@ -874,6 +875,22 @@ describe('xox TypeScript API', () => {
     await closeHarness(harness)
   })
 
+  it('does not treat ordinal shareholder references as target shareholder counts', () => {
+    const ordinalFacts = extractAgentGoalFacts('我们几个月才能回本？帮我第一个股东注资100w')
+    expect(ordinalFacts.expectedShareholderCount).toBeUndefined()
+    expect(ordinalFacts.requiredCapabilities).toEqual(expect.arrayContaining(['draft']))
+
+    const structuredFacts = extractAgentGoalFacts([
+      '投资和股东：',
+      '1. 股东 A 投资 300000，占分红 35%',
+      '2. 股东 B 投资 200000，占分红 25%',
+      '3. 股东 C 投资 150000，占分红 20%',
+      '4. 股东 D 投资 100000，占分红 15%',
+      '5. 预留员工激励池 5%，不算现金投资',
+    ].join('\n'))
+    expect(structuredFacts.expectedShareholderCount).toBe(5)
+  })
+
   it('creates agent navigation events, confirmation cards, and executes confirmed ledger writes', async () => {
     await withFakeOpenAICompatibleProvider(() => fakeToolResponse('ledger_create_member_income', {
       monthLabel: '3月',
@@ -1104,6 +1121,116 @@ describe('xox TypeScript API', () => {
       finalizerResponse: (body) => {
         finalizerRequests.push(body)
         return fakeAssistantTextResponse('当前仍未回本；我已准备 2 张确认卡：成员 A 今天线上 10 张入账、股东 A 注资 100 万。确认前不会写入。')
+      },
+    })
+  })
+
+  it('resumes a clarification turn and completes the missing cross-domain action without duplicating prior cards', async () => {
+    let planningCalls = 0
+    const finalizerRequests: any[] = []
+    await withFakeOpenAICompatibleProvider((body) => {
+      const prompt = body.messages.map((message: any) => message.content ?? '').join('\n')
+      planningCalls += 1
+
+      if (prompt.includes('用户本轮补充')) {
+        expect(prompt).toContain('[same-thread')
+        return fakeToolResponse('ledger_create_member_income', {
+          memberName: '成员1',
+          onlineUnits: 10,
+          occurredAt: '2026-05-24',
+        })
+      }
+
+      if (prompt.includes('不依赖该澄清的缺失动作') || prompt.includes('模型草稿修改动作')) {
+        return fakeToolResponse('workspace_patch_config', {
+          patches: [{ path: 'shareholders[0].investmentAmount', value: 1300000, label: '股东 1 投资额' }],
+        })
+      }
+
+      return fakeToolResponses([
+        {
+          name: 'data_query_workspace',
+          args: {
+            question: '我们几个月才能回本？',
+            scope: 'workspace_summary',
+            metrics: ['payback', 'cash', 'roi'],
+          },
+        },
+        {
+          name: 'ask_user_clarification',
+          args: {
+            question: '当前团队里没有叫「成员A」的成员。你说的是哪位成员？',
+            missingFields: ['memberName'],
+            suggestions: ['成员 1', '成员 2', '成员 3'],
+          },
+        },
+      ])
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-clarification-resume-c7b3b3ec', fakeProviderSettings(baseUrl))
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-clarification-resume-c7b3b3ec@example.com')
+
+      const draftResponse = await client.get('/api/v1/workspace/draft')
+      const config = draftResponse.json.config
+      config.teamMembers = config.teamMembers.slice(0, 3).map((member: any, index: number) => ({
+        ...member,
+        id: `member_${index + 1}`,
+        name: `成员 ${index + 1}`,
+      }))
+      config.shareholders = [
+        { ...config.shareholders[0], id: 'shareholder_a', name: '股东 A', investmentAmount: 300000, dividendRate: 0.6 },
+        { ...config.shareholders[0], id: 'shareholder_b', name: '股东 B', investmentAmount: 200000, dividendRate: 0.4 },
+      ]
+      const patched = await client.patch('/api/v1/workspace/draft', {
+        revision: draftResponse.json.revision,
+        workspaceName: draftResponse.json.workspaceName,
+        config,
+      })
+      expect(patched.statusCode).toBe(200)
+
+      const first = await client.post('/api/v1/agent/messages', {
+        message: '我们几个月才能回本？帮我记一笔成员A的今天的线上10张，然后帮我第一个股东注资100w',
+        automationLevel: 'high',
+      })
+
+      expect(first.statusCode).toBe(200)
+      expect(first.json.actionRequests).toHaveLength(1)
+      expect(first.json.actionRequests[0].kind).toBe('workspace.update_draft')
+      expect(first.json.actionRequests[0].payload.config.shareholders[0].investmentAmount).toBe(1300000)
+      const firstState = await client.get(`/api/v1/agent/threads/${first.json.threadId}`)
+      expect(firstState.json.evaluations.map((evaluation: any) => evaluation.status)).toEqual(['continue', 'needs_clarification'])
+      expect(first.json.messages.at(-1).content).toContain('成员')
+
+      const second = await client.post('/api/v1/agent/messages', {
+        threadId: first.json.threadId,
+        message: '是的。成员1',
+        automationLevel: 'high',
+      })
+
+      expect(second.statusCode).toBe(200)
+      expect(planningCalls).toBeGreaterThanOrEqual(3)
+      expect(finalizerRequests).toHaveLength(2)
+      expect(second.json.runEvents.some((event: any) => event.type === 'clarification_resume_context')).toBe(true)
+      expect(second.json.actionRequests).toHaveLength(1)
+      expect(second.json.actionRequests[0].kind).toBe('ledger.create_entry')
+      expect(second.json.actionRequests[0].targetLabel).toContain('成员 1')
+      expect(second.json.actionRequests[0].payload.amount).toBe(880)
+      expect(second.json.actionRequests[0].payload.occurredAt).toContain('2026-05-24')
+
+      const state = await client.get(`/api/v1/agent/threads/${first.json.threadId}`)
+      const pendingKinds = state.json.actionRequests
+        .filter((action: any) => action.status === 'pending')
+        .map((action: any) => action.kind)
+        .sort()
+      expect(pendingKinds).toEqual(['ledger.create_entry', 'workspace.update_draft'])
+      expect(state.json.actionRequests.filter((action: any) => action.kind === 'workspace.update_draft')).toHaveLength(1)
+      await closeHarness(harness)
+    }, {
+      finalizerResponse: (body) => {
+        finalizerRequests.push(body)
+        return finalizerRequests.length === 1
+          ? fakeAssistantTextResponse('回本周期暂未出现；股东注资确认卡已准备，成员入账还需要你确认具体成员。')
+          : fakeAssistantTextResponse('已根据你的补充准备成员 1 今天线上 10 张的入账确认卡，和上一轮股东注资确认卡一起等待你确认。')
       },
     })
   })

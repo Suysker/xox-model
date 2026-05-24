@@ -41,14 +41,41 @@ function positiveInteger(value: unknown) {
 
 function uniqueSpecificShareholderCount(text: string) {
   const names = new Set<string>()
-  for (const match of text.matchAll(/股东\s*([A-Za-z0-9\u4e00-\u9fa5]+)/gu)) {
+  for (const match of text.matchAll(/股东\s*([A-Za-z0-9]+|[\u4e00-\u9fa5]{1,8})(?=\s*(?:投资|出资|占|分红|，|,|。|；|;|:|：|\n|$))/gu)) {
     const name = match[1] ? cleanValue(match[1]) : ''
-    if (name && !name.startsWith('和') && !name.startsWith('投资')) {
+    if (name && !['和', '投资', '出资', '注资', '分红', '占'].some((prefix) => name.startsWith(prefix))) {
       names.add(name)
     }
   }
   const includesReservedPool = text.includes('激励池') && (text.includes('分红') || text.includes('预留'))
   return names.size + (includesReservedPool ? 1 : 0)
+}
+
+function firstExplicitShareholderCount(text: string) {
+  for (const match of text.matchAll(/(\d+)\s*个\s*股东/gu)) {
+    const before = text.slice(Math.max(0, match.index - 2), match.index)
+    if (before.endsWith('第')) continue
+    const value = positiveInteger(Number(match[1]))
+    if (value) return value
+  }
+  return undefined
+}
+
+function expectedShareholderCountFromObjective(text: string) {
+  const explicitCount = firstExplicitShareholderCount(text)
+  if (explicitCount) return explicitCount
+
+  const hasShareholderStructureContext =
+    text.includes('投资和股东') ||
+    text.includes('投资结构') ||
+    text.includes('股东结构') ||
+    text.includes('出资结构') ||
+    text.includes('分红比例') ||
+    text.includes('占分红')
+  if (!hasShareholderStructureContext) return undefined
+
+  const namedCount = uniqueSpecificShareholderCount(text)
+  return namedCount > 0 ? namedCount : undefined
 }
 
 function workspaceNameFromObjective(text: string) {
@@ -90,8 +117,7 @@ export function extractAgentGoalFacts(objective: string): AgentGoalFacts {
     firstNumberAfter(objective, '预测'),
   )
   const expectedStartMonth = positiveInteger(firstNumberBefore(objective, '月开始'))
-  const shareholderCount = uniqueSpecificShareholderCount(objective)
-  const expectedShareholderCount = shareholderCount > 0 ? shareholderCount : undefined
+  const expectedShareholderCount = expectedShareholderCountFromObjective(objective)
 
   if (expectedMemberCount || expectedHorizonMonths || objective.includes('经营测算') || objective.includes('经营模型')) {
     requiredCapabilities.add('operating_model')

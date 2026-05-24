@@ -76,6 +76,52 @@ function actionPayload(action: Row<'agent_action_requests'>) {
   return parseJson<any>(action.payload_json, null)
 }
 
+function clarificationMissingFields(steps: Row<'agent_plan_steps'>[]) {
+  const fields = new Set<string>()
+  for (const step of steps) {
+    const args = parseJson<any>(step.tool_arguments_json, null)
+    if (Array.isArray(args?.missingFields)) {
+      for (const field of args.missingFields) {
+        if (typeof field === 'string' && field.trim()) fields.add(field.trim())
+      }
+    }
+  }
+  return fields
+}
+
+function findingBlockedByClarification(input: {
+  finding: AgentEvaluationFinding
+  clarificationFields: Set<string>
+}) {
+  if (input.clarificationFields.size === 0) return false
+  if (input.finding.id === 'goal.required_ledger_action_planned') {
+    return [
+      'memberName',
+      'memberId',
+      'monthLabel',
+      'offlineUnits',
+      'onlineUnits',
+      'amount',
+      'subjectKey',
+      'subjectName',
+      'direction',
+      'entryId',
+    ].some((field) => input.clarificationFields.has(field))
+  }
+  if (input.finding.id === 'goal.required_draft_action_planned') {
+    return [
+      'workspaceName',
+      'shareholderName',
+      'shareholderId',
+      'investmentAmount',
+      'dividendRate',
+      'costItemName',
+      'stageCostItemName',
+    ].some((field) => input.clarificationFields.has(field))
+  }
+  return false
+}
+
 function isOperatingModelAction(action: Row<'agent_action_requests'>) {
   if (action.kind !== 'workspace.update_draft') return false
   const payload = actionPayload(action)
@@ -450,7 +496,12 @@ export async function evaluateAgentGoal(input: {
   factResult.satisfied.forEach((id) => satisfied.add(id))
   unsatisfied.push(...factResult.findings)
   policyFindings.push(...factResult.policyFindings)
-  const hasMissingPlannedCapability = unsatisfied.some((item) => item.criterionId === 'graph.required_capability_planned')
+  const missingPlannedCapabilities = unsatisfied.filter((item) => item.criterionId === 'graph.required_capability_planned')
+  const clarificationFields = clarificationMissingFields(clarificationSteps)
+  const independentlyMissingCapabilities = missingPlannedCapabilities.filter((item) =>
+    !findingBlockedByClarification({ finding: item, clarificationFields }),
+  )
+  const hasMissingPlannedCapability = missingPlannedCapabilities.length > 0
 
   let status: AgentEvaluationResult['status'] = 'pass'
   let nextPlannerBrief: string | null = null
@@ -465,6 +516,10 @@ export async function evaluateAgentGoal(input: {
     status = 'failed'
     blocker = '运行图存在失败动作。'
     confidence = 0.95
+  } else if (clarificationSteps.length > 0 && independentlyMissingCapabilities.length > 0) {
+    status = 'continue'
+    nextPlannerBrief = `当前已有澄清问题等待用户，但还存在不依赖该澄清的缺失动作。只补齐这些独立确认卡，不要重复已生成的确认卡，也不要猜测澄清依赖的信息：${independentlyMissingCapabilities.map((item) => item.message).join('；')}`
+    confidence = 0.9
   } else if (clarificationSteps.length > 0) {
     status = 'needs_clarification'
     nextPlannerBrief = '等待用户补充当前澄清问题，不要继续猜测或生成依赖缺失信息的写入动作。'

@@ -24,8 +24,31 @@ export async function planLedgerCreateFromFields(
   if (!monthLabel) return null
   const period = await periodForMonth(ctx, monthLabel)
   if (!period) return null
-  const member = config.teamMembers.find((item) => item.name === input.memberName || item.id === input.memberName)
-  if (!member) return null
+  const member = findTeamMember(config, { memberName: input.memberName })
+  if (!member) {
+    return {
+      title: '需要确认成员',
+      message: `当前团队里没有精确匹配“${input.memberName}”的成员。请补充要入账的成员名称或编号。`,
+      readKind: 'tool_observation',
+      toolName: 'ledger_create_member_income',
+      toolArguments: {
+        monthLabel,
+        memberName: input.memberName,
+        offlineUnits: input.offlineUnits ?? 0,
+        onlineUnits: input.onlineUnits ?? 0,
+        occurredAt: input.occurredAt ?? null,
+      },
+      modelContent: JSON.stringify({
+        status: 'needs_clarification',
+        missingFields: ['memberName'],
+        requestedMemberName: input.memberName,
+        suggestions: config.teamMembers.slice(0, 8).map((item) => item.name),
+      }),
+      displayPreview: `需要确认成员：${input.memberName}`,
+      status: 'info',
+      navigation: ledgerNavigation(period.id, '成员收入入账需要打开本期账本并选中目标账期。'),
+    } satisfies ReadDraft
+  }
 
   const offlineUnits = Number(input.offlineUnits ?? 0)
   const onlineUnits = Number(input.onlineUnits ?? 0)

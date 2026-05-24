@@ -16,6 +16,7 @@ import { planResponse } from './planner.js'
 import { addRunEvent } from './run-events.js'
 import { addMessage } from './thread-store.js'
 import { continueModelAfterToolObservations, type AgentToolObservation } from './tool-observation-continuation.js'
+import { buildClarificationResumeContext } from './clarification-resume.js'
 
 export type AgentGoalRunResult = {
   plannerSource: AgentPlannerSource
@@ -39,13 +40,23 @@ export async function executeAgentGoalRun(
   ctx: PlannerContext & { thread: Row<'agent_threads'> },
   options: { beforeStateWrite: () => Promise<boolean> },
 ): Promise<AgentGoalRunResult | null> {
+  const resumeContext = await buildClarificationResumeContext({
+    db: ctx.db,
+    workspace: ctx.workspace,
+    user: ctx.user,
+    thread: ctx.thread,
+    runId: ctx.runId,
+    message: ctx.message,
+  })
+  const objective = resumeContext?.objective ?? ctx.message
+  const planningCtx = { ...ctx, message: objective }
   const goal = await createGoalContract({
     db: ctx.db,
     workspace: ctx.workspace,
     user: ctx.user,
     threadId: ctx.thread.id,
     runId: ctx.runId,
-    objective: ctx.message,
+    objective,
     automationLevel: ctx.automationLevel,
   })
   await addRunEvent(ctx.db, {
@@ -57,6 +68,21 @@ export async function executeAgentGoalRun(
     status: 'info',
     data: { goalId: goal.id, maxIterations: JSON.parse(goal.contract_json).maxIterations },
   })
+  if (resumeContext) {
+    await addRunEvent(ctx.db, {
+      threadId: ctx.thread.id,
+      runId: ctx.runId,
+      type: 'clarification_resume_context',
+      title: '澄清目标已续接',
+      message: '本轮用户消息已作为上一轮待澄清目标的补充信息进入 Goal Run Engine。',
+      status: 'info',
+      data: {
+        goalId: goal.id,
+        resumedGoalId: resumeContext.resumedGoalId,
+        resumedRunId: resumeContext.resumedRunId,
+      },
+    })
+  }
 
   let plannerSource: AgentPlannerSource = 'rules'
   const navigationEvents: AgentNavigationEvent[] = []
@@ -64,7 +90,7 @@ export async function executeAgentGoalRun(
   const planRows: Row<'agent_plan_steps'>[] = []
   const assistantParts: string[] = []
   const observations: AgentToolObservation[] = []
-  let nextMessage = ctx.message
+  let nextMessage = objective
   let pendingAssistantText: string | null = null
   const maxIterations = Math.max(1, Math.min(8, Number(JSON.parse(goal.contract_json).maxIterations ?? 5)))
 
@@ -88,7 +114,7 @@ export async function executeAgentGoalRun(
       data: { provider: ctx.settings.llmProvider, iteration },
     })
 
-    const planned = await planResponse({ ...ctx, message: nextMessage, planningTurn: iteration === 1 ? 'user_objective' : 'evaluator_repair' })
+    const planned = await planResponse({ ...planningCtx, message: nextMessage, planningTurn: iteration === 1 ? 'user_objective' : 'evaluator_repair' })
     if (!(await options.beforeStateWrite())) return null
     plannerSource = planned.plannerSource
     navigationEvents.push(...planned.navigationEvents)
@@ -175,14 +201,14 @@ export async function executeAgentGoalRun(
       break
     }
     if (evaluation.status === 'continue' && evaluation.nextPlannerBrief) {
-      nextMessage = `${evaluation.nextPlannerBrief}\n\n原始目标：${ctx.message}`
+      nextMessage = `${evaluation.nextPlannerBrief}\n\n当前目标：${objective}`
       continue
     }
     break
   }
 
   if (assistantParts.length === 0 && observations.length > 0) {
-    const continuation = await continueModelAfterToolObservations(ctx, observations)
+    const continuation = await continueModelAfterToolObservations(planningCtx, observations)
     if (!(await options.beforeStateWrite())) return null
     if (continuation.status === 'answered') {
       assistantParts.push(continuation.assistantText.trim())
