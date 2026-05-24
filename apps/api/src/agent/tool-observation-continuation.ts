@@ -28,16 +28,65 @@ export type ToolObservationContinuationResult =
   | { status: 'skipped'; reason: 'no_observations' | 'rules_provider' }
   | { status: 'failed'; message: string; planStep: Row<'agent_plan_steps'> }
 
+function parseJsonObject(value: string | null) {
+  if (!value) return null
+  try {
+    const parsed = JSON.parse(value)
+    return parsed && typeof parsed === 'object' ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function conciseResult(value: unknown) {
+  if (!value || typeof value !== 'object') return value ?? null
+  const record = value as Record<string, unknown>
+  const summary: Record<string, unknown> = {}
+  for (const key of [
+    'ok',
+    'id',
+    'revision',
+    'workspaceName',
+    'direction',
+    'amount',
+    'occurredAt',
+    'relatedEntityName',
+    'relatedEntityId',
+    'status',
+    'monthLabel',
+  ]) {
+    if (record[key] !== undefined) summary[key] = record[key]
+  }
+  if (record.version && typeof record.version === 'object') {
+    const version = record.version as Record<string, unknown>
+    summary.version = {
+      id: version.id,
+      versionNo: version.versionNo ?? version.version_no,
+      name: version.name,
+      kind: version.kind,
+    }
+  }
+  if (record.share && typeof record.share === 'object') {
+    summary.share = { ok: true }
+  }
+  return Object.keys(summary).length > 0 ? summary : { ok: true }
+}
+
 export function actionExecutionObservation(input: {
   action: Row<'agent_action_requests'>
   result?: unknown
 }): AgentToolObservation {
   const displayPreview = `已执行：${input.action.title}`
+  const details = parseJsonObject(input.action.details_json)
   return {
     title: input.action.title,
     toolName: input.action.kind,
     toolCallId: `action_${input.action.id}`,
-    toolArguments: {},
+    toolArguments: {
+      actionRequestId: input.action.id,
+      actionKind: input.action.kind,
+      status: input.action.status,
+    },
     displayPreview,
     modelContent: JSON.stringify({
       displayPreview,
@@ -46,8 +95,12 @@ export function actionExecutionObservation(input: {
       title: input.action.title,
       summary: input.action.summary,
       targetLabel: input.action.target_label,
+      riskLevel: input.action.risk_level,
       status: input.action.status,
-      result: input.result ?? null,
+      executedAt: input.action.executed_at,
+      details,
+      result: conciseResult(input.result),
+      instruction: 'This write action has already been executed. Do not say it is pending, not executed, or ask the user to generate/confirm another confirmation card. If details contain old -> new values, summarize that executed change instead of reapplying the original user request to the final state.',
     }),
     status: input.action.status === 'executed' ? 'completed' : input.action.status === 'failed' ? 'failed' : 'cancelled',
   }
