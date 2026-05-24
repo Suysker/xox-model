@@ -742,6 +742,7 @@ export function AgentChatTimeline(props: {
   onConfirm: (id: string) => void
   onCancel: (id: string) => void
   onUpdate: (id: string, payload: AgentActionUpdatePayload) => void
+  className?: string
 }) {
   const [technicalOpen, setTechnicalOpen] = useState(false)
   const displayNodes = useMemo(() => normalizeTranscriptGroupsForDisplay(collapseCompletedWorkBeforeFinalAnswer(props.nodes)), [props.nodes])
@@ -791,15 +792,11 @@ export function AgentChatTimeline(props: {
   }, [visible])
 
   if (visible.length === 0 && technical.length === 0 && !showThinking) {
-    return (
-      <div className="mt-3 rounded-md border border-stone-900/10 bg-white px-3 py-3 text-xs text-stone-500">
-        输入命令，例如：把 3 月成员 A 线下 10 张、线上 2 张入账。
-      </div>
-    )
+    return <div className={['mt-3 min-h-0', props.className ?? ''].join(' ')} data-agent-timeline-empty="true" />
   }
 
   return (
-    <div className="mt-3 grid max-h-72 gap-1.5 overflow-y-auto pr-1">
+    <div className={['mt-3 grid gap-1.5 overflow-y-auto pr-1', props.className ?? 'max-h-72'].join(' ')}>
       <div className="grid gap-1.5">
         {visible.map((node, index) => {
           const turnTiming = turnTimingByNodeId.get(node.id)

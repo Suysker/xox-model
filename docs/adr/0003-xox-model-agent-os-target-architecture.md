@@ -71,8 +71,8 @@ React Agent Surface
 ```mermaid
 flowchart TB
   subgraph Web[React Product Surface]
-    Workbench[85% Business Workbench<br/>manual edit remains available]
-    Console[Agent Console<br/>chat / stream / errors]
+    Workbench[100% Business Workbench<br/>manual edit remains available]
+    Console[Resizable Agent Shell<br/>bottom drawer / side panel]
     Timeline[Action Timeline<br/>multi-step plan and status]
     Cards[Editable Action Cards<br/>preview / edit / confirm / cancel]
     MemoryPanel[Memory Panel<br/>list / delete scoped memory]

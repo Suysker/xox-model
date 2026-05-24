@@ -348,7 +348,7 @@ Costs:
 
 - Adds frontend dependencies.
 - Introduces a sanitized HTML boundary that must remain tightly scoped.
-- Requires CSS work so rendered Markdown stays compact inside the 85% Agent OS shell.
+- Requires CSS work so rendered Markdown stays compact inside the resizable Agent Shell.
 - Requires ongoing security tests when renderer rules change.
 
 ## Relationship To Earlier ADRs

@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { Bot, Database, History, KeyRound, Plus, RefreshCw, Save, SendHorizontal, Trash2, XCircle } from 'lucide-react'
+import { Bot, Database, History, KeyRound, PanelBottom, PanelRight, Plus, RefreshCw, Save, SendHorizontal, Trash2, XCircle } from 'lucide-react'
 import type { AgentActionUpdatePayload, AgentAutomationLevel, AgentMemoryRecord, AgentProviderProbePayload, AgentProviderProbeResult, AgentProviderSettingRecord, AgentProviderSettingUpdatePayload, AgentSendResponse, AgentThreadSummary, AgentTranscriptNode } from '../../lib/api'
+import type { AgentShellLayoutMode, AgentShellSurface } from './agentShellLayout'
 import { AgentChatTimeline } from './AgentChatTimeline'
 
 function flattenTranscriptNodes(nodes: AgentTranscriptNode[]): AgentTranscriptNode[] {
@@ -25,8 +26,11 @@ export function AgentConsole(props: {
   runningRunId: string | null
   eventConnectionMode: 'idle' | 'connecting' | 'sse' | 'polling'
   automationLevel: AgentAutomationLevel
+  layoutMode: AgentShellLayoutMode
+  surface: AgentShellSurface
   busy: boolean
   error: string | null
+  onLayoutModeChange: (mode: AgentShellLayoutMode) => void
   onSend: (message: string) => void
   onCancelRun: () => void
   onConfirm: (id: string) => void
@@ -87,6 +91,11 @@ export function AgentConsole(props: {
     { level: 'medium', label: '中', title: '全力规划；自动执行低/中风险动作' },
     { level: 'high', label: '高', title: '全力规划；自动执行低/中风险，高风险仍按策略确认' },
   ]
+  const isSideSurface = props.surface === 'side'
+  const layoutOptions: Array<{ mode: AgentShellLayoutMode; title: string; icon: typeof PanelBottom }> = [
+    { mode: 'bottomDrawer', title: '底部抽屉', icon: PanelBottom },
+    { mode: 'sidePanel', title: '右侧栏', icon: PanelRight },
+  ]
 
   useEffect(() => {
     if (!providerOpen) return
@@ -141,9 +150,16 @@ export function AgentConsole(props: {
   }
 
   return (
-    <section className="fixed inset-x-3 bottom-3 z-50 rounded-lg border border-stone-900/10 bg-stone-50/95 shadow-[0_18px_60px_rgba(41,37,36,0.24)] backdrop-blur md:inset-x-6">
-      <div className="grid gap-3 p-3">
-        <div className="min-w-0">
+    <section
+      className={[
+        'flex h-full min-h-0 flex-col overflow-hidden bg-stone-50/90 backdrop-blur-md',
+        isSideSurface
+          ? 'border-l border-stone-900/10 shadow-[inset_1px_0_0_rgba(255,255,255,0.72)]'
+          : 'rounded-lg border border-stone-900/10 shadow-[0_18px_60px_rgba(41,37,36,0.24)]',
+      ].join(' ')}
+    >
+      <div className={['flex h-full min-h-0 flex-col', isSideSurface ? 'p-2.5' : 'p-3'].join(' ')}>
+        <div className="min-w-0 shrink-0">
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex min-w-0 flex-1 items-center gap-2">
               <div className="flex h-8 w-8 items-center justify-center rounded-md bg-stone-950 text-white">
@@ -157,6 +173,28 @@ export function AgentConsole(props: {
                     : `规划器：${plannerLabel} / ${connectionLabel}${props.threadId ? ` / 对话 ${props.threadId.slice(0, 8)}` : ''}`}
                 </p>
               </div>
+            </div>
+            <div className="inline-flex h-8 overflow-hidden rounded-md border border-stone-900/10 bg-white" aria-label="Agent 布局">
+              {layoutOptions.map((option) => {
+                const Icon = option.icon
+                return (
+                  <button
+                    key={option.mode}
+                    type="button"
+                    onClick={() => props.onLayoutModeChange(option.mode)}
+                    className={[
+                      'inline-flex w-8 items-center justify-center transition',
+                      props.layoutMode === option.mode
+                        ? 'bg-stone-950 text-white'
+                        : 'text-stone-500 hover:bg-stone-100 hover:text-stone-800',
+                    ].join(' ')}
+                    title={option.title}
+                    aria-label={option.title}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                  </button>
+                )
+              })}
             </div>
             <button
               type="button"
@@ -241,7 +279,7 @@ export function AgentConsole(props: {
                   <RefreshCw className="h-3.5 w-3.5" />
                 </button>
               </div>
-              <div className="mt-2 grid max-h-28 gap-1 overflow-y-auto">
+              <div className={['mt-2 grid gap-1 overflow-y-auto', isSideSurface ? 'max-h-44' : 'max-h-28'].join(' ')}>
                 {props.threadSummaries.length > 0 ? (
                   props.threadSummaries.map((thread) => (
                     <button
@@ -311,7 +349,7 @@ export function AgentConsole(props: {
                   <option value="commitment">commitment</option>
                 </select>
               </div>
-              <div className="mt-2 max-h-24 overflow-y-auto">
+              <div className={['mt-2 overflow-y-auto', isSideSurface ? 'max-h-40' : 'max-h-24'].join(' ')}>
                 {visibleMemories.length > 0 ? (
                   visibleMemories.map((memory) => (
                     <div key={memory.id} className="flex items-start gap-2 border-t border-stone-100 py-1.5 first:border-t-0">
@@ -369,7 +407,7 @@ export function AgentConsole(props: {
                   </button>
                 </div>
               </div>
-              <div className="mt-2 grid gap-2 md:grid-cols-[0.8fr_1.4fr_1fr]">
+              <div className={['mt-2 grid gap-2', isSideSurface ? '' : 'md:grid-cols-[0.8fr_1.4fr_1fr]'].join(' ')}>
                 <label className="grid gap-1">
                   <span className="text-[10px] font-semibold text-stone-500">provider</span>
                   <input
@@ -459,33 +497,43 @@ export function AgentConsole(props: {
             </form>
           ) : null}
 
-          <AgentChatTimeline
-            nodes={props.transcriptNodes}
-            busy={props.busy}
-            actionDiffsById={actionDiffsById}
-            onConfirm={props.onConfirm}
-            onCancel={props.onCancel}
-            onUpdate={props.onUpdate}
-          />
-
-          <form onSubmit={handleSubmit} className="mt-2 flex gap-2">
-            <input
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              className="h-10 min-w-0 flex-1 rounded-md border border-stone-900/10 bg-white px-3 text-sm outline-none transition focus:border-emerald-500"
-              placeholder="让 Agent 操作当前系统"
-            />
-            <button
-              type="submit"
-              disabled={props.busy || !draft.trim()}
-              className="inline-flex h-10 items-center justify-center gap-1 rounded-md bg-stone-950 px-4 text-sm font-semibold text-white transition hover:bg-stone-800 disabled:opacity-50"
-            >
-              <SendHorizontal className="h-4 w-4" />
-              发送
-            </button>
-          </form>
-          {props.error ? <p className="mt-2 text-xs font-medium text-red-600">{props.error}</p> : null}
         </div>
+
+        <AgentChatTimeline
+          nodes={props.transcriptNodes}
+          busy={props.busy}
+          actionDiffsById={actionDiffsById}
+          onConfirm={props.onConfirm}
+          onCancel={props.onCancel}
+          onUpdate={props.onUpdate}
+          className="min-h-0 flex-1"
+        />
+
+        <form
+          onSubmit={handleSubmit}
+          className={[
+            'mt-2 flex shrink-0 gap-2 border-t border-stone-900/10 pt-2',
+            isSideSurface
+              ? 'bg-stone-50/95 pb-1'
+              : 'sticky bottom-0 -mx-3 bg-stone-50/80 px-3 pb-3 backdrop-blur',
+          ].join(' ')}
+        >
+          <input
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            className="h-10 min-w-0 flex-1 rounded-md border border-stone-900/10 bg-white px-3 text-sm outline-none transition focus:border-emerald-500"
+            placeholder="输入指令"
+          />
+          <button
+            type="submit"
+            disabled={props.busy || !draft.trim()}
+            className="inline-flex h-10 items-center justify-center gap-1 rounded-md bg-stone-950 px-4 text-sm font-semibold text-white transition hover:bg-stone-800 disabled:opacity-50"
+          >
+            <SendHorizontal className="h-4 w-4" />
+            发送
+          </button>
+        </form>
+        {props.error ? <p className="mt-2 text-xs font-medium text-red-600">{props.error}</p> : null}
       </div>
     </section>
   )

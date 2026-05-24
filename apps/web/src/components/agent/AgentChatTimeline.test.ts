@@ -165,6 +165,22 @@ describe('AgentChatTimeline helpers', () => {
     expect(html).toContain('根据测算结果')
   })
 
+  it('renders an empty transcript without example command filler', () => {
+    const html = renderToStaticMarkup(createElement(AgentChatTimeline, {
+      nodes: [],
+      busy: false,
+      actionDiffsById: new Map(),
+      onCancel: () => undefined,
+      onConfirm: () => undefined,
+      onUpdate: () => undefined,
+      className: 'flex-1',
+    }))
+
+    expect(html).toContain('data-agent-timeline-empty="true"')
+    expect(html).not.toContain('输入命令，例如')
+    expect(html).not.toContain('成员 A 线下 10 张')
+  })
+
   it('starts a visible timer immediately after user submission', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-05-22T00:00:05.000Z'))
