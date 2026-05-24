@@ -27,6 +27,11 @@ function payloadConfig(action: Row<'agent_action_requests'>) {
   return payload && typeof payload === 'object' ? payload.config : null
 }
 
+function payloadWorkspaceName(action: Row<'agent_action_requests'>) {
+  const payload = parseJson<any>(action.payload_json, null)
+  return typeof payload?.workspaceName === 'string' ? payload.workspaceName : null
+}
+
 function positiveNumber(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value) && value > 0
 }
@@ -87,10 +92,17 @@ function evaluateGoalFacts(input: {
   const satisfied: string[] = []
   const requiredCapabilities = new Set(input.facts.requiredCapabilities ?? [])
   const forbiddenActions = new Set(input.facts.forbiddenActions ?? [])
-  const operatingModelAction = input.actions.find(isOperatingModelAction)
+  const operatingModelAction = [...input.actions].reverse().find(isOperatingModelAction)
+  const plannedConfigs = input.actions
+    .filter((action) => action.kind === 'workspace.update_draft')
+    .map(payloadConfig)
+    .filter((config): config is Record<string, any> => Boolean(config && typeof config === 'object'))
+  const plannedWorkspaceNames = input.actions
+    .map(payloadWorkspaceName)
+    .filter((name): name is string => Boolean(name))
 
   if (input.facts.workspaceName) {
-    if (input.observation.draft.workspaceName === input.facts.workspaceName) {
+    if (input.observation.draft.workspaceName === input.facts.workspaceName || plannedWorkspaceNames.includes(input.facts.workspaceName)) {
       satisfied.push('goal.workspace_name')
     } else {
       findings.push(finding({
@@ -104,7 +116,8 @@ function evaluateGoalFacts(input: {
   }
 
   if (input.facts.expectedMemberCount) {
-    if (input.observation.draft.teamMemberCount === input.facts.expectedMemberCount) {
+    const plannedMatch = plannedConfigs.some((config) => Array.isArray(config.teamMembers) && config.teamMembers.length === input.facts.expectedMemberCount)
+    if (input.observation.draft.teamMemberCount === input.facts.expectedMemberCount || plannedMatch) {
       satisfied.push('goal.expected_member_count')
     } else {
       findings.push(finding({
@@ -118,7 +131,8 @@ function evaluateGoalFacts(input: {
   }
 
   if (input.facts.expectedShareholderCount) {
-    if (input.observation.draft.shareholderCount === input.facts.expectedShareholderCount) {
+    const plannedMatch = plannedConfigs.some((config) => Array.isArray(config.shareholders) && config.shareholders.length === input.facts.expectedShareholderCount)
+    if (input.observation.draft.shareholderCount === input.facts.expectedShareholderCount || plannedMatch) {
       satisfied.push('goal.expected_shareholder_count')
     } else {
       findings.push(finding({
@@ -132,7 +146,8 @@ function evaluateGoalFacts(input: {
   }
 
   if (input.facts.expectedHorizonMonths) {
-    if (input.observation.draft.monthCount === input.facts.expectedHorizonMonths) {
+    const plannedMatch = plannedConfigs.some((config) => Array.isArray(config.months) && config.months.length === input.facts.expectedHorizonMonths)
+    if (input.observation.draft.monthCount === input.facts.expectedHorizonMonths || plannedMatch) {
       satisfied.push('goal.expected_horizon_months')
     } else {
       findings.push(finding({
@@ -146,7 +161,8 @@ function evaluateGoalFacts(input: {
   }
 
   if (input.facts.expectedStartMonth) {
-    if (input.observation.draft.startMonth === input.facts.expectedStartMonth) {
+    const plannedMatch = plannedConfigs.some((config) => config?.planning?.startMonth === input.facts.expectedStartMonth)
+    if (input.observation.draft.startMonth === input.facts.expectedStartMonth || plannedMatch) {
       satisfied.push('goal.expected_start_month')
     } else {
       findings.push(finding({
@@ -160,25 +176,58 @@ function evaluateGoalFacts(input: {
   }
 
   if (requiredCapabilities.has('operating_model')) {
-    if (operatingModelAction && input.observation.draft.totalRevenue > 0 && input.observation.draft.totalCost > 0) {
+    const operatingConfig = operatingModelAction ? payloadConfig(operatingModelAction) : null
+    if (!operatingModelAction) {
+      findings.push(finding({
+        id: 'goal.required_operating_model_action_planned',
+        criterionId: 'graph.required_capability_planned',
+        severity: 'blocking',
+        message: '目标要求生成经营模型，但当前运行还没有生成经营模型草稿确认卡。',
+      }))
+    } else if (operatingConfig && hasPositiveOperatingInput(operatingConfig)) {
       satisfied.push('goal.required_operating_model')
     } else {
       findings.push(finding({
         id: 'goal.required_operating_model',
-        criterionId: 'domain.goal_facts_match_outcome',
+        criterionId: 'graph.required_capability_planned',
         severity: 'blocking',
-        message: '目标要求生成经营模型，但当前运行还没有可验证的经营模型草稿写入和有效预测。',
+        message: '目标要求生成经营模型，但当前确认卡缺少可验证的非零收入驱动或成本驱动输入。',
         evidence: {
           hasOperatingModelAction: Boolean(operatingModelAction),
-          totalRevenue: input.observation.draft.totalRevenue,
-          totalCost: input.observation.draft.totalCost,
+          hasOperatingConfig: Boolean(operatingConfig),
         },
       }))
     }
   }
 
+  if (requiredCapabilities.has('ledger')) {
+    if (input.actions.some((action) => action.kind.startsWith('ledger.'))) {
+      satisfied.push('goal.required_ledger_action_planned')
+    } else {
+      findings.push(finding({
+        id: 'goal.required_ledger_action_planned',
+        criterionId: 'graph.required_capability_planned',
+        severity: 'blocking',
+        message: '目标包含记账动作，但当前运行还没有生成账本写入确认卡。',
+      }))
+    }
+  }
+
+  if (requiredCapabilities.has('draft')) {
+    if (input.actions.some((action) => action.kind === 'workspace.update_draft' || action.kind === 'workspace.rename')) {
+      satisfied.push('goal.required_draft_action_planned')
+    } else {
+      findings.push(finding({
+        id: 'goal.required_draft_action_planned',
+        criterionId: 'graph.required_capability_planned',
+        severity: 'blocking',
+        message: '目标包含模型草稿修改动作，但当前运行还没有生成模型修改确认卡。',
+      }))
+    }
+  }
+
   if (input.facts.requiresForecastSummary) {
-    if (input.observation.draft.totalRevenue > 0 || input.observation.draft.totalCost > 0) {
+    if (input.observation.draft.totalRevenue > 0 || input.observation.draft.totalCost > 0 || plannedConfigs.some(hasPositiveOperatingInput)) {
       satisfied.push('goal.forecast_summary_computable')
     } else {
       findings.push(finding({
@@ -326,6 +375,7 @@ export async function evaluateAgentGoal(input: {
   const failedActions = actions.filter((action) => action.status === 'failed')
   const failedSteps = planSteps.filter((step) => step.status === 'failed')
   const emptyModelReadSteps = planSteps.filter((step) => step.title === '模型没有返回内容')
+  const clarificationSteps = planSteps.filter((step) => step.title === '需要补充信息')
 
   for (const action of actions) {
     if (action.kind.startsWith('account.')) {
@@ -400,6 +450,7 @@ export async function evaluateAgentGoal(input: {
   factResult.satisfied.forEach((id) => satisfied.add(id))
   unsatisfied.push(...factResult.findings)
   policyFindings.push(...factResult.policyFindings)
+  const hasMissingPlannedCapability = unsatisfied.some((item) => item.criterionId === 'graph.required_capability_planned')
 
   let status: AgentEvaluationResult['status'] = 'pass'
   let nextPlannerBrief: string | null = null
@@ -414,6 +465,14 @@ export async function evaluateAgentGoal(input: {
     status = 'failed'
     blocker = '运行图存在失败动作。'
     confidence = 0.95
+  } else if (clarificationSteps.length > 0) {
+    status = 'needs_clarification'
+    nextPlannerBrief = '等待用户补充当前澄清问题，不要继续猜测或生成依赖缺失信息的写入动作。'
+    confidence = 0.96
+  } else if (hasMissingPlannedCapability) {
+    status = 'continue'
+    nextPlannerBrief = `继续完成目标，只生成缺失的独立确认卡或只读查询，不要重复已生成的确认卡：${unsatisfied.filter((item) => item.criterionId === 'graph.required_capability_planned').map((item) => item.message).join('；')}`
+    confidence = 0.9
   } else if (pendingActions.length > 0) {
     status = 'needs_confirmation'
     nextPlannerBrief = '等待用户处理当前确认卡。不要继续规划依赖这些写入结果的后续动作。'
@@ -441,6 +500,8 @@ export async function evaluateAgentGoal(input: {
       ? 'completed'
       : status === 'needs_confirmation'
         ? 'waiting_for_confirmation'
+        : status === 'needs_clarification'
+          ? 'needs_clarification'
         : status === 'continue'
           ? 'repairing'
           : status === 'blocked'

@@ -78,6 +78,7 @@ function forbiddenActionsFromObjective(text: string): AgentGoalFacts['forbiddenA
 
 export function extractAgentGoalFacts(objective: string): AgentGoalFacts {
   const requiredCapabilities = new Set<NonNullable<AgentGoalFacts['requiredCapabilities']>[number]>()
+  const isMemoryObjective = objective.includes('记住') || objective.includes('以后默认') || objective.includes('以后都')
   const workspaceName = workspaceNameFromObjective(objective)
   if (workspaceName) requiredCapabilities.add('workspace_rename')
 
@@ -95,8 +96,12 @@ export function extractAgentGoalFacts(objective: string): AgentGoalFacts {
   if (expectedMemberCount || expectedHorizonMonths || objective.includes('经营测算') || objective.includes('经营模型')) {
     requiredCapabilities.add('operating_model')
   }
-  if (objective.includes('入账') || objective.includes('记账') || objective.includes('账本')) {
+  if (!isMemoryObjective && (objective.includes('入账') || objective.includes('记账') || objective.includes('账本') || objective.includes('记一笔'))) {
     requiredCapabilities.add('ledger')
+  }
+  if (isMemoryObjective) requiredCapabilities.add('memory')
+  if (objective.includes('股东') && (objective.includes('注资') || objective.includes('投资') || objective.includes('投资额'))) {
+    requiredCapabilities.add('draft')
   }
   if (objective.includes('版本') || objective.includes('快照') || objective.includes('发布')) {
     requiredCapabilities.add('version')

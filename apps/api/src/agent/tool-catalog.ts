@@ -317,11 +317,13 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
       name: 'ledger_create_member_income',
       description: '为某个月的某个成员规划一笔线下/线上销售收入入账确认卡。',
       parameters: objectSchema({
-        monthLabel,
+        monthLabel: { ...monthLabel, description: '目标账期，例如 5月；如果用户说今天/今日，可根据上下文 currentDate 推导。' },
         memberName: { type: 'string', description: '成员名称或成员 id；当用户说默认成员/默认记账成员时，从 tenantScopedMemory 中解析具体成员名后填写。' },
         offlineUnits: { type: 'number', description: '线下销售张数。' },
         onlineUnits: { type: 'number', description: '线上销售张数。' },
-      }, ['monthLabel', 'memberName']),
+        occurredAt: { type: 'string', description: '业务发生时间 ISO 字符串；用户说今天/今日时可填写上下文 currentDate。' },
+        date: { type: 'string', description: '业务发生日期别名，YYYY-MM-DD 或 today/今天。' },
+      }, ['memberName']),
     },
   },
   {
@@ -631,7 +633,7 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
     type: 'function',
     function: {
       name: 'workspace_patch_config',
-      description: '规划通用模型草稿字段修改，用于覆盖页面上可手动编辑但没有专用工具的字段。',
+      description: '规划通用模型草稿字段修改，用于覆盖页面上可手动编辑但没有专用工具的字段。股东“注资/追加投资 X”应传当前投资额加 X 后的新 investmentAmount；只有用户明确说“改成/设为 X”时才传 X 本身。',
       parameters: objectSchema({
         patches: {
           type: 'array',

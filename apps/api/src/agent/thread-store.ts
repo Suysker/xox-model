@@ -63,6 +63,9 @@ export function serializePlanStep(row: Row<'agent_plan_steps'>): AgentPlanStep {
     description: row.description,
     status: row.status as AgentPlanStepStatus,
     navigation: row.navigation_json ? parseJson<AgentNavigationEvent | null>(row.navigation_json, null) : null,
+    toolName: row.tool_name,
+    toolCallId: row.tool_call_id,
+    toolArguments: row.tool_arguments_json ? parseJson<Record<string, unknown>>(row.tool_arguments_json, {}) : null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }

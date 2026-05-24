@@ -315,7 +315,7 @@ Visual style:
 After a run reaches any terminal or interrupt state, the user should receive a model-authored assistant message when the provider is available:
 
 - completed after read-only tools
-- completed after auto-executed tools
+- waiting after editable confirmation-card previews
 - waiting after confirmation cards are prepared
 - failed with actionable reason after unrecoverable tool/provider errors
 

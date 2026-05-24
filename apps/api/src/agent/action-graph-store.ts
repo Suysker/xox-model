@@ -6,15 +6,13 @@ import type { Settings } from '../core/settings.js'
 import { newId } from '../core/security.js'
 import { utcNow } from '../core/time.js'
 import type { CurrentUser } from '../modules/auth.js'
-import { addAgentActionRequest, executeAgentActionRequest } from './approval-executor.js'
+import { addAgentActionRequest } from './approval-executor.js'
 import { isActionDraft, type PlannedItem } from './action-draft-builder.js'
 import { addRunEvent } from './run-events.js'
 import { assertAgentRunLease } from './run-lease.js'
 import { agentThreadEvents } from './thread-events.js'
-import { actionExecutionObservation, type AgentToolObservation } from './tool-observation-continuation.js'
-import { canAutoExecuteRisk } from './tool-policy.js'
+import { actionPreviewObservation, type AgentToolObservation } from './tool-observation-continuation.js'
 import type { AgentAutomationLevel } from './tool-policy.js'
-import { redactSecretLikeContent } from './memory.js'
 
 type ActionGraphContext = {
   db: Kysely<Database>
@@ -62,6 +60,9 @@ type AddAgentPlanStepInput = {
   status: AgentPlanStepStatus
   actionRequestId?: string | null
   navigation?: AgentNavigationEvent | null
+  toolName?: string | null
+  toolCallId?: string | null
+  toolArguments?: Record<string, unknown> | null
 }
 
 async function addAgentPlanStep(ctx: ActionGraphContext, input: AddAgentPlanStepInput) {
@@ -79,69 +80,14 @@ async function addAgentPlanStep(ctx: ActionGraphContext, input: AddAgentPlanStep
       description: input.description,
       status: input.status,
       navigation_json: input.navigation ? jsonString(input.navigation) : null,
+      tool_name: input.toolName ?? null,
+      tool_call_id: input.toolCallId ?? null,
+      tool_arguments_json: input.toolArguments ? jsonString(input.toolArguments) : null,
       created_at: now,
       updated_at: now,
     })
     .execute()
   return ctx.db.selectFrom('agent_plan_steps').selectAll().where('id', '=', id).executeTakeFirstOrThrow()
-}
-
-function safeAutoExecutionError(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error)
-  return redactSecretLikeContent(message).slice(0, 500) || '自动执行失败'
-}
-
-async function autoExecuteActionIfAllowed(
-  ctx: ActionGraphContext,
-  action: Row<'agent_action_requests'>,
-): Promise<Row<'agent_action_requests'>> {
-  if (!canAutoExecuteRisk(action.risk_level, ctx.automationLevel)) return action
-
-  await addRunEvent(ctx.db, {
-    threadId: ctx.threadId,
-    runId: ctx.runId,
-    type: 'action_auto_execution_started',
-    title: '自动执行确认卡',
-    message: `自动化策略 ${ctx.automationLevel} 允许执行 ${action.risk_level} 风险动作：${action.title}`,
-    status: 'running',
-    data: { actionRequestId: action.id, actionKind: action.kind, riskLevel: action.risk_level, automationLevel: ctx.automationLevel },
-  })
-
-  try {
-    await executeAgentActionRequest(ctx.db, ctx.settings, ctx.user, action)
-    await addRunEvent(ctx.db, {
-      threadId: ctx.threadId,
-      runId: ctx.runId,
-      type: 'action_auto_executed',
-      title: '确认卡已自动执行',
-      message: `已自动执行：${action.title}`,
-      status: 'completed',
-      data: { actionRequestId: action.id, actionKind: action.kind, riskLevel: action.risk_level, automationLevel: ctx.automationLevel },
-    })
-  } catch (error) {
-    const message = safeAutoExecutionError(error)
-    await ctx.db
-      .updateTable('agent_action_requests')
-      .set({ status: 'failed', error_message: message })
-      .where('id', '=', action.id)
-      .execute()
-    await ctx.db
-      .updateTable('agent_plan_steps')
-      .set({ status: 'failed', updated_at: utcNow() })
-      .where('action_request_id', '=', action.id)
-      .execute()
-    await addRunEvent(ctx.db, {
-      threadId: ctx.threadId,
-      runId: ctx.runId,
-      type: 'action_auto_execution_failed',
-      title: '确认卡自动执行失败',
-      message: `${action.title}：${message}`,
-      status: 'failed',
-      data: { actionRequestId: action.id, actionKind: action.kind, riskLevel: action.risk_level, automationLevel: ctx.automationLevel },
-    })
-  }
-
-  return ctx.db.selectFrom('agent_action_requests').selectAll().where('id', '=', action.id).executeTakeFirstOrThrow()
 }
 
 export async function storePlannedActionGraph(
@@ -166,7 +112,7 @@ export async function storePlannedActionGraph(
     await assertAgentRunLease(ctx.db, ctx.settings, ctx.runId)
     if (isActionDraft(item)) {
       const action = await addAgentActionRequest(ctx, item)
-      let step = await addAgentPlanStep(ctx, {
+      const step = await addAgentPlanStep(ctx, {
         sequence,
         title: item.title,
         description: item.summary,
@@ -174,16 +120,10 @@ export async function storePlannedActionGraph(
         actionRequestId: action.id,
         navigation: item.navigation,
       })
-      const updatedAction = await autoExecuteActionIfAllowed(ctx, action)
-      if (updatedAction.status !== action.status) {
-        step = await ctx.db.selectFrom('agent_plan_steps').selectAll().where('id', '=', step.id).executeTakeFirstOrThrow()
-      }
-      actionRows.push(updatedAction)
+      actionRows.push(action)
       planRows.push(step)
       navigationEvents.push(item.navigation)
-      if (updatedAction.status === 'executed' || updatedAction.status === 'failed') {
-        observations.push(actionExecutionObservation({ action: updatedAction }))
-      }
+      observations.push(actionPreviewObservation({ action }))
       continue
     }
 
@@ -199,6 +139,9 @@ export async function storePlannedActionGraph(
       description: item.message,
       status: item.status ?? 'info',
       navigation: item.navigation ?? null,
+      toolName: item.toolName ?? null,
+      toolCallId: item.toolCallId ?? null,
+      toolArguments: item.toolArguments ?? null,
     })
     planRows.push(step)
     const observation = observationFromRead(item, sequence)
@@ -216,7 +159,7 @@ export async function storePlannedActionGraph(
     title: failedCount > 0 ? '模型规划需要处理' : actionCount > 0 ? '模型工具调用已解析' : '模型回复已生成',
     message:
       input.items.length > 0
-        ? `模型规划生成 ${input.items.length} 个步骤，其中 ${pendingActionCount} 个写入动作需要确认，${executedActionCount} 个已按自动化策略执行。`
+        ? `模型规划生成 ${input.items.length} 个步骤，其中 ${pendingActionCount} 个写入动作需要确认。`
         : '模型没有生成可执行步骤。',
     status: failedCount > 0 ? 'failed' : pendingActionCount > 0 ? 'blocked' : executedActionCount > 0 ? 'completed' : 'info',
     data: { plannerSource: input.plannerSource, stepCount: input.items.length, actionCount, pendingActionCount, executedActionCount, failedCount, automationLevel: ctx.automationLevel },

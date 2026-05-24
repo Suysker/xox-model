@@ -1,6 +1,7 @@
 import { projectModel, type ModelConfig } from '@xox/domain'
 import type { AgentNavigationEvent } from '@xox/contracts'
 import { listEntries, listSubjectsForPeriod } from '../modules/ledger.js'
+import { utcNow } from '../core/time.js'
 import type { AgentActionDraft } from './approval-executor.js'
 import type { PlannedItem, ReadDraft, RuntimePlannerStep } from './action-draft-builder.js'
 import {
@@ -15,11 +16,14 @@ import type { PlannerContext } from './planning-context.js'
 
 export async function planLedgerCreateFromFields(
   ctx: PlannerContext,
-  input: { monthLabel: string; memberName: string; offlineUnits?: number; onlineUnits?: number },
+  input: { monthLabel?: string | null; memberName: string; offlineUnits?: number; onlineUnits?: number; occurredAt?: string | null },
 ) {
-  const period = await periodForMonth(ctx, input.monthLabel)
-  if (!period) return null
   const { config } = await currentDraftConfig(ctx)
+  const explicitOccurredAt = isoFromDateLike(input.occurredAt)
+  const monthLabel = input.monthLabel?.trim() || (explicitOccurredAt ? `${new Date(explicitOccurredAt).getUTCMonth() + 1}月` : null)
+  if (!monthLabel) return null
+  const period = await periodForMonth(ctx, monthLabel)
+  if (!period) return null
   const member = config.teamMembers.find((item) => item.name === input.memberName || item.id === input.memberName)
   if (!member) return null
 
@@ -29,7 +33,7 @@ export async function planLedgerCreateFromFields(
   const onlineAmount = Math.round(onlineUnits * config.operating.onlineUnitPrice * 100) / 100
   const amount = Math.round((offlineAmount + onlineAmount) * 100) / 100
   if (amount <= 0) return null
-  const occurredAt = periodOccurrenceDate(config, period)
+  const occurredAt = explicitOccurredAt ?? periodOccurrenceDate(config, period)
 
   const subjects = await listSubjectsForPeriod(ctx.db, ctx.workspace, period.id)
   const subjectMap = new Map(subjects.map((subject) => [subject.subjectKey, subject]))
@@ -45,7 +49,7 @@ export async function planLedgerCreateFromFields(
   return {
     kind: 'ledger.create_entry',
     title: '确认成员收入入账',
-    summary: `${input.monthLabel}为${member.name}记录收入 ${amount} 元，系统会自动计提成员提成。`,
+    summary: `${period.monthLabel}为${member.name}记录收入 ${amount} 元，系统会自动计提成员提成。`,
     targetLabel: `${period.monthLabel} / ${member.name}`,
     riskLevel: 'medium',
     details: [
@@ -97,6 +101,7 @@ function moneyAmount(value: unknown) {
 function isoFromDateLike(value: unknown) {
   const raw = asNonEmptyString(value)
   if (!raw) return null
+  if (raw === 'today' || raw === '今天' || raw === '今日' || raw === '当天') return new Date(`${utcNow().slice(0, 10)}T12:00:00.000Z`).toISOString()
   if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return new Date(`${raw}T12:00:00.000Z`).toISOString()
   const date = new Date(raw)
   return Number.isNaN(date.getTime()) ? null : date.toISOString()

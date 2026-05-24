@@ -76,20 +76,100 @@ export function shouldShowTimelineThinking(nodes: AgentTranscriptNode[], busy: b
   if (visible.length === 0) return true
   const latestUserIndex = visible.map((node) => node.kind).lastIndexOf('user_message')
   if (latestUserIndex === -1) return false
-  return !visible.slice(latestUserIndex + 1).some((node) => (
-    node.kind === 'assistant_stream' ||
-    node.kind === 'assistant_message' ||
-    node.kind === 'work_group' ||
+  const afterLatestUser = visible.slice(latestUserIndex + 1)
+  if (afterLatestUser.some((node) => node.kind === 'assistant_message')) return false
+  if (afterLatestUser.some((node) => node.status === 'waiting' || node.status === 'failed' || node.status === 'cancelled')) return false
+  return true
+}
+
+export function timelineThinkingLabel(nodes: AgentTranscriptNode[]) {
+  const visible = flattenNodes(nodes).filter((node) => node.visibility === 'user')
+  const latestUserIndex = visible.map((node) => node.kind).lastIndexOf('user_message')
+  const afterLatestUser = latestUserIndex >= 0 ? visible.slice(latestUserIndex + 1) : visible
+  if (afterLatestUser.some((node) => node.kind === 'tool_call' || node.kind === 'tool_result' || node.kind === 'navigation')) {
+    return '正在生成回复'
+  }
+  return '正在处理'
+}
+
+function hasBlockingChild(node: AgentTranscriptNode): boolean {
+  return node.status === 'waiting' ||
+    node.status === 'failed' ||
+    node.status === 'cancelled' ||
+    Boolean(node.actionRequest?.status === 'pending') ||
+    Boolean(node.children?.some(hasBlockingChild))
+}
+
+function collapsibleAfterFinalAnswer(node: AgentTranscriptNode) {
+  if (hasBlockingChild(node)) return false
+  return node.kind === 'work_group' ||
     node.kind === 'tool_group' ||
     node.kind === 'tool_call' ||
     node.kind === 'tool_result' ||
     node.kind === 'navigation' ||
-    node.kind === 'confirmation' ||
-    node.kind === 'action_update' ||
-    node.kind === 'summary' ||
     node.kind === 'evaluation' ||
-    node.status === 'failed'
-  ))
+    node.kind === 'summary'
+}
+
+function collapseNodeAfterFinalAnswer(node: AgentTranscriptNode, finalizedRunIds: Set<string>): AgentTranscriptNode {
+  const shouldCollapse = Boolean(node.runId && finalizedRunIds.has(node.runId) && collapsibleAfterFinalAnswer(node))
+  return {
+    ...node,
+    ...(shouldCollapse ? { defaultOpen: false } : {}),
+    ...(shouldCollapse && node.disclosure ? { disclosure: { ...node.disclosure, defaultOpen: false } } : {}),
+    ...(node.children?.length
+      ? { children: node.children.map((child) => collapseNodeAfterFinalAnswer(child, finalizedRunIds)) }
+      : {}),
+    ...(node.sections?.length
+      ? { sections: node.sections.map((section) => ({ ...section, defaultOpen: shouldCollapse ? false : section.defaultOpen })) }
+      : {}),
+  }
+}
+
+export function collapseCompletedWorkBeforeFinalAnswer(nodes: AgentTranscriptNode[]) {
+  const finalizedRunIds = new Set(
+    flattenNodes(nodes)
+      .filter((node) => node.visibility === 'user' && node.kind === 'assistant_message' && node.runId)
+      .map((node) => node.runId as string),
+  )
+  if (finalizedRunIds.size === 0) return nodes
+  return nodes.map((node) => collapseNodeAfterFinalAnswer(node, finalizedRunIds))
+}
+
+function isToolGroupEntry(node: AgentTranscriptNode) {
+  return node.kind === 'tool_call' || node.kind === 'tool_result'
+}
+
+function toolGroupTitleFor(children: AgentTranscriptNode[]) {
+  const count = children.filter(isToolGroupEntry).length
+  return count > 0 ? `调用 ${count} 个工具` : '调用工具'
+}
+
+function liftMixedToolGroupChild(child: AgentTranscriptNode): AgentTranscriptNode[] {
+  const normalized = normalizeTranscriptGroupsForDisplayNode(child)
+  if (normalized.kind !== 'tool_group' || !normalized.children?.length) return [normalized]
+
+  const toolChildren = normalized.children.filter(isToolGroupEntry)
+  const nonToolChildren = normalized.children.filter((candidate) => !isToolGroupEntry(candidate))
+  if (nonToolChildren.length === 0) return [normalized]
+  return [
+    ...(toolChildren.length > 0
+      ? [{ ...normalized, title: toolGroupTitleFor(toolChildren), children: toolChildren }]
+      : []),
+    ...nonToolChildren,
+  ]
+}
+
+function normalizeTranscriptGroupsForDisplayNode(node: AgentTranscriptNode): AgentTranscriptNode {
+  if (!node.children?.length) return node
+  return {
+    ...node,
+    children: node.children.flatMap(liftMixedToolGroupChild),
+  }
+}
+
+export function normalizeTranscriptGroupsForDisplay(nodes: AgentTranscriptNode[]) {
+  return nodes.map(normalizeTranscriptGroupsForDisplayNode)
 }
 
 function statusClass(status: AgentTranscriptNode['status']) {
@@ -202,12 +282,13 @@ function canExpand(node: AgentTranscriptNode) {
   const hasSections = isToolNode(node)
     ? hasToolBody(node) || node.sections?.some(shouldRenderStandaloneSection)
     : node.sections?.some(shouldRenderSection)
+  const hasNavigationDetail = node.kind !== 'navigation' && Boolean(node.navigation)
   return Boolean(
     node.children?.some(shouldRenderTranscriptNode) ||
     hasSections ||
     node.details?.length ||
     node.payload ||
-    node.navigation,
+    hasNavigationDetail,
   )
 }
 
@@ -258,26 +339,44 @@ export function formatAgentElapsed(seconds: number) {
   return minutes > 0 ? `${minutes}分 ${remainder}秒` : `${remainder}秒`
 }
 
+export function formatWorkedForElapsed(seconds: number) {
+  const safeSeconds = Math.max(0, Math.floor(seconds))
+  const minutes = Math.floor(safeSeconds / 60)
+  const remainder = safeSeconds % 60
+  return minutes > 0 ? `${minutes}m ${remainder}s` : `${remainder}s`
+}
+
 function elapsedSince(startedAt: string | null | undefined, nowMs: number) {
   const startedMs = startedAt ? Date.parse(startedAt) : Number.NaN
   if (!Number.isFinite(startedMs)) return 0
   return Math.max(0, Math.floor((nowMs - startedMs) / 1000))
 }
 
-function displayNodeTitle(node: AgentTranscriptNode, turnStartedAt: string | null, nowMs: number) {
+function elapsedBetween(startedAt: string | null | undefined, endedAt: string | null | undefined) {
+  const startedMs = startedAt ? Date.parse(startedAt) : Number.NaN
+  const endedMs = endedAt ? Date.parse(endedAt) : Number.NaN
+  if (!Number.isFinite(startedMs) || !Number.isFinite(endedMs)) return null
+  return Math.max(0, Math.floor((endedMs - startedMs) / 1000))
+}
+
+function displayNodeTitle(node: AgentTranscriptNode, nowMs: number) {
   if (node.kind === 'work_group') {
     const match = node.title.match(workGroupTitlePattern)
     const tools = match?.groups?.tools ? Number(match.groups.tools) : 0
     const pending = match?.groups?.pending ? Number(match.groups.pending) : 0
     const parsedElapsed = parseElapsedSeconds(match?.groups?.elapsed)
-    const runningElapsed = elapsedSince(turnStartedAt ?? node.createdAt, nowMs)
+    const runningElapsed = elapsedSince(node.createdAt, nowMs)
     const isRunning = node.status === 'running' || node.status === 'pending'
     const elapsed = isRunning ? runningElapsed : parsedElapsed ?? runningElapsed
-    const elapsedLabel = isRunning ? `正在处理 ${formatAgentElapsed(elapsed)}` : `用时 ${formatAgentElapsed(elapsed)}`
+    const elapsedLabel = isRunning
+      ? `正在处理 ${formatAgentElapsed(elapsed)}`
+      : elapsed > 0
+        ? `用时 ${formatAgentElapsed(elapsed)}`
+        : ''
     if (node.status === 'failed') return '执行遇到问题'
-    if (pending > 0) return `${elapsedLabel} · ${pending} 项待确认`
-    if (tools > 0) return `${elapsedLabel} · 已完成 ${tools} 个工具`
-    return isRunning ? elapsedLabel : `${elapsedLabel} · 执行完成`
+    if (pending > 0) return elapsedLabel ? `${elapsedLabel} · ${pending} 项待确认` : `${pending} 项待确认`
+    if (tools > 0) return elapsedLabel ? `${elapsedLabel} · 已完成 ${tools} 个工具` : `已完成 ${tools} 个工具`
+    return isRunning ? elapsedLabel : elapsedLabel ? `${elapsedLabel} · 执行完成` : '执行完成'
   }
   if ((node.kind === 'tool_call' || node.kind === 'tool_result') && node.tool?.name) {
     const toolName = node.tool.name
@@ -348,7 +447,7 @@ function TimelineMessage(props: { node: AgentTranscriptNode }) {
   )
 }
 
-function ThinkingRow(props: { startedAt: string | null; nowMs: number }) {
+function ThinkingRow(props: { startedAt: string | null; nowMs: number; label: string }) {
   const elapsed = elapsedSince(props.startedAt, props.nowMs)
   return (
     <div className="flex items-center gap-2 px-1 py-1 text-xs font-medium text-stone-500">
@@ -356,7 +455,20 @@ function ThinkingRow(props: { startedAt: string | null; nowMs: number }) {
         <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-stone-300 opacity-75" />
         <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-stone-500" />
       </span>
-      <span>正在处理 {formatAgentElapsed(elapsed)}</span>
+      <span>{props.label} {formatAgentElapsed(elapsed)}</span>
+    </div>
+  )
+}
+
+function TurnDurationHeader(props: { startedAt: string | null; endedAt: string | null; active: boolean; nowMs: number }) {
+  const elapsed = props.endedAt
+    ? elapsedBetween(props.startedAt, props.endedAt) ?? 0
+    : props.active
+      ? elapsedSince(props.startedAt, props.nowMs)
+      : 0
+  return (
+    <div className="px-1 pb-0.5 text-[11px] font-medium leading-4 text-stone-500" data-transcript-turn-duration="true">
+      Worked for {formatWorkedForElapsed(elapsed)}
     </div>
   )
 }
@@ -495,13 +607,15 @@ function ToolBody(props: { node: AgentTranscriptNode }) {
 function NodeRow(props: {
   node: AgentTranscriptNode
   turnStartedAt: string | null
+  turnEndedAt: string | null
+  turnActive: boolean
   nowMs: number
   expanded: boolean
   onToggle: () => void
 }) {
   const expandable = canExpand(props.node)
   const rowSummary = compactRowSummary(props.node)
-  const title = displayNodeTitle(props.node, props.turnStartedAt, props.nowMs)
+  const title = displayNodeTitle(props.node, props.nowMs)
   return (
     <div className="grid min-h-7 grid-cols-[18px_20px_minmax(0,1fr)_auto] items-center gap-1.5">
       {expandable ? (
@@ -558,6 +672,8 @@ function TranscriptNodeView(props: {
   node: AgentTranscriptNode
   depth?: number
   turnStartedAt: string | null
+  turnEndedAt: string | null
+  turnActive: boolean
   nowMs: number
   expanded: ReturnType<typeof useAgentTranscriptExpansion>
   busy: boolean
@@ -575,6 +691,8 @@ function TranscriptNodeView(props: {
       <NodeRow
         node={props.node}
         turnStartedAt={props.turnStartedAt}
+        turnEndedAt={props.turnEndedAt}
+        turnActive={props.turnActive}
         nowMs={props.nowMs}
         expanded={nodeOpen}
         onToggle={() => props.expanded.toggleNode(props.node)}
@@ -600,6 +718,8 @@ function TranscriptNodeView(props: {
               node={child}
               depth={(props.depth ?? 0) + 1}
               turnStartedAt={props.turnStartedAt}
+              turnEndedAt={props.turnEndedAt}
+              turnActive={props.turnActive}
               nowMs={props.nowMs}
               expanded={props.expanded}
               busy={props.busy}
@@ -624,11 +744,13 @@ export function AgentChatTimeline(props: {
   onUpdate: (id: string, payload: AgentActionUpdatePayload) => void
 }) {
   const [technicalOpen, setTechnicalOpen] = useState(false)
-  const visible = userTimelineItems(props.nodes)
+  const displayNodes = useMemo(() => normalizeTranscriptGroupsForDisplay(collapseCompletedWorkBeforeFinalAnswer(props.nodes)), [props.nodes])
+  const visible = userTimelineItems(displayNodes)
   const technical = technicalTimelineItems(props.nodes)
-  const summary = summarizeAgentChatTimeline(props.nodes)
-  const showThinking = shouldShowTimelineThinking(props.nodes, props.busy)
-  const expansion = useAgentTranscriptExpansion(props.nodes)
+  const summary = summarizeAgentChatTimeline(displayNodes)
+  const showThinking = shouldShowTimelineThinking(displayNodes, props.busy)
+  const thinkingLabel = timelineThinkingLabel(displayNodes)
+  const expansion = useAgentTranscriptExpansion(displayNodes)
   const hasRunningVisibleNode = flattenNodes(visible).some((node) => node.status === 'running' || node.status === 'pending')
   const [nowMs, setNowMs] = useState(() => Date.now())
 
@@ -638,14 +760,25 @@ export function AgentChatTimeline(props: {
     return () => window.clearInterval(timer)
   }, [hasRunningVisibleNode, props.busy])
 
-  const turnStartedAtByNodeId = useMemo(() => {
-    const starts = new Map<string, string | null>()
+  const turnTimingByNodeId = useMemo(() => {
+    const timing = new Map<string, { startedAt: string | null; endedAt: string | null }>()
     let currentStartedAt: string | null = null
+    let currentNodeIds: string[] = []
     visible.forEach((node) => {
-      if (node.kind === 'user_message') currentStartedAt = node.createdAt
-      starts.set(node.id, currentStartedAt)
+      if (node.kind === 'user_message') {
+        currentStartedAt = node.createdAt
+        currentNodeIds = []
+      }
+      currentNodeIds.push(node.id)
+      timing.set(node.id, { startedAt: currentStartedAt, endedAt: null })
+      if (node.kind === 'assistant_message') {
+        currentNodeIds.forEach((nodeId) => {
+          const current = timing.get(nodeId)
+          if (current) timing.set(nodeId, { ...current, endedAt: node.createdAt })
+        })
+      }
     })
-    return starts
+    return timing
   }, [visible])
 
   const latestUserStartedAt = useMemo(() => {
@@ -668,21 +801,41 @@ export function AgentChatTimeline(props: {
   return (
     <div className="mt-3 grid max-h-72 gap-1.5 overflow-y-auto pr-1">
       <div className="grid gap-1.5">
-        {visible.map((node) => (
-          <TranscriptNodeView
-            key={node.id}
-            node={node}
-            turnStartedAt={turnStartedAtByNodeId.get(node.id) ?? null}
-            nowMs={nowMs}
-            expanded={expansion}
-            busy={props.busy}
-            actionDiffsById={props.actionDiffsById}
-            onConfirm={props.onConfirm}
-            onCancel={props.onCancel}
-            onUpdate={props.onUpdate}
-          />
-        ))}
-        {showThinking ? <ThinkingRow startedAt={latestUserStartedAt} nowMs={nowMs} /> : null}
+        {visible.map((node, index) => {
+          const turnTiming = turnTimingByNodeId.get(node.id)
+          const turnActive = props.busy && Boolean(turnTiming?.startedAt) && !turnTiming?.endedAt
+          const showTurnDuration =
+            node.kind !== 'user_message' &&
+            visible[index - 1]?.kind === 'user_message' &&
+            Boolean(turnTiming?.startedAt) &&
+            Boolean(turnTiming?.endedAt || turnActive)
+          return (
+            <div key={node.id} className="contents">
+              {showTurnDuration ? (
+                <TurnDurationHeader
+                  startedAt={turnTiming?.startedAt ?? null}
+                  endedAt={turnTiming?.endedAt ?? null}
+                  active={turnActive}
+                  nowMs={nowMs}
+                />
+              ) : null}
+              <TranscriptNodeView
+                node={node}
+                turnStartedAt={turnTiming?.startedAt ?? null}
+                turnEndedAt={turnTiming?.endedAt ?? null}
+                turnActive={turnActive}
+                nowMs={nowMs}
+                expanded={expansion}
+                busy={props.busy}
+                actionDiffsById={props.actionDiffsById}
+                onConfirm={props.onConfirm}
+                onCancel={props.onCancel}
+                onUpdate={props.onUpdate}
+              />
+            </div>
+          )
+        })}
+        {showThinking ? <ThinkingRow startedAt={latestUserStartedAt} nowMs={nowMs} label={thinkingLabel} /> : null}
       </div>
 
       {technical.length > 0 ? (
@@ -704,7 +857,9 @@ export function AgentChatTimeline(props: {
             <TranscriptNodeView
               key={node.id}
               node={node}
-              turnStartedAt={turnStartedAtByNodeId.get(node.id) ?? null}
+              turnStartedAt={turnTimingByNodeId.get(node.id)?.startedAt ?? null}
+              turnEndedAt={turnTimingByNodeId.get(node.id)?.endedAt ?? null}
+              turnActive={props.busy && Boolean(turnTimingByNodeId.get(node.id)?.startedAt) && !turnTimingByNodeId.get(node.id)?.endedAt}
               nowMs={nowMs}
               expanded={expansion}
               busy={props.busy}

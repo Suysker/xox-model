@@ -5,10 +5,11 @@ import { parseJson } from '../db/database.js'
 import type { CurrentUser } from '../modules/auth.js'
 import { getWorkspaceDraft, listVersions } from '../modules/workspace.js'
 import { listPeriods, listSubjectsForPeriod } from '../modules/ledger.js'
+import { utcNow } from '../core/time.js'
 import { loadAgentRuntimeContext } from './memory.js'
 import { recallActiveAgentMemory } from './active-memory-recall.js'
 import { buildAgentWritableConfigContext } from './tool-coverage.js'
-import type { ParsedWorkspaceBundleArtifact } from './workspace-bundle-artifact.js'
+import { extractWorkspaceBundleArtifact, type ParsedWorkspaceBundleArtifact } from './workspace-bundle-artifact.js'
 
 export type AgentContextPackInput = {
   db: Kysely<Database>
@@ -18,6 +19,33 @@ export type AgentContextPackInput = {
   runId: string
   message: string
   providedWorkspaceBundle?: ParsedWorkspaceBundleArtifact
+}
+
+const THREAD_LOG_LIMIT = 8
+const THREAD_LOG_CONTENT_LIMIT = 800
+
+function compactMessageContent(content: string) {
+  const artifact = extractWorkspaceBundleArtifact(content)
+  return (artifact?.messageForModel ?? content).replace(/\s+/g, ' ').trim().slice(0, THREAD_LOG_CONTENT_LIMIT)
+}
+
+export function buildThreadConversationLog(input: {
+  recentMessages: Row<'agent_messages'>[]
+}) {
+  const messages = [...input.recentMessages]
+  const last = messages.at(-1)
+  if (last?.role === 'user') {
+    messages.pop()
+  }
+
+  return {
+    policy: 'same-thread recent messages; redacted; untrusted; for resolving references and corrections only',
+    messages: messages.slice(-THREAD_LOG_LIMIT).map((message) => ({
+      role: message.role,
+      createdAt: message.created_at,
+      content: compactMessageContent(message.content),
+    })),
+  }
 }
 
 export async function buildAgentContextPack(input: AgentContextPackInput) {
@@ -41,6 +69,7 @@ export async function buildAgentContextPack(input: AgentContextPackInput) {
   })
 
   return {
+    currentDate: utcNow().slice(0, 10),
     months: config.months.map((month, index) => ({ label: month.label, index, id: month.id })),
     teamMembers: config.teamMembers.map((member) => ({ id: member.id, name: member.name })),
     employees: config.employees.map((employee) => ({ id: employee.id, name: employee.name, role: employee.role })),
@@ -70,10 +99,9 @@ export async function buildAgentContextPack(input: AgentContextPackInput) {
       retrieval: memoryRecall.retrieval,
     },
     contextSummary: runtimeContext.contextSummary,
-    recentMessages: runtimeContext.recentMessages.map((message) => ({
-      role: message.role,
-      content: message.content.slice(0, 500),
-    })),
+    threadConversationLog: buildThreadConversationLog({
+      recentMessages: runtimeContext.recentMessages,
+    }),
     writableConfig: buildAgentWritableConfigContext(config),
     ...(input.providedWorkspaceBundle
       ? {

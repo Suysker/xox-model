@@ -47,7 +47,7 @@ function customEventName(event: AgentRunEvent) {
   if (event.type === 'confirmation_ready') return 'xox.interrupt.confirmation_card'
   if (event.type === 'action_updated') return 'xox.confirmation_edited'
   if (event.type === 'action_cancelled') return 'xox.action_cancelled'
-  if (event.type === 'action_execution_failed' || event.type === 'action_auto_execution_failed') return 'xox.action_failed'
+  if (event.type === 'action_execution_failed') return 'xox.action_failed'
   if (event.type === 'goal_evaluated') return 'xox.evaluation_result'
   if (event.type.startsWith('memory_')) return `xox.${event.type}`
   if (event.type === 'provider_tool_call_repaired') return 'xox.tool_call_repaired'
@@ -62,7 +62,7 @@ function eventTypeForRunEvent(event: AgentRunEvent): AgentAgUiEventType {
   if (event.type === 'run_completed' || event.type === 'run_cancelled') return 'RUN_FINISHED'
   if (event.type === 'model_planning' || event.type === 'provider_stream_started') return 'STEP_STARTED'
   if (event.type === 'provider_stream_completed') return 'STEP_FINISHED'
-  if (event.type === 'action_executed' || event.type === 'action_auto_executed') return 'TOOL_CALL_RESULT'
+  if (event.type === 'action_executed') return 'TOOL_CALL_RESULT'
   return 'CUSTOM'
 }
 
@@ -159,7 +159,7 @@ function runEventToAgUiEvents(event: AgentRunEvent): PendingAgUiEvent[] {
       content: event.message,
     }]
   }
-  if (event.type === 'action_executed' || event.type === 'action_auto_executed') {
+  if (event.type === 'action_executed') {
     const actionKind = asString(event.data?.actionKind)
     return [{
       ...base,

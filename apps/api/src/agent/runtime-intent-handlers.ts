@@ -81,14 +81,24 @@ async function rememberFromToolCall(ctx: PlannerContext, step: RuntimePlannerSte
 }
 
 export const runtimeIntentHandlers: ActionDraftBuilderHandlers<PlannerContext> = {
-  'ledger.create_member_income': (ctx, step) => step.monthLabel && step.memberName
-    ? planLedgerCreateFromFields(ctx, {
-        monthLabel: step.monthLabel,
-        memberName: step.memberName,
+  'ledger.create_member_income': (ctx, step) => {
+    const memberName = typeof step.memberName === 'string' && step.memberName.trim()
+      ? step.memberName.trim()
+      : null
+    return memberName
+      ? planLedgerCreateFromFields(ctx, {
+        monthLabel: typeof step.monthLabel === 'string' ? step.monthLabel : null,
+        memberName,
         offlineUnits: step.offlineUnits ?? 0,
         onlineUnits: step.onlineUnits ?? 0,
+        occurredAt: typeof step.occurredAt === 'string'
+          ? step.occurredAt
+          : typeof step.date === 'string'
+            ? step.date
+            : null,
       })
-    : null,
+      : null
+  },
   'ledger.create_entry': planGenericLedgerCreateFromStep,
   'ledger.create_planned_member_income_batch': planPlannedMemberIncomeBatch,
   'ledger.create_planned_related_expense_batch': planPlannedRelatedExpenseBatch,

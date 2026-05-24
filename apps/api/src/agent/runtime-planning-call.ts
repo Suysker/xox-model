@@ -8,7 +8,7 @@ import {
   retryRuntimeMessage,
   shouldRetryRuntimePlan,
 } from './runtime/provider-failover-policy.js'
-import type { RuntimePlanningInput, RuntimePlanResult } from './runtime/runtime-adapter.js'
+import type { RuntimeChatMessage, RuntimePlanningInput, RuntimePlanResult } from './runtime/runtime-adapter.js'
 import {
   HIGH_VOLUME_STRUCTURED_MAX_TOKENS,
   HIGH_VOLUME_STRUCTURED_TIMEOUT_MS,
@@ -16,7 +16,13 @@ import {
   hasHighVolumeStructuredTool,
 } from './runtime/high-volume-tool-policy.js'
 import { addRunEvent } from './run-events.js'
+import { plannerSystemPrompt } from './prompt-registry.js'
 import { provideRuntimeToolCatalog } from './tool-gateway.js'
+import {
+  contextWithoutThreadConversationLog,
+  runtimeMessagesFromThreadConversationLog,
+  threadConversationLogFromContext,
+} from './runtime-conversation-log.js'
 
 function plannerTokenBudget(message: string) {
   const structuredLineCount = message.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).length
@@ -65,6 +71,28 @@ function runtimeRequestTimeoutMs(input: {
   return plannerRequestTimeoutMs(input)
 }
 
+function plannerRuntimeMessages(input: { context: unknown; message: string }): RuntimeChatMessage[] {
+  return [
+    { role: 'system', content: plannerSystemPrompt() },
+    ...runtimeMessagesFromThreadConversationLog(threadConversationLogFromContext(input.context)),
+    {
+      role: 'user',
+      content: `上下文：${JSON.stringify(contextWithoutThreadConversationLog(input.context))}\n用户指令：${input.message}`,
+    },
+  ]
+}
+
+async function addNonStreamPlanningPreface(ctx: PlannerContext, result: RuntimePlanResult | null) {
+  if (!result || result.steps.length === 0) return
+  const text = result?.assistantText?.trim()
+  if (!text) return
+  await addRuntimeStreamRunEvent({ ...ctx, phase: 'planning' }, {
+    kind: 'content_delta',
+    delta: text,
+    preview: text,
+  })
+}
+
 export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePlanResult | null> {
   const context = await buildAgentContextPack({
     db: ctx.db,
@@ -93,6 +121,7 @@ export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePl
     message: redactSecretLikeContent(ctx.message),
     context,
     tools: toolCatalog.tools,
+    messages: plannerRuntimeMessages({ context, message: redactSecretLikeContent(ctx.message) }),
     maxTokens,
     ...(stableLongToolMode ? { stream: false } : {}),
     requestTimeoutMs: runtimeRequestTimeoutMs({
@@ -103,7 +132,7 @@ export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePl
       stableLongToolMode,
     }),
     ...(ctx.abortSignal ? { abortSignal: ctx.abortSignal } : {}),
-    onStreamEvent: (event) => addRuntimeStreamRunEvent(ctx, event),
+    onStreamEvent: (event) => addRuntimeStreamRunEvent({ ...ctx, phase: 'planning' }, event),
   }
 
   if (stableLongToolMode) {
@@ -142,7 +171,10 @@ export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePl
         requestTimeoutMs: retryInput.requestTimeoutMs ?? ctx.settings.agentProviderRequestTimeoutMs,
       },
     })
-    return planWithRuntimeAdapter(retryInput)
+    const retry = await planWithRuntimeAdapter(retryInput)
+    await addNonStreamPlanningPreface(ctx, retry)
+    return retry
   }
+  await addNonStreamPlanningPreface(ctx, first)
   return first
 }

@@ -69,7 +69,7 @@ Goal Interpreter
 - `agent-kernel.ts` / 后续 `goal-run-engine.ts` 负责把复杂目标推进成多轮 `plan -> confirm/execute -> observe -> evaluate -> repair`。
 - 模型每轮只需要选择下一批工具；是否继续、是否阻断、是否完成由 Completion Evaluator 根据 server-owned action graph 和领域状态决定。
 - 模型 final text 不能直接结束复杂 run；`before_stop` 必须先运行 evaluator。
-- 自动执行阈值只控制确认卡是否可自动确认；即使 `automationLevel=high`，也必须先落 `agent_action_requests`，再经 Approval Executor 执行。
+- `automationLevel` 只控制 planner 是否更积极地补齐多步骤目标；任何级别都不能自动执行写入。所有写入必须先落 `agent_action_requests`，由用户编辑/确认后再经 Approval Executor 执行。
 
 当前已实现的运行切片：
 
@@ -132,7 +132,7 @@ Goal Contract 至少需要包含：
 
 1. Goal Interpreter 建立可评估 contract。
 2. 第一轮 planner 选择经营模型配置、必要查询或澄清工具。
-3. 写入 draft 生成可编辑确认卡；若用户选择高自动化，仍先落卡再自动执行。
+3. 写入 draft 生成可编辑确认卡；即使用户选择高自动化，也只生成待确认卡，不自动写入。
 4. Observation Collector 读取 draft、projection、audit 和 action graph。
 5. Completion Evaluator 检查成员数、股东、成本项、12 个月、预测结果、确认卡和 audit 是否满足 contract。
 6. 若缺项存在，Repair Planner 生成下一轮 brief，让模型补齐缺口；禁止用后端正则从原始文本猜语义。
@@ -309,24 +309,24 @@ planning-session.ts
 
 长结构化输入的拆分规则只允许根据文本形态决定是否保留换行，例如长度、有效行数、列表行数量、JSON 深度。它不能根据业务关键词决定工具，也不能为某个测试场景硬编码命中条件。紧凑的多动作句子继续按分号和换行拆成多次模型规划；完整经营简报保持为一次模型调用，让模型看到全局约束后选择高阶工具。
 
-### 自动执行策略
+### 自动化与确认策略
 
-Agent OS 默认仍是人工确认：写入工具先生成可编辑确认卡，用户确认后执行。为支持类似 Codex 的执行策略，用户也可以在本轮消息上选择自动执行阈值：
+Agent OS 的写入边界固定为人工确认：写入工具先生成可编辑确认卡，用户确认后执行。`automationLevel` 仍保留在 run 上，但它只影响 planner 的推进力度和一次可以补齐多少独立动作，不代表自动确认权限。
 
 ```text
 manual  -> 所有写入保持 pending，等待用户编辑/确认
-low     -> 自动执行 low 风险确认卡
-medium  -> 自动执行 low/medium 风险确认卡
-high    -> 自动执行 low/medium/high 风险确认卡
+low     -> planner 可以补齐低风险/单步目标，但写入仍保持 pending
+medium  -> planner 可以补齐中等复杂目标，但写入仍保持 pending
+high    -> planner 可以主动补齐多步骤复杂目标，但写入仍保持 pending
 ```
 
 设计原则：
 
 - 自动化是用户显式运行策略，不是模型自己决定权限；模型只负责 tool_call 规划。
-- 即使自动执行，也必须先持久化确认卡和 plan step，再由 Approval Executor 调用同一套 policy/domain service 执行，保证运行图、审计和刷新都可追踪。
-- 自动执行不绕过风险等级、导航、租户、账期锁定、派生分录、revision、版本和分享校验；失败时把对应 action/step 标记 failed 并记录 run event。
+- 写入确认卡必须先持久化 action request 和 plan step；执行只能来自用户确认请求，再由 Approval Executor 调用同一套 policy/domain service。
+- 用户确认执行也不绕过风险等级、导航、租户、账期锁定、派生分录、revision、版本和分享校验；失败时把对应 action/step 标记 failed 并记录 run event。
 - `agent_runs` 持久化本轮 `automation_level`，这样 background worker、SSE、恢复和同步请求看到同一个策略。默认值是 `manual`，兼容已有调用。
-- 前端只把用户选择的阈值传给 API；它不本地执行确认卡，也不推断哪些动作应该自动执行。
+- 前端只把用户选择的规划级别传给 API；它不本地执行确认卡，也不推断哪些动作应该执行。
 
 依赖方向固定为：
 
@@ -334,7 +334,9 @@ high    -> 自动执行 low/medium/high 风险确认卡
 web AgentConsole automation selector
   -> contracts AgentAutomationLevel
   -> routes/run-submission persist agent_runs.automation_level
-  -> planner/action-graph-store
+  -> goal-run-engine / planner / action-graph-store
+      -> pending agent_action_requests
+      -> user confirm
       -> approval-executor.executeAgentActionRequest
       -> tool-policy/domain services/audit
 ```
@@ -345,7 +347,7 @@ web AgentConsole automation selector
 - 确认执行后草稿包含预期股东、成员、员工、成本、12 个月节奏，并能由 `projectModel` 计算。
 - 真实 DeepSeek smoke 中，复杂经营简报必须产生 tool call 和 action graph，而不是空回复或低层工具爆炸。
 - 现有 50-direction smoke 不回退，低层新增/删除/记账/版本/分享工具仍可独立被模型选择。
-- 自动执行阈值为 `high` 时，复杂经营模型的高风险 `workspace.update_draft` 确认卡必须在 action graph 中创建后自动执行，最终草稿被 domain service 持久化；阈值为 `manual` 时仍保持 pending 且可编辑。
+- `automationLevel=high` 时，复杂经营模型的高风险 `workspace.update_draft` 也必须保持 pending 且可编辑；确认后草稿才会被 domain service 持久化。
 
 本轮 Tool Catalog Gateway 拆分的依赖方向固定为：
 
@@ -636,6 +638,7 @@ SaaS memory 必须分层隔离：
 | user memory | `userId` | 用户偏好、展示习惯 |
 | workspace memory | `workspaceId + userId` | 当前工作区业务别名、默认记账习惯 |
 | thread memory | `threadId + workspaceId + userId` | 当前对话状态 |
+| thread conversation log | `threadId` 最近消息 | 本轮短期指代、省略、用户纠正，例如“今天是...”“第一个...” |
 | run context | `runId` | 本次临时事实 |
 
 要求：
@@ -644,7 +647,9 @@ SaaS memory 必须分层隔离：
 - memory 写入必须由模型显式调用 `memory_remember`；服务端不在 message submission 阶段用关键词、正则或穷举从用户文本中猜测“应该记住什么”。
 - secrets、API key、token、密码、验证码等不得写入 memory。
 - context summary 只来自同一 thread、同一 user、同一 workspace。
-- context summary 和后续 provider prompt 注入的 recent messages 必须经过 secret redaction；即使用户在旧消息里粘贴过 key/token，也不能进入长期摘要或下一轮运行上下文。
+- context summary、`threadConversationLog` 和后续 provider prompt 注入的短期日志必须经过 secret redaction；即使用户在旧消息里粘贴过 key/token，也不能进入长期摘要或下一轮运行上下文。
+- `threadConversationLog` 是短期对话上下文，不是长期 memory，也不是业务特化规则。Planner 和 tool-observation finalizer 都应把它作为同线程最近对话注入给模型，用来消解“今天”“第一个”“上面那个”等指代；如果日志加当前工作区数据仍不能唯一确定对象，才调用 `ask_user_clarification`。
+- 不用提示词特例修复某个业务短语。例如“第一个股东注资”应由模型基于当前工具 schema、草稿结构和同线程日志理解，不应在 prompt 或后端代码里写死 `shareholders[0]` 的业务规则。
 - 删除 memory 后，后续 prompt 不再注入；如果 summary 中包含同类信息，需要重新压缩或标记失效。
 - 压缩内容只保留业务目标、已确认事实、未完成动作、用户偏好和重要错误。
 
@@ -1078,6 +1083,7 @@ API startup / recovery
 - `planning-context.ts`，持有 Agent planning context 类型；draft builders 和 run worker 不再 type-import planner。
 - `planning-session.ts`，负责多段消息拆分、bundle artifact 替换、多次 runtime planning 调用和 planned item 聚合；planner 不再内联 session loop。
 - `runtime-planning-call.ts`，负责单次 provider planning call、Context Pack、Tool Catalog Gateway 和 provider stream trace wiring；planner 不再直接协调 runtime adapter 细节。
+- `context-pack.ts`，负责注入当前日期、工作区事实、租户记忆、可写字段目录和同线程短期 `threadConversationLog`；业务指代靠模型在这个上下文中理解，不在后端写关键词分支。
 - `runtime-intent-handlers.ts`，负责 provider tool_call intent 到业务 draft/read builder 的 handler registry；planner 不再直接依赖各业务 draft builder。
 - `apps/api/src/agent/prompts`。
 - `tool-catalog.ts`。
@@ -1099,7 +1105,7 @@ API startup / recovery
 - `agent-kernel.ts` 已委托 `goal-run-engine.ts` 执行多轮 `plan -> action graph -> execute/confirm -> observe -> evaluate -> repair`。
 - Completion Evaluator 已作为每轮停止前的强制关口；模型 final text、空 tool-call 或失败 action 不能绕过 evaluator。
 - React Agent Console 已展示 Goal/Evaluation 面板，包括目标、评估轮次、满足/未满足数量、blocker 和下一轮 brief。
-- DeepSeek 真实 smoke 已升级为最终 domain outcome 验收：`npm.cmd run smoke:agent` 使用真实 OpenAI-compatible `tool_calls` 跑通 52 个方向，复杂经营模型最终保存 50 个成员、12 个月草稿，并验证自动执行、action graph、memory 注入和 audit。
+- DeepSeek 真实 smoke 已升级为最终 domain outcome 验收：`npm.cmd run smoke:agent` 使用真实 OpenAI-compatible `tool_calls` 跑通核心方向，复杂经营模型先生成 50 个成员、12 个月草稿确认卡，确认后保存，并验证 action graph、memory 注入和 audit。
 
 当前 maturity gates：
 

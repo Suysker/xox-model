@@ -100,8 +100,12 @@ function jsonPlanResult(
       },
     },
   })
-  if (toolSteps.length > 0) return { source: SOURCE, steps: toolSteps }
   const assistantText = textContentFromMessage(message)
+  if (toolSteps.length > 0) {
+    return assistantText
+      ? { source: SOURCE, steps: toolSteps, assistantText }
+      : { source: SOURCE, steps: toolSteps }
+  }
   return assistantText
     ? { source: SOURCE, steps: [], assistantText }
     : { source: SOURCE, steps: [] }
@@ -328,7 +332,10 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
       }, requestTimeoutMs + 1_000)
       timeout.unref?.()
       const endpoint = `${input.settings.openaiCompatibleBaseUrl.replace(/\/$/, '')}/chat/completions`
-      const shape = (omitToolChoice = false) => shapeOpenAICompatibleChatRequest(input, { omitToolChoice })
+      const shape = (omitToolChoice = false) => shapeOpenAICompatibleChatRequest(input, {
+        omitToolChoice,
+        ...(input.disableThinking !== undefined ? { disableThinking: input.disableThinking } : {}),
+      })
       const init = (omitToolChoice = false): RequestInit => {
         const requestShape = shape(omitToolChoice)
         return {

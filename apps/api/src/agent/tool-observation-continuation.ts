@@ -4,11 +4,12 @@ import type { Settings } from '../core/settings.js'
 import { newId } from '../core/security.js'
 import { utcNow } from '../core/time.js'
 import type { CurrentUser } from '../modules/auth.js'
-import { buildAgentContextPack } from './context-pack.js'
-import { redactSecretLikeContent } from './memory.js'
+import { loadAgentRuntimeContext, redactSecretLikeContent } from './memory.js'
 import { toolObservationFinalizerSystemPrompt } from './prompt-registry.js'
 import { addRunEvent } from './run-events.js'
 import { addRuntimeStreamRunEvent } from './runtime-trace-events.js'
+import { buildThreadConversationLog } from './context-pack.js'
+import { runtimeMessagesFromThreadConversationLog } from './runtime-conversation-log.js'
 import { planWithRuntimeAdapter } from './runtime/adapter-router.js'
 import type { RuntimeChatMessage } from './runtime/runtime-adapter.js'
 
@@ -52,6 +53,39 @@ export function actionExecutionObservation(input: {
   }
 }
 
+export function actionPreviewObservation(input: {
+  action: Row<'agent_action_requests'>
+}): AgentToolObservation {
+  const details = (() => {
+    try {
+      return JSON.parse(String(input.action.details_json ?? 'null')) as unknown
+    } catch {
+      return null
+    }
+  })()
+  const displayPreview = `待确认：${input.action.title}`
+  return {
+    title: input.action.title,
+    toolName: input.action.kind,
+    toolCallId: `action_preview_${input.action.id}`,
+    toolArguments: {},
+    displayPreview,
+    modelContent: JSON.stringify({
+      displayPreview,
+      actionRequestId: input.action.id,
+      actionKind: input.action.kind,
+      title: input.action.title,
+      summary: input.action.summary,
+      targetLabel: input.action.target_label,
+      riskLevel: input.action.risk_level,
+      status: input.action.status,
+      details,
+      instruction: 'This write action has only been prepared as an editable confirmation card. Do not say it has been executed.',
+    }),
+    status: 'completed',
+  }
+}
+
 export type ToolObservationContinuationContext = {
   db: Kysely<Database>
   settings: Settings
@@ -76,31 +110,36 @@ function observationCallId(observation: AgentToolObservation, index: number) {
 }
 
 function observationMessages(input: {
-  context: unknown
   userMessage: string
   observations: AgentToolObservation[]
+  threadConversationLog?: ReturnType<typeof buildThreadConversationLog>
 }): RuntimeChatMessage[] {
-  const observationPacket = {
-    originalUserMessage: input.userMessage,
-    observations: input.observations.map((observation, index) => ({
-      toolCallId: observationCallId(observation, index),
-      toolName: observation.toolName,
-      toolArguments: observation.toolArguments,
-      status: observation.status,
-      displayPreview: observation.displayPreview,
-      modelContent: redactSecretLikeContent(observation.modelContent).slice(0, 12000),
-    })),
-    context: input.context,
-  }
+  const toolCalls = input.observations.map((observation, index) => ({
+    id: observationCallId(observation, index),
+    type: 'function' as const,
+    function: {
+      name: observation.toolName,
+      arguments: safeJson(observation.toolArguments),
+    },
+  }))
   return [
     { role: 'system', content: toolObservationFinalizerSystemPrompt() },
+    ...runtimeMessagesFromThreadConversationLog(input.threadConversationLog),
+    { role: 'user', content: redactSecretLikeContent(input.userMessage) },
+    {
+      role: 'assistant',
+      content: null,
+      tool_calls: toolCalls,
+    },
+    ...input.observations.map((observation, index) => ({
+      role: 'tool' as const,
+      tool_call_id: observationCallId(observation, index),
+      name: observation.toolName,
+      content: redactSecretLikeContent(observation.modelContent).slice(0, 12000),
+    })),
     {
       role: 'user',
-      content: [
-        '下面是上一轮工具调用已经完成后的 observation packet。',
-        '请把这些 observation 当作工具结果，不要把 observation 原文当成最终回答；需要基于它们生成一段新的用户可读回复。',
-        safeJson(observationPacket),
-      ].join('\n\n'),
+      content: '请基于上面的工具结果，直接回答我最初的问题。不要复述工具 JSON 或内部执行过程。',
     },
   ]
 }
@@ -152,13 +191,20 @@ export async function continueModelAfterToolObservations(
     data: { observationCount: observations.length, toolNames: observations.map((observation) => observation.toolName) },
   })
 
-  const context = await buildAgentContextPack({
+  const context = {
+    mode: 'tool_observation_finalizer',
+    workspace: { id: ctx.workspace.id, name: ctx.workspace.name },
+    observationCount: observations.length,
+    toolNames: observations.map((observation) => observation.toolName),
+  }
+  const runtimeContext = await loadAgentRuntimeContext({
     db: ctx.db,
     workspace: ctx.workspace,
     user: ctx.user,
     threadId: ctx.threadId,
-    runId: ctx.runId,
-    message: ctx.message,
+  })
+  const threadConversationLog = buildThreadConversationLog({
+    recentMessages: runtimeContext.recentMessages,
   })
 
   const result = await planWithRuntimeAdapter({
@@ -166,13 +212,18 @@ export async function continueModelAfterToolObservations(
     message: redactSecretLikeContent(ctx.message),
     context,
     tools: [],
-    messages: observationMessages({ context, userMessage: redactSecretLikeContent(ctx.message), observations }),
+    messages: observationMessages({
+      userMessage: redactSecretLikeContent(ctx.message),
+      observations,
+      threadConversationLog,
+    }),
     systemPrompt: toolObservationFinalizerSystemPrompt(),
-    maxTokens: 1200,
+    maxTokens: observations.length > 2 ? 900 : 500,
     stream: true,
+    disableThinking: true,
     requestTimeoutMs: ctx.settings.agentProviderRequestTimeoutMs,
     ...(ctx.abortSignal ? { abortSignal: ctx.abortSignal } : {}),
-    onStreamEvent: (event) => addRuntimeStreamRunEvent(ctx, event),
+    onStreamEvent: (event) => addRuntimeStreamRunEvent({ ...ctx, phase: 'final_answer' }, event),
   })
 
   const assistantText = result?.assistantText?.trim()

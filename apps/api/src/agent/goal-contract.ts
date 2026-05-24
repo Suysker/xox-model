@@ -37,7 +37,14 @@ function defaultCriteria(): AgentGoalContract['acceptanceCriteria'] {
     {
       id: 'graph.write_actions_have_cards',
       label: '写入动作有确认卡',
-      description: '所有写入动作必须先创建可编辑确认卡；自动执行也必须先落卡。',
+      description: '所有写入动作必须先创建可编辑确认卡；任何自动化级别都不能绕过用户确认。',
+      kind: 'action_graph',
+      required: true,
+    },
+    {
+      id: 'graph.required_capability_planned',
+      label: '目标能力已覆盖',
+      description: '复杂目标里每个明确业务动作都必须对应可见的只读工具调用或待确认写入卡，不能只完成其中一部分就结束。',
       kind: 'action_graph',
       required: true,
     },
@@ -166,6 +173,7 @@ export function normalizeGoalStatus(value: string | null): AgentGoalStatus | nul
     value === 'evaluating' ||
     value === 'repairing' ||
     value === 'completed' ||
+    value === 'needs_clarification' ||
     value === 'blocked' ||
     value === 'failed' ||
     value === 'cancelled'

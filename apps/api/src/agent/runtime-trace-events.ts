@@ -8,6 +8,7 @@ type RuntimeTraceContext = {
   db: Kysely<Database>
   threadId: string
   runId: string
+  phase?: 'planning' | 'final_answer'
 }
 
 const PROVIDER_STREAM_DELTA_LIMIT = 240
@@ -61,7 +62,10 @@ function runtimeStreamEventPayload(event: RuntimeStreamEvent): Record<string, un
 }
 
 export async function addRuntimeStreamRunEvent(ctx: RuntimeTraceContext, event: RuntimeStreamEvent) {
-  const data = runtimeStreamEventPayload(event)
+  const data: Record<string, unknown> = {
+    ...runtimeStreamEventPayload(event),
+    ...(ctx.phase ? { phase: ctx.phase } : {}),
+  }
   if (event.kind === 'stream_started') {
     await addRunEvent(ctx.db, {
       threadId: ctx.threadId,

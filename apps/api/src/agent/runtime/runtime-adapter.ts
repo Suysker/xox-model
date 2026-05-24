@@ -85,6 +85,7 @@ export type RuntimePlanningInput = {
   messages?: RuntimeChatMessage[]
   systemPrompt?: string
   stream?: boolean
+  disableThinking?: boolean
   maxTokens?: number
   requestTimeoutMs?: number
   abortSignal?: AbortSignal

@@ -290,6 +290,9 @@ export type AgentPlanStepTable = {
   description: string
   status: string
   navigation_json: JsonText | null
+  tool_name: string | null
+  tool_call_id: string | null
+  tool_arguments_json: JsonText | null
   created_at: Timestamp
   updated_at: Timestamp
 }

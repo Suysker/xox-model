@@ -16,7 +16,10 @@ const INTERNAL_RUN_EVENT_TYPES = new Set([
   'worker_claimed',
   'goal_iteration_started',
   'tool_catalog_ready',
+  'confirmation_ready',
   'provider_stable_long_tool_mode',
+  'provider_retrying',
+  'provider_tool_call_repaired',
 ])
 
 const INTERNAL_LABEL_PATTERNS = [
@@ -136,7 +139,7 @@ function providerStreamItem(event: AgentRunEvent): PendingTranscriptItem | null 
       title: '正在规划下一步',
       summary: '模型正在根据当前页面、记忆和可用工具准备下一步动作。',
       status: 'running',
-      visibility: 'user',
+      visibility: 'technical',
       sourceType: event.type,
       agUiEventType: 'STEP_STARTED',
       payload: event.data,
@@ -155,7 +158,7 @@ function providerStreamItem(event: AgentRunEvent): PendingTranscriptItem | null 
       title: toolCallCount && toolCallCount > 0 ? '工具选择已完成' : '模型回复已完成',
       summary: toolCallCount && toolCallCount > 0 ? `模型已选择 ${toolCallCount} 个工具调用，正在生成业务步骤。` : '模型已完成本轮回复。',
       status: 'completed',
-      visibility: 'user',
+      visibility: 'technical',
       sourceType: event.type,
       agUiEventType: 'STEP_FINISHED',
       payload: event.data,
@@ -241,10 +244,9 @@ function runEventToTranscriptItem(event: AgentRunEvent): PendingTranscriptItem |
   } else if (event.type === 'tool_plan_ready') {
     const stepCount = asNumber(event.data?.stepCount)
     const pendingActionCount = asNumber(event.data?.pendingActionCount)
-    const executedActionCount = asNumber(event.data?.executedActionCount)
     kind = 'planning'
     title = '业务步骤已生成'
-    summary = `已生成 ${stepCount ?? 0} 个步骤，其中 ${pendingActionCount ?? 0} 个需要确认，${executedActionCount ?? 0} 个已自动执行。`
+    summary = `已生成 ${stepCount ?? 0} 个步骤，其中 ${pendingActionCount ?? 0} 个需要确认。`
     status = pendingActionCount && pendingActionCount > 0 ? 'waiting' : transcriptStatus(event.status)
     agUiEventType = 'STEP_FINISHED'
   } else if (event.type === 'confirmation_ready') {
@@ -257,15 +259,15 @@ function runEventToTranscriptItem(event: AgentRunEvent): PendingTranscriptItem |
     title = '已按你的编辑更新确认卡'
     summary = event.message
     actionRequestId = asString(event.data?.actionRequestId) || null
-  } else if (event.type === 'action_executed' || event.type === 'action_auto_executed') {
+  } else if (event.type === 'action_executed') {
     kind = 'tool_result'
-    title = event.type === 'action_auto_executed' ? '已自动执行动作' : '已执行动作'
+    title = '已执行动作'
     summary = event.message
     status = 'completed'
     agUiEventType = 'TOOL_CALL_RESULT'
     toolName = asString(event.data?.actionKind) || null
     actionRequestId = asString(event.data?.actionRequestId) || null
-  } else if (event.type === 'action_execution_failed' || event.type === 'action_auto_execution_failed') {
+  } else if (event.type === 'action_execution_failed') {
     kind = 'error'
     title = '动作执行失败'
     summary = event.message
@@ -288,17 +290,6 @@ function runEventToTranscriptItem(event: AgentRunEvent): PendingTranscriptItem |
     title = event.type === 'memory_injected' ? '已使用相关记忆' : event.type === 'memory_promoted' ? '记忆已更新' : '正在查找相关记忆'
     summary = memorySummary(event)
     status = transcriptStatus(event.status)
-  } else if (event.type === 'provider_tool_call_repaired') {
-    kind = 'tool_call'
-    title = '工具参数已修复'
-    summary = '模型返回的工具参数包含污染片段，已在安全范围内修复后继续。'
-    status = 'info'
-    toolName = asString(event.data?.toolName) || null
-  } else if (event.type === 'provider_retrying') {
-    kind = 'tool_call'
-    title = '正在重试工具规划'
-    summary = '上一次模型工具参数不完整，正在用更窄的工具范围重试。'
-    status = 'running'
   } else if (event.type === 'run_completed') {
     title = '本轮运行完成'
     summary = 'Agent 已完成本轮可执行步骤和检查。'
@@ -393,6 +384,10 @@ function navigationTitle(navigation: AgentNavigationEvent | null | undefined) {
 
 function planStepToTranscriptItem(step: AgentPlanStep, action: AgentActionRequest | null, index: number): PendingTranscriptItem {
   const status = planStatus(step.status, action)
+  const toolName = action?.kind ?? step.toolName ?? null
+  const payload = step.toolArguments
+    ? { toolArguments: step.toolArguments, planStepSequence: step.sequence }
+    : { planStepSequence: step.sequence }
   return {
     id: `plan-${step.id}`,
     threadId: step.threadId,
@@ -406,10 +401,11 @@ function planStepToTranscriptItem(step: AgentPlanStep, action: AgentActionReques
     sourceType: 'plan_step',
     agUiEventType: status === 'completed' ? 'STEP_FINISHED' : 'STEP_STARTED',
     ...((action?.id ?? step.actionRequestId) ? { actionRequestId: action?.id ?? step.actionRequestId } : {}),
-    ...(action?.kind ? { toolName: action.kind } : {}),
+    ...(toolName ? { toolName } : {}),
+    ...(step.toolCallId ? { toolCallId: step.toolCallId } : {}),
     ...((action?.navigation ?? step.navigation) ? { navigation: action?.navigation ?? step.navigation } : {}),
     ...(action?.details ? { details: action.details } : {}),
-    ...(action ? { payload: { riskLevel: action.riskLevel, targetLabel: action.targetLabel } } : {}),
+    payload: action ? { ...payload, riskLevel: action.riskLevel, targetLabel: action.targetLabel } : payload,
     createdAt: step.createdAt,
     order: eventOrder(step.createdAt, index + 1, 3),
   }

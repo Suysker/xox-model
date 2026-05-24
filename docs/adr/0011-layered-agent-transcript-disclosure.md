@@ -217,6 +217,9 @@ Layering is a semantic and interaction contract, not permission to draw nested c
 - normalize backend engineering titles in the renderer: do not show raw strings such as `Worked for 0s / 1 tools / 0 pending`, and do not show a tool name twice in the same row
 - start turn timing as soon as the user message appears in the transcript; show a lightweight running timer before tool rows exist, then keep the elapsed duration on the completed work cycle
 - suppress generic `Result Preview` placeholders such as "tool call completed and used for reply"; render result preview only when it contains real business output
+- keep provider retry, streamed tool-call repair, memory recall/reinjection, queue, lease and evaluator loop details in the technical log unless they produce an actionable user-facing failure; these are harness diagnostics, not product steps
+- preserve model-authored planning preface text before the work cycle; when repair turns stream additional unrelated planning text, do not let later fragments overwrite the first preface
+- never turn no-op write previews into confirmation cards; same-value `workspace_patch_config` patches should become tool observations so the evaluator/model can repair the missing work instead of asking the user to confirm a meaningless edit
 
 This keeps the exact tree inspectable while matching mature command/transcript UIs such as Codex, Claude Code and OpenClaw.
 
@@ -347,9 +350,9 @@ Default open/closed behavior should be deterministic and test-backed:
 | tool group | present for every visible tool/action/navigation run | Shows `调用 1 个工具` or `调用 3 个工具`; closed after completion, open while running/waiting/failed. |
 | read-only tool row | closed after completion | One line with business label, tool name chip and status. No JSON argument body in the compact row. |
 | write tool row with pending confirmation | open to confirmation card path | User must inspect/edit before execution; the row is attached to the same tool group that produced the write. |
-| navigation row | closed after completion | Lives inside the work cycle/tool group, close to the related tool/action. It must not appear as a top-level transcript sibling. |
+| navigation row | closed after completion | Lives inside the work cycle/tool group, close to the related tool/action. It must not appear as a top-level transcript sibling. A pure navigation row with no details is not expandable. |
 | confirmation card | open while pending | Editable card is attached to the producing tool/action, not rendered as a separate primary region. |
-| business check row | visible when useful | Show only business checks such as `只读，未修改业务数据`, `已打开看测算`, `等待 1 张确认卡`; never expose evaluator class names. |
+| business check row | visible only when actionable | Show failures or concrete validation findings that require user attention. Successful no-op checks, read-only confirmations, completed-write acknowledgements and pending-confirmation reminders are already represented by tool rows/cards and stay out of the main lane. Never expose evaluator class names. |
 | failed tool row | open | Show concise error and relevant retry/correction hint. |
 | tool body | closed through the tool row after completion | Expanding the tool row shows one inline body with `参数` and real `返回` together. Generic completion placeholders are hidden. |
 | raw provider details | technical/debug only | Raw provider payloads are not a normal second-level visual block in the main transcript. Use technical logs or explicit evidence/debug views when needed. |
@@ -359,16 +362,18 @@ Default open/closed behavior should be deterministic and test-backed:
 
 The projector should group by server-owned identifiers, not text heuristics:
 
+- Preserve model-authored visible preface text emitted before provider tool calls as an `assistant_stream` row before the work cycle. This includes non-stream Chat Completions responses where `message.content` and `tool_calls` arrive together. Suppress only final-answer stream duplicates once the persisted assistant Markdown summary exists.
 - Create one `Work Cycle Group` for every run that has visible operational work: provider tool calls, read results, navigation, confirmation cards, action edits, execution results, failures, or business checks.
 - Do not create a work cycle for pure chat. A greeting remains `User Bubble -> Assistant Markdown Summary`.
 - Create one `Tool Group` inside each work cycle whenever the run has any tool/action/navigation/confirmation state. This is mandatory even for a single tool.
 - Group provider tool calls emitted in the same planning turn into the same tool group.
 - Attach pending `AgentActionRequest` cards to the producing tool/action row. If the provider tool-call argument stream and the server confirmation card represent the same canonical tool, merge them into one tool row.
 - Attach navigation rows to the same work cycle/tool group as the related tool/action. Navigation rows must not be top-level siblings between the user bubble and tool row.
-- Create a business `Evaluation/Check Row` from structured run/action/domain state, not from harness labels. Examples: `本次只读，未修改业务数据`, `等待 1 张确认卡`, `已打开看测算`.
+- Create a business `Evaluation/Check Row` from structured run/action/domain state, not from harness labels. It should appear only for actionable failures or validation findings that are not already visible in tool rows or confirmation cards.
 - Keep memory/evaluator/provider lifecycle rows technical unless they are transformed into a business check.
+- Keep generic confirmation lifecycle events such as `confirmation_ready` out of the main lane. The confirmation card attached to the producing tool row is the user-facing interrupt.
 - Collapse repeated technical rows in the technical log only.
-- Preserve chronological order at the top level: user message, work cycle, assistant summary. Assistant final summary should not appear before visible tool/work rows from the same run.
+- Preserve chronological order at the top level: user message, optional model preface, work cycle, assistant summary. Assistant final summary should not appear before visible tool/work rows from the same run.
 
 No regex or keyword routing should be introduced. Grouping is display projection over already-known server state.
 
@@ -447,8 +452,6 @@ For a read-only question:
     ▸ 查询数据  data_query_workspace  completed
       参数 + 返回      同一展开区域
     ▸ 已打开：看测算
-  ✓ 本次只读取当前工作区数据，未修改业务数据
-
 基准场景尚未回本。总收入 ... 总成本 ...
 ```
 
@@ -466,7 +469,6 @@ For a write action:
       确认卡：4 月线上系数 0.35 -> 0.3
       [编辑] [确认执行] [取消]
     ▸ 已打开：调模型
-  ! 等待 1 张确认卡，确认前不会写入草稿
 ```
 
 For a complex multi-step goal:
@@ -479,7 +481,6 @@ For a complex multi-step goal:
     ▸ 建立 50 个成员  workspace_configure_operating_model  waiting
     ▸ 设置成本和节奏  workspace_configure_operating_model  waiting
     ▸ 生成 12 个月预测  data_query_workspace  completed
-  ! 等待 2 张确认卡；不会发布正式版本
 
 我已生成可编辑确认卡。你确认后我会保存草稿，但不会发布正式版本。
 ```
@@ -527,9 +528,9 @@ The first screen should be compact. Expansion reveals detail, not another page o
 - `apps/api/src/agent/agent-timeline-projector.ts` now builds the strict top-level order for visible operational runs: user message, one work cycle, assistant Markdown summary. Pure chat remains only user message plus assistant summary.
 - The backend projector always creates a `Work Cycle Group` and `Tool Group` for non-chat runs, including single-tool runs.
 - Provider tool-call argument rows are merged into server-owned confirmation rows by canonical tool identity. For example, `workspace_update_online_factor` and the resulting `workspace.update_draft` confirmation render as one tool row with a combined tool body and the editable card.
-- Read-only plan-step results are attached back to the nearest producing provider tool row as that row's `返回`. The same text may still be summarized by the assistant afterward, but the tool row itself must carry the evidence of what came back.
+- Read-only plan-step results are attached back to the matching provider tool row by tool-call identity, not by nearest visual position. The same text may still be summarized by the assistant afterward, but the tool row itself must carry the evidence of what came back.
 - Navigation rows are attached inside the relevant tool group and no longer appear as top-level transcript siblings.
-- Business check rows are generated from structured node state and use business wording such as read-only/no-write or pending confirmation counts; harness/evaluator implementation labels remain technical.
+- Business check rows are generated from structured node state only when the user needs to act on a failure or concrete validation finding. Generic success/no-write/pending-confirmation status stays technical or is represented by the related tool row/card; harness/evaluator implementation labels remain technical.
 - Raw provider arguments/results are projected into one combined frontend tool body; raw provider detail remains technical/debug evidence rather than a second visual fold in the normal lane.
 - `apps/web/src/components/agent/AgentChatTimeline.tsx` renders the nested transcript directly and exposes stable `data-transcript-kind` / `data-transcript-section-kind` markers for browser-level structural verification.
 - `apps/web/src/hooks/useAgentTranscriptExpansion.ts` handles recursive section expansion without leaking expansion state across nodes or threads.

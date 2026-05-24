@@ -55,6 +55,14 @@ function workspacePanelNavigation(reason: string): AgentNavigationEvent {
   }
 }
 
+function sameJsonValue(left: unknown, right: unknown) {
+  try {
+    return JSON.stringify(left) === JSON.stringify(right)
+  } catch {
+    return Object.is(left, right)
+  }
+}
+
 export async function planOnlineFactorFromFields(
   ctx: PlannerContext,
   input: { monthLabel: string; factor: number; mode: 'forecast' | 'write' },
@@ -107,21 +115,34 @@ export async function planWorkspacePatch(
   const { draft, config } = await currentDraftConfig(ctx)
   const nextConfig = cloneModelConfig(config)
   const details = []
+  const changedPatches = []
 
   for (const patch of patches) {
     const oldValue = getConfigPath(nextConfig, patch.path)
+    if (sameJsonValue(oldValue, patch.value)) continue
     setConfigPath(nextConfig, patch.path, patch.value)
+    changedPatches.push(patch)
     details.push({
       label: patch.label ?? patch.path,
       value: `${JSON.stringify(oldValue)} -> ${JSON.stringify(patch.value)}`,
     })
   }
 
+  if (changedPatches.length === 0) {
+    return {
+      title: '模型草稿未变化',
+      message: '这次工具参数和当前草稿一致，没有生成写入确认卡。请重新给出需要增加、减少或改成的具体值。',
+      readKind: 'tool_observation',
+      status: 'info',
+      navigation: modelWorkbenchNavigation('模型草稿修改需要打开调模型页面供核对。'),
+    } satisfies ReadDraft
+  }
+
   const normalized = hydrateModelConfig(nextConfig)
   return {
     kind: 'workspace.update_draft',
     title: '确认修改模型草稿',
-    summary: `将 ${patches.length} 项模型输入保存到当前草稿。`,
+    summary: `将 ${changedPatches.length} 项模型输入保存到当前草稿。`,
     targetLabel: ctx.workspace.name,
     riskLevel: 'medium',
     details: details.slice(0, 8),
@@ -130,7 +151,7 @@ export async function planWorkspacePatch(
       revision: draft.revision,
       workspaceName: ctx.workspace.name,
       config: normalized,
-      patches,
+      patches: changedPatches,
     },
   } satisfies AgentActionDraft
 }

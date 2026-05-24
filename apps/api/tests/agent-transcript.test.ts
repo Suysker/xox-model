@@ -214,6 +214,62 @@ describe('Agent execution transcript projection', () => {
     expect(technical.some((item) => item.title === '正在查找相关记忆')).toBe(true)
   })
 
+  it('keeps provider stream lifecycle metadata out of the user timeline', () => {
+    const timeline = buildAgentTimelineItems(projectionState({
+      messages: [
+        { id: 'message-user-provider-stream', threadId: 'thread-1', role: 'user', content: '我们几个月可以回本？', createdAt },
+      ],
+      runEvents: [
+        runEvent({ sequence: 1, type: 'provider_stream_started', title: 'Provider 流已打开', message: '正在接收 deepseek / deepseek-v4-pro 的流式输出。', status: 'running', data: { kind: 'stream_started' } }),
+        runEvent({ sequence: 2, type: 'provider_stream_delta', title: '模型输出片段', message: '当前未回本。', status: 'running', data: { kind: 'content_delta', preview: '当前未回本。' } }),
+        runEvent({ sequence: 3, type: 'provider_stream_completed', title: 'Provider 流已结束', message: '模型流已结束。', status: 'completed', data: { kind: 'stream_completed', toolCallCount: 0 } }),
+      ],
+    }))
+
+    const visible = timeline.filter((item) => item.visibility === 'user')
+    const technical = timeline.filter((item) => item.visibility === 'technical')
+
+    expect(visible.some((item) => item.kind === 'assistant_stream' && item.summary.includes('当前未回本'))).toBe(true)
+    expect(visible.map((item) => `${item.title}\n${item.summary}`).join('\n')).not.toContain('Provider 流')
+    expect(technical.map((item) => item.title)).toContain('正在规划下一步')
+    expect(technical.map((item) => item.title)).toContain('模型回复已完成')
+  })
+
+  it('keeps provider retry and repair events in the technical timeline only', () => {
+    const timeline = buildAgentTimelineItems(projectionState({
+      messages: [
+        { id: 'message-user-provider-retry', threadId: 'thread-1', role: 'user', content: '生成复杂经营模型', createdAt },
+      ],
+      runEvents: [
+        runEvent({
+          sequence: 1,
+          type: 'provider_retrying',
+          title: '模型服务请求重试',
+          message: '模型服务返回的流式工具调用不可解析，正在改用非流式请求对同一轮规划重试一次。',
+          status: 'running',
+          data: { toolName: 'workspace_configure_operating_model' },
+        }),
+        runEvent({
+          sequence: 2,
+          type: 'provider_tool_call_repaired',
+          title: '工具参数已修复',
+          message: '模型返回的工具参数包含污染片段，已在安全范围内修复后继续。',
+          status: 'info',
+          data: { toolName: 'workspace_configure_operating_model' },
+        }),
+      ],
+    }))
+
+    const visibleText = timeline.filter((item) => item.visibility === 'user').map((item) => `${item.title}\n${item.summary}`).join('\n')
+    const technicalSourceTypes = timeline.filter((item) => item.visibility === 'technical').map((item) => item.sourceType)
+
+    expect(visibleText).not.toContain('正在重试工具规划')
+    expect(visibleText).not.toContain('工具参数已修复')
+    expect(visibleText).not.toContain('流式工具调用不可解析')
+    expect(technicalSourceTypes).toContain('provider_retrying')
+    expect(technicalSourceTypes).toContain('provider_tool_call_repaired')
+  })
+
   it('projects simple greetings as only user and assistant transcript nodes', () => {
     const nodes = buildAgentTranscriptNodes(projectionState({
       messages: [
@@ -241,6 +297,7 @@ describe('Agent execution transcript projection', () => {
       runEvents: [
         runEvent({ sequence: 1, type: 'provider_stream_delta', title: '工具调用片段', message: 'ledger_create_entry', status: 'running', data: { kind: 'tool_call_delta', toolCallIndex: 0, toolName: 'ledger_create_entry', argumentsPreview: '{"amount":176}' } }),
         runEvent({ sequence: 2, type: 'tool_plan_ready', title: '模型工具调用已解析', message: '模型规划生成 1 个步骤。', status: 'running', data: { stepCount: 1, pendingActionCount: 1 } }),
+        runEvent({ sequence: 3, type: 'confirmation_ready', title: '需要你确认动作', message: '已生成 1 张待确认动作卡，用户可编辑后执行。', status: 'blocked', data: { actionRequestIds: ['action-1'] } }),
       ],
       planSteps: [planStep()],
       actionRequests: [action()],
@@ -251,16 +308,17 @@ describe('Agent execution transcript projection', () => {
     const toolGroup = workGroup?.children?.find((node) => node.kind === 'tool_group')
     const toolNode = flattenNodes(nodes).find((node) => node.kind === 'tool_call' && node.actionRequest?.id === 'action-1')
     const navigationNode = toolGroup?.children?.find((node) => node.kind === 'navigation')
-    const checkNode = workGroup?.children?.find((node) => node.kind === 'evaluation')
     const sections = flattenSections(toolNode?.sections)
 
     expect(visible.map((node) => node.kind)).toEqual(['user_message', 'work_group', 'assistant_message'])
+    expect(flattenNodes(nodes).map((node) => `${node.title}\n${node.summary}`).join('\n')).not.toContain('需要你确认动作')
+    expect(flattenNodes(nodes).map((node) => `${node.title}\n${node.summary}`).join('\n')).not.toContain('待确认动作卡')
     expect(workGroup).toBeTruthy()
     expect(toolGroup).toBeTruthy()
     expect(toolNode).toBeTruthy()
     expect(toolNode?.defaultOpen).toBe(true)
     expect(navigationNode?.title).toContain('已打开')
-    expect(checkNode?.summary).toContain('等待 1 张确认卡')
+    expect(workGroup?.children?.some((node) => node.kind === 'evaluation')).toBe(false)
     expect(toolNode?.summary).not.toContain('"amount"')
     expect(sections.some((section) => section.kind === 'confirmation' && section.actionRequest?.id === 'action-1' && section.defaultOpen)).toBe(true)
     expect(toolNode?.sections?.some((section) => section.kind === 'arguments')).toBe(true)
@@ -308,7 +366,6 @@ describe('Agent execution transcript projection', () => {
     const toolGroup = workGroup?.children?.find((node) => node.kind === 'tool_group')
     const toolNode = toolGroup?.children?.find((node) => node.kind === 'tool_call')
     const navigationNode = toolGroup?.children?.find((node) => node.kind === 'navigation')
-    const checkNode = workGroup?.children?.find((node) => node.kind === 'evaluation')
     const sections = flattenSections(toolNode?.sections)
     const resultSection = toolNode?.sections?.find((section) => section.kind === 'result')
 
@@ -325,9 +382,131 @@ describe('Agent execution transcript projection', () => {
     expect(resultSection?.content).toBe('已读取当前工作区测算结果。')
     expect(sections.some((section) => section.kind === 'raw' && section.content?.includes('"question"'))).toBe(true)
     expect(navigationNode?.title).toBe('已打开：看测算')
-    expect(checkNode?.summary).toContain('本次只读取当前工作区数据，未修改业务数据')
+    expect(workGroup?.children?.some((node) => node.kind === 'evaluation')).toBe(false)
     expect(workGroup?.children?.some((node) => node.title === '查询回本周期')).toBe(false)
     expect(nodes.filter((node) => node.kind === 'navigation')).toHaveLength(0)
+  })
+
+  it('attaches read results to the matching provider tool instead of the nearest later tool', () => {
+    const nodes = buildAgentTranscriptNodes(projectionState({
+      messages: [
+        { id: 'message-user-mixed-tools', threadId: 'thread-1', role: 'user', content: '查回本，再问我缺哪个成员', createdAt },
+        { id: 'message-assistant-mixed-tools', threadId: 'thread-1', role: 'assistant', content: '当前未回本，还需要确认成员。', createdAt },
+      ],
+      runEvents: [
+        runEvent({
+          sequence: 1,
+          type: 'provider_stream_delta',
+          title: '工具调用片段',
+          message: 'data_query_workspace',
+          status: 'running',
+          data: {
+            kind: 'tool_call_delta',
+            toolCallIndex: 0,
+            toolName: 'data_query_workspace',
+            argumentsPreview: '{"question":"我们几个月才能回本？","scope":"workspace_summary","metrics":["payback"]}',
+          },
+        }),
+        runEvent({
+          sequence: 2,
+          type: 'provider_stream_delta',
+          title: '工具调用片段',
+          message: 'ask_user_clarification',
+          status: 'running',
+          data: {
+            kind: 'tool_call_delta',
+            toolCallIndex: 1,
+            toolName: 'ask_user_clarification',
+            argumentsPreview: '{"missingFields":["memberName"],"question":"你说的成员A是哪位？"}',
+          },
+        }),
+        runEvent({ sequence: 3, type: 'run_completed', title: '运行完成', message: '模型规划和只读回答已完成。', status: 'completed' }),
+      ],
+      planSteps: [
+        planStep({
+          id: 'step-data-query',
+          actionRequestId: null,
+          sequence: 1,
+          title: '查询回本周期',
+          description: '基准场景总收入 ¥4,375,800，总成本 ¥7,273,781，总利润 ¥-2,897,981。',
+          status: 'executed',
+          navigation: null,
+          toolName: 'data_query_workspace',
+          toolCallId: 'call_data_query_workspace',
+          toolArguments: { scope: 'workspace_summary', metrics: ['payback'] },
+        }),
+        planStep({
+          id: 'step-clarification',
+          actionRequestId: null,
+          sequence: 2,
+          title: '需要补充信息',
+          description: '当前团队里没有叫「成员A」的成员，请确认是哪位。',
+          status: 'info',
+          navigation: null,
+          toolName: 'ask_user_clarification',
+          toolCallId: 'call_ask_user_clarification',
+          toolArguments: { missingFields: ['memberName'] },
+        }),
+      ],
+      actionRequests: [],
+    }))
+
+    const toolGroup = flattenNodes(nodes).find((node) => node.kind === 'tool_group')
+    const dataNode = toolGroup?.children?.find((node) => node.tool?.name === 'data_query_workspace')
+    const clarificationNode = toolGroup?.children?.find((node) => node.tool?.name === 'ask_user_clarification')
+    const dataResult = dataNode?.sections?.find((section) => section.kind === 'result')?.content
+    const clarificationResult = clarificationNode?.sections?.find((section) => section.kind === 'result')?.content
+
+    expect(dataResult).toContain('基准场景总收入')
+    expect(clarificationResult ?? '').not.toContain('基准场景总收入')
+    expect(flattenSections(dataNode?.sections).some((section) => section.kind === 'raw' && section.content?.includes('workspace_summary'))).toBe(true)
+  })
+
+  it('uses provider tool index as a compatibility fallback for older read plan steps without tool metadata', () => {
+    const nodes = buildAgentTranscriptNodes(projectionState({
+      messages: [
+        { id: 'message-user-old-run', threadId: 'thread-1', role: 'user', content: '查回本，再问我缺哪个成员', createdAt },
+        { id: 'message-assistant-old-run', threadId: 'thread-1', role: 'assistant', content: '当前未回本，还需要确认成员。', createdAt },
+      ],
+      runEvents: [
+        runEvent({
+          sequence: 1,
+          type: 'provider_stream_delta',
+          title: '工具调用片段',
+          message: 'data_query_workspace',
+          status: 'running',
+          data: { kind: 'tool_call_delta', toolCallIndex: 0, toolName: 'data_query_workspace', argumentsPreview: '{"scope":"workspace_summary"}' },
+        }),
+        runEvent({
+          sequence: 2,
+          type: 'provider_stream_delta',
+          title: '工具调用片段',
+          message: 'ask_user_clarification',
+          status: 'running',
+          data: { kind: 'tool_call_delta', toolCallIndex: 1, toolName: 'ask_user_clarification', argumentsPreview: '{"missingFields":["memberName"]}' },
+        }),
+        runEvent({ sequence: 3, type: 'run_completed', title: '运行完成', message: '模型规划和只读回答已完成。', status: 'completed' }),
+      ],
+      planSteps: [
+        planStep({
+          id: 'step-old-data-query',
+          actionRequestId: null,
+          sequence: 1,
+          title: '查询回本周期',
+          description: '基准场景总收入 ¥4,375,800，总成本 ¥7,273,781。',
+          status: 'executed',
+          navigation: null,
+        }),
+      ],
+      actionRequests: [],
+    }))
+
+    const toolGroup = flattenNodes(nodes).find((node) => node.kind === 'tool_group')
+    const dataNode = toolGroup?.children?.find((node) => node.tool?.name === 'data_query_workspace')
+    const clarificationNode = toolGroup?.children?.find((node) => node.tool?.name === 'ask_user_clarification')
+
+    expect(dataNode?.sections?.find((section) => section.kind === 'result')?.content).toContain('基准场景总收入')
+    expect(clarificationNode?.sections?.find((section) => section.kind === 'result')?.content ?? '').not.toContain('基准场景总收入')
   })
 
   it('merges provider draft tool calls into the generic workspace confirmation row', () => {
@@ -404,7 +583,63 @@ describe('Agent execution transcript projection', () => {
     expect(sections.some((section) => section.kind === 'arguments')).toBe(true)
     expect(sections.some((section) => section.kind === 'raw' && section.content?.includes('onlineSalesFactor'))).toBe(true)
     expect(sections.some((section) => section.kind === 'confirmation' && section.actionRequest?.id === 'action-online-factor')).toBe(true)
-    expect(workGroup?.children?.find((node) => node.kind === 'evaluation')?.summary).toContain('等待 1 张确认卡')
+    expect(workGroup?.children?.some((node) => node.kind === 'evaluation')).toBe(false)
+  })
+
+  it('keeps planner preface text but drops duplicated final-answer stream after tool observations', () => {
+    const nodes = buildAgentTranscriptNodes(projectionState({
+      messages: [
+        { id: 'message-user-preface', threadId: 'thread-1', role: 'user', content: '回本并记一笔账', createdAt },
+        { id: 'message-assistant-preface', threadId: 'thread-1', role: 'assistant', content: '当前还不能回本，我已经准备好确认卡。', createdAt: '2026-05-22T00:00:08.000Z' },
+      ],
+      runEvents: [
+        runEvent({ sequence: 1, type: 'provider_stream_delta', title: '模型输出片段', message: '我先拆成查询和记账两步。', status: 'running', data: { kind: 'content_delta', phase: 'planning', preview: '我先拆成查询和记账两步。' } }),
+        runEvent({ sequence: 2, type: 'provider_stream_delta', title: '工具调用片段', message: 'ledger_create_entry', status: 'running', data: { kind: 'tool_call_delta', phase: 'planning', toolCallIndex: 0, toolName: 'ledger_create_entry', argumentsPreview: '{"amount":176}' } }),
+        runEvent({ sequence: 3, type: 'provider_stream_delta', title: '模型输出片段', message: '当前还不能回本', status: 'running', data: { kind: 'content_delta', phase: 'final_answer', preview: '当前还不能回本，我已经准备好确认卡。' } }),
+        runEvent({ sequence: 4, type: 'provider_stream_completed', title: 'Provider 流已结束', message: '模型流已结束。', status: 'completed', data: { toolCallCount: 0, phase: 'final_answer' } }),
+      ],
+      planSteps: [planStep()],
+      actionRequests: [action()],
+    }))
+
+    const visible = nodes.filter((node) => node.visibility === 'user')
+    expect(visible.map((node) => node.kind)).toEqual(['user_message', 'assistant_stream', 'work_group', 'assistant_message'])
+    expect(visible[1]?.summary).toContain('我先拆成查询和记账两步')
+    expect(visible.map((node) => node.summary).join('\n')).not.toContain('当前还不能回本，我已经准备好确认卡。\n当前还不能回本')
+  })
+
+  it('preserves the first planner preface when later repair turns stream unrelated planning text', () => {
+    const nodes = buildAgentTranscriptNodes(projectionState({
+      messages: [
+        { id: 'message-user-preface-merge', threadId: 'thread-1', role: 'user', content: '回本、记账、股东注资', createdAt },
+        { id: 'message-assistant-preface-merge', threadId: 'thread-1', role: 'assistant', content: '我已经处理完查询并准备好待确认动作。', createdAt: '2026-05-22T00:00:08.000Z' },
+      ],
+      runEvents: [
+        runEvent({ sequence: 1, type: 'provider_stream_delta', title: '模型输出片段', message: '我会同时处理三件事。', status: 'running', data: { kind: 'content_delta', phase: 'planning', preview: '我会同时处理三件事：查询回本、准备记账、准备股东注资。' } }),
+        runEvent({ sequence: 2, type: 'provider_stream_delta', title: '工具调用片段', message: 'data_query_workspace', status: 'running', data: { kind: 'tool_call_delta', phase: 'planning', toolCallIndex: 0, toolName: 'data_query_workspace', argumentsPreview: '{"scope":"workspace_summary"}' } }),
+        runEvent({ sequence: 3, type: 'provider_stream_delta', title: '模型输出片段', message: '用户给了三个任务。', status: 'running', data: { kind: 'content_delta', phase: 'planning', preview: '用户给了三个任务，但当前还缺成员名称。' } }),
+      ],
+      planSteps: [
+        planStep({
+          id: 'step-data-query-preface',
+          actionRequestId: null,
+          title: '查询回本周期',
+          description: '当前还不能回本。',
+          status: 'executed',
+          toolName: 'data_query_workspace',
+          toolCallId: 'call_data_query_workspace',
+          toolArguments: { scope: 'workspace_summary' },
+        }),
+      ],
+      actionRequests: [],
+    }))
+
+    const visible = nodes.filter((node) => node.visibility === 'user')
+    const preface = visible.find((node) => node.kind === 'assistant_stream')
+
+    expect(visible.map((node) => node.kind)).toEqual(['user_message', 'assistant_stream', 'work_group', 'assistant_message'])
+    expect(preface?.summary).toContain('我会同时处理三件事')
+    expect(preface?.summary).not.toContain('当前还缺成员名称')
   })
 
   it('groups multi-tool turns into a work group and a compact tool group', () => {

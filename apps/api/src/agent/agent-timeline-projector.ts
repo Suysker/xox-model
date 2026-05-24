@@ -20,6 +20,9 @@ function timeOrder(createdAt: string, fallback = 0, rank = 0) {
 
 function transcriptOrder(state: AgentProjectionState, item: AgentTranscriptItem) {
   const firstRunEventTime = state.runEvents[0]?.createdAt
+  if (item.kind === 'message' && item.payload?.phase === 'planning') {
+    return timeOrder(firstRunEventTime ?? item.createdAt, item.sequence, 1)
+  }
   if (firstRunEventTime) return timeOrder(firstRunEventTime, item.sequence, 4)
   return timeOrder(item.createdAt, item.sequence, 4)
 }
@@ -92,6 +95,7 @@ function timelineItemFromTranscript(
     ...(item.sourceType ? { sourceType: item.sourceType } : {}),
     ...(item.agUiEventType ? { agUiEventType: item.agUiEventType } : {}),
     ...((action?.kind ?? item.toolName) ? { toolName: action?.kind ?? item.toolName } : {}),
+    ...(item.toolCallId ? { toolCallId: item.toolCallId } : {}),
     ...(item.actionRequestId ? { actionRequestId: item.actionRequestId } : {}),
     ...(action ? { actionRequest: action } : {}),
     ...(item.navigation ? { navigation: item.navigation } : {}),
@@ -116,7 +120,15 @@ function hasFinalAssistantMessageForRun(state: AgentProjectionState) {
 }
 
 function shouldDropTranscriptItem(item: AgentTranscriptItem, state: AgentProjectionState) {
-  return item.kind === 'message' && hasFinalAssistantMessageForRun(state)
+  if (item.kind !== 'message' || !hasFinalAssistantMessageForRun(state)) return false
+  if (item.payload?.phase === 'final_answer') return true
+  const hasToolWork = state.runEvents.some((event) =>
+    event.runId === item.runId &&
+    event.type === 'provider_stream_delta' &&
+    event.data?.kind === 'tool_call_delta',
+  ) || state.planSteps.some((step) => step.runId === item.runId) ||
+    state.actionRequests.some((action) => action.runId === item.runId)
+  return !hasToolWork
 }
 
 function transcriptTimelineVisibility(item: AgentTranscriptItem, action: AgentActionRequest | null): AgentTimelineItem['visibility'] {
@@ -200,12 +212,14 @@ function mergeTimelineItems(items: PendingTimelineItem[]) {
       if (existingIndex !== undefined) {
         const existing = merged[existingIndex]
         if (existing) {
+          const summary = mergeAssistantStreamText(existing.summary, item.summary)
+          const content = mergeAssistantStreamText(existing.content, item.content)
           merged[existingIndex] = {
             ...existing,
             title: item.title || existing.title,
-            summary: item.summary || existing.summary,
+            summary,
             status: item.status,
-            ...((item.content || existing.content) ? { content: item.content || existing.content } : {}),
+            ...((content || existing.content) ? { content } : {}),
             ...(item.payload ? { payload: item.payload } : {}),
             order: Math.min(existing.order, item.order),
           }
@@ -246,6 +260,14 @@ function mergeTimelineItems(items: PendingTimelineItem[]) {
   }
 
   return merged
+}
+
+function mergeAssistantStreamText(existing: string | undefined, next: string | undefined) {
+  if (!existing) return next ?? ''
+  if (!next) return existing
+  if (next.startsWith(existing)) return next
+  if (existing.startsWith(next)) return existing
+  return existing
 }
 
 function providerToolCallCompletedStatus(state: AgentProjectionState, runId: string | null | undefined): AgentTimelineItem['status'] | null {
@@ -754,6 +776,29 @@ function attachReadResultToToolNode(toolNode: PendingTranscriptNode, readNode: P
   }
 }
 
+function numericPayloadField(payload: Record<string, unknown> | null | undefined, field: string) {
+  const value = payload?.[field]
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function readResultMatchesToolNode(readNode: PendingTranscriptNode, candidate: PendingTranscriptNode) {
+  if (candidate.actionRequest) return false
+  if (candidate.runId !== readNode.runId) return false
+  if (candidate.kind !== 'tool_call' && candidate.kind !== 'tool_result') return false
+
+  const readCallId = readNode.tool?.callId
+  const candidateCallId = candidate.tool?.callId
+  if (readCallId && candidateCallId) return readCallId === candidateCallId
+
+  const readToolName = readNode.tool?.name
+  const candidateToolName = candidate.tool?.name
+  if (readToolName && candidateToolName) return providerToolMatchesAction(candidateToolName, readToolName)
+
+  const planStepSequence = numericPayloadField(readNode.payload, 'planStepSequence')
+  const toolCallIndex = numericPayloadField(candidate.payload, 'toolCallIndex')
+  return planStepSequence !== null && toolCallIndex !== null && planStepSequence === toolCallIndex + 1
+}
+
 function mergeReadResultPlanStepsIntoToolNodes(nodes: PendingTranscriptNode[]): PendingTranscriptNode[] {
   const next: PendingTranscriptNode[] = []
 
@@ -764,9 +809,7 @@ function mergeReadResultPlanStepsIntoToolNodes(nodes: PendingTranscriptNode[]): 
         const candidate = next[index]
         if (
           candidate &&
-          !candidate.actionRequest &&
-          candidate.runId === node.runId &&
-          (candidate.kind === 'tool_call' || candidate.kind === 'tool_result')
+          readResultMatchesToolNode(node, candidate)
         ) {
           targetIndex = index
           break
@@ -869,26 +912,10 @@ function attachNavigationRows(nodes: PendingTranscriptNode[]): PendingTranscript
   return next
 }
 
-function businessCheckNode(runKey: string, children: AgentTranscriptNode[], order: number): PendingTranscriptNode {
+function businessCheckNode(runKey: string, children: AgentTranscriptNode[], order: number): PendingTranscriptNode | null {
   const flattened = flattenTranscriptChildren(children)
-  const pendingCount = pendingNodeCount(children)
   const failedCount = flattened.filter((node) => node.status === 'failed').length
-  const executedCount = flattened.filter((node) => node.kind === 'tool_result' && node.status === 'completed' && node.actionRequestId).length
-  const navigationCount = flattened.filter((node) => node.kind === 'navigation').length
-  const hasWrites = flattened.some((node) => node.actionRequest || node.actionRequestId)
-  const status = failedCount > 0 ? 'failed' : pendingCount > 0 ? 'waiting' : 'completed'
-  const summary = failedCount > 0
-    ? `有 ${failedCount} 个步骤失败，请展开查看并修复。`
-    : pendingCount > 0
-      ? `等待 ${pendingCount} 张确认卡，确认前不会写入业务数据。`
-      : executedCount > 0
-        ? `已执行 ${executedCount} 个动作，业务数据已刷新。`
-        : hasWrites
-          ? '本轮涉及业务动作，当前没有待确认写入。'
-          : [
-              '本次只读取当前工作区数据，未修改业务数据。',
-              navigationCount > 0 ? `已打开 ${navigationCount} 个相关页面用于核对。` : null,
-            ].filter(Boolean).join(' ')
+  if (failedCount === 0) return null
 
   return {
     id: `node-business-check-${runKey}`,
@@ -897,8 +924,8 @@ function businessCheckNode(runKey: string, children: AgentTranscriptNode[], orde
     sequence: children[0]?.sequence ?? 0,
     kind: 'evaluation',
     title: '业务检查',
-    summary,
-    status,
+    summary: `有 ${failedCount} 个步骤失败，请展开查看并修复。`,
+    status: 'failed',
     visibility: 'user',
     defaultOpen: false,
     disclosure: {
@@ -964,7 +991,8 @@ function groupRunSegment(items: AgentTimelineItem[]): PendingTranscriptNode[] {
       : []),
     ...otherChildren,
   ].sort((left, right) => left.order - right.order)
-  groupedChildren.push(businessCheckNode(runKey, groupedChildren, Math.max(...nodes.map((node) => node.order)) + 0.5))
+  const checkNode = businessCheckNode(runKey, groupedChildren, Math.max(...nodes.map((node) => node.order)) + 0.5)
+  if (checkNode) groupedChildren.push(checkNode)
   return [
     workGroupNode(runKey, items, groupedChildren, Math.min(...nodes.map((node) => node.order))),
   ]

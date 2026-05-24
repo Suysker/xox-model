@@ -6,6 +6,8 @@ import { conflict, forbidden, unprocessable } from '../core/http.js'
 type RiskLevel = 'low' | 'medium' | 'high'
 export type AgentAutomationLevel = 'manual' | RiskLevel
 
+const riskRank: Record<RiskLevel, number> = { low: 1, medium: 2, high: 3 }
+
 type AgentActionPolicy = {
   kind: AgentActionKind
   minRiskLevel: RiskLevel
@@ -21,20 +23,8 @@ type DraftLike = {
 
 type ActionRowLike = Pick<Row<'agent_action_requests'>, 'kind' | 'status' | 'workspace_id' | 'user_id' | 'payload_json' | 'navigation_json' | 'risk_level'>
 
-const riskRank: Record<RiskLevel, number> = {
-  low: 1,
-  medium: 2,
-  high: 3,
-}
-
 export function normalizeAgentAutomationLevel(value: unknown): AgentAutomationLevel {
   return value === 'low' || value === 'medium' || value === 'high' ? value : 'manual'
-}
-
-export function canAutoExecuteRisk(riskLevel: string, automationLevel: AgentAutomationLevel) {
-  if (automationLevel === 'manual') return false
-  if (!(riskLevel in riskRank)) return false
-  return riskRank[riskLevel as RiskLevel] <= riskRank[automationLevel]
 }
 
 const ACTION_POLICIES: Record<AgentActionKind, AgentActionPolicy> = {

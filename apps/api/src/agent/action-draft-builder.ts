@@ -97,9 +97,9 @@ export async function buildPlannedItemFromRuntimeStep<TContext>(
   step: RuntimePlannerStep,
   handlers: ActionDraftBuilderHandlers<TContext>,
 ): Promise<PlannedItemResult> {
-  if (step.intent === 'agent.ask_clarification') return clarificationRead(step)
-  if (step.intent === 'account.forbidden') return accountForbiddenRead()
-  if (step.intent === 'ui.navigate') return uiNavigateRead(step)
+  if (step.intent === 'agent.ask_clarification') return attachToolMetadata(clarificationRead(step), step)
+  if (step.intent === 'account.forbidden') return attachToolMetadata(accountForbiddenRead(), step)
+  if (step.intent === 'ui.navigate') return attachToolMetadata(uiNavigateRead(step), step)
   if (!step.intent) return null
   const handler = handlers[step.intent]
   return handler ? attachToolMetadata(await handler(ctx, step), step) : null

@@ -368,7 +368,7 @@ Key paths:
   - Stops synthesizing assistant replies from read-tool strings.
   - Returns `assistantText` only for model-authored assistant messages and `observations` for tool results.
 - `apps/api/src/agent/goal-run-engine.ts`
-  - Feeds read and auto-executed action observations back into the model before adding an assistant message.
+  - Feeds read observations and pending confirmation-card previews back into the model before adding an assistant message.
   - Keeps pending confirmation cards as interruption states without fake final answers.
 - `apps/api/src/agent/approval-executor.ts`
   - Feeds confirmed-write execution observations back into the model before adding a post-confirmation assistant message.

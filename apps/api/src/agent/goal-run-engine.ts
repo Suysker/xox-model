@@ -15,7 +15,7 @@ import {
 import { planResponse } from './planner.js'
 import { addRunEvent } from './run-events.js'
 import { addMessage } from './thread-store.js'
-import { continueModelAfterToolObservations } from './tool-observation-continuation.js'
+import { continueModelAfterToolObservations, type AgentToolObservation } from './tool-observation-continuation.js'
 
 export type AgentGoalRunResult = {
   plannerSource: AgentPlannerSource
@@ -28,6 +28,7 @@ export type AgentGoalRunResult = {
 function evaluationSummary(evaluation: ReturnType<typeof serializeEvaluation>) {
   if (evaluation.status === 'pass') return 'Completion Evaluator 已确认当前目标满足验收条件。'
   if (evaluation.status === 'needs_confirmation') return 'Completion Evaluator 已暂停后续规划，等待用户处理确认卡。'
+  if (evaluation.status === 'needs_clarification') return 'Completion Evaluator 已暂停后续规划，等待用户补充信息。'
   if (evaluation.status === 'continue') return 'Completion Evaluator 发现仍有未满足项，已准备下一轮修复规划。'
   if (evaluation.status === 'blocked') return `Completion Evaluator 已阻断目标：${evaluation.blocker ?? '存在策略阻断。'}`
   if (evaluation.status === 'failed') return `Completion Evaluator 判定目标失败：${evaluation.blocker ?? '存在失败步骤。'}`
@@ -62,7 +63,9 @@ export async function executeAgentGoalRun(
   const actionRows: Row<'agent_action_requests'>[] = []
   const planRows: Row<'agent_plan_steps'>[] = []
   const assistantParts: string[] = []
+  const observations: AgentToolObservation[] = []
   let nextMessage = ctx.message
+  let pendingAssistantText: string | null = null
   const maxIterations = Math.max(1, Math.min(8, Number(JSON.parse(goal.contract_json).maxIterations ?? 5)))
 
   for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
@@ -91,16 +94,18 @@ export async function executeAgentGoalRun(
     navigationEvents.push(...planned.navigationEvents)
     actionRows.push(...planned.actionRows)
     planRows.push(...planned.planRows)
+    observations.push(...planned.observations)
     if (planned.assistantText?.trim()) {
-      assistantParts.push(planned.assistantText.trim())
-    } else if (planned.observations.length > 0 && planned.actionRows.every((row) => row.status !== 'pending')) {
-      const continuation = await continueModelAfterToolObservations(ctx, planned.observations)
-      if (!(await options.beforeStateWrite())) return null
-      if (continuation.status === 'answered') {
-        assistantParts.push(continuation.assistantText.trim())
-      } else if (continuation.status === 'failed') {
-        planRows.push(continuation.planStep)
-      }
+      pendingAssistantText = planned.assistantText.trim()
+    }
+    if (
+      pendingAssistantText &&
+      planned.actionRows.length === 0 &&
+      planned.planRows.length === 0 &&
+      planned.observations.length === 0
+    ) {
+      assistantParts.push(pendingAssistantText)
+      break
     }
 
     const evaluationRow = await evaluateAgentGoal({
@@ -137,7 +142,7 @@ export async function executeAgentGoalRun(
       },
     })
     const evaluatorCandidate = memoryCandidateFromEvaluatorFinding({ runId: ctx.runId, evaluation: evaluationRow })
-    if (evaluatorCandidate) {
+    if (evaluatorCandidate && (evaluation.status === 'blocked' || evaluation.status === 'failed')) {
       await consolidateAgentMemoryCandidates({
         db: ctx.db,
         workspace: ctx.workspace,
@@ -165,7 +170,8 @@ export async function executeAgentGoalRun(
       }
     }
 
-    if (evaluation.status === 'pass' || evaluation.status === 'needs_confirmation' || evaluation.status === 'blocked' || evaluation.status === 'failed') {
+    if (evaluation.status === 'pass' || evaluation.status === 'needs_confirmation' || evaluation.status === 'needs_clarification' || evaluation.status === 'blocked' || evaluation.status === 'failed') {
+      if (pendingAssistantText && observations.length === 0) assistantParts.push(pendingAssistantText)
       break
     }
     if (evaluation.status === 'continue' && evaluation.nextPlannerBrief) {
@@ -173,6 +179,41 @@ export async function executeAgentGoalRun(
       continue
     }
     break
+  }
+
+  if (assistantParts.length === 0 && observations.length > 0) {
+    const continuation = await continueModelAfterToolObservations(ctx, observations)
+    if (!(await options.beforeStateWrite())) return null
+    if (continuation.status === 'answered') {
+      assistantParts.push(continuation.assistantText.trim())
+    } else if (continuation.status === 'failed') {
+      planRows.push(continuation.planStep)
+      const evaluationRow = await evaluateAgentGoal({
+        db: ctx.db,
+        workspace: ctx.workspace,
+        goal,
+        iteration: maxIterations + 1,
+      })
+      const evaluation = serializeEvaluation(evaluationRow)
+      await addRunEvent(ctx.db, {
+        threadId: ctx.thread.id,
+        runId: ctx.runId,
+        type: 'goal_evaluated',
+        title: 'Completion Evaluator 已运行',
+        message: evaluationSummary(evaluation),
+        status: evaluation.status === 'failed' || evaluation.status === 'blocked' ? 'failed' : 'info',
+        data: {
+          goalId: goal.id,
+          iteration: maxIterations + 1,
+          evaluationStatus: evaluation.status,
+          satisfiedCriteria: evaluation.satisfiedCriteria,
+          unsatisfiedCount: evaluation.unsatisfiedCriteria.length,
+          nextPlannerBrief: evaluation.nextPlannerBrief,
+        },
+      })
+    }
+  } else if (assistantParts.length === 0 && pendingAssistantText) {
+    assistantParts.push(pendingAssistantText)
   }
 
   await consolidateExecutedActionMemory({

@@ -210,6 +210,9 @@ export type AgentPlanStep = {
   description: string
   status: AgentPlanStepStatus
   navigation: AgentNavigationEvent | null
+  toolName?: string | null
+  toolCallId?: string | null
+  toolArguments?: Record<string, unknown> | null
   createdAt: string
   updatedAt: string
 }
@@ -322,6 +325,7 @@ export type AgentTranscriptItem = {
   sourceType?: string
   agUiEventType?: AgentAgUiEventType
   actionRequestId?: string | null
+  toolCallId?: string | null
   toolName?: string | null
   navigation?: AgentNavigationEvent | null
   details?: Array<{ label: string; value: string }>
@@ -463,6 +467,7 @@ export type AgentGoalStatus =
   | 'interpreting'
   | 'planning'
   | 'waiting_for_confirmation'
+  | 'needs_clarification'
   | 'evaluating'
   | 'repairing'
   | 'completed'
@@ -507,7 +512,7 @@ export type AgentGoalFacts = {
   expectedStartMonth?: number
   requiresForecastSummary?: boolean
   forbiddenActions?: Array<'publish_release' | 'share_link' | 'account_action'>
-  requiredCapabilities?: Array<'workspace_rename' | 'operating_model' | 'ledger' | 'version' | 'share'>
+  requiredCapabilities?: Array<'workspace_rename' | 'operating_model' | 'draft' | 'ledger' | 'memory' | 'version' | 'share'>
 }
 
 export type AgentGoalContract = {

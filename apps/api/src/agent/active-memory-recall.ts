@@ -12,6 +12,7 @@ import { redactSecretLikeContent } from './memory-safety.js'
 
 const ACTIVE_RECALL_TIMEOUT_MS = 1200
 const ACTIVE_RECALL_CACHE_TTL_MS = 10_000
+const ACTIVE_RECALL_RUN_CACHE_TTL_MS = 2 * 60 * 60 * 1000
 const ACTIVE_RECALL_CIRCUIT_TIMEOUTS = 3
 const ACTIVE_RECALL_CIRCUIT_COOLDOWN_MS = 60_000
 
@@ -21,6 +22,7 @@ type CacheEntry = {
 }
 
 const recallCache = new Map<string, CacheEntry>()
+const recallCacheByRun = new Map<string, CacheEntry>()
 const circuitByScope = new Map<string, { timeoutCount: number; openedAt: number | null }>()
 
 export type ActiveMemoryRecallResult = {
@@ -38,6 +40,14 @@ function scopeKey(input: { workspace: Row<'workspaces'>; user: CurrentUser }) {
 
 function cacheKey(input: { workspace: Row<'workspaces'>; user: CurrentUser; message: string }) {
   return `${scopeKey(input)}:${redactSecretLikeContent(input.message).slice(0, 240)}`
+}
+
+function runCacheKey(input: { workspace: Row<'workspaces'>; user: CurrentUser; runId: string }) {
+  return `${scopeKey(input)}:${input.runId}`
+}
+
+function cacheRecallForRun(input: { workspace: Row<'workspaces'>; user: CurrentUser; runId: string }, result: ActiveMemoryRecallResult) {
+  recallCacheByRun.set(runCacheKey(input), { expiresAt: Date.now() + ACTIVE_RECALL_RUN_CACHE_TTL_MS, result })
 }
 
 function circuitOpen(key: string) {
@@ -97,6 +107,9 @@ export async function recallActiveAgentMemory(input: {
   runId: string
   message: string
 }): Promise<ActiveMemoryRecallResult> {
+  const cachedForRun = recallCacheByRun.get(runCacheKey(input))
+  if (cachedForRun && cachedForRun.expiresAt > Date.now()) return cachedForRun.result
+
   const scopedKey = scopeKey(input)
   if (circuitOpen(scopedKey)) {
     await addRunEvent(input.db, {
@@ -108,7 +121,9 @@ export async function recallActiveAgentMemory(input: {
       status: 'info',
       data: { skippedReason: 'circuit_open' },
     })
-    return { injectedSummary: null, memories: [], usedMemoryIds: [], skippedReason: 'circuit_open', confidence: 0, retrieval: [] }
+    const result: ActiveMemoryRecallResult = { injectedSummary: null, memories: [], usedMemoryIds: [], skippedReason: 'circuit_open', confidence: 0, retrieval: [] }
+    cacheRecallForRun(input, result)
+    return result
   }
 
   const key = cacheKey(input)
@@ -165,6 +180,7 @@ export async function recallActiveAgentMemory(input: {
         })
       }
     }
+    cacheRecallForRun(input, cached.result)
     return cached.result
   }
 
@@ -201,7 +217,9 @@ export async function recallActiveAgentMemory(input: {
       status: 'info',
       data: { skippedReason: 'timeout', timeoutMs: ACTIVE_RECALL_TIMEOUT_MS },
     })
-    return { injectedSummary: null, memories: [], usedMemoryIds: [], skippedReason: 'timeout', confidence: 0, retrieval: [] }
+    const result: ActiveMemoryRecallResult = { injectedSummary: null, memories: [], usedMemoryIds: [], skippedReason: 'timeout', confidence: 0, retrieval: [] }
+    cacheRecallForRun(input, result)
+    return result
   }
 
   recordSuccess(scopedKey)
@@ -223,6 +241,7 @@ export async function recallActiveAgentMemory(input: {
     })
     const result: ActiveMemoryRecallResult = { injectedSummary: null, memories: [], usedMemoryIds: [], skippedReason: 'no_relevant_memory', confidence: 0, retrieval: [] }
     recallCache.set(key, { expiresAt: Date.now() + ACTIVE_RECALL_CACHE_TTL_MS, result })
+    cacheRecallForRun(input, result)
     return result
   }
 
@@ -292,5 +311,6 @@ export async function recallActiveAgentMemory(input: {
 
   const result: ActiveMemoryRecallResult = { injectedSummary, memories, usedMemoryIds, confidence, retrieval }
   recallCache.set(key, { expiresAt: Date.now() + ACTIVE_RECALL_CACHE_TTL_MS, result })
+  cacheRecallForRun(input, result)
   return result
 }

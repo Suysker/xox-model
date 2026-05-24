@@ -10,7 +10,7 @@ Accepted as the target Agent OS architecture.
 
 2026-05-19 实现切片：已落地 `AgentGoalContract`、`agent_goals`、`agent_evaluations`、run `goal_status`、`goal-run-engine.ts`、`completion-evaluator.ts`、`observation-collector.ts`、主动 memory candidate detector/consolidator，以及 React Goal/Evaluation 面板。OpenAI-compatible provider stream trace 已改为 redacted/coalesced chunk events：adapter 仍实时读取 token/chunk，但按时间和长度合并写入 `provider_stream_delta`，避免长 tool-call 参数被每 token DB trace 拖慢甚至中断。当前实现以 deterministic policy/domain/action-graph evaluator 为主，LLM rubric evaluator、独立 memory promotion scheduler 和更细粒度 evaluator 子模块仍是后续演进项。
 
-2026-05-19 真实 provider 验收：使用 DeepSeek `deepseek-v4-pro` 跑通 `npm.cmd run smoke:agent`，planner source 为 `openai_compatible_tool_calls`，覆盖 52 个方向，包括 provider settings、只读预测、团队数量问答、成员/股东/员工/成本项新增删除、工作区改名、可编辑确认卡、多步骤 action graph、账号动作拒绝、账本增改作废恢复、历史筛选、导入导出、锁账/解锁、快照/发布/分享/撤销/回滚/删除/重置、主动 memory 写入和新对话注入、复杂 50 成员 12 个月经营模型高阶工具自动执行，最终草稿成员数为 50，agent 执行审计记录数为 32。
+2026-05-24 约束修订：`automationLevel` 只表示 planner 推进力度，不再表示自动确认权限。复杂经营模型、记账、版本、分享、导入和草稿修改等所有写入都必须保持可编辑确认卡，用户确认后才执行。
 
 ## 背景
 
@@ -140,7 +140,7 @@ React Agent OS
 1. **业务完成由 evaluator 判定，不由模型自称完成判定。**
 2. **模型每轮只负责下一批合理动作，不负责一次性吐完整业务剧本。**
 3. **读操作可以由 harness 自动执行并形成 observation；写操作先进入可编辑确认卡。**
-4. **用户选择自动化阈值时，自动执行仍然先创建确认卡，再由 Approval Executor 走同一套 policy/domain/audit。**
+4. **用户选择自动化阈值时，只允许 planner 更积极地补齐步骤；写入仍等待用户确认，再由 Approval Executor 走同一套 policy/domain/audit。**
 5. **所有状态以 server-owned transcript、goal state、action graph 和 domain outcome 为事实源。**
 6. **Memory 和 skills 是 context/capability，不是权限。**
 7. **Runtime adapter 是薄层；OpenAI Agents SDK、DeepSeek、Qwen 都不能拥有 SaaS 权限和业务执行权。**
@@ -707,7 +707,7 @@ frontend -/-> local action truth
 - Action Graph 显示阶段、依赖、工具调用、确认卡、执行、失败和 evaluator findings。
 - Goal Panel 显示当前目标、验收标准、已满足项、未满足项、阻塞项和下一步。
 - 确认卡可编辑；编辑后 server 重新校验并同步 action graph。
-- 自动执行阈值显示在 run 上，用户能看到哪些动作被自动执行、为什么允许。
+- 自动化级别显示在 run 上，用户能看到本轮 planner 为什么会主动补齐更多步骤。
 - 新对话能注入 scoped memory；用户可以查看和删除 memory。
 
 ## 验收标准
@@ -726,7 +726,7 @@ frontend -/-> local action truth
 - `before_stop` 必须运行 Completion Evaluator；模型 final text 不能绕过 evaluator。
 - Action Graph 展示每轮 planner、每个动作、每次执行、每次 evaluator finding。
 - 所有写入仍满足显式导航、可编辑确认卡、policy 二次校验、domain service 执行和 audit log。
-- 自动执行阈值只决定 pending card 是否可自动确认，不允许跳过确认卡持久化。
+- 自动化级别不决定 pending card 是否可自动确认；所有写入卡都必须由用户确认。
 - DeepSeek real smoke 对复杂经营目标检查最终 domain outcome，而不是只检查 tool_call 存在。
 - 多用户、多 workspace、memory 注入和 provider settings 不串线。
 - 账号影响类动作即使在复杂目标中出现，也由 policy/evaluator 阻断。
@@ -768,7 +768,7 @@ frontend -/-> local action truth
 
 8. **Real Provider Evaluation Smoke**
    - DeepSeek 复杂经营目标必须验证 final outcome。
-   - smoke 覆盖多轮继续、自动执行、可编辑确认卡、memory 注入、账号动作阻断。
+   - smoke 覆盖多轮继续、可编辑确认卡、用户确认执行、memory 注入、账号动作阻断。
    - smoke 增加“未说记住但后续新对话正确召回”的主动记忆场景，同时验证跨 workspace 不注入。
 
 ## 参考

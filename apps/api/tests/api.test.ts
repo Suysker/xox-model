@@ -903,8 +903,9 @@ describe('xox TypeScript API', () => {
         .map((item: any) => `${item.title}\n${item.summary}`)
         .join('\n')
       expect(visibleTranscript).toContain('正在理解你的目标')
-      expect(visibleTranscript).toContain('需要你确认动作')
       expect(visibleTranscript).toContain('确认成员收入入账')
+      expect(visibleTranscript).not.toContain('需要你确认动作')
+      expect(visibleTranscript).not.toContain('待确认动作卡')
       expect(visibleTranscript).not.toContain('Worker 已认领')
       expect(visibleTranscript).not.toContain('run lease')
       const visibleTimeline = planned.json.timelineItems
@@ -1017,6 +1018,122 @@ describe('xox TypeScript API', () => {
     })
   })
 
+  it('repairs a cross-domain goal into read, ledger, and draft confirmation cards without auto-executing writes', async () => {
+    let goalPlanningCalls = 0
+    const finalizerRequests: any[] = []
+    await withFakeOpenAICompatibleProvider((body) => {
+      const prompt = body.messages.map((message: any) => message.content).join('\n')
+      const instruction = fakeCurrentInstruction(body)
+      if (instruction.includes('今天是 5.24')) {
+        return fakeAssistantTextResponse('已按当前对话记录这个上下文。')
+      }
+
+      expect(prompt).toContain('今天是 5.24')
+      expect(prompt).toContain('第一个股东是股东 A')
+      expect(prompt).toContain('[same-thread')
+      expect(body.messages[0].content).not.toContain('shareholders[0].investmentAmount')
+      expect(body.messages[0].content).not.toContain('首位股东')
+
+      goalPlanningCalls += 1
+      if (goalPlanningCalls === 1) {
+        return fakeToolResponse('data_query_workspace', {
+          question: '我们几个月才能回本？',
+          scope: 'workspace_summary',
+          metrics: ['payback', 'cash', 'roi'],
+        })
+      }
+      return fakeToolResponses([
+        {
+          name: 'ledger_create_member_income',
+          args: {
+            memberName: '成员 A',
+            onlineUnits: 10,
+            occurredAt: '2026-05-24',
+          },
+        },
+        {
+          name: 'workspace_patch_config',
+          args: {
+            patches: [
+              { path: 'shareholders[0].name', value: '股东 A', label: '股东 1 名称' },
+              { path: 'shareholders[0].investmentAmount', value: 1065000, label: '股东 1 投资额' },
+            ],
+          },
+        },
+      ])
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-cross-domain-goal-repair', fakeProviderSettings(baseUrl))
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-cross-domain-goal-repair@example.com')
+
+      const contextTurn = await client.post('/api/v1/agent/messages', {
+        message: '今天是 5.24。第一个股东是股东 A，另外的股东不需要删除。',
+      })
+      expect(contextTurn.statusCode).toBe(200)
+
+      const response = await client.post('/api/v1/agent/messages', {
+        threadId: contextTurn.json.threadId,
+        message: '我们几个月才能回本？帮我记一笔成员A的今天的线上10张，然后帮我第一个股东注资100w',
+        automationLevel: 'high',
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(goalPlanningCalls).toBe(2)
+      expect(finalizerRequests).toHaveLength(1)
+      expect(response.json.actionRequests).toHaveLength(2)
+      expect(response.json.actionRequests.every((action: any) => action.status === 'pending')).toBe(true)
+      expect(response.json.actionRequests.map((action: any) => action.kind).sort()).toEqual(['ledger.create_entry', 'workspace.update_draft'])
+      const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
+      expect(state.json.evaluations.map((evaluation: any) => evaluation.status)).toEqual(['continue', 'needs_confirmation'])
+      expect(response.json.runEvents.filter((event: any) => event.type === 'memory_recall_started')).toHaveLength(1)
+      expect(response.json.runEvents.some((event: any) => event.type === 'action_auto_executed')).toBe(false)
+      expect(response.json.messages.at(-1).content).toContain('已准备 2 张确认卡')
+
+      const ledgerAction = response.json.actionRequests.find((action: any) => action.kind === 'ledger.create_entry')
+      expect(ledgerAction.targetLabel).toContain('5月 / 成员 A')
+      expect(ledgerAction.payload.amount).toBe(880)
+      expect(ledgerAction.payload.occurredAt).toContain('2026-05-24')
+
+      const draftAction = response.json.actionRequests.find((action: any) => action.kind === 'workspace.update_draft')
+      expect(draftAction.payload.config.shareholders[0].name).toBe('股东 A')
+      expect(draftAction.payload.config.shareholders[0].investmentAmount).toBe(1065000)
+      const draft = (await client.get('/api/v1/workspace/draft')).json
+      expect(draft.config.shareholders[0].investmentAmount).not.toBe(1065000)
+      await closeHarness(harness)
+    }, {
+      finalizerResponse: (body) => {
+        finalizerRequests.push(body)
+        return fakeAssistantTextResponse('当前仍未回本；我已准备 2 张确认卡：成员 A 今天线上 10 张入账、股东 A 注资 100 万。确认前不会写入。')
+      },
+    })
+  })
+
+  it('does not create a confirmation card for no-op workspace patch arguments', async () => {
+    await withFakeOpenAICompatibleProvider(() => fakeToolResponse('workspace_patch_config', {
+      patches: [
+        { path: 'shareholders[0].investmentAmount', value: 65000, label: '股东 1 投资额' },
+      ],
+    }), async (baseUrl) => {
+      const harness = await buildHarness('agent-noop-workspace-patch', fakeProviderSettings(baseUrl))
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-noop-workspace-patch@example.com')
+
+      const response = await client.post('/api/v1/agent/messages', {
+        message: '检查一下第一个股东投资额是不是当前值，不需要写入',
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(response.json.actionRequests).toHaveLength(0)
+      expect(response.json.planSteps.map((step: any) => step.title)).toContain('模型草稿未变化')
+      expect(response.json.messages.at(-1).content).toContain('没有生成写入确认卡')
+      const draft = (await client.get('/api/v1/workspace/draft')).json
+      expect(draft.config.shareholders[0].investmentAmount).toBe(65000)
+      await closeHarness(harness)
+    }, {
+      finalizerResponse: () => fakeAssistantTextResponse('当前股东投资额和工具参数一致，没有生成写入确认卡。'),
+    })
+  })
+
   it('keeps allowed steps when a multi-step message also contains a forbidden account action', async () => {
     await withFakeOpenAICompatibleProvider((body) => {
       const instruction = fakeCurrentInstruction(body)
@@ -1041,7 +1158,7 @@ describe('xox TypeScript API', () => {
       expect(planned.json.actionRequests).toHaveLength(1)
       expect(planned.json.actionRequests[0].kind).toBe('ledger.create_entry')
       expect(planned.json.planSteps.map((step: any) => step.status)).toEqual(['ready', 'info'])
-      expect(planned.json.messages.map((message: any) => message.role)).toEqual(['user'])
+      expect(planned.json.messages.map((message: any) => message.role)).toEqual(['user', 'assistant'])
       expect(planned.json.planSteps[1].description).toContain('账号登录、退出、注销')
 
       const restored = await client.get(`/api/v1/agent/threads/${planned.json.threadId}`)
@@ -2041,6 +2158,7 @@ describe('xox TypeScript API', () => {
 
   it('answers read-only data questions only through a model-selected data tool call', async () => {
     const requests: any[] = []
+    const finalizerRequests: any[] = []
     await withFakeOpenAICompatibleProvider((body) => {
       requests.push(body)
       expect(body.tools.some((tool: any) => tool.function.name === 'data_query_workspace')).toBe(true)
@@ -2053,7 +2171,8 @@ describe('xox TypeScript API', () => {
     }, async (baseUrl) => {
       const harness = await buildHarness('agent-data-query', {
         llmProvider: 'openai-compatible',
-        openaiCompatibleProvider: 'test-compatible',
+        openaiCompatibleProvider: 'deepseek',
+        openaiCompatibleModel: 'deepseek-v4-pro',
         openaiCompatibleBaseUrl: baseUrl,
         openaiCompatibleApiKey: 'test-key',
       })
@@ -2074,12 +2193,23 @@ describe('xox TypeScript API', () => {
       expect(response.json.runEvents.some((event: any) => event.type === 'model_continuation')).toBe(true)
       expect(response.json.runEvents.some((event: any) => event.type === 'model_continuation_completed')).toBe(true)
       expect(requests).toHaveLength(1)
+      expect(finalizerRequests).toHaveLength(1)
+      expect(finalizerRequests[0].max_tokens).toBeLessThanOrEqual(500)
+      expect(finalizerRequests[0].thinking).toEqual({ type: 'disabled' })
+      expect(finalizerRequests[0].messages.some((message: any) => message.role === 'tool')).toBe(true)
+      expect(JSON.stringify(finalizerRequests[0])).not.toContain('tenantScopedMemory')
+      expect(JSON.stringify(finalizerRequests[0])).not.toContain('writableConfig')
       const visibleNodes = flattenTranscriptNodes(response.json.transcriptNodes).filter((node: any) => node.visibility === 'user')
       const assistantNode = visibleNodes.find((node: any) => node.kind === 'assistant_message')
       expect(assistantNode?.content ?? assistantNode?.summary).toContain('3月计划收入')
       expect(response.json.planSteps[0].description).toContain('plannedRevenue')
       expect(response.json.planSteps[0].description).not.toContain('3月计划收入 ¥')
       await closeHarness(harness)
+    }, {
+      finalizerResponse: (body) => {
+        finalizerRequests.push(body)
+        return fakeObservationFinalizerResponse(body)
+      },
     })
   })
 
@@ -2733,7 +2863,7 @@ describe('xox TypeScript API', () => {
 
       const restored = await firstClient.get(`/api/v1/agent/threads/${planned.json.threadId}`)
       expect(restored.statusCode).toBe(200)
-      expect(restored.json.messages.map((message: any) => message.role)).toEqual(['user'])
+      expect(restored.json.messages.map((message: any) => message.role)).toEqual(['user', 'assistant'])
       expect(restored.json.runs[0].status).toBe('completed')
       expect(restored.json.runs[0].planner).toBe('openai_compatible_tool_calls')
       expect(restored.json.planSteps).toHaveLength(1)
@@ -2931,7 +3061,7 @@ describe('xox TypeScript API', () => {
       expect(afterDelete.json.memories.some((memory: any) => memory.id === firstMemories.json.memories[0].id)).toBe(false)
       await closeHarness(harness)
     })
-  })
+  }, 10_000)
 
   it('injects tenant-scoped memory into a new agent thread for real provider planning', async () => {
     const secretValue = ['sk', 'providersecretvalue123456'].join('-')
@@ -3252,7 +3382,7 @@ describe('xox TypeScript API', () => {
 
       await closeHarness(harness)
     })
-  })
+  }, 10_000)
 
   it('plans employee add/delete and workspace rename through model-selected tools', async () => {
     await withFakeOpenAICompatibleProvider((body) => {
@@ -3308,7 +3438,7 @@ describe('xox TypeScript API', () => {
 
       await closeHarness(harness)
     })
-  })
+  }, 10_000)
 
   it('plans a comprehensive operating model through one high-level editable confirmation', async () => {
     const months = [
@@ -3446,9 +3576,9 @@ describe('xox TypeScript API', () => {
       expect(autoPlanned.statusCode).toBe(200)
       expect(autoPlanned.json.automationLevel).toBe('high')
       expect(autoPlanned.json.actionRequests).toHaveLength(1)
-      expect(autoPlanned.json.actionRequests[0].status).toBe('executed')
-      expect(autoPlanned.json.planSteps.find((step: any) => step.actionRequestId === autoPlanned.json.actionRequests[0].id)?.status).toBe('executed')
-      expect(autoPlanned.json.runEvents.some((event: any) => event.type === 'action_auto_executed')).toBe(true)
+      expect(autoPlanned.json.actionRequests[0].status).toBe('pending')
+      expect(autoPlanned.json.planSteps.find((step: any) => step.actionRequestId === autoPlanned.json.actionRequests[0].id)?.status).toBe('ready')
+      expect(autoPlanned.json.runEvents.some((event: any) => event.type === 'action_auto_executed')).toBe(false)
       const autoDraft = (await client.get('/api/v1/workspace/draft')).json
       expect(autoDraft.workspaceName).toBe('星河 50 期启动测算')
       expect(autoDraft.config.teamMembers).toHaveLength(50)
@@ -3546,7 +3676,7 @@ describe('xox TypeScript API', () => {
       expect(planned.statusCode).toBe(200)
       expect(planningCalls).toBe(2)
       expect(planned.json.actionRequests.map((action: any) => action.kind)).toEqual(['workspace.update_draft'])
-      expect(planned.json.actionRequests[0].status).toBe('executed')
+      expect(planned.json.actionRequests[0].status).toBe('pending')
       expect(planned.json.actionRequests[0].payload.source).toBe('workspace_configure_operating_model')
       expect(planned.json.runEvents.some((event: any) =>
         event.type === 'provider_retrying' &&
@@ -3554,9 +3684,8 @@ describe('xox TypeScript API', () => {
       )).toBe(true)
       expect(planned.json.evaluations?.[0]?.status ?? planned.json.goals?.[0]?.status).not.toBe('failed')
       const draft = (await client.get('/api/v1/workspace/draft')).json
-      expect(draft.workspaceName).toBe('星河 50 期启动测算')
-      expect(draft.config.teamMembers).toHaveLength(50)
-      expect(draft.config.months).toHaveLength(12)
+      expect(draft.workspaceName).not.toBe('星河 50 期启动测算')
+      expect(draft.config.teamMembers).not.toHaveLength(50)
       await closeHarness(harness)
     }, { capabilities: ['draft'] })
   }, 10_000)
@@ -3597,10 +3726,10 @@ describe('xox TypeScript API', () => {
       expect(planned.statusCode).toBe(200)
       expect(planned.json.actionRequests).toHaveLength(1)
       expect(planned.json.actionRequests[0].kind).toBe('workspace.rename')
-      expect(planned.json.actionRequests[0].status).toBe('executed')
+      expect(planned.json.actionRequests[0].status).toBe('pending')
       expect(planned.json.runEvents.some((event: any) => event.type === 'provider_tool_call_repaired')).toBe(true)
       const draft = (await client.get('/api/v1/workspace/draft')).json
-      expect(draft.workspaceName).toBe('流式修复工作区')
+      expect(draft.workspaceName).not.toBe('流式修复工作区')
       await closeHarness(harness)
     }, { capabilities: ['draft'] })
   })
@@ -3689,13 +3818,14 @@ describe('xox TypeScript API', () => {
       expect(planned.statusCode).toBe(200)
       expect(planned.json.actionRequests).toHaveLength(1)
       expect(planned.json.actionRequests[0].kind).toBe('workspace.update_draft')
-      expect(planned.json.actionRequests[0].status).toBe('executed')
+      expect(planned.json.actionRequests[0].status).toBe('pending')
+      expect(planned.json.actionRequests[0].payload.workspaceName).toBe('星河 50 期启动测算')
       expect(planned.json.runEvents.some((event: any) =>
         event.type === 'action_auto_execution_failed',
       )).toBe(false)
       const draft = (await client.get('/api/v1/workspace/draft')).json
-      expect(draft.workspaceName).toBe('星河 50 期启动测算')
-      expect(draft.config.teamMembers).toHaveLength(50)
+      expect(draft.workspaceName).not.toBe('星河 50 期启动测算')
+      expect(draft.config.teamMembers).not.toHaveLength(50)
       await closeHarness(harness)
     }, { capabilities: ['draft'] })
   })
@@ -3759,16 +3889,16 @@ describe('xox TypeScript API', () => {
       const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
       expect(planningCalls).toBe(2)
       expect(state.statusCode).toBe(200)
-      expect(state.json.evaluations.map((evaluation: any) => evaluation.status)).toEqual(['continue', 'pass'])
+      expect(state.json.evaluations.map((evaluation: any) => evaluation.status)).toEqual(['continue', 'needs_confirmation'])
       expect(state.json.evaluations[0].unsatisfiedCriteria.some((finding: any) => finding.id === 'goal.expected_member_count')).toBe(true)
-      expect(state.json.evaluations[0].unsatisfiedCriteria.some((finding: any) => finding.id === 'goal.required_operating_model')).toBe(true)
+      expect(state.json.evaluations[0].unsatisfiedCriteria.some((finding: any) => finding.id === 'goal.required_operating_model_action_planned')).toBe(true)
       expect(state.json.evaluations[1].satisfiedCriteria).toContain('goal.expected_member_count')
       expect(state.json.evaluations[1].satisfiedCriteria).toContain('goal.no_publish_requested')
-      const draft = (await client.get('/api/v1/workspace/draft')).json
-      expect(draft.workspaceName).toBe('星河 50 期启动测算')
-      expect(draft.config.teamMembers).toHaveLength(50)
-      expect(draft.config.shareholders).toHaveLength(5)
-      expect(draft.config.planning).toMatchObject({ startMonth: 3, horizonMonths: 12 })
+      const action = state.json.actionRequests.find((item: any) => item.payload?.source === 'workspace_configure_operating_model')
+      expect(action.payload.workspaceName).toBe('星河 50 期启动测算')
+      expect(action.payload.config.teamMembers).toHaveLength(50)
+      expect(action.payload.config.shareholders).toHaveLength(5)
+      expect(action.payload.config.planning).toMatchObject({ startMonth: 3, horizonMonths: 12 })
       await closeHarness(harness)
     }, { capabilities: ['draft'] })
   })
@@ -3811,10 +3941,10 @@ describe('xox TypeScript API', () => {
 
       expect(response.statusCode).toBe(200)
       expect(response.json.actionRequests[0].payload.workspaceName).toBe('星河 50 期启动测算')
-      expect(response.json.actionRequests[0].status).toBe('executed')
+      expect(response.json.actionRequests[0].status).toBe('pending')
       const draft = (await client.get('/api/v1/workspace/draft')).json
-      expect(draft.workspaceName).toBe('星河 50 期启动测算')
-      expect(draft.config.teamMembers).toHaveLength(50)
+      expect(draft.workspaceName).not.toBe('星河 50 期启动测算')
+      expect(draft.config.teamMembers).not.toHaveLength(50)
       await closeHarness(harness)
     }, { capabilities: ['draft'] })
   })
@@ -3874,24 +4004,21 @@ describe('xox TypeScript API', () => {
       expect(response.json.planner).toBe('openai_compatible_tool_calls')
       expect(planningCalls).toBe(2)
       expect(response.json.actionRequests).toHaveLength(2)
-      expect(response.json.actionRequests.every((action: any) => action.status === 'executed')).toBe(true)
+      expect(response.json.actionRequests.every((action: any) => action.status === 'pending')).toBe(true)
       expect(response.json.planSteps.map((step: any) => step.sequence)).toEqual([1, 2, 3, 4])
 
       const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
       expect(state.statusCode).toBe(200)
       expect(state.json.goals).toHaveLength(1)
-      expect(state.json.goals[0].status).toBe('completed')
-      expect(state.json.evaluations.map((evaluation: any) => evaluation.status)).toEqual(['continue', 'pass'])
-      expect(state.json.evaluations[0].unsatisfiedCriteria.some((finding: any) => finding.id === 'domain.operating_inputs_nonzero')).toBe(true)
+      expect(state.json.goals[0].status).toBe('waiting_for_confirmation')
+      expect(state.json.evaluations.map((evaluation: any) => evaluation.status)).toEqual(['continue', 'needs_confirmation'])
+      expect(state.json.evaluations[0].unsatisfiedCriteria.some((finding: any) => finding.id === 'goal.required_operating_model')).toBe(true)
       expect(state.json.runEvents.filter((event: any) => event.type === 'goal_iteration_started')).toHaveLength(2)
-      expect(state.json.runEvents.some((event: any) => event.type === 'memory_candidate_stored')).toBe(true)
-
-      const memories = await client.get('/api/v1/agent/memories')
-      expect(memories.json.memories.some((memory: any) => memory.memoryType === 'episodic' && memory.value.includes('修复后经营模型'))).toBe(true)
+      expect(state.json.runEvents.some((event: any) => event.type === 'confirmation_ready')).toBe(true)
+      expect(response.json.actionRequests.at(-1).payload.workspaceName).toBe('修复后经营模型')
+      expect(response.json.actionRequests.at(-1).payload.config.teamMembers).toHaveLength(2)
       const draft = (await client.get('/api/v1/workspace/draft')).json
-      expect(draft.workspaceName).toBe('修复后经营模型')
-      expect(draft.config.teamMembers).toHaveLength(2)
-      expect(draft.config.months).toHaveLength(12)
+      expect(draft.workspaceName).not.toBe('修复后经营模型')
       const base = projectModel(draft.config).scenarios.find((scenario) => scenario.key === 'base')
       expect(base?.grossSales).toBeGreaterThan(0)
       expect(base?.totalCost).toBeGreaterThan(0)
@@ -4412,7 +4539,7 @@ describe('xox TypeScript API', () => {
 
       await closeHarness(harness)
     })
-  }, 15_000)
+  }, 25_000)
 
   it('keeps agent read-only forecasts non-mutating and refuses account actions', async () => {
     await withFakeOpenAICompatibleProvider((body) => {

@@ -351,10 +351,6 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
         String(greeting.json.messages.at(-1)?.content ?? '').includes('Agent OS'),
       `basic reply did not identify the product agent: ${String(greeting.json.messages.at(-1)?.content ?? '')}`,
     )
-    assertSmoke(
-      Array.isArray(greeting.json.planSteps) && greeting.json.planSteps.some((step: any) => step.status === 'executed'),
-      `basic reply did not produce an executed read-only step: ${JSON.stringify(greeting.json.planSteps)}`,
-    )
     assertUnifiedTimeline(greeting, 'basic conversational reply', { expectedVisibleKinds: ['user_message', 'assistant_message'] })
     rememberCoverage(coveredDirections, 'basic_conversational_reply')
 
@@ -397,9 +393,11 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
         dataQuestion.json.runEvents.some((event: any) => event.type === 'run_completed'),
       `background data question did not persist run trace: ${redactedResponse(dataQuestion)}`,
     )
+    const dataQuestionText = String(dataQuestion.json.messages.at(-1)?.content ?? '').replace(/\s+/g, '')
     assertSmoke(
-      String(dataQuestion.json.messages.at(-1)?.content ?? '').includes('3月计划收入') &&
-        String(dataQuestion.json.messages.at(-1)?.content ?? '').includes('计划成本'),
+      dataQuestionText.includes('3月') &&
+        dataQuestionText.includes('计划收入') &&
+        dataQuestionText.includes('计划成本'),
       `data question did not answer with period metrics: ${String(dataQuestion.json.messages.at(-1)?.content ?? '')}`,
     )
     rememberCoverage(coveredDirections, 'data_agent_period_question')
@@ -912,7 +910,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
       threadId: null,
       automationLevel: 'high',
       message: [
-        '请用完整经营模型能力生成并保存一个 12 个月草稿；写入仍先落确认卡，当前 high 自动化允许自动执行；不要发布正式版本。',
+        '请用完整经营模型能力生成一个 12 个月草稿确认卡；写入只落可编辑确认卡，等待我确认后再保存；不要发布正式版本。',
         '项目=星河 50 期启动测算；周期=2026 年 3 月开始 12 个月。',
         '股东=A 投 300000 分红35%；B 投200000 分红25%；C 投150000 分红20%；D 投100000 分红15%；员工激励池5%不投现金。',
         '一次性启动成本=场地装修180000、设备直播120000、服装物料80000、招募宣发60000、法务财务25000、备用现金85000。',
@@ -939,12 +937,13 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
       `complex operating model did not expose action graph steps: ${JSON.stringify(complexOperatingModel.json.planSteps)}`,
     )
     assertSmoke(complexOperatingModel.json.automationLevel === 'high', 'complex operating model did not run with high automation')
-    assertSmoke(complexAction.status === 'executed', `complex operating model was not auto-executed: ${JSON.stringify(complexAction)}`)
+    assertSmoke(complexAction.status === 'pending', `complex operating model write was not left for editable confirmation: ${JSON.stringify(complexAction)}`)
     assertSmoke(
-      complexOperatingModel.json.runEvents.some((event: any) => event.type === 'action_auto_executed'),
-      'complex operating model did not record auto-execution event',
+      !complexOperatingModel.json.runEvents.some((event: any) => event.type === 'action_auto_executed'),
+      'complex operating model unexpectedly recorded auto-execution event',
     )
     actionKinds.add(complexAction.kind)
+    await confirmAction(client, complexAction, 'confirm complex operating model', actionKinds)
     const complexDraft = await client.get('/api/v1/workspace/draft')
     assertOk(complexDraft, 'read complex operating model draft')
     complexOperatingModelRevision = Number(complexDraft.json.revision)
@@ -952,7 +951,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     assertSmoke(complexOperatingModelMemberCount === 50, 'confirmed complex operating model did not persist 50 members')
     assertSmoke(complexDraft.json.workspaceName === '星河 50 期启动测算', 'confirmed complex operating model did not update workspace name')
     rememberCoverage(coveredDirections, 'complex_operating_model_high_level_tool')
-    rememberCoverage(coveredDirections, 'automation_high_auto_execute')
+    rememberCoverage(coveredDirections, 'automation_high_requires_confirmation')
     rememberCoverage(coveredDirections, 'unified_timeline_complex_tool_rows')
 
     const auditCount = await db

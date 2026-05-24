@@ -9,6 +9,7 @@ import { resolveProviderModelRef } from '../src/agent/runtime/provider-model-ref
 import { shapeOpenAICompatibleChatRequest } from '../src/agent/runtime/provider-request-shaper.js'
 import { normalizeProviderToolSchemas } from '../src/agent/runtime/provider-tool-schema.js'
 import { extractBalancedJson } from '../src/agent/runtime/balanced-json.js'
+import { OpenAICompatibleChatAdapter } from '../src/agent/runtime/openai-compatible-chat-adapter.js'
 import {
   parseToolArguments,
   plannerStepsFromProviderToolCalls,
@@ -334,5 +335,45 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
     expect(operatingRetry.tools.map((item) => item.function.name)).toEqual(['workspace_configure_operating_model'])
     expect(operatingRetry.maxTokens).toBeGreaterThanOrEqual(48_000)
     expect(operatingRetry.requestTimeoutMs).toBeGreaterThanOrEqual(360_000)
+  })
+
+  it('preserves provider-authored preface text on non-stream tool-call responses', async () => {
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      id: 'chatcmpl_preface',
+      object: 'chat.completion',
+      choices: [{
+        index: 0,
+        finish_reason: 'tool_calls',
+        message: {
+          role: 'assistant',
+          content: '我先查询当前工作区数据，再给出回本结论。',
+          tool_calls: [{
+            id: 'call_ledger_create_member_income',
+            type: 'function',
+            function: {
+              name: 'ledger_create_member_income',
+              arguments: JSON.stringify({ monthLabel: '5月', memberName: '成员 A', onlineUnits: 10 }),
+            },
+          }],
+        },
+      }],
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })) as typeof fetch
+
+    try {
+      const result = await new OpenAICompatibleChatAdapter().plan(runtimeInput('deepseek', 'deepseek-v4-pro'))
+      expect(result?.assistantText).toBe('我先查询当前工作区数据，再给出回本结论。')
+      expect(result?.steps).toHaveLength(1)
+      expect(result?.steps[0]).toEqual(expect.objectContaining({
+        intent: 'ledger.create_member_income',
+        memberName: '成员 A',
+        onlineUnits: 10,
+      }))
+    } finally {
+      globalThis.fetch = originalFetch
+    }
   })
 })

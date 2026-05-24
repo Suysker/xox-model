@@ -363,10 +363,16 @@ export async function runMigrations(db: Kysely<Database>) {
       description TEXT NOT NULL,
       status VARCHAR(32) NOT NULL,
       navigation_json JSON,
+      tool_name VARCHAR(120),
+      tool_call_id VARCHAR(180),
+      tool_arguments_json JSON,
       created_at DATETIME NOT NULL,
       updated_at DATETIME NOT NULL
     )`,
   )
+  await addColumnIfMissing(db, 'agent_plan_steps', 'tool_name', 'VARCHAR(120)')
+  await addColumnIfMissing(db, 'agent_plan_steps', 'tool_call_id', 'VARCHAR(180)')
+  await addColumnIfMissing(db, 'agent_plan_steps', 'tool_arguments_json', 'JSON')
   await exec(
     db,
     `CREATE TABLE IF NOT EXISTS agent_memories (
