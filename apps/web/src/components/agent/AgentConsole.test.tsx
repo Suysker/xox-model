@@ -25,6 +25,39 @@ function node(overrides: Partial<AgentTranscriptNode> = {}): AgentTranscriptNode
   }
 }
 
+function threadSummary(index: number): AgentConsoleProps['threadSummaries'][number] {
+  return {
+    id: `thread-${index}`,
+    title: `历史任务 ${index}`,
+    createdAt: '2026-05-24T00:00:00.000Z',
+    updatedAt: '2026-05-24T00:00:00.000Z',
+    lastMessage: `第 ${index} 条历史摘要`,
+    lastMessageAt: '2026-05-24T00:00:00.000Z',
+    latestRunStatus: 'completed',
+    planner: 'openai_compatible_tool_calls',
+    pendingActionCount: 0,
+  }
+}
+
+function memoryRecord(index: number): AgentConsoleProps['memories'][number] {
+  return {
+    id: `memory-${index}`,
+    workspaceId: 'workspace-1',
+    userId: 'user-1',
+    threadId: null,
+    kind: 'agent_run',
+    scopeType: 'workspace',
+    memoryType: 'episodic',
+    status: 'active',
+    key: `memory.${index}`,
+    value: `记忆内容 ${index}`,
+    confidence: 0.8,
+    evidence: { runId: `run-${index}` },
+    createdAt: '2026-05-24T00:00:00.000Z',
+    updatedAt: '2026-05-24T00:00:00.000Z',
+  }
+}
+
 function props(overrides: Partial<AgentConsoleProps> = {}): AgentConsoleProps {
   return {
     threadId: 'thread-1',
@@ -118,6 +151,33 @@ describe('AgentConsole', () => {
       expect(rendered.container.textContent).not.toContain('你好')
       expect(rendered.container.querySelector('textarea')?.getAttribute('placeholder')).toBe('输入指令')
       expect(rendered.container.querySelector('button[aria-label="展开对话"]')).not.toBeNull()
+    } finally {
+      rendered.cleanup()
+    }
+  })
+
+  it('lets history and memory panels fill the available conversation space', () => {
+    const rendered = renderConsole(props({
+      threadSummaries: [threadSummary(1), threadSummary(2), threadSummary(3)],
+      memories: [memoryRecord(1), memoryRecord(2), memoryRecord(3)],
+    }))
+    try {
+      const historyButton = rendered.container.querySelector('button[title="历史对话"]') as HTMLButtonElement | null
+      const memoryButton = rendered.container.querySelector('button[title="记忆"]') as HTMLButtonElement | null
+      if (!historyButton || !memoryButton) throw new Error('panel buttons missing')
+
+      act(() => historyButton.click())
+      act(() => memoryButton.click())
+
+      const panelRegion = rendered.container.querySelector('[data-testid="agent-utility-panels"]') as HTMLElement | null
+      expect(panelRegion).not.toBeNull()
+      expect(panelRegion?.className).toContain('flex-1')
+      expect(panelRegion?.style.gridTemplateRows).toContain('minmax(0, 1fr)')
+      expect(rendered.container.querySelector('[data-testid="agent-history-panel"]')?.className).toContain('min-h-0')
+      expect(rendered.container.querySelector('[data-testid="agent-memory-panel"]')?.className).toContain('min-h-0')
+      expect(rendered.container.innerHTML).not.toContain('max-h-28')
+      expect(rendered.container.innerHTML).not.toContain('max-h-24')
+      expect(rendered.container.querySelector('textarea')?.getAttribute('placeholder')).toBe('输入指令')
     } finally {
       rendered.cleanup()
     }

@@ -95,6 +95,9 @@ export function AgentConsole(props: {
     { level: 'high', label: '高', title: '全力规划；自动执行低/中风险，高风险仍按策略确认' },
   ]
   const isSideSurface = props.surface === 'side'
+  const utilityPanelCount = Number(historyOpen) + Number(memoryOpen)
+  const showUtilityPanels = props.conversationOpen && utilityPanelCount > 0
+  const utilityPanelRows = utilityPanelCount > 1 ? 'minmax(0, 1fr) minmax(0, 1fr)' : 'minmax(0, 1fr)'
   const layoutOptions: Array<{ mode: AgentShellLayoutMode; title: string; icon: typeof PanelBottom }> = [
     { mode: 'bottomDrawer', title: '底部抽屉', icon: PanelBottom },
     { mode: 'sidePanel', title: '右侧栏', icon: PanelRight },
@@ -296,123 +299,6 @@ export function AgentConsole(props: {
             </button>
           </div>
 
-          {props.conversationOpen && historyOpen ? (
-            <div className="mt-2 rounded-md border border-stone-900/10 bg-white px-3 py-2 text-xs">
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-semibold text-stone-800">历史对话</span>
-                <button
-                  type="button"
-                  onClick={props.onRefreshThreads}
-                  disabled={props.busy}
-                  className="inline-flex h-7 items-center justify-center rounded-md border border-stone-900/10 px-2 text-stone-600 transition hover:bg-stone-100 disabled:opacity-50"
-                  title="刷新历史"
-                >
-                  <RefreshCw className="h-3.5 w-3.5" />
-                </button>
-              </div>
-              <div className={['mt-2 grid gap-1 overflow-y-auto', isSideSurface ? 'max-h-44' : 'max-h-28'].join(' ')}>
-                {props.threadSummaries.length > 0 ? (
-                  props.threadSummaries.map((thread) => (
-                    <button
-                      key={thread.id}
-                      type="button"
-                      onClick={() => props.onSelectThread(thread.id)}
-                      disabled={props.busy}
-                      className={`grid min-w-0 gap-0.5 rounded-md border px-2 py-1.5 text-left transition disabled:opacity-50 ${
-                        thread.id === props.threadId
-                          ? 'border-emerald-200 bg-emerald-50'
-                          : 'border-stone-100 bg-white hover:bg-stone-50'
-                      }`}
-                    >
-                      <span className="truncate font-semibold text-stone-800">{thread.title}</span>
-                      <span className="truncate text-[10px] text-stone-500">{thread.lastMessage ?? '暂无消息'}</span>
-                      <span className="flex flex-wrap gap-1 text-[10px] text-stone-400">
-                        <span>{formatThreadTime(thread.updatedAt)}</span>
-                        {thread.latestRunStatus ? <span>{thread.latestRunStatus}</span> : null}
-                        {thread.pendingActionCount > 0 ? <span className="font-semibold text-amber-700">{thread.pendingActionCount} 待确认</span> : null}
-                      </span>
-                    </button>
-                  ))
-                ) : (
-                  <p className="py-2 text-stone-500">暂无历史对话。</p>
-                )}
-              </div>
-            </div>
-          ) : null}
-
-          {props.conversationOpen && memoryOpen ? (
-            <div className="mt-2 rounded-md border border-stone-900/10 bg-white px-3 py-2 text-xs">
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-semibold text-stone-800">当前工作区记忆</span>
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => props.onRefreshMemories(memorySearch)}
-                    disabled={props.busy}
-                    className="inline-flex h-7 items-center justify-center rounded-md border border-stone-900/10 px-2 text-stone-600 transition hover:bg-stone-100 disabled:opacity-50"
-                    title="按关键词刷新记忆"
-                  >
-                    <RefreshCw className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              </div>
-              <div className="mt-2 grid gap-1 sm:grid-cols-[minmax(0,1fr)_120px]">
-                <input
-                  value={memorySearch}
-                  onChange={(event) => setMemorySearch(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') props.onRefreshMemories(memorySearch)
-                  }}
-                  className="h-7 rounded-md border border-stone-900/10 px-2 text-[11px] outline-none transition focus:border-emerald-500"
-                  placeholder="搜索记忆"
-                />
-                <select
-                  value={memoryTypeFilter}
-                  onChange={(event) => setMemoryTypeFilter(event.target.value)}
-                  className="h-7 rounded-md border border-stone-900/10 px-2 text-[11px] outline-none transition focus:border-emerald-500"
-                  title="按记忆类型过滤"
-                >
-                  <option value="all">全部类型</option>
-                  <option value="working">working</option>
-                  <option value="episodic">episodic</option>
-                  <option value="semantic">semantic</option>
-                  <option value="procedural">procedural</option>
-                  <option value="commitment">commitment</option>
-                </select>
-              </div>
-              <div className={['mt-2 overflow-y-auto', isSideSurface ? 'max-h-40' : 'max-h-24'].join(' ')}>
-                {visibleMemories.length > 0 ? (
-                  visibleMemories.map((memory) => (
-                    <div key={memory.id} className="flex items-start gap-2 border-t border-stone-100 py-1.5 first:border-t-0">
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate font-medium text-stone-800">{memory.value}</p>
-                        <p className="text-[10px] text-stone-400">
-                          {memory.kind} / {memory.memoryType ?? 'semantic'} / {memory.status ?? 'active'} / {memory.confidence.toFixed(2)}
-                        </p>
-                        {memory.evidence ? (
-                          <p className="truncate text-[10px] text-stone-400">
-                            证据 {String(memory.evidence.runId ?? memory.evidence.actionRequestId ?? memory.evidence.snapshotId ?? '已记录')}
-                          </p>
-                        ) : null}
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => props.onDeleteMemory(memory.id)}
-                        disabled={props.busy}
-                        className="inline-flex h-6 w-6 items-center justify-center rounded-md text-stone-400 transition hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
-                        title="删除记忆"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  ))
-                ) : (
-                  <p className="py-2 text-stone-500">暂无记忆。</p>
-                )}
-              </div>
-            </div>
-          ) : null}
-
           {props.conversationOpen && providerOpen ? (
             <form onSubmit={handleProviderSubmit} className="mt-2 rounded-md border border-stone-900/10 bg-white px-3 py-2 text-xs">
               <div className="flex items-center justify-between gap-2">
@@ -530,7 +416,134 @@ export function AgentConsole(props: {
 
         </div>
 
-        {props.conversationOpen ? (
+        {showUtilityPanels ? (
+          <div
+            className="mt-2 grid min-h-0 flex-1 gap-2"
+            style={{ gridTemplateRows: utilityPanelRows }}
+            data-testid="agent-utility-panels"
+          >
+            {historyOpen ? (
+              <div
+                className="flex min-h-0 flex-col rounded-md border border-stone-900/10 bg-white px-3 py-2 text-xs"
+                data-testid="agent-history-panel"
+              >
+                <div className="flex shrink-0 items-center justify-between gap-2">
+                  <span className="font-semibold text-stone-800">历史对话</span>
+                  <button
+                    type="button"
+                    onClick={props.onRefreshThreads}
+                    disabled={props.busy}
+                    className="inline-flex h-7 items-center justify-center rounded-md border border-stone-900/10 px-2 text-stone-600 transition hover:bg-stone-100 disabled:opacity-50"
+                    title="刷新历史"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <div className="mt-2 grid min-h-0 flex-1 content-start gap-1 overflow-y-auto">
+                  {props.threadSummaries.length > 0 ? (
+                    props.threadSummaries.map((thread) => (
+                      <button
+                        key={thread.id}
+                        type="button"
+                        onClick={() => props.onSelectThread(thread.id)}
+                        disabled={props.busy}
+                        className={`grid min-w-0 gap-0.5 rounded-md border px-2 py-1.5 text-left transition disabled:opacity-50 ${
+                          thread.id === props.threadId
+                            ? 'border-emerald-200 bg-emerald-50'
+                            : 'border-stone-100 bg-white hover:bg-stone-50'
+                        }`}
+                      >
+                        <span className="truncate font-semibold text-stone-800">{thread.title}</span>
+                        <span className="truncate text-[10px] text-stone-500">{thread.lastMessage ?? '暂无消息'}</span>
+                        <span className="flex flex-wrap gap-1 text-[10px] text-stone-400">
+                          <span>{formatThreadTime(thread.updatedAt)}</span>
+                          {thread.latestRunStatus ? <span>{thread.latestRunStatus}</span> : null}
+                          {thread.pendingActionCount > 0 ? <span className="font-semibold text-amber-700">{thread.pendingActionCount} 待确认</span> : null}
+                        </span>
+                      </button>
+                    ))
+                  ) : (
+                    <p className="py-2 text-stone-500">暂无历史对话。</p>
+                  )}
+                </div>
+              </div>
+            ) : null}
+
+            {memoryOpen ? (
+              <div
+                className="flex min-h-0 flex-col rounded-md border border-stone-900/10 bg-white px-3 py-2 text-xs"
+                data-testid="agent-memory-panel"
+              >
+                <div className="flex shrink-0 items-center justify-between gap-2">
+                  <span className="font-semibold text-stone-800">当前工作区记忆</span>
+                  <button
+                    type="button"
+                    onClick={() => props.onRefreshMemories(memorySearch)}
+                    disabled={props.busy}
+                    className="inline-flex h-7 items-center justify-center rounded-md border border-stone-900/10 px-2 text-stone-600 transition hover:bg-stone-100 disabled:opacity-50"
+                    title="按关键词刷新记忆"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <div className="mt-2 grid shrink-0 gap-1 sm:grid-cols-[minmax(0,1fr)_120px]">
+                  <input
+                    value={memorySearch}
+                    onChange={(event) => setMemorySearch(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') props.onRefreshMemories(memorySearch)
+                    }}
+                    className="h-7 rounded-md border border-stone-900/10 px-2 text-[11px] outline-none transition focus:border-emerald-500"
+                    placeholder="搜索记忆"
+                  />
+                  <select
+                    value={memoryTypeFilter}
+                    onChange={(event) => setMemoryTypeFilter(event.target.value)}
+                    className="h-7 rounded-md border border-stone-900/10 px-2 text-[11px] outline-none transition focus:border-emerald-500"
+                    title="按记忆类型过滤"
+                  >
+                    <option value="all">全部类型</option>
+                    <option value="working">working</option>
+                    <option value="episodic">episodic</option>
+                    <option value="semantic">semantic</option>
+                    <option value="procedural">procedural</option>
+                    <option value="commitment">commitment</option>
+                  </select>
+                </div>
+                <div className="mt-2 min-h-0 flex-1 overflow-y-auto">
+                  {visibleMemories.length > 0 ? (
+                    visibleMemories.map((memory) => (
+                      <div key={memory.id} className="flex items-start gap-2 border-t border-stone-100 py-1.5 first:border-t-0">
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate font-medium text-stone-800">{memory.value}</p>
+                          <p className="text-[10px] text-stone-400">
+                            {memory.kind} / {memory.memoryType ?? 'semantic'} / {memory.status ?? 'active'} / {memory.confidence.toFixed(2)}
+                          </p>
+                          {memory.evidence ? (
+                            <p className="truncate text-[10px] text-stone-400">
+                              证据 {String(memory.evidence.runId ?? memory.evidence.actionRequestId ?? memory.evidence.snapshotId ?? '已记录')}
+                            </p>
+                          ) : null}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => props.onDeleteMemory(memory.id)}
+                          disabled={props.busy}
+                          className="inline-flex h-6 w-6 items-center justify-center rounded-md text-stone-400 transition hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+                          title="删除记忆"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="py-2 text-stone-500">暂无记忆。</p>
+                  )}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        ) : props.conversationOpen ? (
           <AgentChatTimeline
             nodes={props.transcriptNodes}
             busy={props.busy}
