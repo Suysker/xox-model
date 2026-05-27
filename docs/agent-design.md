@@ -533,7 +533,7 @@ React Agent OS：
 - `AgentActionCard`：写入确认卡，可内联编辑摘要、明细、导航和执行载荷。
 - `agentNavigation`：把后端导航目标投影为用户可读页面/面板/记录标签。
 - `AgentMemoryPanel`：查看和删除当前用户 / 当前工作区 memory。
-- `AgentProviderSettings`：在 Agent 台内配置当前用户 / 当前工作区 OpenAI-compatible provider；保存后只展示 `hasApiKey` 状态，不回显 key。
+- `AgentProviderSettings`：在 Agent 台内配置当前用户 / 当前工作区 OpenAI-compatible provider；已保存 key 只以密码掩码显示，不回显真实 key；点击保存会先执行 provider probe，只有测试通过才写入配置。
 - `AgentTechnicalLog`：只在显式展开时显示 run/event/tool 诊断状态。
 
 前端统一时间线的实现约束：
@@ -543,7 +543,7 @@ React Agent OS：
 - 复用与抽象：`AgentChatTimeline` 只消费后端 `AgentTimelineItem`，用 `actionRequestId` 关联编辑 diff，用 `agentNavigation` 渲染“打开页面 / 面板 / 定位记录”，并导出纯函数供测试覆盖。
 - 命名与样式：用户可见运行态统一叫 `timeline / tool row / confirmation / technical log`；中文界面使用 `对话时间线 / 工具调用 / 导航 / 确认 / 执行 / 失败`；紧凑 SaaS 工作台样式保持 8px 以内圆角、信息密度优先，不做营销式大卡片。
 - Agent 容器：底部抽屉覆盖页面但不缩放主工作台，宽度与主页面 `max-w-[1520px]` 内容容器对齐，输入区保持半透明 sticky；对话区可收起但输入区常驻；主页面尾部按抽屉可见高度追加滚动预留空间，避免用户滚到底仍被覆盖。右侧栏让出主页面宽度，窄屏临时回退到底部抽屉但保留用户布局偏好。
-- Agent 侧栏面板：历史和记忆不是头部里的两行下拉列表。打开后占据对话中部可用空间，一个面板独占剩余高度，两个面板同时打开时平分可用高度，各自内部滚动，输入区仍固定可用。
+- Agent 侧栏面板：侧栏不是窄版底部抽屉，而是 Codex / VSCode 插件栏式的垂直信息架构。顶部只保留 Agent 标识、当前运行短状态、历史/记忆/模型/布局切换/展开收起等图标级入口；新建对话、自动化级别和发送动作落在底部常驻命令盒，避免窄宽度下按钮换行挤压标题。历史、记忆和模型入口必须显示选中态；对话区收起时点击这些入口会先展开对话区并打开目标面板。历史和记忆不是头部里的两行下拉列表，打开后占据对话中部可用空间，一个面板独占剩余高度，两个面板同时打开时平分可用高度，各自内部滚动，输入区仍固定可用；记忆标题、搜索、类型筛选和刷新在宽抽屉中保持同一工具行，在窄侧栏中允许压缩但不能挤占输入区。
 - Agent 输入：使用多行 textarea；Enter 发送，Shift+Enter 换行，发送按钮只是同一路径的显式触发。
 - 验收：一条多步骤消息必须在同一条前端时间线展示用户消息、模型回复、工具行、导航目标、内联确认卡、编辑 diff、失败原因和取消状态；执行或取消后，timeline 必须随后端返回的 `timelineItems` 刷新。
 

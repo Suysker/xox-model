@@ -2,7 +2,7 @@
 import { act, type ComponentProps } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { AgentConsole } from './AgentConsole'
-import type { AgentTranscriptNode } from '../../lib/api'
+import type { AgentProviderProbeResult, AgentTranscriptNode } from '../../lib/api'
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -58,6 +58,19 @@ function memoryRecord(index: number): AgentConsoleProps['memories'][number] {
   }
 }
 
+function providerProbe(status: AgentProviderProbeResult['status'] = 'passed'): AgentProviderProbeResult {
+  return {
+    status,
+    provider: 'deepseek',
+    model: 'deepseek-v4-pro',
+    message: status === 'passed' ? '测试通过' : '测试失败',
+    checks: [
+      { name: 'auth', status, message: status === 'passed' ? '认证通过' : '认证失败' },
+      { name: 'tools', status, message: status === 'passed' ? 'tool_calls 可用' : 'tool_calls 不可用' },
+    ],
+  }
+}
+
 function props(overrides: Partial<AgentConsoleProps> = {}): AgentConsoleProps {
   return {
     threadId: 'thread-1',
@@ -90,7 +103,7 @@ function props(overrides: Partial<AgentConsoleProps> = {}): AgentConsoleProps {
     onRefreshProviderSetting: () => undefined,
     onAutomationLevelChange: () => undefined,
     onSaveProviderSetting: () => undefined,
-    onProbeProviderSetting: () => undefined,
+    onProbeProviderSetting: async () => providerProbe('passed'),
     onDeleteProviderSetting: () => undefined,
     ...overrides,
   }
@@ -118,6 +131,14 @@ function setTextareaValue(textarea: HTMLTextAreaElement, value: string) {
   act(() => {
     setter?.call(textarea, value)
     textarea.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+}
+
+function setInputValue(input: HTMLInputElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
+  act(() => {
+    setter?.call(input, value)
+    input.dispatchEvent(new Event('input', { bubbles: true }))
   })
 }
 
@@ -156,6 +177,20 @@ describe('AgentConsole', () => {
     }
   })
 
+  it('keeps the side panel composer at the bottom when conversation is collapsed', () => {
+    const rendered = renderConsole(props({
+      conversationOpen: false,
+      layoutMode: 'sidePanel',
+      surface: 'side',
+    }))
+    try {
+      expect(rendered.container.querySelector('[data-testid="agent-side-spacer"]')).not.toBeNull()
+      expect(rendered.container.querySelector('[data-testid="agent-side-composer"]')).not.toBeNull()
+    } finally {
+      rendered.cleanup()
+    }
+  })
+
   it('lets history and memory panels fill the available conversation space', () => {
     const rendered = renderConsole(props({
       threadSummaries: [threadSummary(1), threadSummary(2), threadSummary(3)],
@@ -169,8 +204,14 @@ describe('AgentConsole', () => {
       act(() => historyButton.click())
       act(() => memoryButton.click())
 
+      expect(historyButton.getAttribute('aria-pressed')).toBe('true')
+      expect(memoryButton.getAttribute('aria-pressed')).toBe('true')
       const panelRegion = rendered.container.querySelector('[data-testid="agent-utility-panels"]') as HTMLElement | null
+      const memoryToolbar = rendered.container.querySelector('[data-testid="agent-memory-toolbar"]') as HTMLElement | null
       expect(panelRegion).not.toBeNull()
+      expect(memoryToolbar?.querySelector('input[placeholder="搜索记忆"]')).not.toBeNull()
+      expect(memoryToolbar?.querySelector('select[title="按记忆类型过滤"]')).not.toBeNull()
+      expect(memoryToolbar?.querySelector('button[title="按关键词刷新记忆"]')).not.toBeNull()
       expect(panelRegion?.className).toContain('flex-1')
       expect(panelRegion?.style.gridTemplateRows).toContain('minmax(0, 1fr)')
       expect(rendered.container.querySelector('[data-testid="agent-history-panel"]')?.className).toContain('min-h-0')
@@ -178,6 +219,137 @@ describe('AgentConsole', () => {
       expect(rendered.container.innerHTML).not.toContain('max-h-28')
       expect(rendered.container.innerHTML).not.toContain('max-h-24')
       expect(rendered.container.querySelector('textarea')?.getAttribute('placeholder')).toBe('输入指令')
+    } finally {
+      rendered.cleanup()
+    }
+  })
+
+  it('expands the conversation when opening history, memory, or provider from collapsed mode', () => {
+    const expansionRequests: boolean[] = []
+    const rendered = renderConsole(props({
+      conversationOpen: false,
+      onConversationOpenChange: (open) => expansionRequests.push(open),
+    }))
+    try {
+      const historyButton = rendered.container.querySelector('button[title="历史对话"]') as HTMLButtonElement | null
+      const memoryButton = rendered.container.querySelector('button[title="记忆"]') as HTMLButtonElement | null
+      const providerButton = rendered.container.querySelector('button[title="模型配置"]') as HTMLButtonElement | null
+      if (!historyButton || !memoryButton || !providerButton) throw new Error('utility buttons missing')
+
+      act(() => historyButton.click())
+      act(() => memoryButton.click())
+      act(() => providerButton.click())
+
+      expect(expansionRequests).toEqual([true, true, true])
+      expect(historyButton.getAttribute('aria-pressed')).toBe('true')
+      expect(memoryButton.getAttribute('aria-pressed')).toBe('true')
+      expect(providerButton.getAttribute('aria-pressed')).toBe('true')
+    } finally {
+      rendered.cleanup()
+    }
+  })
+
+  it('uses compact Codex-style chrome in the side panel', () => {
+    const rendered = renderConsole(props({
+      layoutMode: 'sidePanel',
+      surface: 'side',
+      providerSetting: {
+        provider: 'deepseek',
+        baseUrl: 'https://api.deepseek.com',
+        model: 'deepseek-v4-pro',
+        hasApiKey: true,
+        updatedAt: '2026-05-24T00:00:00.000Z',
+      },
+      threadSummaries: [threadSummary(1)],
+      memories: [memoryRecord(1)],
+    }))
+    try {
+      const sideHeader = rendered.container.querySelector('[data-testid="agent-side-header"]') as HTMLElement | null
+      const sideToolbar = rendered.container.querySelector('[data-testid="agent-side-toolbar"]') as HTMLElement | null
+      const sideComposer = rendered.container.querySelector('[data-testid="agent-side-composer"]') as HTMLElement | null
+      expect(sideHeader).not.toBeNull()
+      expect(sideToolbar).not.toBeNull()
+      expect(sideComposer).not.toBeNull()
+      expect(sideHeader?.querySelector('button[aria-label="历史对话 1"]')).not.toBeNull()
+      expect(sideHeader?.querySelector('button[aria-label="记忆 1"]')).not.toBeNull()
+      expect(sideHeader?.querySelector('button[aria-label="模型 deepseek"]')).not.toBeNull()
+      expect(sideComposer?.querySelector('button[aria-label="新建对话"]')).not.toBeNull()
+      expect(sideComposer?.querySelector('textarea')?.getAttribute('placeholder')).toBe('输入指令')
+      expect(sideHeader?.textContent).not.toContain('新对话')
+      expect(sideHeader?.textContent).not.toContain('历史 1')
+      expect(sideHeader?.textContent).not.toContain('记忆 1')
+      expect(sideHeader?.textContent).not.toContain('模型 deepseek')
+      expect(rendered.container.textContent).toContain('手动')
+    } finally {
+      rendered.cleanup()
+    }
+  })
+
+  it('shows a saved provider key as a password mask without submitting the mask', async () => {
+    const probes: unknown[] = []
+    const saves: unknown[] = []
+    const rendered = renderConsole(props({
+      providerSetting: {
+        provider: 'deepseek',
+        baseUrl: 'https://api.deepseek.com',
+        model: 'deepseek-v4-pro',
+        hasApiKey: true,
+        updatedAt: '2026-05-24T00:00:00.000Z',
+      },
+      onProbeProviderSetting: async (payload) => {
+        probes.push(payload)
+        return providerProbe('passed')
+      },
+      onSaveProviderSetting: async (payload) => {
+        saves.push(payload)
+      },
+    }))
+    try {
+      const providerButton = rendered.container.querySelector('button[title="模型配置"]') as HTMLButtonElement | null
+      if (!providerButton) throw new Error('provider button missing')
+      act(() => providerButton.click())
+
+      const apiKeyInput = rendered.container.querySelector('input[type="password"]') as HTMLInputElement | null
+      expect(apiKeyInput?.value).toBe('••••••••••••••••')
+
+      const saveButton = Array.from(rendered.container.querySelectorAll('button[type="submit"]'))
+        .find((button) => button.textContent?.includes('保存')) as HTMLButtonElement | undefined
+      if (!saveButton) throw new Error('save button missing')
+      await act(async () => saveButton.click())
+
+      expect(probes).toEqual([{ provider: 'deepseek', baseUrl: 'https://api.deepseek.com', model: 'deepseek-v4-pro' }])
+      expect(saves).toEqual([{ provider: 'deepseek', baseUrl: 'https://api.deepseek.com', model: 'deepseek-v4-pro' }])
+      expect(apiKeyInput?.value).toBe('••••••••••••••••')
+    } finally {
+      rendered.cleanup()
+    }
+  })
+
+  it('tests a new provider key before saving and blocks failed probes', async () => {
+    const saves: unknown[] = []
+    const rendered = renderConsole(props({
+      providerSetting: null,
+      onProbeProviderSetting: async () => providerProbe('failed'),
+      onSaveProviderSetting: async (payload) => {
+        saves.push(payload)
+      },
+    }))
+    try {
+      const providerButton = rendered.container.querySelector('button[title="模型配置"]') as HTMLButtonElement | null
+      if (!providerButton) throw new Error('provider button missing')
+      act(() => providerButton.click())
+
+      const apiKeyInput = rendered.container.querySelector('input[type="password"]') as HTMLInputElement | null
+      if (!apiKeyInput) throw new Error('api key input missing')
+      setInputValue(apiKeyInput, 'sk-test')
+
+      const saveButton = Array.from(rendered.container.querySelectorAll('button[type="submit"]'))
+        .find((button) => button.textContent?.includes('保存')) as HTMLButtonElement | undefined
+      if (!saveButton) throw new Error('save button missing')
+      await act(async () => saveButton.click())
+
+      expect(saves).toEqual([])
+      expect(apiKeyInput.value).toBe('sk-test')
     } finally {
       rendered.cleanup()
     }

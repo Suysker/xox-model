@@ -15,6 +15,14 @@ function formatThreadTime(value: string | null) {
   return date.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
 
+const SAVED_API_KEY_MASK = '••••••••••••••••'
+
+function normalizeMaskedApiKeyInput(current: string, next: string) {
+  if (current !== SAVED_API_KEY_MASK || next === SAVED_API_KEY_MASK) return next
+  if (SAVED_API_KEY_MASK.startsWith(next)) return ''
+  return next.replace(SAVED_API_KEY_MASK, '')
+}
+
 export function AgentConsole(props: {
   threadId: string | null
   planner: AgentSendResponse['planner'] | null
@@ -46,7 +54,7 @@ export function AgentConsole(props: {
   onRefreshProviderSetting: () => void
   onAutomationLevelChange: (level: AgentAutomationLevel) => void
   onSaveProviderSetting: (payload: AgentProviderSettingUpdatePayload) => Promise<void> | void
-  onProbeProviderSetting: (payload: AgentProviderProbePayload) => Promise<AgentProviderProbeResult> | void
+  onProbeProviderSetting: (payload: AgentProviderProbePayload) => Promise<AgentProviderProbeResult>
   onDeleteProviderSetting: () => void
 }) {
   const [draft, setDraft] = useState('')
@@ -102,6 +110,25 @@ export function AgentConsole(props: {
     { mode: 'bottomDrawer', title: '底部抽屉', icon: PanelBottom },
     { mode: 'sidePanel', title: '右侧栏', icon: PanelRight },
   ]
+  const providerHasSavedApiKey = Boolean(props.providerSetting?.hasApiKey)
+  const providerApiKeyIsMask = providerHasSavedApiKey && providerDraft.apiKey === SAVED_API_KEY_MASK
+  const utilityButtonClass = (active: boolean) => [
+    'inline-flex h-8 items-center justify-center gap-1 rounded-md border px-2 text-xs font-semibold transition',
+    active
+      ? 'border-stone-950 bg-stone-950 text-white shadow-sm hover:bg-stone-800'
+      : 'border-stone-900/10 bg-white text-stone-700 hover:bg-stone-100',
+  ].join(' ')
+  const sideIconButtonClass = (active: boolean) => [
+    'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border text-xs font-semibold transition',
+    active
+      ? 'border-stone-950 bg-stone-950 text-white shadow-sm hover:bg-stone-800'
+      : 'border-stone-900/10 bg-white text-stone-600 hover:bg-stone-100 hover:text-stone-900',
+  ].join(' ')
+  const sideStatusLabel = props.busy
+    ? `执行中 / ${connectionLabel}`
+    : props.runningRunId
+      ? '运行中'
+      : connectionLabel
 
   useEffect(() => {
     if (!providerOpen) return
@@ -109,7 +136,7 @@ export function AgentConsole(props: {
       provider: props.providerSetting?.provider ?? 'deepseek',
       baseUrl: props.providerSetting?.baseUrl ?? 'https://api.deepseek.com',
       model: props.providerSetting?.model ?? 'deepseek-v4-pro',
-      apiKey: '',
+      apiKey: props.providerSetting?.hasApiKey ? SAVED_API_KEY_MASK : '',
     })
   }, [providerOpen, props.providerSetting])
 
@@ -139,21 +166,36 @@ export function AgentConsole(props: {
     submitDraft()
   }
 
+  function toggleUtilityPanel(setOpen: (updater: (current: boolean) => boolean) => void) {
+    if (!props.conversationOpen) {
+      props.onConversationOpenChange(true)
+      setOpen(() => true)
+      return
+    }
+    setOpen((current) => !current)
+  }
+
   async function handleProviderSubmit(event: FormEvent) {
     event.preventDefault()
     const provider = providerDraft.provider.trim()
     const baseUrl = providerDraft.baseUrl.trim()
     const model = providerDraft.model.trim()
-    const apiKey = providerDraft.apiKey.trim()
+    const apiKey = providerApiKeyIsMask ? '' : providerDraft.apiKey.trim()
     if (!provider || !baseUrl || !model || props.busy) return
+    const payload = {
+      provider,
+      baseUrl,
+      model,
+      ...(apiKey ? { apiKey } : {}),
+    }
     try {
-      await props.onSaveProviderSetting({
-        provider,
-        baseUrl,
-        model,
-        ...(apiKey ? { apiKey } : {}),
-      })
-      setProviderDraft((current) => ({ ...current, apiKey: '' }))
+      const probe = await props.onProbeProviderSetting(payload)
+      if (!probe || probe.status !== 'passed') return
+      await props.onSaveProviderSetting(payload)
+      setProviderDraft((current) => ({
+        ...current,
+        apiKey: apiKey || props.providerSetting?.hasApiKey ? SAVED_API_KEY_MASK : '',
+      }))
     } catch {
       // The hook owns the visible error message; keep the typed key for correction.
     }
@@ -163,7 +205,7 @@ export function AgentConsole(props: {
     const provider = providerDraft.provider.trim()
     const baseUrl = providerDraft.baseUrl.trim()
     const model = providerDraft.model.trim()
-    const apiKey = providerDraft.apiKey.trim()
+    const apiKey = providerApiKeyIsMask ? '' : providerDraft.apiKey.trim()
     if (!provider || !baseUrl || !model || props.busy) return
     await props.onProbeProviderSetting({
       provider,
@@ -184,120 +226,191 @@ export function AgentConsole(props: {
     >
       <div className={['flex h-full min-h-0 flex-col', isSideSurface ? 'p-2.5' : 'p-3'].join(' ')}>
         <div className="min-w-0 shrink-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex min-w-0 flex-1 items-center gap-2">
-              <div className="flex h-8 w-8 items-center justify-center rounded-md bg-stone-950 text-white">
-                <Bot className="h-4 w-4" />
+          {isSideSurface ? (
+            <div
+              className="flex items-center gap-2 border-b border-stone-900/10 pb-2"
+              data-testid="agent-side-header"
+            >
+              <div className="flex min-w-0 flex-1 items-center gap-2">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-stone-950 text-white">
+                  <Bot className="h-4 w-4" />
+                </div>
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-stone-950">Agent OS</p>
+                  <p className="truncate text-xs text-stone-500">{plannerLabel} / {sideStatusLabel}</p>
+                </div>
               </div>
-              <div className="min-w-0">
-                <p className="text-sm font-semibold text-stone-950">Agent OS</p>
-                <p className="truncate text-xs text-stone-500">
-                  {props.busy
-                    ? `执行中 / ${connectionLabel}`
-                    : `规划器：${plannerLabel} / ${connectionLabel}${props.threadId ? ` / 对话 ${props.threadId.slice(0, 8)}` : ''}`}
-                </p>
+              <div className="flex shrink-0 items-center gap-1" data-testid="agent-side-toolbar">
+                <button
+                  type="button"
+                  onClick={() => toggleUtilityPanel(setHistoryOpen)}
+                  className={sideIconButtonClass(historyOpen)}
+                  title={`历史对话 ${props.threadSummaries.length}`}
+                  aria-label={`历史对话 ${props.threadSummaries.length}`}
+                  aria-pressed={historyOpen}
+                >
+                  <History className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => toggleUtilityPanel(setMemoryOpen)}
+                  className={sideIconButtonClass(memoryOpen)}
+                  title={`记忆 ${props.memories.length}`}
+                  aria-label={`记忆 ${props.memories.length}`}
+                  aria-pressed={memoryOpen}
+                >
+                  <Database className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => toggleUtilityPanel(setProviderOpen)}
+                  className={sideIconButtonClass(providerOpen)}
+                  title={`模型 ${props.providerSetting?.provider ?? '默认'}`}
+                  aria-label={`模型 ${props.providerSetting?.provider ?? '默认'}`}
+                  aria-pressed={providerOpen}
+                >
+                  <KeyRound className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => props.onLayoutModeChange('bottomDrawer')}
+                  className={sideIconButtonClass(false)}
+                  title="切到底部抽屉"
+                  aria-label="切到底部抽屉"
+                >
+                  <PanelBottom className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => props.onConversationOpenChange(!props.conversationOpen)}
+                  className={sideIconButtonClass(false)}
+                  title={props.conversationOpen ? '收起对话' : '展开对话'}
+                  aria-label={props.conversationOpen ? '收起对话' : '展开对话'}
+                  aria-expanded={props.conversationOpen}
+                >
+                  {props.conversationOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronUp className="h-3.5 w-3.5" />}
+                </button>
               </div>
             </div>
-            <div className="inline-flex h-8 overflow-hidden rounded-md border border-stone-900/10 bg-white" aria-label="Agent 布局">
-              {layoutOptions.map((option) => {
-                const Icon = option.icon
-                return (
-                  <button
-                    key={option.mode}
-                    type="button"
-                    onClick={() => props.onLayoutModeChange(option.mode)}
-                    className={[
-                      'inline-flex w-8 items-center justify-center transition',
-                      props.layoutMode === option.mode
-                        ? 'bg-stone-950 text-white'
-                        : 'text-stone-500 hover:bg-stone-100 hover:text-stone-800',
-                    ].join(' ')}
-                    title={option.title}
-                    aria-label={option.title}
-                  >
-                    <Icon className="h-3.5 w-3.5" />
-                  </button>
-                )
-              })}
-            </div>
-            <button
-              type="button"
-              onClick={() => props.onConversationOpenChange(!props.conversationOpen)}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-stone-900/10 bg-white text-stone-500 transition hover:bg-stone-100 hover:text-stone-800"
-              title={props.conversationOpen ? '收起对话' : '展开对话'}
-              aria-label={props.conversationOpen ? '收起对话' : '展开对话'}
-              aria-expanded={props.conversationOpen}
-            >
-              {props.conversationOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronUp className="h-3.5 w-3.5" />}
-            </button>
-            <button
-              type="button"
-              onClick={props.onNewThread}
-              disabled={props.busy}
-              className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-stone-900/10 bg-white px-2 text-xs font-semibold text-stone-700 transition hover:bg-stone-100 disabled:opacity-50"
-              title="新建对话"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              新对话
-            </button>
-            {props.runningRunId ? (
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex min-w-0 flex-1 items-center gap-2">
+                <div className="flex h-8 w-8 items-center justify-center rounded-md bg-stone-950 text-white">
+                  <Bot className="h-4 w-4" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-stone-950">Agent OS</p>
+                  <p className="truncate text-xs text-stone-500">
+                    {props.busy
+                      ? `执行中 / ${connectionLabel}`
+                      : `规划器：${plannerLabel} / ${connectionLabel}${props.threadId ? ` / 对话 ${props.threadId.slice(0, 8)}` : ''}`}
+                  </p>
+                </div>
+              </div>
+              <div className="inline-flex h-8 overflow-hidden rounded-md border border-stone-900/10 bg-white" aria-label="Agent 布局">
+                {layoutOptions.map((option) => {
+                  const Icon = option.icon
+                  return (
+                    <button
+                      key={option.mode}
+                      type="button"
+                      onClick={() => props.onLayoutModeChange(option.mode)}
+                      className={[
+                        'inline-flex w-8 items-center justify-center transition',
+                        props.layoutMode === option.mode
+                          ? 'bg-stone-950 text-white'
+                          : 'text-stone-500 hover:bg-stone-100 hover:text-stone-800',
+                      ].join(' ')}
+                      title={option.title}
+                      aria-label={option.title}
+                    >
+                      <Icon className="h-3.5 w-3.5" />
+                    </button>
+                  )
+                })}
+              </div>
               <button
                 type="button"
-                onClick={props.onCancelRun}
-                className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-red-200 bg-red-50 px-2 text-xs font-semibold text-red-700 transition hover:bg-red-100"
-                title="取消当前运行"
+                onClick={() => props.onConversationOpenChange(!props.conversationOpen)}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-stone-900/10 bg-white text-stone-500 transition hover:bg-stone-100 hover:text-stone-800"
+                title={props.conversationOpen ? '收起对话' : '展开对话'}
+                aria-label={props.conversationOpen ? '收起对话' : '展开对话'}
+                aria-expanded={props.conversationOpen}
               >
-                <XCircle className="h-3.5 w-3.5" />
-                取消
+                {props.conversationOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronUp className="h-3.5 w-3.5" />}
               </button>
-            ) : null}
-            <div className="inline-flex h-8 overflow-hidden rounded-md border border-stone-900/10 bg-white" aria-label="自动化执行级别">
-              {automationOptions.map((option) => (
+              <button
+                type="button"
+                onClick={props.onNewThread}
+                disabled={props.busy}
+                className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-stone-900/10 bg-white px-2 text-xs font-semibold text-stone-700 transition hover:bg-stone-100 disabled:opacity-50"
+                title="新建对话"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                新对话
+              </button>
+              {props.runningRunId ? (
                 <button
-                  key={option.level}
                   type="button"
-                  onClick={() => props.onAutomationLevelChange(option.level)}
-                  disabled={props.busy}
-                  className={[
-                    'min-w-9 px-2 text-xs font-semibold transition disabled:opacity-50',
-                    props.automationLevel === option.level
-                      ? 'bg-stone-950 text-white'
-                      : 'text-stone-600 hover:bg-stone-100',
-                  ].join(' ')}
-                  title={option.title}
+                  onClick={props.onCancelRun}
+                  className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-red-200 bg-red-50 px-2 text-xs font-semibold text-red-700 transition hover:bg-red-100"
+                  title="取消当前运行"
                 >
-                  {option.label}
+                  <XCircle className="h-3.5 w-3.5" />
+                  取消
                 </button>
-              ))}
+              ) : null}
+              <div className="inline-flex h-8 overflow-hidden rounded-md border border-stone-900/10 bg-white" aria-label="自动化执行级别">
+                {automationOptions.map((option) => (
+                  <button
+                    key={option.level}
+                    type="button"
+                    onClick={() => props.onAutomationLevelChange(option.level)}
+                    disabled={props.busy}
+                    className={[
+                      'min-w-9 px-2 text-xs font-semibold transition disabled:opacity-50',
+                      props.automationLevel === option.level
+                        ? 'bg-stone-950 text-white'
+                        : 'text-stone-600 hover:bg-stone-100',
+                    ].join(' ')}
+                    title={option.title}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => toggleUtilityPanel(setHistoryOpen)}
+                className={utilityButtonClass(historyOpen)}
+                title="历史对话"
+                aria-pressed={historyOpen}
+              >
+                <History className="h-3.5 w-3.5" />
+                历史 {props.threadSummaries.length}
+              </button>
+              <button
+                type="button"
+                onClick={() => toggleUtilityPanel(setMemoryOpen)}
+                className={utilityButtonClass(memoryOpen)}
+                title="记忆"
+                aria-pressed={memoryOpen}
+              >
+                <Database className="h-3.5 w-3.5" />
+                记忆 {props.memories.length}
+              </button>
+              <button
+                type="button"
+                onClick={() => toggleUtilityPanel(setProviderOpen)}
+                className={utilityButtonClass(providerOpen)}
+                title="模型配置"
+                aria-pressed={providerOpen}
+              >
+                <KeyRound className="h-3.5 w-3.5" />
+                模型 {props.providerSetting?.provider ?? '默认'}
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={() => setHistoryOpen((current) => !current)}
-              className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-stone-900/10 bg-white px-2 text-xs font-semibold text-stone-700 transition hover:bg-stone-100"
-              title="历史对话"
-            >
-              <History className="h-3.5 w-3.5" />
-              历史 {props.threadSummaries.length}
-            </button>
-            <button
-              type="button"
-              onClick={() => setMemoryOpen((current) => !current)}
-              className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-stone-900/10 bg-white px-2 text-xs font-semibold text-stone-700 transition hover:bg-stone-100"
-              title="记忆"
-            >
-              <Database className="h-3.5 w-3.5" />
-              记忆 {props.memories.length}
-            </button>
-            <button
-              type="button"
-              onClick={() => setProviderOpen((current) => !current)}
-              className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-stone-900/10 bg-white px-2 text-xs font-semibold text-stone-700 transition hover:bg-stone-100"
-              title="模型配置"
-            >
-              <KeyRound className="h-3.5 w-3.5" />
-              模型 {props.providerSetting?.provider ?? '默认'}
-            </button>
-          </div>
+          )}
 
           {props.conversationOpen && providerOpen ? (
             <form onSubmit={handleProviderSubmit} className="mt-2 rounded-md border border-stone-900/10 bg-white px-3 py-2 text-xs">
@@ -361,18 +474,28 @@ export function AgentConsole(props: {
                   <input
                     type="password"
                     value={providerDraft.apiKey}
-                    onChange={(event) => setProviderDraft((current) => ({ ...current, apiKey: event.target.value }))}
+                    onFocus={(event) => {
+                      if (providerApiKeyIsMask) event.currentTarget.select()
+                    }}
+                    onChange={(event) => {
+                      const nextValue = event.target.value
+                      setProviderDraft((current) => ({
+                        ...current,
+                        apiKey: normalizeMaskedApiKeyInput(current.apiKey, nextValue),
+                      }))
+                    }}
                     className="h-8 rounded-md border border-stone-900/10 px-2 text-xs outline-none transition focus:border-emerald-500"
-                    placeholder={props.providerSetting?.hasApiKey ? '留空保留当前 key' : '首次保存需要 key'}
+                    placeholder={props.providerSetting?.hasApiKey ? '' : '首次保存需要 key'}
                   />
                 </label>
                 <button
                   type="submit"
                   disabled={props.busy || !providerDraft.provider.trim() || !providerDraft.baseUrl.trim() || !providerDraft.model.trim()}
                   className="inline-flex h-8 items-center justify-center gap-1 rounded-md bg-stone-950 px-3 text-xs font-semibold text-white transition hover:bg-stone-800 disabled:opacity-50"
+                  title="先测试，通过后保存"
                 >
                   <Save className="h-3.5 w-3.5" />
-                  保存
+                  测试并保存
                 </button>
                 <button
                   type="button"
@@ -474,32 +597,24 @@ export function AgentConsole(props: {
                 className="flex min-h-0 flex-col rounded-md border border-stone-900/10 bg-white px-3 py-2 text-xs"
                 data-testid="agent-memory-panel"
               >
-                <div className="flex shrink-0 items-center justify-between gap-2">
+                <div
+                  className="flex shrink-0 flex-wrap items-center gap-2"
+                  data-testid="agent-memory-toolbar"
+                >
                   <span className="font-semibold text-stone-800">当前工作区记忆</span>
-                  <button
-                    type="button"
-                    onClick={() => props.onRefreshMemories(memorySearch)}
-                    disabled={props.busy}
-                    className="inline-flex h-7 items-center justify-center rounded-md border border-stone-900/10 px-2 text-stone-600 transition hover:bg-stone-100 disabled:opacity-50"
-                    title="按关键词刷新记忆"
-                  >
-                    <RefreshCw className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-                <div className="mt-2 grid shrink-0 gap-1 sm:grid-cols-[minmax(0,1fr)_120px]">
                   <input
                     value={memorySearch}
                     onChange={(event) => setMemorySearch(event.target.value)}
                     onKeyDown={(event) => {
                       if (event.key === 'Enter') props.onRefreshMemories(memorySearch)
                     }}
-                    className="h-7 rounded-md border border-stone-900/10 px-2 text-[11px] outline-none transition focus:border-emerald-500"
+                    className="h-7 min-w-[220px] flex-1 rounded-md border border-stone-900/10 px-2 text-[11px] outline-none transition focus:border-emerald-500"
                     placeholder="搜索记忆"
                   />
                   <select
                     value={memoryTypeFilter}
                     onChange={(event) => setMemoryTypeFilter(event.target.value)}
-                    className="h-7 rounded-md border border-stone-900/10 px-2 text-[11px] outline-none transition focus:border-emerald-500"
+                    className="h-7 w-32 shrink-0 rounded-md border border-stone-900/10 px-2 text-[11px] outline-none transition focus:border-emerald-500"
                     title="按记忆类型过滤"
                   >
                     <option value="all">全部类型</option>
@@ -509,6 +624,15 @@ export function AgentConsole(props: {
                     <option value="procedural">procedural</option>
                     <option value="commitment">commitment</option>
                   </select>
+                  <button
+                    type="button"
+                    onClick={() => props.onRefreshMemories(memorySearch)}
+                    disabled={props.busy}
+                    className="inline-flex h-7 items-center justify-center rounded-md border border-stone-900/10 px-2 text-stone-600 transition hover:bg-stone-100 disabled:opacity-50"
+                    title="按关键词刷新记忆"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                  </button>
                 </div>
                 <div className="mt-2 min-h-0 flex-1 overflow-y-auto">
                   {visibleMemories.length > 0 ? (
@@ -553,36 +677,105 @@ export function AgentConsole(props: {
             onUpdate={props.onUpdate}
             className="min-h-0 flex-1"
           />
+        ) : isSideSurface ? (
+          <div className="min-h-0 flex-1" data-testid="agent-side-spacer" />
         ) : null}
 
-        <form
-          onSubmit={handleSubmit}
-          className={[
-            'mt-2 flex shrink-0 items-end gap-2 border-t border-stone-900/10 pt-2',
-            isSideSurface
-              ? 'bg-stone-50/95 pb-1'
-              : 'sticky bottom-0 -mx-3 rounded-b-lg bg-stone-50/80 px-3 pb-3 backdrop-blur',
-          ].join(' ')}
-        >
-          <textarea
-            ref={draftRef}
-            rows={1}
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={handleDraftKeyDown}
-            className="max-h-32 min-h-10 min-w-0 flex-1 resize-none rounded-xl border border-stone-900/10 bg-white/90 px-3 py-2 text-sm leading-6 outline-none transition focus:border-emerald-500"
-            placeholder="输入指令"
-          />
-          <button
-            type="submit"
-            disabled={props.busy || !draft.trim()}
-            className="inline-flex h-10 w-12 shrink-0 items-center justify-center rounded-xl bg-stone-950 text-sm font-semibold text-white transition hover:bg-stone-800 disabled:opacity-50"
-            title="发送"
-            aria-label="发送"
+        {isSideSurface ? (
+          <form
+            onSubmit={handleSubmit}
+            className="mt-2 shrink-0 rounded-2xl border border-stone-900/10 bg-white/95 p-2 shadow-sm"
+            data-testid="agent-side-composer"
           >
-            <SendHorizontal className="h-4 w-4" />
-          </button>
-        </form>
+            <textarea
+              ref={draftRef}
+              rows={1}
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={handleDraftKeyDown}
+              className="max-h-32 min-h-14 w-full resize-none rounded-xl bg-transparent px-1.5 py-1 text-sm leading-6 text-stone-900 outline-none placeholder:text-stone-400"
+              placeholder="输入指令"
+            />
+            <div className="mt-2 flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={props.onNewThread}
+                disabled={props.busy}
+                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-stone-500 transition hover:bg-stone-100 hover:text-stone-900 disabled:opacity-50"
+                title="新建对话"
+                aria-label="新建对话"
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+              <div
+                className="inline-flex h-8 min-w-0 flex-1 overflow-hidden rounded-md border border-stone-900/10 bg-stone-50"
+                aria-label="自动化执行级别"
+              >
+                {automationOptions.map((option) => (
+                  <button
+                    key={option.level}
+                    type="button"
+                    onClick={() => props.onAutomationLevelChange(option.level)}
+                    disabled={props.busy}
+                    className={[
+                      'min-w-0 flex-1 px-1 text-xs font-semibold transition disabled:opacity-50',
+                      props.automationLevel === option.level
+                        ? 'bg-stone-950 text-white'
+                        : 'text-stone-600 hover:bg-stone-100',
+                    ].join(' ')}
+                    title={option.title}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              {props.runningRunId ? (
+                <button
+                  type="button"
+                  onClick={props.onCancelRun}
+                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-red-600 transition hover:bg-red-50"
+                  title="取消当前运行"
+                  aria-label="取消当前运行"
+                >
+                  <XCircle className="h-4 w-4" />
+                </button>
+              ) : null}
+              <button
+                type="submit"
+                disabled={props.busy || !draft.trim()}
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-stone-950 text-sm font-semibold text-white transition hover:bg-stone-800 disabled:opacity-50"
+                title="发送"
+                aria-label="发送"
+              >
+                <SendHorizontal className="h-4 w-4" />
+              </button>
+            </div>
+          </form>
+        ) : (
+          <form
+            onSubmit={handleSubmit}
+            className="sticky bottom-0 -mx-3 mt-2 flex shrink-0 items-end gap-2 rounded-b-lg border-t border-stone-900/10 bg-stone-50/80 px-3 pb-3 pt-2 backdrop-blur"
+          >
+            <textarea
+              ref={draftRef}
+              rows={1}
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={handleDraftKeyDown}
+              className="max-h-32 min-h-10 min-w-0 flex-1 resize-none rounded-xl border border-stone-900/10 bg-white/90 px-3 py-2 text-sm leading-6 outline-none transition focus:border-emerald-500"
+              placeholder="输入指令"
+            />
+            <button
+              type="submit"
+              disabled={props.busy || !draft.trim()}
+              className="inline-flex h-10 w-12 shrink-0 items-center justify-center rounded-xl bg-stone-950 text-sm font-semibold text-white transition hover:bg-stone-800 disabled:opacity-50"
+              title="发送"
+              aria-label="发送"
+            >
+              <SendHorizontal className="h-4 w-4" />
+            </button>
+          </form>
+        )}
         {props.error ? <p className="mt-2 text-xs font-medium text-red-600">{props.error}</p> : null}
       </div>
     </section>
