@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
-import { Bot, ChevronDown, ChevronUp, Database, History, KeyRound, PanelBottom, PanelRight, Plus, RefreshCw, SendHorizontal, Save, Trash2, XCircle } from 'lucide-react'
+import { Bot, ChevronDown, ChevronUp, Database, History, KeyRound, PanelBottom, PanelRight, Plus, RefreshCw, SendHorizontal, Save, SquarePen, Trash2, XCircle } from 'lucide-react'
 import type { AgentActionUpdatePayload, AgentAutomationLevel, AgentMemoryRecord, AgentProviderProbePayload, AgentProviderProbeResult, AgentProviderSettingRecord, AgentProviderSettingUpdatePayload, AgentSendResponse, AgentThreadSummary, AgentTranscriptNode } from '../../lib/api'
 import type { AgentShellLayoutMode, AgentShellSurface } from './agentShellLayout'
 import { AgentChatTimeline } from './AgentChatTimeline'
@@ -241,6 +241,16 @@ export function AgentConsole(props: {
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-1" data-testid="agent-side-toolbar">
+                <button
+                  type="button"
+                  onClick={props.onNewThread}
+                  disabled={props.busy}
+                  className={sideIconButtonClass(false)}
+                  title="新建对话"
+                  aria-label="新建对话"
+                >
+                  <SquarePen className="h-3.5 w-3.5" />
+                </button>
                 <button
                   type="button"
                   onClick={() => toggleUtilityPanel(setHistoryOpen)}
@@ -697,18 +707,8 @@ export function AgentConsole(props: {
               placeholder="输入指令"
             />
             <div className="mt-2 flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={props.onNewThread}
-                disabled={props.busy}
-                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-stone-500 transition hover:bg-stone-100 hover:text-stone-900 disabled:opacity-50"
-                title="新建对话"
-                aria-label="新建对话"
-              >
-                <Plus className="h-4 w-4" />
-              </button>
               <div
-                className="inline-flex h-8 min-w-0 flex-1 overflow-hidden rounded-md border border-stone-900/10 bg-stone-50"
+                className="inline-flex h-9 min-w-0 flex-1 overflow-hidden rounded-lg border border-stone-900/10 bg-stone-50"
                 aria-label="自动化执行级别"
               >
                 {automationOptions.map((option) => (
@@ -743,7 +743,7 @@ export function AgentConsole(props: {
               <button
                 type="submit"
                 disabled={props.busy || !draft.trim()}
-                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-stone-950 text-sm font-semibold text-white transition hover:bg-stone-800 disabled:opacity-50"
+                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-stone-950 text-sm font-semibold text-white transition hover:bg-stone-800 disabled:opacity-50"
                 title="发送"
                 aria-label="发送"
               >
