@@ -250,6 +250,7 @@ describe('AgentConsole', () => {
   })
 
   it('uses compact Codex-style chrome in the side panel', () => {
+    const automationChanges: AgentConsoleProps['automationLevel'][] = []
     const rendered = renderConsole(props({
       layoutMode: 'sidePanel',
       surface: 'side',
@@ -262,19 +263,33 @@ describe('AgentConsole', () => {
       },
       threadSummaries: [threadSummary(1)],
       memories: [memoryRecord(1)],
+      onAutomationLevelChange: (level) => automationChanges.push(level),
     }))
     try {
       const sideHeader = rendered.container.querySelector('[data-testid="agent-side-header"]') as HTMLElement | null
       const sideToolbar = rendered.container.querySelector('[data-testid="agent-side-toolbar"]') as HTMLElement | null
       const sideComposer = rendered.container.querySelector('[data-testid="agent-side-composer"]') as HTMLElement | null
+      const sideAutomation = rendered.container.querySelector('[data-testid="agent-side-automation"]') as HTMLElement | null
       expect(sideHeader).not.toBeNull()
       expect(sideToolbar).not.toBeNull()
       expect(sideComposer).not.toBeNull()
+      expect(sideAutomation).not.toBeNull()
       expect(sideHeader?.querySelector('button[aria-label="历史对话 1"]')).not.toBeNull()
       expect(sideHeader?.querySelector('button[aria-label="记忆 1"]')).not.toBeNull()
       expect(sideHeader?.querySelector('button[aria-label="模型 deepseek"]')).not.toBeNull()
       expect(sideHeader?.querySelector('button[aria-label="新建对话"]')).not.toBeNull()
       expect(sideComposer?.querySelector('button[aria-label="新建对话"]')).toBeNull()
+      expect(sideAutomation?.querySelector('button[aria-haspopup="menu"]')).not.toBeNull()
+      expect(sideAutomation?.textContent).toContain('手动')
+      expect(sideAutomation?.textContent).not.toContain('低')
+      const automationButton = sideAutomation?.querySelector('button[aria-haspopup="menu"]') as HTMLButtonElement | null
+      if (!automationButton) throw new Error('automation menu button missing')
+      act(() => automationButton.click())
+      expect(sideAutomation?.querySelector('[role="menu"]')).not.toBeNull()
+      const menuItems = Array.from(sideAutomation?.querySelectorAll('[role="menuitemradio"]') ?? []) as HTMLButtonElement[]
+      expect(menuItems).toHaveLength(4)
+      act(() => menuItems[3]?.click())
+      expect(automationChanges).toEqual(['high'])
       expect(sideComposer?.querySelector('textarea')?.getAttribute('placeholder')).toBe('输入指令')
       expect(sideHeader?.textContent).not.toContain('新对话')
       expect(sideHeader?.textContent).not.toContain('历史 1')

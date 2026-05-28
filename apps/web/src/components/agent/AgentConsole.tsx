@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
-import { Bot, ChevronDown, ChevronUp, Database, History, KeyRound, PanelBottom, PanelRight, Plus, RefreshCw, SendHorizontal, Save, SquarePen, Trash2, XCircle } from 'lucide-react'
+import { Bot, Check, ChevronDown, ChevronUp, Database, History, KeyRound, PanelBottom, PanelRight, Plus, RefreshCw, SendHorizontal, Save, ShieldCheck, SquarePen, Trash2, XCircle } from 'lucide-react'
 import type { AgentActionUpdatePayload, AgentAutomationLevel, AgentMemoryRecord, AgentProviderProbePayload, AgentProviderProbeResult, AgentProviderSettingRecord, AgentProviderSettingUpdatePayload, AgentSendResponse, AgentThreadSummary, AgentTranscriptNode } from '../../lib/api'
 import type { AgentShellLayoutMode, AgentShellSurface } from './agentShellLayout'
 import { AgentChatTimeline } from './AgentChatTimeline'
@@ -64,6 +64,7 @@ export function AgentConsole(props: {
   const [memoryTypeFilter, setMemoryTypeFilter] = useState('all')
   const [historyOpen, setHistoryOpen] = useState(false)
   const [providerOpen, setProviderOpen] = useState(false)
+  const [sideAutomationMenuOpen, setSideAutomationMenuOpen] = useState(false)
   const [providerDraft, setProviderDraft] = useState({
     provider: 'deepseek',
     baseUrl: 'https://api.deepseek.com',
@@ -102,6 +103,11 @@ export function AgentConsole(props: {
     { level: 'medium', label: '中', title: '全力规划；自动执行低/中风险动作' },
     { level: 'high', label: '高', title: '全力规划；自动执行低/中风险，高风险仍按策略确认' },
   ]
+  const currentAutomationOption = automationOptions.find((option) => option.level === props.automationLevel) ?? {
+    level: 'manual' as const,
+    label: '手动',
+    title: '全力规划；所有写入都停在确认卡',
+  }
   const isSideSurface = props.surface === 'side'
   const utilityPanelCount = Number(historyOpen) + Number(memoryOpen)
   const showUtilityPanels = props.conversationOpen && utilityPanelCount > 0
@@ -146,6 +152,10 @@ export function AgentConsole(props: {
     textarea.style.height = '0px'
     textarea.style.height = `${Math.min(textarea.scrollHeight, 128)}px`
   }, [draft])
+
+  useEffect(() => {
+    if (!isSideSurface) setSideAutomationMenuOpen(false)
+  }, [isSideSurface])
 
   function submitDraft() {
     const message = draft.trim()
@@ -708,26 +718,51 @@ export function AgentConsole(props: {
             />
             <div className="mt-2 flex items-center gap-1.5">
               <div
-                className="inline-flex h-9 min-w-0 flex-1 overflow-hidden rounded-lg border border-stone-900/10 bg-stone-50"
+                className="relative min-w-0 flex-1"
                 aria-label="自动化执行级别"
+                data-testid="agent-side-automation"
               >
-                {automationOptions.map((option) => (
-                  <button
-                    key={option.level}
-                    type="button"
-                    onClick={() => props.onAutomationLevelChange(option.level)}
-                    disabled={props.busy}
-                    className={[
-                      'min-w-0 flex-1 px-1 text-xs font-semibold transition disabled:opacity-50',
-                      props.automationLevel === option.level
-                        ? 'bg-stone-950 text-white'
-                        : 'text-stone-600 hover:bg-stone-100',
-                    ].join(' ')}
-                    title={option.title}
+                {sideAutomationMenuOpen ? (
+                  <div
+                    role="menu"
+                    className="absolute bottom-full left-0 z-20 mb-2 w-52 overflow-hidden rounded-xl border border-white/10 bg-stone-950 py-1.5 text-xs text-stone-200 shadow-xl"
                   >
-                    {option.label}
-                  </button>
-                ))}
+                    {automationOptions.map((option) => (
+                      <button
+                        key={option.level}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={props.automationLevel === option.level}
+                        onClick={() => {
+                          props.onAutomationLevelChange(option.level)
+                          setSideAutomationMenuOpen(false)
+                        }}
+                        disabled={props.busy}
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left transition hover:bg-white/10 disabled:opacity-50"
+                      >
+                        <ShieldCheck className="h-3.5 w-3.5 text-amber-300" />
+                        <span className="min-w-0 flex-1 truncate">{option.title}</span>
+                        {props.automationLevel === option.level ? <Check className="h-3.5 w-3.5 text-stone-200" /> : null}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => setSideAutomationMenuOpen((current) => !current)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Escape') setSideAutomationMenuOpen(false)
+                  }}
+                  disabled={props.busy}
+                  className="inline-flex h-9 max-w-full items-center gap-1.5 rounded-full bg-stone-950 px-3 text-xs font-semibold text-amber-300 shadow-sm transition hover:bg-stone-800 disabled:opacity-50"
+                  title={currentAutomationOption.title}
+                  aria-haspopup="menu"
+                  aria-expanded={sideAutomationMenuOpen}
+                >
+                  <ShieldCheck className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">{currentAutomationOption.label}</span>
+                  <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+                </button>
               </div>
               {props.runningRunId ? (
                 <button
