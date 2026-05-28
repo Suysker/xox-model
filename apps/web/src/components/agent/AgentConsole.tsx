@@ -98,15 +98,15 @@ export function AgentConsole(props: {
         ? '轮询'
         : '待机'
   const automationOptions: Array<{ level: AgentAutomationLevel; label: string; title: string }> = [
-    { level: 'manual', label: '手动', title: '全力规划；所有写入都停在确认卡' },
-    { level: 'low', label: '低', title: '全力规划；自动执行低风险动作' },
-    { level: 'medium', label: '中', title: '全力规划；自动执行低/中风险动作' },
-    { level: 'high', label: '高', title: '全力规划；自动执行低/中风险，高风险仍按策略确认' },
+    { level: 'manual', label: '手动', title: '所有写入都停在确认卡' },
+    { level: 'low', label: '低', title: '自动执行低风险动作' },
+    { level: 'medium', label: '中', title: '自动执行低/中风险动作' },
+    { level: 'high', label: '高', title: '自动执行低/中风险动作，高风险仍确认' },
   ]
   const currentAutomationOption = automationOptions.find((option) => option.level === props.automationLevel) ?? {
     level: 'manual' as const,
     label: '手动',
-    title: '全力规划；所有写入都停在确认卡',
+    title: '所有写入都停在确认卡',
   }
   const isSideSurface = props.surface === 'side'
   const utilityPanelCount = Number(historyOpen) + Number(memoryOpen)
@@ -725,7 +725,7 @@ export function AgentConsole(props: {
                 {sideAutomationMenuOpen ? (
                   <div
                     role="menu"
-                    className="absolute bottom-full left-0 z-20 mb-2 w-52 overflow-hidden rounded-xl border border-white/10 bg-stone-950 py-1.5 text-xs text-stone-200 shadow-xl"
+                    className="absolute bottom-full left-0 z-20 mb-2 w-56 overflow-hidden rounded-xl border border-stone-900/10 bg-white py-1.5 text-xs text-stone-700 shadow-xl"
                   >
                     {automationOptions.map((option) => (
                       <button
@@ -738,11 +738,19 @@ export function AgentConsole(props: {
                           setSideAutomationMenuOpen(false)
                         }}
                         disabled={props.busy}
-                        className="flex w-full items-center gap-2 px-3 py-2 text-left transition hover:bg-white/10 disabled:opacity-50"
+                        className={[
+                          'flex w-full items-center gap-2 px-3 py-2 text-left transition disabled:opacity-50',
+                          props.automationLevel === option.level
+                            ? 'bg-amber-50 text-stone-950'
+                            : 'hover:bg-stone-50',
+                        ].join(' ')}
                       >
-                        <ShieldCheck className="h-3.5 w-3.5 text-amber-300" />
-                        <span className="min-w-0 flex-1 truncate">{option.title}</span>
-                        {props.automationLevel === option.level ? <Check className="h-3.5 w-3.5 text-stone-200" /> : null}
+                        <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+                        <span className="min-w-0 flex-1">
+                          <span className="block font-semibold">{option.label}</span>
+                          <span className="block truncate text-[11px] text-stone-500">{option.title}</span>
+                        </span>
+                        {props.automationLevel === option.level ? <Check className="h-3.5 w-3.5 shrink-0 text-stone-700" /> : null}
                       </button>
                     ))}
                   </div>
@@ -754,12 +762,12 @@ export function AgentConsole(props: {
                     if (event.key === 'Escape') setSideAutomationMenuOpen(false)
                   }}
                   disabled={props.busy}
-                  className="inline-flex h-9 max-w-full items-center gap-1.5 rounded-full bg-stone-950 px-3 text-xs font-semibold text-amber-300 shadow-sm transition hover:bg-stone-800 disabled:opacity-50"
+                  className="inline-flex h-9 max-w-full items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 text-xs font-semibold text-stone-900 shadow-sm transition hover:bg-amber-100 disabled:opacity-50"
                   title={currentAutomationOption.title}
                   aria-haspopup="menu"
                   aria-expanded={sideAutomationMenuOpen}
                 >
-                  <ShieldCheck className="h-3.5 w-3.5 shrink-0" />
+                  <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-amber-600" />
                   <span className="truncate">{currentAutomationOption.label}</span>
                   <ChevronDown className="h-3.5 w-3.5 shrink-0" />
                 </button>

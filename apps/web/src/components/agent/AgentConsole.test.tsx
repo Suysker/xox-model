@@ -285,9 +285,15 @@ describe('AgentConsole', () => {
       const automationButton = sideAutomation?.querySelector('button[aria-haspopup="menu"]') as HTMLButtonElement | null
       if (!automationButton) throw new Error('automation menu button missing')
       act(() => automationButton.click())
-      expect(sideAutomation?.querySelector('[role="menu"]')).not.toBeNull()
+      const automationMenu = sideAutomation?.querySelector('[role="menu"]') as HTMLElement | null
+      expect(automationMenu).not.toBeNull()
+      expect(automationMenu?.className).toContain('bg-white')
+      expect(automationMenu?.className).not.toContain('bg-stone-950')
+      expect(automationMenu?.textContent).not.toContain('全力规划')
       const menuItems = Array.from(sideAutomation?.querySelectorAll('[role="menuitemradio"]') ?? []) as HTMLButtonElement[]
       expect(menuItems).toHaveLength(4)
+      expect(menuItems[0]?.textContent).toContain('手动')
+      expect(menuItems[0]?.textContent).toContain('所有写入都停在确认卡')
       act(() => menuItems[3]?.click())
       expect(automationChanges).toEqual(['high'])
       expect(sideComposer?.querySelector('textarea')?.getAttribute('placeholder')).toBe('输入指令')
