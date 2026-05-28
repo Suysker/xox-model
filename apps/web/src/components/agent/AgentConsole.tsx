@@ -101,7 +101,7 @@ export function AgentConsole(props: {
     { level: 'manual', label: '手动', title: '所有写入都停在确认卡' },
     { level: 'low', label: '低', title: '自动执行低风险动作' },
     { level: 'medium', label: '中', title: '自动执行低/中风险动作' },
-    { level: 'high', label: '高', title: '自动执行低/中风险动作，高风险仍确认' },
+    { level: 'high', label: '高', title: '低/中风险自动，高风险确认' },
   ]
   const currentAutomationOption = automationOptions.find((option) => option.level === props.automationLevel) ?? {
     level: 'manual' as const,
@@ -299,16 +299,6 @@ export function AgentConsole(props: {
                   aria-label="切到底部抽屉"
                 >
                   <PanelBottom className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => props.onConversationOpenChange(!props.conversationOpen)}
-                  className={sideIconButtonClass(false)}
-                  title={props.conversationOpen ? '收起对话' : '展开对话'}
-                  aria-label={props.conversationOpen ? '收起对话' : '展开对话'}
-                  aria-expanded={props.conversationOpen}
-                >
-                  {props.conversationOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronUp className="h-3.5 w-3.5" />}
                 </button>
               </div>
             </div>
@@ -748,7 +738,7 @@ export function AgentConsole(props: {
                         <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-amber-500" />
                         <span className="min-w-0 flex-1">
                           <span className="block font-semibold">{option.label}</span>
-                          <span className="block truncate text-[11px] text-stone-500">{option.title}</span>
+                          <span className="block whitespace-normal text-[11px] leading-4 text-stone-500">{option.title}</span>
                         </span>
                         {props.automationLevel === option.level ? <Check className="h-3.5 w-3.5 shrink-0 text-stone-700" /> : null}
                       </button>
