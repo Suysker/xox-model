@@ -1,4 +1,4 @@
-# ADR 0016: Read-only Analytical Sandbox Tool
+# ADR 0016: Manifest-Scoped Sandbox Tool
 
 Status: Proposed
 
@@ -8,20 +8,21 @@ Date: 2026-05-29
 
 `xox-model` is a multi-tenant SaaS business system. Its Agent OS already follows a harness model: model-selected tools, typed action drafts, editable confirmation cards, domain-service execution, audit logs, observation feedback, evaluator repair loops and tenant-scoped memory.
 
-The missing capability is code-backed analysis. Users will eventually ask the Agent to:
+The missing capability is controlled code execution. Users will eventually ask the Agent to:
 
 - run heavier financial simulations than a prompt or deterministic domain function should handle;
 - clean uploaded CSV/XLSX files before import;
 - compare alternative operating formulas, commission plans or scenario grids;
-- generate charts, tables or intermediate artifacts that help users decide what to save.
+- generate charts, tables or intermediate artifacts that help users decide what to save;
+- validate, reconcile or reshape temporary business data before it becomes an editable xox action.
 
-Local coding agents such as OpenClaw and Hermes can execute code because their normal trust model is a user-owned machine, repo or container. Even when they run on a remote box, that box is usually dedicated to the operator's workspace. `xox-model` is different: a production API host sits next to many tenants' data, credentials, caches, object-storage access, logs and internal services. Letting a model generate arbitrary code inside the API process, the production container, the production VPC or with production secrets would turn a user-level analysis feature into a cross-tenant security boundary.
+Local coding agents such as OpenClaw and Hermes can execute code because their normal trust model is a user-owned machine, repo or container. Even when they run on a remote box, that box is usually dedicated to the operator's workspace. `xox-model` is different: a production API host sits next to many tenants' data, credentials, caches, object-storage access, logs and internal services. Letting a model generate arbitrary code inside the API process, the production container, the production VPC or with production secrets would turn a user-level execution feature into a cross-tenant security boundary.
 
-The product requirement is therefore narrower:
+The product requirement is therefore narrower than a hosted coding agent, but broader than analysis only:
 
-> Give the harness Agent code-backed analytical power without giving it business write authority or production-runtime access.
+> Give the harness Agent manifest-scoped code execution without giving it business write authority or production-runtime access.
 
-This ADR defines a **Read-only Analytical Sandbox Tool**. "Read-only" means read-only with respect to business state. The sandbox may create temporary files and artifacts inside its own workspace, but it cannot mutate `xox-model` workspaces, ledgers, versions, users, provider settings, memory records or any production database.
+This ADR defines a **Manifest-Scoped Sandbox Tool**. "Read-only" means read-only with respect to durable business state, not limited to analytical use cases. The sandbox may create temporary files and artifacts inside its own workspace, but it cannot mutate `xox-model` workspaces, ledgers, versions, users, provider settings, memory records or any production database. Its real boundary is the manifest: identity, data bundle, filesystem, runtime, network and capability policy are all declared before execution and enforced outside the model-generated code.
 
 ## Reference Findings
 
@@ -51,8 +52,8 @@ Useful ideas:
 Direct implication for xox-model:
 
 - We can reuse the **layering**: `Agent -> Sandbox Tool -> Sandbox Session -> Observation`.
-- We should not expose a full `SandboxAgent` as the business Agent's primary identity yet. The product needs one narrow analytical tool, not a second coding assistant living inside the SaaS app.
-- If we use OpenAI Agents SDK sandbox clients later, they should sit behind our own `analysis-sandbox-broker` interface. The harness and business policy should not depend on one provider's sandbox API.
+- We should not expose a full `SandboxAgent` as the business Agent's primary identity yet. The product needs one governed sandbox tool, not a second coding assistant living inside the SaaS app.
+- If we use OpenAI Agents SDK sandbox clients later, they should sit behind our own `sandbox-broker` interface. The harness and business policy should not depend on one provider's sandbox API.
 
 ### OpenClaw
 
@@ -80,7 +81,7 @@ Direct implication for xox-model:
 
 - Do not import OpenClaw's local exec model. It assumes an operator-owned host and is too permissive for a SaaS production plane.
 - Reuse the approval vocabulary and stricter-policy composition pattern.
-- Treat analytical code execution as a new authority class: `analysis_compute`. It is not a business write, but it is not the same as a cheap read.
+- Treat model-authored code execution as a new authority class: `sandbox_compute`. It is not a business write, but it is not the same as a cheap read.
 - Deterministic security validation is allowed. The existing ban on regex/keyword routing applies to business intent selection, not to sandbox file/path/network safety checks.
 
 ### Hermes Agent
@@ -112,20 +113,20 @@ Direct implication for xox-model:
 
 ## Decision
 
-Add a future `analysis_sandbox.run_code` capability as a **read-only analytical tool** in the Agent harness.
+Add a future `sandbox.run_code` capability as a **manifest-scoped, business-readonly execution tool** in the Agent harness.
 
-The tool may execute code only inside an isolated, per-run sandbox workspace created by an `Analysis Sandbox Broker`. It can receive a minimized data bundle from the current tenant workspace and return structured observations plus optional artifacts. It cannot directly call domain services, internal APIs, databases, object storage, memory stores, provider settings or account actions.
+The tool may execute code only inside an isolated, per-run sandbox workspace created by a `Sandbox Broker`. It can receive a minimized data bundle from the current tenant workspace and return structured observations plus optional artifacts. It cannot directly call domain services, internal APIs, databases, object storage, memory stores, provider settings or account actions.
 
 ```mermaid
 flowchart TD
   User[User objective] --> Goal[Goal Run Engine]
   Goal --> Planner[Provider Planner]
-  Planner -->|tool_call| Tool[analysis_sandbox.run_code]
+  Planner -->|tool_call| Tool[sandbox.run_code]
   Tool --> Policy[Sandbox Tool Policy]
   Policy --> Bundle[Data Bundle Builder]
-  Bundle --> Broker[Analysis Sandbox Broker]
+  Bundle --> Broker[Sandbox Broker]
   Broker --> Session[Ephemeral Sandbox Session]
-  Session --> Exec[Run analytical code]
+  Session --> Exec[Run manifest-scoped code]
   Exec --> Obs[Structured Observation + Artifacts]
   Obs --> Store[Tool Observation Store]
   Store --> Planner2[Model continuation]
@@ -136,9 +137,9 @@ flowchart TD
 
 ## Scope
 
-Supported code-backed tasks:
+Supported code-backed tasks are defined by manifest capabilities, not by a single "analysis" label:
 
-1. **Read-only financial computation**
+1. **Financial computation**
    - Monte Carlo simulations.
    - Scenario grids.
    - Cash-flow sensitivity analysis.
@@ -157,11 +158,21 @@ Supported code-backed tasks:
    - Create charts/tables for planning.
    - Generate recommended draft patches as proposals.
 
+4. **Validation and reconciliation**
+   - Check whether a pasted table matches the current workspace schema.
+   - Reconcile exported totals against current forecast or ledger slices.
+   - Explain row-level validation failures before the user imports anything.
+
+5. **Temporary artifact generation**
+   - Generate short-lived CSV/JSON/chart artifacts from approved input bundles.
+   - Produce downloadable review files that are not durable workspace state.
+   - Prepare model-visible structured observations for later tool calls.
+
 Explicit non-goals:
 
 - No production DB access.
 - No internal REST/API access.
-- No tenant-to-tenant analysis.
+- No tenant-to-tenant data access, execution or artifact sharing.
 - No account actions.
 - No deployment, migration, code editing or build execution.
 - No arbitrary browser automation with user session tokens.
@@ -170,7 +181,7 @@ Explicit non-goals:
 
 ## Product Contract
 
-The model sees `analysis_sandbox.run_code` as a tool. The user sees it as a compact tool row in the Agent transcript.
+The model sees `sandbox.run_code` as a tool. The user sees it as a compact tool row in the Agent transcript.
 
 The tool row should show:
 
@@ -187,7 +198,7 @@ The tool result is an observation, not the final assistant answer. The model mus
 If the sandbox result suggests a business mutation, the normal Agent OS lifecycle applies:
 
 ```text
-analysis observation -> model continuation -> action draft -> editable confirmation card -> policy -> domain service -> audit
+sandbox observation -> model continuation -> action draft -> editable confirmation card -> policy -> domain service -> audit
 ```
 
 The sandbox never writes `workspace_drafts`, `actual_entries`, `workspace_versions`, `agent_memory`, `provider_settings` or `audit_logs` directly.
@@ -197,19 +208,19 @@ The sandbox never writes `workspace_drafts`, `actual_entries`, `workspace_versio
 Provider-facing name:
 
 ```text
-analysis_sandbox_run_code
+sandbox_run_code
 ```
 
 Internal intent:
 
 ```text
-analysis_sandbox.run_code
+sandbox.run_code
 ```
 
-Suggested input shape:
+Formal contract:
 
 ```ts
-type AnalysisSandboxRunCodeInput = {
+type SandboxRunCodeInput = {
   purpose: string;
   language: 'python' | 'javascript';
   code: string;
@@ -228,17 +239,87 @@ type AnalysisSandboxRunCodeInput = {
   };
   expectedOutputs?: Array<'json' | 'table' | 'chart' | 'csv' | 'markdown'>;
 };
+
+type SandboxManifest = {
+  schemaVersion: 1;
+  identity: {
+    tenantId: string;
+    workspaceId: string;
+    threadId: string;
+    runId: string;
+    toolCallId: string;
+    userIdHash: string;
+  };
+  inputBundle: {
+    bundleId: string;
+    kind:
+      | 'workspace_summary'
+      | 'forecast_months'
+      | 'ledger_entries'
+      | 'entity_summary'
+      | 'uploaded_file'
+      | 'custom_bundle';
+    schemaVersion: string;
+    mountPath: '/input';
+    readonly: true;
+    fields: string[];
+    rowCount?: number;
+    fileCount?: number;
+    redactions: number;
+    contentHash: string;
+  };
+  runtime: {
+    language: 'python' | 'javascript';
+    entrypoint: 'single_script';
+    timeoutMs: number;
+    cpuMs: number;
+    memoryMb: number;
+    processLimit: number;
+    openFileLimit: number;
+    stdoutLimitBytes: number;
+    stderrLimitBytes: number;
+  };
+  capabilities: SandboxCapabilityProfile;
+  network: {
+    mode: 'disabled' | 'allowlisted';
+    allowlist: Array<{ host: string; port?: number; protocol: 'https' }>;
+  };
+  outputPolicy: {
+    writableMountPath: '/output';
+    maxArtifactCount: number;
+    maxArtifactBytes: number;
+    allowedArtifactKinds: Array<'csv' | 'json' | 'png' | 'html' | 'txt' | 'md'>;
+    expiresInSeconds: number;
+  };
+};
+
+type SandboxCapabilityProfile = {
+  filesystem: 'input_readonly_output_tmp';
+  shell: false;
+  packageInstall: false;
+  internalApi: false;
+  productionDatabase: false;
+  objectStorage: 'none' | 'selected_upload_readonly';
+  providerSecrets: false;
+  userSessionTokens: false;
+  businessWrites: false;
+  memoryWrites: false;
+  accountActions: false;
+};
 ```
 
-Suggested observation shape:
+The manifest is server-owned. The model may request data and write code, but it cannot declare broader capabilities for itself. Automation level does not modify `SandboxManifest.capabilities`.
+
+Observation shape:
 
 ```ts
-type AnalysisSandboxObservation = {
+type SandboxObservation = {
   runId: string;
   sandboxRunId: string;
   status: 'completed' | 'blocked' | 'failed' | 'timed_out';
   purpose: string;
   language: 'python' | 'javascript';
+  manifest: Pick<SandboxManifest, 'schemaVersion' | 'identity' | 'inputBundle' | 'runtime' | 'capabilities' | 'network' | 'outputPolicy'>;
   dataBundleSummary: {
     scope: string;
     rows?: number;
@@ -330,7 +411,7 @@ Default: no outbound network.
 Allowed exceptions must be explicit product features, not model discretion:
 
 - package installation is not allowed during execution;
-- common analytical packages should be prebuilt into the runtime image;
+- common data, validation and finance packages should be prebuilt into the runtime image;
 - external data fetches should use existing web/data tools with SSRF controls, then pass a sanitized result bundle into the sandbox;
 - if future customer-owned connectors are needed, they must be broker-mediated and read-only.
 
@@ -347,7 +428,7 @@ Sandbox safety is different. Deterministic allow/deny checks on paths, network t
 Start with a broker abstraction and one backend:
 
 ```ts
-interface AnalysisSandboxBackend {
+interface SandboxBackend {
   create(input: SandboxCreateInput): Promise<SandboxSessionRef>;
   execute(session: SandboxSessionRef, input: SandboxExecuteInput): Promise<SandboxExecuteResult>;
   collect(session: SandboxSessionRef): Promise<SandboxArtifact[]>;
@@ -359,7 +440,7 @@ Backend candidates:
 
 | Backend | Fit | Caveat |
 | --- | --- | --- |
-| OpenAI hosted Code Interpreter | Fastest hosted analytical prototype | Third-party data processing, runtime limits, provider coupling |
+| OpenAI hosted Code Interpreter | Fastest hosted prototype for compute and transformation | Third-party data processing, runtime limits, provider coupling |
 | OpenAI Agents SDK SandboxAgent + E2B/Daytona/Vercel/Modal client | Good abstraction and future portability | SDK sandbox is beta; still needs xox broker and SaaS policy |
 | Self-hosted container with gVisor/Kata/Firecracker later | Stronger control and data-residency story | Operationally heavier |
 | Wasm/WASI | Excellent for deterministic plugins/formulas | Too narrow for pandas/openpyxl-style workflows |
@@ -368,7 +449,7 @@ The ADR does not require choosing a production backend now. It requires the xox 
 
 ### Language Support
 
-Initial supported language should be Python because the three supported tasks are data/finance heavy and benefit from `pandas`, `numpy`, `openpyxl`, `scipy` and plotting libraries.
+Initial supported language should be Python because the first useful tasks are data/finance/transformation heavy and benefit from `pandas`, `numpy`, `openpyxl`, `scipy` and plotting libraries.
 
 JavaScript can be added later for lightweight transformations, but it should not imply `npm install` or shell access.
 
@@ -378,7 +459,7 @@ Do not expose general shell as the first product surface.
 
 The tool should run a single submitted code cell or script through a broker-owned runner. The runner may internally invoke Python/Node, but the model does not get an `exec_command` primitive.
 
-This keeps the feature aligned with "analytical sandbox", not "coding agent inside SaaS".
+This keeps the feature aligned with governed sandbox execution, not a coding agent inside the SaaS production plane.
 
 ## Integration With Current Harness
 
@@ -388,11 +469,11 @@ Add metadata:
 
 ```ts
 {
-  name: 'analysis_sandbox_run_code',
-  capability: 'analysis',
-  riskLevel: 'analysis_compute',
+  name: 'sandbox_run_code',
+  capability: 'sandbox',
+  riskLevel: 'sandbox_compute',
   confirmationMode: 'none_for_business_read',
-  authorityClass: 'sandbox_readonly_compute',
+  authorityClass: 'sandbox_business_readonly_compute',
 }
 ```
 
@@ -400,26 +481,27 @@ This tool is a read tool from the business perspective, but the policy engine st
 
 ### `tool-gateway.ts`
 
-Add `analysis` as a capability bucket. The router should expose the sandbox tool when the user asks for:
+Add `sandbox` as a capability bucket. The router should expose the sandbox tool when the user asks for:
 
 - complex calculations;
 - simulations;
 - data cleaning;
 - formula experiments;
+- validation or reconciliation on scoped data;
 - artifact generation from current workspace or uploaded files.
 
 The gateway must not inspect user text with regex. The provider-native capability router selects the bucket.
 
 ### `context-pack.ts`
 
-Do not inject large datasets directly into the model prompt. For large data, the context pack should tell the model that `analysis_sandbox_run_code` can request a scoped bundle.
+Do not inject large datasets directly into the model prompt. For large data, the context pack should tell the model that `sandbox_run_code` can request a scoped bundle.
 
 ### `runtime-intent-handlers.ts`
 
 Map the provider tool call to:
 
 ```text
-analysis_sandbox.run_code -> analysis-sandbox-service -> observation
+sandbox.run_code -> sandbox-service -> observation
 ```
 
 No action draft builder runs inside the sandbox path.
@@ -441,7 +523,7 @@ Sandbox outputs should not automatically become long-term memory. Memory candida
 - evaluator-validated recurring procedures;
 - explicit user instruction.
 
-Temporary analysis artifacts expire unless the user saves or exports them.
+Temporary sandbox artifacts expire unless the user saves or exports them.
 
 ## Data Flow
 
@@ -454,7 +536,7 @@ sequenceDiagram
   participant S as Sandbox
   participant E as Evaluator
 
-  M->>H: tool_call analysis_sandbox_run_code
+  M->>H: tool_call sandbox_run_code
   H->>H: tool policy and tenant scope check
   H->>D: build minimized bundle
   D-->>H: redacted bundle manifest
@@ -515,7 +597,7 @@ Default transcript:
 ```text
 Worked for 42s
   调用 1 个工具
-    分析沙箱 · completed
+    受控沙箱 · completed
       参数: scope, language, expected outputs
       返回: summary, tables/artifacts/resource usage
 Assistant Markdown Summary
@@ -539,7 +621,7 @@ If the sandbox proposes imports or model changes, render them as normal confirma
 
 - OpenAI Agents SDK sandbox abstractions may be used behind a backend adapter if the chosen backend is compatible.
 - OpenAI HITL and guardrail concepts map to our policy/evaluator boundaries.
-- OpenClaw approval classification vocabulary can inspire `analysis_compute`, `readonly_scoped`, `exec_capable` and `control_plane` policy classes.
+- OpenClaw approval classification vocabulary can inspire `sandbox_compute`, `readonly_scoped`, `exec_capable` and `control_plane` policy classes.
 - OpenClaw path/workspace guard patterns can inspire pure path safety helpers, with MIT attribution if code is copied.
 - Hermes' one-shot `execute_code` approval insight should be reused conceptually: arbitrary code is a distinct authority class.
 
@@ -555,10 +637,12 @@ If the sandbox proposes imports or model changes, render them as normal confirma
 
 Before implementation can be considered complete:
 
-- `analysis_sandbox_run_code` is registered as a provider-native tool and is selected by the model through normal tool calls.
+- `sandbox_run_code` is registered as a provider-native tool and is selected by the model through normal tool calls.
 - The tool can execute a deterministic finance simulation from a minimized workspace bundle and return a structured observation.
 - The tool can parse an uploaded CSV/XLSX fixture and return a preview without importing it.
 - The tool can compare formulas and return proposed patches that still require normal confirmation-card flow.
+- The tool can run a non-analytical but valid transformation/validation task from a manifest-scoped input bundle without broadening its capabilities.
+- Every sandbox run persists or emits the server-owned `SandboxManifest` used for execution.
 - Sandbox code cannot access production DB credentials, provider keys, internal API URLs, memory store, account tokens or other tenants' data.
 - Network egress is denied by default and covered by tests.
 - Data bundle builder rejects cross-workspace and over-broad requests.
@@ -580,11 +664,11 @@ Before implementation can be considered complete:
    - Add redaction, row caps and cross-tenant tests.
 
 3. **Tool registration and observation loop**
-   - Register `analysis_sandbox_run_code`.
+   - Register `sandbox_run_code`.
    - Persist observations and continue model generation after tool results.
 
 4. **Real backend**
-   - Choose one backend behind `AnalysisSandboxBackend`.
+   - Choose one backend behind `SandboxBackend`.
    - Prefer provider-managed sandbox for speed only if data policy allows it.
    - Keep self-hosted backend as a clean replacement path.
 
@@ -604,14 +688,14 @@ Before implementation can be considered complete:
 - Whether production data policy permits a hosted third-party sandbox for paid tenants, or whether we need self-hosted isolation before launch.
 - Whether Python-only is sufficient for the first release.
 - Whether sandbox-generated charts should be persisted as normal workspace artifacts or temporary agent artifacts.
-- Whether repeated scenario-analysis outputs should be eligible for memory consolidation after user confirmation.
+- Whether repeated sandbox outputs should be eligible for memory consolidation after user confirmation.
 - Whether high automation should allow low-risk import previews to auto-generate confirmation cards, while still never executing imports without normal write policy.
 
 ## Consequences
 
 Benefits:
 
-- Adds meaningful agent power without turning xox-model into an unsafe hosted coding agent.
+- Adds meaningful code-backed agent power without turning xox-model into an unsafe hosted coding agent.
 - Keeps resource usage small because sandboxes are short-lived and data bundles are minimized.
 - Preserves the existing SaaS harness invariants: tenant scope, confirmation cards, domain services, audit and evaluator.
 - Leaves backend choice open: OpenAI hosted sandbox, Agents SDK hosted clients, E2B/Daytona/Modal, or self-hosted isolation.
@@ -620,7 +704,7 @@ Costs:
 
 - Adds a new execution plane and operational surface.
 - Requires artifact lifecycle management.
-- Adds latency for complex analysis.
+- Adds latency for complex code-backed tasks.
 - Requires careful data minimization and security tests.
 
-The key design tradeoff is intentional: xox-model gains code-backed analytical reasoning, but does not grant the Agent general-purpose production execution power.
+The key design tradeoff is intentional: xox-model gains manifest-scoped code execution, but does not grant the Agent general-purpose production execution power.
