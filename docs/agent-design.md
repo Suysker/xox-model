@@ -1,6 +1,6 @@
 # Agent OS 设计
 
-本文件描述 `xox-model` 的目标 Agent OS 架构。正式 runtime 采用策略见 [ADR 0001](adr/0001-agent-runtime-architecture.md)，Harness Agent 分层架构见 [ADR 0002](adr/0002-harness-agent-architecture.md)，历史收敛记录见 [ADR 0003](adr/0003-xox-model-agent-os-target-architecture.md)，当前目标架构以 [ADR 0004: Evaluator-Centered Harness Agent 架构](adr/0004-evaluator-centered-harness-agent.md) 为准。
+本文件描述 `xox-model` 的目标 Agent OS 架构。正式 runtime 采用策略见 [ADR 0001](adr/0001-agent-runtime-architecture.md)，Harness Agent 分层架构见 [ADR 0002](adr/0002-harness-agent-architecture.md)，历史收敛记录见 [ADR 0003](adr/0003-xox-model-agent-os-target-architecture.md)，当前目标架构以 [ADR 0004: Evaluator-Centered Harness Agent 架构](adr/0004-evaluator-centered-harness-agent.md) 为准。复杂计算和数据转换的只读代码执行边界见 [ADR 0016: Read-only Analytical Sandbox Tool](adr/0016-read-only-analytical-sandbox-tool.md)，它只能产生 observation 和临时分析产物，不提供业务写入通道。
 
 ## 目标
 
@@ -19,6 +19,7 @@
 - 确认卡协议：所有写入都必须有 `navigation / riskLevel / details / payload`，并且确认卡可编辑。编辑后仍通过 `assertActionExecutionAllowed` 和领域服务二次校验。
 - 多步骤协议：模型可以一次返回多个 tool call；服务端也可以把一个 batch tool 展开为多张确认卡。前端统一时间线按后端 `timelineItems` 顺序展示，用户可逐项编辑/确认/取消。
 - 只读筛选协议：账本历史筛选和预实深度追问不写业务数据，走 `data_query_workspace`。返回的 `AgentNavigationEvent` 可携带页面过滤状态，React 显式切到对应页面并应用筛选。
+- 只读分析沙箱：复杂预测、临时数据清洗、敏感输入裁剪后的公式实验可以走 `analysis_sandbox.run_code`，但沙箱只接收当前租户的最小化数据包，只返回结构化 observation；任何保存、记账、发布、恢复、记忆写入仍必须回到普通 server tool、确认卡、领域服务和审计链路。
 
 新增覆盖点：
 
