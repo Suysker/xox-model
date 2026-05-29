@@ -7,6 +7,7 @@ export type AgentToolCapability =
   | 'ledger'
   | 'memory'
   | 'navigation'
+  | 'sandbox'
   | 'share'
   | 'version'
 
@@ -92,6 +93,16 @@ export type AgentToolCallStep = {
   mainTab?: 'dashboard' | 'inputs' | 'bookkeeping' | 'variance'
   secondaryTab?: string
   question?: string
+  purpose?: string
+  language?: 'python' | 'javascript'
+  code?: string
+  dataRequest?: unknown
+  fields?: string[]
+  monthLabels?: string[]
+  fileIds?: string[]
+  fileKinds?: string[]
+  rowLimit?: number
+  expectedOutputs?: string[]
   missingFields?: string[]
   suggestions?: string[]
   kind?: 'preference' | 'fact' | 'business_rule' | 'workflow'
@@ -801,6 +812,50 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
   {
     type: 'function',
     function: {
+      name: 'sandbox_run_code',
+      description:
+        '在 manifest-scoped 受控沙箱中运行一段只读代码，用于复杂计算、临时数据清洗、文件校验/转换、公式实验或短期 artifact 生成。沙箱只接收当前工作区的最小化数据包，不允许业务写入、内部 API、生产 DB、provider key、用户 session、记忆写入或网络访问。结果只是 observation；如需保存/导入/记账/改模型，必须继续调用普通业务工具生成确认卡。',
+      parameters: objectSchema({
+        purpose: { type: 'string', description: '本次沙箱任务目的，用一句中文说明，例如“对当前 12 个月预测做敏感性分析”。' },
+        language: { type: 'string', enum: ['python', 'javascript'], description: '代码语言。默认优先 python；轻量 JSON/文本转换可用 javascript。' },
+        code: {
+          type: 'string',
+          description:
+            '要在受控沙箱里运行的代码。不要尝试访问网络、环境变量、内部 API、生产数据库、文件系统任意路径或安装包；输入数据只在 /input，输出只能写 /output。',
+        },
+        dataRequest: objectSchema({
+          scope: {
+            type: 'string',
+            enum: ['workspace_summary', 'forecast_months', 'ledger_entries', 'entity_summary', 'uploaded_file', 'custom_bundle'],
+            description: '需要挂载到沙箱的最小化数据范围。',
+          },
+          fields: { type: 'array', items: { type: 'string' }, description: '需要的字段白名单；不确定时可省略，由服务端按 scope 提供最小摘要。' },
+          monthLabels: { type: 'array', items: { type: 'string' }, description: '需要的月份标签，例如 ["3月","4月"]。' },
+          fileIds: { type: 'array', items: { type: 'string' }, description: '用户上传文件 id；只有处理上传文件时填写。' },
+          fileKinds: {
+            type: 'array',
+            items: {
+              type: 'string',
+              enum: ['csv', 'tsv', 'json', 'jsonl', 'xlsx', 'xls', 'png', 'jpg', 'jpeg', 'webp', 'html', 'htm', 'txt', 'md', 'pdf', 'docx', 'doc'],
+            },
+            description: '上传文件类型提示；真实执行前仍由服务端 adapter 校验 extension/MIME/magic bytes。',
+          },
+          rowLimit: { type: 'number', description: '最多挂载多少行，服务端会强制上限。' },
+        }, ['scope']),
+        expectedOutputs: {
+          type: 'array',
+          items: {
+            type: 'string',
+            enum: ['json', 'table', 'chart', 'csv', 'spreadsheet', 'document', 'image', 'markdown'],
+          },
+          description: '期望输出类型；只影响临时 artifact 允许类型，不授予业务写入权限。',
+        },
+      }, ['purpose', 'language', 'code', 'dataRequest']),
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'memory_remember',
       description:
         '保存当前用户在当前工作区内的长期记忆。仅当用户明确要求“记住/以后默认/以后都”某个稳定偏好、默认业务习惯或长期规则时调用。不要保存 API key、token、密码、验证码、账号凭据或一次性秘密；普通业务执行不要调用本工具。',
@@ -882,6 +937,12 @@ const TOOL_METADATA: Record<string, Omit<AgentToolMetadata, 'name'>> = {
   },
   data_query_workspace: {
     capability: 'data',
+    riskLevel: 'read',
+    confirmationMode: 'never',
+    navigationTarget: null,
+  },
+  sandbox_run_code: {
+    capability: 'sandbox',
     riskLevel: 'read',
     confirmationMode: 'never',
     navigationTarget: null,
@@ -1161,6 +1222,8 @@ export function toolCallToPlannerStep(toolName: string, args: Record<string, unk
       return { intent: 'ui.navigate', ...args }
     case 'data_query_workspace':
       return { intent: 'data.query_workspace', ...args }
+    case 'sandbox_run_code':
+      return { intent: 'sandbox.run_code', ...args }
     case 'memory_remember':
       return { intent: 'memory.remember', ...args }
     case 'ask_user_clarification':

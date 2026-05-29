@@ -163,6 +163,14 @@ Agent 写入动作统一遵循 `preview -> authority decision -> execute or conf
 
 Agent 只读数据问答通过模型选择 `data_query_workspace` 工具完成，支持整体工作区、单月汇总、成员汇总、团队成员数量/名单、月份排行、预实科目差异深度追问和账本历史筛选。该工具只返回 `planSteps / messages / navigationEvents`，不生成 `actionRequests`，不修改业务数据；账本历史筛选会在导航事件中携带 `ledgerFilters`，前端据此打开账本页并应用方向、状态、日期和关键词过滤器。
 
+Agent 受控代码执行通过模型选择 `sandbox_run_code` 工具完成，内部 intent 为 `sandbox.run_code`。该工具不是公开 REST 写入接口，而是 Agent harness 的只读计算/转换能力：
+
+- 入参包含 `purpose`、`language`、`code`、`dataRequest.scope`、可选字段/月度/文件/行数和期望输出类型。
+- 服务端生成 `SandboxManifest`，其中输入挂载只读、网络默认关闭、shell/package install/internal API/production DB/provider secret/user session token/business write/memory write/account action 全部禁用。
+- 当前实现使用 deterministic fake backend 验证 manifest、数据包和 observation 链路，不在 API 进程内执行模型代码；后续真实后端必须挂在同一 `SandboxBackend` 接口后面。
+- 工具结果是 `tool_observation`，模型必须基于 observation 继续生成最终回复或选择普通写入工具。任何保存草稿、记账、发布、恢复、记忆写入都仍然要生成 server-owned 可编辑确认卡。
+- 常见文件格式通过 typed file adapter 进入沙箱边界，当前覆盖 `.xlsx / .xls / .csv / .tsv / .json / .jsonl / .html / .txt / .md / .pdf / .docx / .doc / .png / .jpg / .jpeg / .webp` 的归一化和安全检查。
+
 ## 错误语义
 
 - `401`：未登录或会话已失效

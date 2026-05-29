@@ -34,7 +34,7 @@ export type RuntimeToolCatalogProjection = {
 }
 
 const ESSENTIAL_CAPABILITIES: AgentToolCapability[] = ['account', 'clarification']
-const ROUTABLE_CAPABILITIES: AgentToolCapability[] = ['data', 'draft', 'import_export', 'ledger', 'memory', 'navigation', 'share', 'version']
+const ROUTABLE_CAPABILITIES: AgentToolCapability[] = ['data', 'draft', 'import_export', 'ledger', 'memory', 'navigation', 'sandbox', 'share', 'version']
 const BUSINESS_CORE_CAPABILITIES: AgentToolCapability[] = ROUTABLE_CAPABILITIES.filter((capability) => capability !== 'navigation')
 const ALL_CAPABILITIES = new Set<AgentToolCapability>([...ESSENTIAL_CAPABILITIES, ...ROUTABLE_CAPABILITIES])
 const CAPABILITY_TOOL_EXPANSIONS: Partial<Record<AgentToolCapability, string[]>> = {
@@ -51,13 +51,14 @@ const CAPABILITY_ROUTER_SYSTEM_PROMPT = [
   '用户要求重置当前草稿、恢复默认模型或用默认模板覆盖当前输入时选择 draft。',
   '用户一次性提供完整经营简报、投资结构、批量成员、员工、成本和多月节奏并要求生成经营模型时选择 draft。',
   '用户要求股东注资、追加投资、修改投资额或分红比例时选择 draft；这属于模型草稿/资本结构，不属于 ledger，除非用户明确说要把资金到账记入实际账本分录。',
+  '用户要求运行代码、复杂模拟、临时文件清洗、解析 PDF/Word/Excel/图片/JSON/HTML/Markdown、生成短期文件或需要模型写代码处理当前工作区数据时选择 sandbox。',
   '用户在同一句里同时查询数据、记账、修改模型时必须选择多个能力域，例如回本查询=data，成员销售入账=ledger，股东注资=draft。',
   '不要臆造能力域，不要输出 JSON 文本替代 tool_call。',
 ].join('\n')
 
 const CAPABILITY_ROUTER_RETRY_SYSTEM_PROMPT = [
   CAPABILITY_ROUTER_SYSTEM_PROMPT,
-  '上一次 capability 选择为空。本轮如果用户要求记账、调模型、新增/删除业务对象、版本、分享、导入导出、数据查询或账本筛选，必须选择至少一个非空能力域。',
+  '上一次 capability 选择为空。本轮如果用户要求记账、调模型、新增/删除业务对象、版本、分享、导入导出、数据查询、账本筛选、运行代码或临时文件处理，必须选择至少一个非空能力域。',
   '如果用户明确要求保存长期记忆或默认偏好，必须选择 memory。',
   '只有纯问候、身份询问、闲聊或完全无业务意图时，capabilities 才能为空数组。',
 ].join('\n')
@@ -76,6 +77,7 @@ const CAPABILITY_SELECTION_TOOL: ChatTool = {
       'data=当前数据只读问答、预实分析深度追问、账本历史筛选；不要把参数假设试算只归到 data。',
       'navigation=只打开页面或面板；数据问答、记账、调模型、版本、分享等业务工具会自己返回导航事件，不要额外选择 navigation。',
       'import_export=工作区 bundle 导入导出。',
+      'sandbox=manifest-scoped 受控代码执行、复杂模拟、临时文件清洗/转换/校验、短期 artifact 生成；只返回 observation，不写业务数据。',
     ].join(' '),
     parameters: {
       type: 'object',

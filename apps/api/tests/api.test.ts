@@ -23,7 +23,7 @@ type JsonResponse = {
   json: any
 }
 
-type FakeCapability = 'data' | 'draft' | 'import_export' | 'ledger' | 'memory' | 'navigation' | 'share' | 'version'
+type FakeCapability = 'data' | 'draft' | 'import_export' | 'ledger' | 'memory' | 'navigation' | 'sandbox' | 'share' | 'version'
 
 type FakeProviderOptions = {
   autoSelectCapabilities?: boolean
@@ -31,7 +31,7 @@ type FakeProviderOptions = {
   finalizerResponse?: (body: any, request: IncomingMessage) => unknown | Promise<unknown>
 }
 
-const DEFAULT_FAKE_CAPABILITIES: FakeCapability[] = ['data', 'draft', 'import_export', 'ledger', 'memory', 'navigation', 'share', 'version']
+const DEFAULT_FAKE_CAPABILITIES: FakeCapability[] = ['data', 'draft', 'import_export', 'ledger', 'memory', 'navigation', 'sandbox', 'share', 'version']
 
 function testSettings(databasePath: string): Settings {
   return {

@@ -1,6 +1,6 @@
 # ADR 0016: Manifest-Scoped Sandbox Tool
 
-Status: Proposed
+Status: Accepted
 
 Date: 2026-05-29
 
@@ -134,6 +134,18 @@ flowchart TD
   Draft --> Card[Editable Confirmation Card]
   Card --> Domain[Domain Services after approval]
 ```
+
+## Implementation Status
+
+As of 2026-05-30, the core harness boundary is implemented in the TypeScript API:
+
+- `packages/contracts` defines `SandboxRunCodeInput`, `SandboxManifest`, `SandboxCapabilityProfile`, `SandboxObservation`, `SandboxFileKind` and `SandboxArtifactKind`.
+- `apps/api/src/agent/tool-catalog.ts` registers provider-native `sandbox_run_code`; `tool-gateway.ts` can project the `sandbox` capability bucket; `runtime-intent-handlers.ts` maps it to `sandbox.run_code`.
+- `apps/api/src/agent/sandbox-service.ts` owns manifest construction, minimized workspace data bundles, a `SandboxBackend` interface and a deterministic fake backend for local verification.
+- `apps/api/src/agent/sandbox-file-adapters.ts` owns typed file kind normalization and deterministic file safety checks for common business formats.
+- Sandbox output is returned as a `tool_observation`, so the model must continue and author the final user answer or choose ordinary write tools that create editable confirmation cards.
+
+The fake backend intentionally does not execute model-authored code inside the API process. It proves the SaaS boundary, manifest contract, data minimization and observation loop without granting production runtime authority. A production backend must replace only the `SandboxBackend` implementation and preserve the same manifest, capability and observation contracts.
 
 ## Scope
 

@@ -41,6 +41,7 @@ import {
   planWorkspaceRename,
 } from './workspace-action-drafts.js'
 import { rememberAgentMemory, redactSecretLikeContent } from './memory.js'
+import { planSandboxRunCode } from './sandbox-service.js'
 import type { ReadDraft, RuntimePlannerStep } from './action-draft-builder.js'
 
 function numericAlias(...values: unknown[]) {
@@ -163,4 +164,5 @@ export const runtimeIntentHandlers: ActionDraftBuilderHandlers<PlannerContext> =
   }),
   'memory.remember': rememberFromToolCall,
   'data.query_workspace': answerWorkspaceDataQuestion,
+  'sandbox.run_code': planSandboxRunCode,
 }

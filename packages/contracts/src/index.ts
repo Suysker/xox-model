@@ -512,7 +512,7 @@ export type AgentGoalFacts = {
   expectedStartMonth?: number
   requiresForecastSummary?: boolean
   forbiddenActions?: Array<'publish_release' | 'share_link' | 'account_action'>
-  requiredCapabilities?: Array<'workspace_rename' | 'operating_model' | 'draft' | 'ledger' | 'memory' | 'version' | 'share'>
+  requiredCapabilities?: Array<'workspace_rename' | 'operating_model' | 'draft' | 'ledger' | 'memory' | 'sandbox' | 'version' | 'share'>
 }
 
 export type AgentGoalContract = {
@@ -651,6 +651,163 @@ export type AgentProviderSettingUpdatePayload = {
 }
 
 export type AgentProviderProbePayload = Partial<AgentProviderSettingUpdatePayload>
+
+export type SandboxFileKind =
+  | 'csv'
+  | 'tsv'
+  | 'json'
+  | 'jsonl'
+  | 'xlsx'
+  | 'xls'
+  | 'png'
+  | 'jpg'
+  | 'jpeg'
+  | 'webp'
+  | 'html'
+  | 'htm'
+  | 'txt'
+  | 'md'
+  | 'pdf'
+  | 'docx'
+  | 'doc'
+
+export type SandboxArtifactKind =
+  | 'csv'
+  | 'tsv'
+  | 'json'
+  | 'jsonl'
+  | 'xlsx'
+  | 'png'
+  | 'jpg'
+  | 'jpeg'
+  | 'webp'
+  | 'html'
+  | 'txt'
+  | 'md'
+  | 'pdf'
+  | 'docx'
+
+export type SandboxDataScope =
+  | 'workspace_summary'
+  | 'forecast_months'
+  | 'ledger_entries'
+  | 'entity_summary'
+  | 'uploaded_file'
+  | 'custom_bundle'
+
+export type SandboxRunCodeInput = {
+  purpose: string
+  language: 'python' | 'javascript'
+  code: string
+  dataRequest: {
+    scope: SandboxDataScope
+    fields?: string[]
+    monthLabels?: string[]
+    fileIds?: string[]
+    fileKinds?: SandboxFileKind[]
+    rowLimit?: number
+  }
+  expectedOutputs?: Array<'json' | 'table' | 'chart' | 'csv' | 'spreadsheet' | 'document' | 'image' | 'markdown'>
+}
+
+export type SandboxCapabilityProfile = {
+  filesystem: 'input_readonly_output_tmp'
+  shell: false
+  packageInstall: false
+  internalApi: false
+  productionDatabase: false
+  objectStorage: 'none' | 'selected_upload_readonly'
+  providerSecrets: false
+  userSessionTokens: false
+  businessWrites: false
+  memoryWrites: false
+  accountActions: false
+}
+
+export type SandboxManifest = {
+  schemaVersion: 1
+  identity: {
+    tenantId: string
+    workspaceId: string
+    threadId: string
+    runId: string
+    toolCallId: string
+    userIdHash: string
+  }
+  inputBundle: {
+    bundleId: string
+    kind: SandboxDataScope
+    schemaVersion: string
+    mountPath: '/input'
+    readonly: true
+    fields: string[]
+    rowCount?: number
+    fileCount?: number
+    fileKinds?: SandboxFileKind[]
+    mimeTypes?: string[]
+    redactions: number
+    contentHash: string
+  }
+  runtime: {
+    language: 'python' | 'javascript'
+    entrypoint: 'single_script'
+    timeoutMs: number
+    cpuMs: number
+    memoryMb: number
+    processLimit: number
+    openFileLimit: number
+    stdoutLimitBytes: number
+    stderrLimitBytes: number
+  }
+  capabilities: SandboxCapabilityProfile
+  network: {
+    mode: 'disabled' | 'allowlisted'
+    allowlist: Array<{ host: string; port?: number; protocol: 'https' }>
+  }
+  outputPolicy: {
+    writableMountPath: '/output'
+    maxArtifactCount: number
+    maxArtifactBytes: number
+    allowedArtifactKinds: SandboxArtifactKind[]
+    expiresInSeconds: number
+  }
+}
+
+export type SandboxObservation = {
+  runId: string
+  sandboxRunId: string
+  status: 'completed' | 'blocked' | 'failed' | 'timed_out'
+  purpose: string
+  language: 'python' | 'javascript'
+  manifest: Pick<SandboxManifest, 'schemaVersion' | 'identity' | 'inputBundle' | 'runtime' | 'capabilities' | 'network' | 'outputPolicy'>
+  dataBundleSummary: {
+    scope: string
+    rows?: number
+    files?: number
+    fields: string[]
+    redactions: number
+  }
+  result: {
+    summary: string
+    structured?: unknown
+    tables?: Array<{ name: string; rows: unknown[] }>
+    charts?: Array<{ title: string; artifactId: string }>
+    proposedPatches?: unknown[]
+  }
+  artifacts: Array<{
+    artifactId: string
+    kind: SandboxArtifactKind
+    name: string
+    sizeBytes: number
+  }>
+  resourceUsage: {
+    wallTimeMs: number
+    cpuMs?: number
+    memoryPeakMb?: number
+    stdoutBytes: number
+    stderrBytes: number
+  }
+}
 
 export type AgentSendResponse = {
   threadId: string

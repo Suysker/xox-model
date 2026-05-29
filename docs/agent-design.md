@@ -81,6 +81,7 @@ Goal Interpreter
 - `completion-evaluator.ts` 以 action graph、确认卡、audit 和领域投影为硬事实；经营模型草稿还会检查非零收入/成本驱动输入，避免空壳草稿被默认值误判通过。
 - `goal-fact-extractor.ts` 只识别需要确认卡的写入目标；账本历史筛选、偏差追问和明确“不要写入”的检查是只读目标，不会触发缺失写入确认卡的修复循环。无变化的 `workspace_patch_config` 作为 observation 返回给模型，不生成伪确认卡。
 - `memory-candidate-detector.ts` 和 `memory-consolidator.ts` 会在 action 执行后主动沉淀 scoped episodic/procedural memory；显式 `memory_remember` 仍保留为用户可控记忆入口。
+- `sandbox-service.ts` 已实现 manifest-scoped sandbox tool 的核心边界：模型只能请求 `sandbox_run_code`，服务端生成只读 `SandboxManifest`、最小化数据包和输出策略，fake backend 返回结构化 observation；它不执行生产写入、不读取 API 进程环境变量、不访问数据库/内部 API/provider key。后续真实隔离后端只能替换 `SandboxBackend`，不能改变业务只读和 confirmation-card 约束。
 - React `AgentConsole` 已显示最新目标、评估轮次、满足/未满足数量、blocker 和下一轮 planner brief。
 
 验证命令：

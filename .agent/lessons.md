@@ -170,6 +170,8 @@
 - A Goal Run Engine must fail closed when repair iterations are exhausted. Do not mark a run successful while the goal contract is still `repairing`; surface the unfinished criteria instead.
 - Goal fact extraction must distinguish read-only inspections from writes. Ledger history filters, variance questions, and explicit no-write checks should not require missing write confirmation cards, and no-op patch observations should not be repaired as failed writes.
 - Agent automation level means execution authority, not planning effort. The planner/evaluator loop must always pursue the full goal; `manual / low / medium / high` only decides whether eligible action requests auto-execute or remain editable pending cards. Even auto-executed writes must first create a server-owned action request and then reuse the same policy, domain-service, audit, observation, and transcript path as user-confirmed writes.
+- SaaS Agent code execution must be manifest-scoped, not process-local. A sandbox tool may compute, transform, validate and emit temporary artifacts, but it must receive only a server-built minimized bundle, run behind a broker/backend interface, return a tool observation, and never inherit API env vars, provider keys, user session tokens, internal APIs, production DB handles, memory writes or business-write authority.
+- File safety checks for sandbox inputs are deterministic security policy, not business intent routing. Keep extension/MIME/magic/size/active-content/macro checks centralized in typed file adapters, and let model semantics only decide when to request the sandbox tool.
 
 ## Testing
 
