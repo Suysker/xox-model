@@ -19,7 +19,7 @@
 - 确认卡协议：所有写入都必须有 `navigation / riskLevel / details / payload`，并且确认卡可编辑。编辑后仍通过 `assertActionExecutionAllowed` 和领域服务二次校验。
 - 多步骤协议：模型可以一次返回多个 tool call；服务端也可以把一个 batch tool 展开为多张确认卡。前端统一时间线按后端 `timelineItems` 顺序展示，用户可逐项编辑/确认/取消。
 - 只读筛选协议：账本历史筛选和预实深度追问不写业务数据，走 `data_query_workspace`。返回的 `AgentNavigationEvent` 可携带页面过滤状态，React 显式切到对应页面并应用筛选。
-- 受控沙箱执行：复杂预测、临时数据清洗、校验对账、敏感输入裁剪后的公式实验和短期 artifact 生成可以走 `sandbox.run_code`，但沙箱只接收当前租户的 manifest-scoped 最小化数据包，只返回结构化 observation；任何保存、记账、发布、恢复、记忆写入仍必须回到普通 server tool、确认卡、领域服务和审计链路。
+- 受控沙箱执行：复杂预测、临时数据清洗、校验对账、敏感输入裁剪后的公式实验、常见文件格式处理和短期 artifact 生成可以走 `sandbox.run_code`，但沙箱只接收当前租户的 manifest-scoped 最小化数据包，只返回结构化 observation；任何保存、记账、发布、恢复、记忆写入仍必须回到普通 server tool、确认卡、领域服务和审计链路。
 
 新增覆盖点：
 

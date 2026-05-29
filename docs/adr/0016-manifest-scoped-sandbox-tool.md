@@ -147,7 +147,7 @@ Supported code-backed tasks are defined by manifest capabilities, not by a singl
    - Cost allocation experiments.
 
 2. **Temporary data transformation**
-   - Parse and normalize uploaded CSV/XLSX files.
+   - Parse and normalize uploaded spreadsheets, documents, structured text and image files.
    - Detect duplicate rows, missing fields and outliers.
    - Map columns to xox-model import schemas.
    - Produce import previews, not direct imports.
@@ -164,9 +164,41 @@ Supported code-backed tasks are defined by manifest capabilities, not by a singl
    - Explain row-level validation failures before the user imports anything.
 
 5. **Temporary artifact generation**
-   - Generate short-lived CSV/JSON/chart artifacts from approved input bundles.
+   - Generate short-lived CSV/JSON/spreadsheet/document/chart artifacts from approved input bundles.
    - Produce downloadable review files that are not durable workspace state.
    - Prepare model-visible structured observations for later tool calls.
+
+## File Format Support
+
+Common business formats should be supported through typed adapters, not by handing arbitrary uploaded bytes to the model. The sandbox can process a broad set of formats as long as each file enters through a manifest-declared adapter, passes scan/size limits, and is mounted into the sandbox as a scoped input.
+
+File support is split into four concerns:
+
+1. **Input parsing**: read user-provided files into normalized tables, text, images or binary metadata.
+2. **Output artifacts**: create short-lived files for user review or download.
+3. **Preview rendering**: render a safe preview in the Agent transcript or product UI.
+4. **Security controls**: scan, sanitize, redact, limit and expire files before model feedback or persistence.
+
+Initial supported input formats:
+
+| Family | Extensions | Typical adapters | Notes |
+| --- | --- | --- | --- |
+| Spreadsheet | `.xlsx`, `.xls`, `.csv`, `.tsv` | `openpyxl`, `pandas`, `xlrd`, SheetJS-style parsing | `.xls` is legacy binary and should be converted in a hardened adapter before model code sees rows. |
+| Structured text | `.json`, `.jsonl`, `.txt`, `.md` | native parsers, JSON schema validation, markdown parser | Large JSON should become an artifact reference plus schema/summary, not a prompt blob. |
+| Web document | `.html`, `.htm` | HTML sanitizer, `BeautifulSoup`/`lxml`-style extraction | Scripts, external resources and inline event handlers must be stripped before preview or feedback. |
+| Image | `.png`, `.jpg`, `.jpeg`, `.webp` | Pillow/OpenCV-style metadata and image processing | OCR is optional and should be a separate manifest capability because it is slower and may need another model/service. |
+| PDF | `.pdf` | PyMuPDF/pdfplumber/pypdf-style text/table extraction | Rendered previews must be sandboxed; embedded files, JavaScript and external links are not executable. |
+| Word document | `.docx`, `.doc` | `python-docx`/Mammoth/LibreOffice-style conversion | `.doc` is legacy binary and should be converted outside model code in a hardened adapter. Macros are never executed. |
+
+Initial output artifact formats:
+
+| Family | Extensions | Notes |
+| --- | --- | --- |
+| Tables/data | `.csv`, `.tsv`, `.json`, `.jsonl`, `.xlsx` | Used for review/export; importing into business state still requires normal confirmation cards. |
+| Text/document | `.txt`, `.md`, `.html`, `.pdf`, `.docx` | HTML must be sanitized; PDF/DOCX generation must stay inside output quotas. |
+| Images/charts | `.png`, `.jpg`, `.jpeg`, `.webp` | Generated charts and screenshots are temporary artifacts by default. |
+
+Format support is not a permission grant. A file being parseable does not mean model code can access object storage, fetch remote resources, call internal APIs, preserve hidden metadata, or write durable workspace state.
 
 Explicit non-goals:
 
@@ -220,6 +252,41 @@ sandbox.run_code
 Formal contract:
 
 ```ts
+type SandboxFileKind =
+  | 'csv'
+  | 'tsv'
+  | 'json'
+  | 'jsonl'
+  | 'xlsx'
+  | 'xls'
+  | 'png'
+  | 'jpg'
+  | 'jpeg'
+  | 'webp'
+  | 'html'
+  | 'htm'
+  | 'txt'
+  | 'md'
+  | 'pdf'
+  | 'docx'
+  | 'doc';
+
+type SandboxArtifactKind =
+  | 'csv'
+  | 'tsv'
+  | 'json'
+  | 'jsonl'
+  | 'xlsx'
+  | 'png'
+  | 'jpg'
+  | 'jpeg'
+  | 'webp'
+  | 'html'
+  | 'txt'
+  | 'md'
+  | 'pdf'
+  | 'docx';
+
 type SandboxRunCodeInput = {
   purpose: string;
   language: 'python' | 'javascript';
@@ -235,9 +302,10 @@ type SandboxRunCodeInput = {
     fields?: string[];
     monthLabels?: string[];
     fileIds?: string[];
+    fileKinds?: SandboxFileKind[];
     rowLimit?: number;
   };
-  expectedOutputs?: Array<'json' | 'table' | 'chart' | 'csv' | 'markdown'>;
+  expectedOutputs?: Array<'json' | 'table' | 'chart' | 'csv' | 'spreadsheet' | 'document' | 'image' | 'markdown'>;
 };
 
 type SandboxManifest = {
@@ -265,6 +333,8 @@ type SandboxManifest = {
     fields: string[];
     rowCount?: number;
     fileCount?: number;
+    fileKinds?: SandboxFileKind[];
+    mimeTypes?: string[];
     redactions: number;
     contentHash: string;
   };
@@ -288,7 +358,7 @@ type SandboxManifest = {
     writableMountPath: '/output';
     maxArtifactCount: number;
     maxArtifactBytes: number;
-    allowedArtifactKinds: Array<'csv' | 'json' | 'png' | 'html' | 'txt' | 'md'>;
+    allowedArtifactKinds: SandboxArtifactKind[];
     expiresInSeconds: number;
   };
 };
@@ -336,7 +406,7 @@ type SandboxObservation = {
   };
   artifacts: Array<{
     artifactId: string;
-    kind: 'csv' | 'json' | 'png' | 'html' | 'txt';
+    kind: SandboxArtifactKind;
     name: string;
     sizeBytes: number;
   }>;
@@ -404,6 +474,22 @@ The sandbox does not query business state itself. `Data Bundle Builder` queries 
 
 For uploaded files, the broker should copy only the selected upload into the sandbox. Upload parsing should not grant the sandbox access to the whole object-storage bucket.
 
+### File Safety
+
+All file adapters must run before or inside the broker boundary, never in the API process with production secrets. The broker should enforce:
+
+- extension, MIME and magic-byte agreement;
+- maximum file size, worksheet count, page count, image pixel count and decompressed size;
+- zip-bomb and nested-archive rejection;
+- macro and active-content blocking for Office documents;
+- HTML sanitization before preview or model feedback;
+- PDF JavaScript, embedded-file and launch-action blocking;
+- EXIF and document metadata stripping unless explicitly requested;
+- antivirus or malware scanning when a deployment environment provides it;
+- conversion to normalized intermediate forms when possible, for example rows, extracted text, page images or sanitized HTML.
+
+Legacy binary formats such as `.xls` and `.doc` are allowed only through hardened conversion adapters. Model-written code should see the converted safe representation or a read-only copied file, not privileged object-storage handles.
+
 ### Network Policy
 
 Default: no outbound network.
@@ -411,7 +497,7 @@ Default: no outbound network.
 Allowed exceptions must be explicit product features, not model discretion:
 
 - package installation is not allowed during execution;
-- common data, validation and finance packages should be prebuilt into the runtime image;
+- common data, validation, document, image and finance packages should be prebuilt into the runtime image;
 - external data fetches should use existing web/data tools with SSRF controls, then pass a sanitized result bundle into the sandbox;
 - if future customer-owned connectors are needed, they must be broker-mediated and read-only.
 
@@ -639,13 +725,14 @@ Before implementation can be considered complete:
 
 - `sandbox_run_code` is registered as a provider-native tool and is selected by the model through normal tool calls.
 - The tool can execute a deterministic finance simulation from a minimized workspace bundle and return a structured observation.
-- The tool can parse an uploaded CSV/XLSX fixture and return a preview without importing it.
+- The tool can parse uploaded `.xlsx`, `.xls`, `.csv`, `.json`, `.html`, `.txt`, `.md`, `.pdf`, `.docx`, `.doc`, `.png` and `.jpg/.jpeg` fixtures through typed adapters and return previews without importing them.
 - The tool can compare formulas and return proposed patches that still require normal confirmation-card flow.
 - The tool can run a non-analytical but valid transformation/validation task from a manifest-scoped input bundle without broadening its capabilities.
 - Every sandbox run persists or emits the server-owned `SandboxManifest` used for execution.
 - Sandbox code cannot access production DB credentials, provider keys, internal API URLs, memory store, account tokens or other tenants' data.
 - Network egress is denied by default and covered by tests.
 - Data bundle builder rejects cross-workspace and over-broad requests.
+- File adapters reject extension/MIME/magic mismatches, zip bombs, over-large PDFs/images/spreadsheets, Office macros and unsafe HTML/PDF active content.
 - Resource limits stop runaway code.
 - Artifacts are tenant/workspace scoped, size-limited and expire.
 - Tool results are observations; final user answers are model-authored continuation messages.
@@ -663,22 +750,28 @@ Before implementation can be considered complete:
    - Build minimized bundles from domain services.
    - Add redaction, row caps and cross-tenant tests.
 
-3. **Tool registration and observation loop**
+3. **File Adapter Registry**
+   - Add typed input adapters for spreadsheet, structured text, HTML, image, PDF and Word families.
+   - Normalize files into safe intermediate rows/text/images/sanitized HTML before model feedback.
+   - Add fixture tests for supported extensions and rejection tests for unsafe files.
+
+4. **Tool registration and observation loop**
    - Register `sandbox_run_code`.
    - Persist observations and continue model generation after tool results.
 
-4. **Real backend**
+5. **Real backend**
    - Choose one backend behind `SandboxBackend`.
    - Prefer provider-managed sandbox for speed only if data policy allows it.
    - Keep self-hosted backend as a clean replacement path.
 
-5. **Artifact and UI**
+6. **Artifact and UI**
    - Render compact tool rows.
    - Add artifact previews and expiration.
 
-6. **Security hardening**
+7. **Security hardening**
    - Egress tests.
    - Secret absence tests.
+   - File safety tests.
    - Quota/timeouts.
    - Cleanup sweeper.
    - Audit coverage for sandbox run metadata.
