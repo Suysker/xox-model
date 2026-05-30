@@ -18,8 +18,9 @@ import { addMessage } from './thread-store.js'
 import { continueModelAfterToolObservations, type AgentToolObservation } from './tool-observation-continuation.js'
 import { buildClarificationResumeContext } from './clarification-resume.js'
 import { evaluateToolLoopGuardrails } from './tool-runtime/tool-loop-guardrails.js'
+import { resolveAfterEvaluation, resolveAfterPlanning } from './turn-resolver.js'
 
-export type AgentGoalRunResult = {
+export type AgentRunResult = {
   plannerSource: AgentPlannerSource
   assistantMessage: Row<'agent_messages'> | null
   navigationEvents: AgentNavigationEvent[]
@@ -38,10 +39,10 @@ function evaluationSummary(evaluation: ReturnType<typeof serializeEvaluation>) {
   return 'Completion Evaluator 需要补充信息。'
 }
 
-export async function executeAgentGoalRun(
+export async function executeAgentRun(
   ctx: PlannerContext & { thread: Row<'agent_threads'> },
   options: { beforeStateWrite: () => Promise<boolean> },
-): Promise<AgentGoalRunResult | null> {
+): Promise<AgentRunResult | null> {
   const resumeContext = await buildClarificationResumeContext({
     db: ctx.db,
     workspace: ctx.workspace,
@@ -66,7 +67,7 @@ export async function executeAgentGoalRun(
     runId: ctx.runId,
     type: 'goal_contract_created',
     title: '目标契约已建立',
-    message: 'Goal Run Engine 已建立目标契约，后续会用 Completion Evaluator 判定是否完成。',
+    message: 'AgentRunEngine 已建立目标契约，后续会用 Completion Evaluator 判定是否完成。',
     status: 'info',
     data: { goalId: goal.id, maxIterations: JSON.parse(goal.contract_json).maxIterations },
   })
@@ -76,7 +77,7 @@ export async function executeAgentGoalRun(
       runId: ctx.runId,
       type: 'clarification_resume_context',
       title: '澄清目标已续接',
-      message: '本轮用户消息已作为上一轮待澄清目标的补充信息进入 Goal Run Engine。',
+      message: '本轮用户消息已作为上一轮待澄清目标的补充信息进入 AgentRunEngine。',
       status: 'info',
       data: {
         goalId: goal.id,
@@ -165,10 +166,20 @@ export async function executeAgentGoalRun(
         },
       })
     }
-    const blockingGuardrail = guardrailFindings.find((finding) => finding.severity === 'block')
-    if (blockingGuardrail) {
-      await updateGoalStatus(ctx.db, goal, 'failed', { blockedReason: blockingGuardrail.repairBrief })
-      if (assistantParts.length === 0) assistantParts.push(blockingGuardrail.repairBrief)
+    const planningNextStep = resolveAfterPlanning({
+      pendingAssistantText,
+      actionRows: planned.actionRows,
+      planRows: planned.planRows,
+      observations: planned.observations,
+      guardrailFindings,
+    })
+    if (planningNextStep.type === 'failed') {
+      await updateGoalStatus(ctx.db, goal, 'failed', { blockedReason: planningNextStep.reason })
+      if (assistantParts.length === 0) assistantParts.push(planningNextStep.reason)
+      break
+    }
+    if (planningNextStep.type === 'final_output') {
+      if (planningNextStep.assistantText?.trim()) assistantParts.push(planningNextStep.assistantText.trim())
       break
     }
 
@@ -235,17 +246,30 @@ export async function executeAgentGoalRun(
       }
     }
 
-    if (evaluation.status === 'pass' || evaluation.status === 'needs_confirmation' || evaluation.status === 'needs_clarification' || evaluation.status === 'blocked' || evaluation.status === 'failed') {
-      if (pendingAssistantText && observations.length === 0) assistantParts.push(pendingAssistantText)
+    const evaluationNextStep = resolveAfterEvaluation({
+      evaluation,
+      objective,
+      pendingAssistantText,
+      observations,
+      actionRows,
+    })
+    if (
+      evaluationNextStep.type === 'final_output' ||
+      evaluationNextStep.type === 'continue_with_observations' ||
+      evaluationNextStep.type === 'await_confirmation' ||
+      evaluationNextStep.type === 'await_clarification' ||
+      evaluationNextStep.type === 'blocked' ||
+      evaluationNextStep.type === 'failed'
+    ) {
+      if (evaluationNextStep.type === 'final_output' && evaluationNextStep.assistantText?.trim()) {
+        assistantParts.push(evaluationNextStep.assistantText.trim())
+      } else if (pendingAssistantText && observations.length === 0) {
+        assistantParts.push(pendingAssistantText)
+      }
       break
     }
-    if (evaluation.status === 'continue' && evaluation.nextPlannerBrief) {
-      nextMessage = [
-        evaluation.nextPlannerBrief,
-        '上一轮工具观察结果会随本次规划一起提供；不要重复已经完成的只读查询或确认卡。',
-        '如果观察结果已足够确定对象和值，继续调用对应业务工具；仍无法唯一确定时再询问用户。',
-        `当前目标：${objective}`,
-      ].join('\n\n')
+    if (evaluationNextStep.type === 'run_again') {
+      nextMessage = evaluationNextStep.nextMessage
       continue
     }
     break

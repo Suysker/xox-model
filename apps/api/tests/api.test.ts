@@ -4279,7 +4279,7 @@ describe('xox TypeScript API', () => {
     }, { capabilities: ['draft'] })
   })
 
-  it('iterates through the Goal Run Engine until the Completion Evaluator verifies the repaired operating model', async () => {
+  it('iterates through AgentRunEngine until the Completion Evaluator verifies the repaired operating model', async () => {
     const months = Array.from({ length: 12 }, (_, index) => ({
       monthIndex: index + 1,
       events: 4,
@@ -4321,9 +4321,9 @@ describe('xox TypeScript API', () => {
       planningCalls += 1
       return fakeToolResponse('workspace_configure_operating_model', { plan: planningCalls === 1 ? emptyPlan : repairedPlan })
     }, async (baseUrl) => {
-      const harness = await buildHarness('agent-goal-run-engine-loop', { llmProvider: 'openai-compatible', openaiCompatibleProvider: 'test-compatible', openaiCompatibleBaseUrl: baseUrl, openaiCompatibleApiKey: 'test-key' })
+      const harness = await buildHarness('agent-run-engine-loop', { llmProvider: 'openai-compatible', openaiCompatibleProvider: 'test-compatible', openaiCompatibleBaseUrl: baseUrl, openaiCompatibleApiKey: 'test-key' })
       const client = new Client(harness.app)
-      await registerUser(client, 'agent-goal-run-engine-loop@example.com')
+      await registerUser(client, 'agent-run-engine-loop@example.com')
 
       const response = await client.post('/api/v1/agent/messages', {
         message: '构建 12 个月经营模型。如果预测结果为空，你必须继续修复，直到 evaluator 确认草稿有有效收入或成本。',

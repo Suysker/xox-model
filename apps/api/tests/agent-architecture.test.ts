@@ -25,6 +25,14 @@ describe('Agent ADR architecture boundaries', () => {
     expect(existsSync(join(srcRoot, 'agent', 'tool-projector.ts'))).toBe(false)
   })
 
+  it('keeps AgentRunEngine as the single run-loop entrypoint', () => {
+    expect(existsSync(join(srcRoot, 'agent', 'agent-run-engine.ts'))).toBe(true)
+    expect(existsSync(join(srcRoot, 'agent', 'goal-run-engine.ts'))).toBe(false)
+    const kernel = source('agent/agent-kernel.ts')
+    expect(kernel).toContain("from './agent-run-engine.js'")
+    expect(kernel).not.toContain('goal-run-engine')
+  })
+
   it('keeps runtime adapters provider-only and free of DB, routes, approvals, and domain execution', () => {
     const runtimeFiles = [
       'agent/runtime/adapter-router.ts',
@@ -86,6 +94,30 @@ describe('Agent ADR architecture boundaries', () => {
       /tool-gateway/,
       /planner/,
     ])
+  })
+
+  it('keeps AgentActionRuntime as the Agent-owned write lifecycle boundary', () => {
+    expect(existsSync(join(srcRoot, 'agent', 'agent-action-runtime.ts'))).toBe(true)
+    expectNoImports('agent/action-graph-store.ts', [
+      /approval-executor/,
+      /autoExecuteAgentActionRequest/,
+      /resolveActionAuthority/,
+    ])
+    const runtime = source('agent/agent-action-runtime.ts')
+    expect(runtime).toContain('addAgentActionRequest')
+    expect(runtime).toContain('autoExecuteAgentActionRequest')
+    expectNoImports('agent/agent-action-runtime.ts', [
+      /runtime\//,
+      /tool-gateway/,
+      /planner/,
+    ])
+  })
+
+  it('routes provider planning through ContextEngine instead of ad hoc context pack assembly', () => {
+    expect(existsSync(join(srcRoot, 'agent', 'context-engine', 'index.ts'))).toBe(true)
+    const planningCall = source('agent/runtime-planning-call.ts')
+    expect(planningCall).toContain("from './context-engine/index.js'")
+    expect(planningCall).not.toContain("from './context-pack.js'")
   })
 
   it('keeps historical Agent route imports pointed at current boundaries', () => {

@@ -6,13 +6,16 @@ import type { Settings } from '../core/settings.js'
 import { newId } from '../core/security.js'
 import { utcNow } from '../core/time.js'
 import type { CurrentUser } from '../modules/auth.js'
-import { addAgentActionRequest, autoExecuteAgentActionRequest } from './approval-executor.js'
 import { isActionDraft, type PlannedItem } from './action-draft-builder.js'
 import { addRunEvent } from './run-events.js'
 import { assertAgentRunLease } from './run-lease.js'
 import { agentThreadEvents } from './thread-events.js'
-import { actionExecutionObservation, actionPreviewObservation, type AgentToolObservation } from './tool-observation-continuation.js'
-import { resolveActionAuthority, type AgentAutomationLevel } from './tool-policy.js'
+import type { AgentToolObservation } from './tool-observation-continuation.js'
+import type { AgentAutomationLevel } from './tool-policy.js'
+import {
+  createAgentActionRuntimeRequest,
+  settleAgentActionRuntimeRequest,
+} from './agent-action-runtime.js'
 
 type ActionGraphContext = {
   db: Kysely<Database>
@@ -94,33 +97,6 @@ async function getPlanStep(ctx: ActionGraphContext, id: string) {
   return ctx.db.selectFrom('agent_plan_steps').selectAll().where('id', '=', id).executeTakeFirstOrThrow()
 }
 
-function failedActionObservation(input: {
-  action: Row<'agent_action_requests'>
-  reason: string
-  error?: string | null
-}): AgentToolObservation {
-  const displayPreview = input.error
-    ? `自动执行失败：${input.action.title}：${input.error}`
-    : `动作被策略阻止：${input.action.title}`
-  return {
-    title: input.action.title,
-    toolName: input.action.kind,
-    toolCallId: `action_${input.action.id}`,
-    toolArguments: {},
-    displayPreview,
-    modelContent: JSON.stringify({
-      displayPreview,
-      actionRequestId: input.action.id,
-      actionKind: input.action.kind,
-      title: input.action.title,
-      status: input.action.status,
-      reason: input.reason,
-      error: input.error ?? null,
-    }),
-    status: 'failed',
-  }
-}
-
 export async function storePlannedActionGraph(
   ctx: ActionGraphContext,
   input: { items: PlannedItem[]; plannerSource: AgentPlannerSource },
@@ -142,7 +118,7 @@ export async function storePlannedActionGraph(
     const sequence = sequenceOffset + index + 1
     await assertAgentRunLease(ctx.db, ctx.settings, ctx.runId)
     if (isActionDraft(item)) {
-      let action = await addAgentActionRequest(ctx, item)
+      let action = await createAgentActionRuntimeRequest(ctx, item)
       let step = await addAgentPlanStep(ctx, {
         sequence,
         title: item.title,
@@ -151,42 +127,10 @@ export async function storePlannedActionGraph(
         actionRequestId: action.id,
         navigation: item.navigation,
       })
-      const authority = resolveActionAuthority({
-        automationLevel: ctx.automationLevel,
-        kind: item.kind,
-        riskLevel: item.riskLevel,
-      })
-      if (authority.mode === 'auto_execute') {
-        const executed = await autoExecuteAgentActionRequest(ctx.db, ctx.settings, ctx.user, action, authority.reason)
-        action = executed.actionRequest
-        step = await getPlanStep(ctx, step.id)
-        observations.push(executed.error
-          ? failedActionObservation({ action, reason: authority.reason, error: executed.error })
-          : actionExecutionObservation({ action, result: executed.result }))
-      } else if (authority.mode === 'forbidden') {
-        await ctx.db.updateTable('agent_action_requests')
-          .set({ status: 'failed', error_message: authority.reason })
-          .where('id', '=', action.id)
-          .execute()
-        await ctx.db.updateTable('agent_plan_steps')
-          .set({ status: 'failed', updated_at: utcNow() })
-          .where('id', '=', step.id)
-          .execute()
-        await addRunEvent(ctx.db, {
-          threadId: ctx.threadId,
-          runId: ctx.runId,
-          type: 'action_auto_execution_failed',
-          title: '动作被策略阻止',
-          message: `${item.title}：${authority.reason}`,
-          status: 'failed',
-          data: { actionRequestId: action.id, actionKind: action.kind, reason: authority.reason },
-        })
-        action = await ctx.db.selectFrom('agent_action_requests').selectAll().where('id', '=', action.id).executeTakeFirstOrThrow()
-        step = await getPlanStep(ctx, step.id)
-        observations.push(failedActionObservation({ action, reason: authority.reason }))
-      } else {
-        observations.push(actionPreviewObservation({ action }))
-      }
+      const settled = await settleAgentActionRuntimeRequest(ctx, { draft: item, action })
+      action = settled.action
+      step = await getPlanStep(ctx, step.id)
+      observations.push(settled.observation)
       actionRows.push(action)
       planRows.push(step)
       navigationEvents.push(item.navigation)

@@ -1,6 +1,6 @@
 # Agent OS 设计
 
-本文件描述 `xox-model` 的目标 Agent OS 架构。正式 runtime 采用策略见 [ADR 0001](adr/0001-agent-runtime-architecture.md)，Harness Agent 分层架构见 [ADR 0002](adr/0002-harness-agent-architecture.md)，历史收敛记录见 [ADR 0003](adr/0003-xox-model-agent-os-target-architecture.md)，当前目标架构以 [ADR 0004: Evaluator-Centered Harness Agent 架构](adr/0004-evaluator-centered-harness-agent.md) 为准。受控代码执行边界见 [ADR 0016: Manifest-Scoped Sandbox Tool](adr/0016-manifest-scoped-sandbox-tool.md)，它只能在服务端生成的 manifest 内运行并产生 observation 和临时产物，不提供业务写入通道。
+本文件描述 `xox-model` 的目标 Agent OS 架构。正式 runtime 采用策略见 [ADR 0001](adr/0001-agent-runtime-architecture.md)，Harness Agent 分层架构见 [ADR 0002](adr/0002-harness-agent-architecture.md)，历史收敛记录见 [ADR 0003](adr/0003-xox-model-agent-os-target-architecture.md)，当前可靠性核心以 [ADR 0004: Evaluator-Centered Harness Agent 架构](adr/0004-evaluator-centered-harness-agent.md) 为准；后续架构收束以 [ADR 0018: AgentRunEngine v2 Single-Loop Harness Upgrade](adr/0018-agent-run-engine-v2-single-loop-harness.md) 为准，目标是把 `AgentRunEngine`、turn resolution、context、tool runtime、agent actions、evaluator、sandbox 和 transcript/trace 收束到一个更清晰的单循环 harness。受控代码执行边界见 [ADR 0016: Manifest-Scoped Sandbox Tool](adr/0016-manifest-scoped-sandbox-tool.md)，它只能在服务端生成的 manifest 内运行并产生 observation 和临时产物，不提供业务写入通道。
 
 ## 目标
 
@@ -47,9 +47,9 @@
 | Skills | 可选过程知识层 | 不能替代 server tools，不能绕过确认、权限、审计 |
 | MCP | 外部工具和连接器边界 | 核心财务业务能力继续走受控 server tools |
 
-## Evaluator-Centered Goal Run Engine
+## Evaluator-Centered AgentRunEngine
 
-`xox-model` 的 Agent OS 不是一次 provider tool-call 规划器。复杂目标必须进入 Goal Run Engine，由 harness 多轮执行：
+`xox-model` 的 Agent OS 不是一次 provider tool-call 规划器。复杂目标必须进入 AgentRunEngine，由 harness 多轮执行：
 
 ```text
 Goal Interpreter
@@ -67,7 +67,7 @@ Goal Interpreter
 核心变化：
 
 - `planner.ts` 只负责一轮 provider-native planning，不再代表完整任务已经完成。
-- `agent-kernel.ts` / 后续 `goal-run-engine.ts` 负责把复杂目标推进成多轮 `plan -> confirm/execute -> observe -> evaluate -> repair`。
+- `agent-kernel.ts` 委托 `agent-run-engine.ts` 负责把复杂目标推进成多轮 `plan -> confirm/execute -> observe -> evaluate -> repair`。
 - 模型每轮只需要选择下一批工具；是否继续、是否阻断、是否完成由 Completion Evaluator 根据 server-owned action graph 和领域状态决定。
 - 模型 final text 不能直接结束复杂 run；`before_stop` 必须先运行 evaluator。
 - `automationLevel` 的旧解释已由 ADR 0015 取代：它表示执行授权程度，不表示 planner 推进力度。Planner/evaluator 始终全力推进；写入动作先落 `agent_action_requests`，再按 Automation Policy Engine 判定自动执行或等待用户编辑/确认。
@@ -75,7 +75,7 @@ Goal Interpreter
 当前已实现的运行切片：
 
 - `goal-contract.ts` 持久化 `AgentGoalContract`，并把 `goalStatus` 投影到 run/thread state。
-- `goal-run-engine.ts` 在每轮 provider planning 后运行 Completion Evaluator；`continue` 会把上一轮工具 observation 注入下一轮带工具 planning，`needs_confirmation` 会停止等待用户确认，`pass/blocked/failed` 会终止目标。达到最大修复轮次仍未满足时，run/goal 必须 fail closed，不能伪装完成。
+- `agent-run-engine.ts` 在每轮 provider planning 后运行 Completion Evaluator；`continue` 会把上一轮工具 observation 注入下一轮带工具 planning，`needs_confirmation` 会停止等待用户确认，`pass/blocked/failed` 会终止目标。达到最大修复轮次仍未满足时，run/goal 必须 fail closed，不能伪装完成。
 - `data_query_workspace(scope=entity_summary)` 是当前成员、股东、员工和成本对象的只读实体检查工具。模型遇到“第一个股东”“当前成员”“现有投资额”等工作区内已有事实时，应先读取该工具，再继续生成写入确认卡或澄清真正缺失的信息。
 - `planning-context.ts` 的 `planningTurn='evaluator_repair'` 让修复回合作为一次 harness-driven model call，不被用户多步骤分隔逻辑拆散。
 - `completion-evaluator.ts` 以 action graph、确认卡、audit 和领域投影为硬事实；经营模型草稿还会检查非零收入/成本驱动输入，避免空壳草稿被默认值误判通过。
@@ -315,7 +315,7 @@ planning-session.ts
 
 ### 自动化与确认策略
 
-ADR 0015 已取代这里的旧语义：`automationLevel` 是执行授权策略，不是 planner 推进力度。Goal Run Engine、provider planner、tool catalog、observation loop、evaluator 和 repair planner 都必须始终全力推进用户目标；自动化级别只在 action draft 已生成后决定是否可以自动执行。
+ADR 0015 已取代这里的旧语义：`automationLevel` 是执行授权策略，不是 planner 推进力度。AgentRunEngine、provider planner、tool catalog、observation loop、evaluator 和 repair planner 都必须始终全力推进用户目标；自动化级别只在 action draft 已生成后决定是否可以自动执行。
 
 ```text
 manual  -> 读操作自动执行；所有写入保持可编辑 pending 确认卡
@@ -339,7 +339,7 @@ high    -> 读操作、低风险写入、中风险写入可自动执行；高风
 web AgentConsole automation selector
   -> contracts AgentAutomationLevel
   -> routes/run-submission persist agent_runs.automation_level
-  -> goal-run-engine / planner / action-graph-store
+  -> agent-run-engine / planner / action-graph-store
       -> Automation Policy Engine
       -> pending or auto-executed agent_action_requests
       -> user confirm when required
@@ -977,14 +977,14 @@ OpenAI Agents SDK
 - `provider_stream_delta` 只记录短 `delta`、累计 `preview`、tool call index、tool name 和 arguments preview；所有字段先经过 secret-like redaction，并有长度上限。
 - OpenAI-compatible adapter 按时间和长度合并 content/tool argument trace。它仍实时消费 provider stream，但不会把每个 token 都同步写入 DB；长 tool-call 参数只落阶段性 preview 和完成事件，防止 DeepSeek/Qwen/Doubao 等 provider 因客户端消费过慢而中断。
 - 如果兼容 provider 的 stream 已经暴露 tool name，但最终 arguments 是不完整 JSON，Runtime Planner 记录 `provider_retrying`，并用同一 provider 非流式重试一次；重试只投影已暴露的单个工具，但仍让 provider 通过正常 `tool_calls` 返回结果，不发送 forced named `tool_choice`。若 provider 明确拒绝 `tool_choice` 参数，OpenAI-compatible adapter 会保留当前工具投影并去掉 `tool_choice` 再试一次。没有 backend 语义路由：工具选择仍来自第一次 provider-native tool call，重试仍必须返回合法 provider-native tool call，否则 fail closed。
-- Provider request timeout 是 Goal Run Engine 的运行预算，不是 adapter 内部不可见常量。模块分工如下：
+- Provider request timeout 是 AgentRunEngine 的运行预算，不是 adapter 内部不可见常量。模块分工如下：
   - `settings.ts` 定义部署默认值和 env 下限，生产默认要覆盖复杂 tool-call JSON 生成时间。
   - `runtime-planning-call.ts` 根据结构化输入长度、工具目录规模和 `maxTokens` 生成本轮 `requestTimeoutMs`；普通问答保持轻量预算，复杂经营模型、批量记账或宽工具目录自动升到长预算。
   - `runtime-adapter.ts` 暴露 provider-neutral `requestTimeoutMs` 字段，具体 provider adapter 只负责执行 HTTP/stream timeout，不决定业务复杂度。
   - `openai-compatible-chat-adapter.ts` 把超时归类为 `provider_timeout`，不同于认证、HTTP、网络和响应格式错误；如果超时前已流出 tool name，重试继续沿用这个 provider-native 选择，并切到单工具非流式请求。
   - `runtime-trace-events.ts` 在 `provider_stream_started` 中记录脱敏的 `requestTimeoutMs`，便于从技术日志判断是否走了复杂任务预算。
   - `runtime-plan-reader.ts` 用“模型服务响应超时”解释超时，不再误报为 base URL/网络不可达。
-  - 依赖方向保持为 `Goal Run Engine -> Runtime Planning Call -> Runtime Adapter -> Runtime Trace`；Tool Catalog Gateway 仍只投影工具，不承担 timeout 或业务意图判断。
+  - 依赖方向保持为 `AgentRunEngine -> Runtime Planning Call -> Runtime Adapter -> Runtime Trace`；Tool Catalog Gateway 仍只投影工具，不承担 timeout 或业务意图判断。
 - `provider_stream_completed` 只记录内容长度和 tool call 数量。
 - 不保存 provider 原始 SSE 行、完整 prompt、API key、HTTP headers、完整 tool arguments 或 provider 原始 JSON。
 - OpenAI-compatible / DeepSeek / Qwen / Doubao 等兼容 Chat Completions `stream + tools + tool_calls` 的 provider 走 token/chunk 路径；如果 provider 返回普通 JSON，adapter 仍用非流式 tool_calls 解析，但不会伪造 token delta。
@@ -1112,7 +1112,7 @@ API startup / recovery
 当前关键实现状态：
 
 - 已持久化 `AgentGoalContract`、`AgentEvaluationResult` 和 run `goalStatus`，并通过 ThreadState / SSE 投影到前端。
-- `agent-kernel.ts` 已委托 `goal-run-engine.ts` 执行多轮 `plan -> action graph -> execute/confirm -> observe -> evaluate -> repair`。
+- `agent-kernel.ts` 已委托 `agent-run-engine.ts` 执行多轮 `plan -> action graph -> execute/confirm -> observe -> evaluate -> repair`。
 - Completion Evaluator 已作为每轮停止前的强制关口；模型 final text、空 tool-call 或失败 action 不能绕过 evaluator。
 - React Agent Console 已展示 Goal/Evaluation 面板，包括目标、评估轮次、满足/未满足数量、blocker 和下一轮 brief。
 - DeepSeek 真实 smoke 已升级为最终 domain outcome 验收：`npm.cmd run smoke:agent` 使用真实 OpenAI-compatible `tool_calls` 跑通核心方向，复杂经营模型先生成 50 个成员、12 个月草稿确认卡，确认后保存，并验证 action graph、memory 注入和 audit。
@@ -1151,6 +1151,7 @@ Agent: workspace_import_bundle
 - 前端已有后端状态刷新式 unified timeline / memory panel，OpenAI-compatible provider chunk 和 OpenAI Agents SDK lifecycle/tool trace 已进入统一时间线；后续要继续做跨实例 pubsub 和 SDK tracing。
 - 任何 SDK 原生成熟化增强都必须进入 provider-neutral run events 或 Tool Policy hooks，不能替代确认卡、租户隔离、domain services 或 audit。
 - ADR 0017 已落地第一版 Tool Runtime Maturity Layer：吸收 OpenAI Agents JS 的 tool/approval/guardrail/turn-resolution 思想、OpenClaw 的 effective tool inventory 和 stricter approval composition、Hermes 的 provider sanitation 与 tool-loop guardrails，但保留 xox 的 SaaS harness 作为主线，不引入本地 agent control plane。实现模块包括 `tool-runtime/effective-tool-inventory.ts`、`tool-runtime/tool-call-supervisor.ts`、`tool-runtime/tool-loop-guardrails.ts`、`runtime/provider-payload-sanitizer.ts` 和 `tool-runtime/approval-policy-composer.ts`。
+- ADR 0018 的单循环核心已落地：不再继续增加并列 sidecar，而是把当前成熟部件重新组织到 `AgentRunEngine v2` 单循环内。`TurnResolver` 负责模型输出到 next step 的分类，`ContextEngine` 负责上下文/记忆/压缩入口，`ToolRuntime` 负责模型已选工具的监督，`AgentActionRuntime` 负责 Agent 发起的写入生命周期，`CompletionEvaluator` 负责完成判定，Transcript/Trace 分别负责用户可见和技术诊断投影。
 
 ## 迁移顺序
 
@@ -1162,7 +1163,7 @@ Agent: workspace_import_bundle
 6. 增强 React Agent OS 的 unified timeline、event projection、memory 管理。（已完成后端状态刷新式统一时间线、provider chunk 预览、内联确认卡和 run-scoped navigation replay；跨实例实时 pub/sub 是后续 maturity gate）
 7. 用真实 provider 分别跑只读、确认写入、多步骤、拒绝账号动作、memory 隔离测试。
 8. 增加 Goal Contract / Goal Store / Evaluation Result contract 与持久化。
-9. 把 `agent-kernel.ts` 升级为 Goal Run Engine：多轮 planning、执行/确认、observation、Completion Evaluator、Repair Planner。
+9. 把 `agent-kernel.ts` 委托给 `AgentRunEngine`：多轮 planning、执行/确认、observation、Completion Evaluator、Repair Planner。
 10. 前端新增 Goal Panel 与 evaluator findings，真实 DeepSeek smoke 改为验证最终 domain outcome 和 evaluator pass。
 
 ## 验收标准
@@ -1177,7 +1178,7 @@ Agent: workspace_import_bundle
 - 模型草稿、记账、版本、分享和工作区 bundle 导入导出等主要手动业务能力已映射到 tool registry / tool coverage；账号动作继续保持 `manual_only`。
 - 所有写入动作都有 `agent_action_requests` 和 `audit_logs`。
 - Memory list/delete/context injection 均证明不会跨用户或跨工作区。
-- 复杂目标必须通过 Goal Run Engine 多轮 `plan -> execute/confirm -> observe -> evaluate -> repair` 闭环；模型 final text 不能绕过 Completion Evaluator。
+- 复杂目标必须通过 AgentRunEngine 多轮 `plan -> execute/confirm -> observe -> evaluate -> repair` 闭环；模型 final text 不能绕过 Completion Evaluator。
 - `AgentEvaluationResult` 必须能解释每个未满足验收项，并把下一步 brief 或 blocker 展示到 Action Graph / Goal Panel。
 - DeepSeek 复杂经营 smoke 必须验证最终 draft/projection/ledger/version/share/audit outcome，而不是只验证 provider 返回了 tool_call。
 

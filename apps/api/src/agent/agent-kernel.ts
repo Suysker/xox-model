@@ -1,7 +1,7 @@
 import type { AgentGoalStatus, AgentNavigationEvent, AgentPlannerSource } from '@xox/contracts'
 import type { Row } from '../db/schema.js'
 import type { PlannerContext } from './planning-context.js'
-import { executeAgentGoalRun } from './goal-run-engine.js'
+import { executeAgentRun } from './agent-run-engine.js'
 
 export type AgentKernelRunResult = {
   plannerSource: AgentPlannerSource
@@ -16,5 +16,5 @@ export async function executeAgentKernelRun(
   ctx: PlannerContext & { thread: Row<'agent_threads'> },
   options: { beforeStateWrite: () => Promise<boolean> },
 ): Promise<AgentKernelRunResult | null> {
-  return executeAgentGoalRun(ctx, options)
+  return executeAgentRun(ctx, options)
 }

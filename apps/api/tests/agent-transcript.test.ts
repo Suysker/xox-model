@@ -117,7 +117,7 @@ describe('Agent execution transcript projection', () => {
       runEvents: [
         runEvent({ sequence: 1, type: 'run_queued', title: 'Run 已入队', message: '用户指令已持久化，等待 Agent worker 认领执行。' }),
         runEvent({ sequence: 2, type: 'worker_claimed', title: 'Worker 已认领', message: '后台 worker 已取得 run lease，开始执行。', status: 'running' }),
-        runEvent({ sequence: 3, type: 'goal_contract_created', title: '目标契约已建立', message: 'Goal Run Engine 已建立目标契约。', status: 'info' }),
+        runEvent({ sequence: 3, type: 'goal_contract_created', title: '目标契约已建立', message: 'AgentRunEngine 已建立目标契约。', status: 'info' }),
         runEvent({ sequence: 4, type: 'goal_iteration_started', title: '目标循环 1', message: '开始第一轮模型规划。', status: 'running' }),
         runEvent({ sequence: 5, type: 'model_planning', title: '模型规划中', message: '正在调用配置的模型。', status: 'running' }),
       ],
@@ -195,7 +195,7 @@ describe('Agent execution transcript projection', () => {
       ],
       runEvents: [
         runEvent({ sequence: 1, type: 'run_queued', title: 'Run 已入队', message: '用户指令已持久化，等待 Agent worker 认领执行。' }),
-        runEvent({ sequence: 2, type: 'goal_contract_created', title: '目标契约已建立', message: 'Goal Run Engine 已建立目标契约。', status: 'info' }),
+        runEvent({ sequence: 2, type: 'goal_contract_created', title: '目标契约已建立', message: 'AgentRunEngine 已建立目标契约。', status: 'info' }),
         runEvent({ sequence: 3, type: 'model_planning', title: '模型规划中', message: '正在调用配置的模型。', status: 'running' }),
         runEvent({ sequence: 4, type: 'memory_recall_started', title: '正在查找相关记忆', message: '正在查找与本次任务相关的工作区记忆。', status: 'running' }),
         runEvent({ sequence: 5, type: 'provider_stream_delta', title: '文本片段', message: '你好', status: 'running', data: { kind: 'content_delta', preview: '你好！我是 xox-model Agent OS。' } }),
@@ -278,7 +278,7 @@ describe('Agent execution transcript projection', () => {
       ],
       runEvents: [
         runEvent({ sequence: 1, type: 'run_queued', title: 'Run 已入队', message: '用户指令已持久化，等待 Agent worker 认领执行。' }),
-        runEvent({ sequence: 2, type: 'goal_contract_created', title: '目标契约已建立', message: 'Goal Run Engine 已建立目标契约。', status: 'info' }),
+        runEvent({ sequence: 2, type: 'goal_contract_created', title: '目标契约已建立', message: 'AgentRunEngine 已建立目标契约。', status: 'info' }),
         runEvent({ sequence: 3, type: 'memory_recall_started', title: '正在查找相关记忆', message: '正在查找与本次任务相关的工作区记忆。', status: 'running' }),
         runEvent({ sequence: 4, type: 'run_completed', title: '运行完成', message: '模型规划和只读回答已完成。', status: 'completed' }),
       ],
