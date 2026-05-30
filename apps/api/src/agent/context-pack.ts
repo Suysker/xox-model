@@ -101,8 +101,11 @@ export async function buildAgentContextPack(input: AgentContextPackInput) {
       key: memory.key,
       value: memory.value,
       memoryType: memory.memory_type,
+      lane: memory.lane,
       status: memory.status,
       confidence: memory.confidence,
+      injectable: Number(memory.injectable) === 1,
+      evidenceScore: memory.evidence_score,
     })),
     memoryContext: memoryRecall.injectedSummary,
     memoryUsage: {

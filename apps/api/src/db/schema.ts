@@ -305,17 +305,24 @@ export type AgentMemoryTable = {
   kind: string
   scope_type: string
   memory_type: string
+  lane: string
   status: string
   key: string
   value: string
   confidence: number
+  evidence_score: number
   sensitivity: string
+  injectable: number
+  normalized_hash: string | null
   source_message_id: string | null
   source_run_id: string | null
+  source_kind: string | null
   evidence_json: JsonText | null
   last_used_at: string | null
+  last_verified_at: string | null
   promoted_at: string | null
   expires_at: string | null
+  superseded_by: string | null
   metadata_json: JsonText | null
   created_at: Timestamp
   updated_at: Timestamp

@@ -232,16 +232,17 @@ export async function executeAgentRun(
     }
     if (evaluation.status === 'pass' && actionRows.length > 0) {
       const updatedGoal = await ctx.db.selectFrom('agent_goals').selectAll().where('id', '=', goal.id).executeTakeFirst()
-      if (updatedGoal) {
+      const completedGoalCandidate = updatedGoal ? memoryCandidateFromCompletedGoal({ goal: updatedGoal }) : null
+      if (completedGoalCandidate) {
         await consolidateAgentMemoryCandidates({
           db: ctx.db,
           workspace: ctx.workspace,
           user: ctx.user,
           threadId: ctx.thread.id,
           runId: ctx.runId,
-          candidates: [memoryCandidateFromCompletedGoal({ goal: updatedGoal })],
+          candidates: [completedGoalCandidate],
           title: '完成目标已进入记忆候选',
-          message: '本轮完成目标已保存为带证据的情节记忆候选，供后续同工作区任务召回。',
+          message: '本轮完成目标中提取到稳定记忆候选，已按记忆门禁保存。',
         })
       }
     }

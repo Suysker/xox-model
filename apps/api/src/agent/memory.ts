@@ -7,6 +7,12 @@ import { utcNow } from '../core/time.js'
 import type { CurrentUser } from '../modules/auth.js'
 import { addMemoryEvent } from './memory-events.js'
 import {
+  decideMemoryCandidate,
+  type AgentMemoryKind,
+  type AgentMemoryLane,
+  type AgentMemoryStatus,
+} from './memory-promotion-policy.js'
+import {
   containsSecretLikeContent,
   normalizeMemoryText,
   redactSecretLikeContent,
@@ -16,10 +22,11 @@ const COMPACTION_MESSAGE_THRESHOLD = 10
 const COMPACTION_MESSAGE_STEP = 6
 const MEMORY_VALUE_LIMIT = 500
 const MEMORY_KEY_LIMIT = 120
-const MEMORY_KINDS = new Set(['preference', 'fact', 'business_rule', 'workflow', 'episode', 'correction'])
+const MEMORY_KINDS = new Set(['preference', 'fact', 'business_fact', 'business_rule', 'workflow', 'episode', 'correction', 'diagnostic'])
 const MEMORY_SCOPE_TYPES = new Set(['thread', 'workspace', 'user', 'procedural', 'commitment'])
 const MEMORY_TYPES = new Set(['working', 'episodic', 'semantic', 'procedural', 'commitment'])
-const MEMORY_STATUSES = new Set(['candidate', 'active', 'promoted', 'archived', 'rejected', 'expired'])
+const MEMORY_LANES = new Set(['working', 'session', 'semantic', 'procedural', 'episodic', 'diagnostic', 'archived'])
+const MEMORY_STATUSES = new Set(['candidate', 'active', 'promoted', 'archived', 'rejected', 'expired', 'superseded'])
 const MEMORY_SENSITIVITIES = new Set(['normal', 'private', 'restricted'])
 
 export type AgentRuntimeContext = {
@@ -36,7 +43,7 @@ function normalizeMemoryValue(value: string) {
 
 function normalizeMemoryKind(value: string | null | undefined) {
   const kind = typeof value === 'string' ? value.trim() : ''
-  return MEMORY_KINDS.has(kind) ? kind : 'preference'
+  return (MEMORY_KINDS.has(kind) ? kind : 'preference') as AgentMemoryKind
 }
 
 function normalizeMemoryScopeType(value: string | null | undefined) {
@@ -51,8 +58,15 @@ function normalizeMemoryType(value: string | null | undefined) {
 
 function normalizeMemoryStatus(value: string | null | undefined, memoryType: string) {
   const status = typeof value === 'string' ? value.trim() : ''
-  if (MEMORY_STATUSES.has(status)) return status
-  return memoryType === 'semantic' || memoryType === 'procedural' ? 'promoted' : 'active'
+  if (MEMORY_STATUSES.has(status)) return status as AgentMemoryStatus
+  return (memoryType === 'semantic' || memoryType === 'procedural' ? 'promoted' : 'active') as AgentMemoryStatus
+}
+
+function normalizeMemoryLane(value: string | null | undefined, memoryType: string): AgentMemoryLane | undefined {
+  const lane = typeof value === 'string' ? value.trim() : ''
+  if (MEMORY_LANES.has(lane)) return lane as AgentMemoryLane
+  if (memoryType === 'working' || memoryType === 'episodic' || memoryType === 'semantic' || memoryType === 'procedural') return memoryType as AgentMemoryLane
+  return undefined
 }
 
 function normalizeMemorySensitivity(value: string | null | undefined) {
@@ -80,17 +94,24 @@ export async function rememberAgentMemory(input: {
   db: Kysely<Database>
   workspace: Row<'workspaces'>
   user: CurrentUser
-  threadId: string
+  threadId?: string | null
   messageId?: string | null
   runId?: string | null
   kind?: string | null
   scopeType?: string | null
   memoryType?: string | null
+  lane?: string | null
   status?: string | null
+  injectable?: boolean | null
   sensitivity?: string | null
   key?: string | null
   value: string
   confidence?: number | null
+  evidenceScore?: number | null
+  sourceKind?: string | null
+  expiresAt?: string | null
+  supersededBy?: string | null
+  lastVerifiedAt?: string | null
   evidence?: Record<string, unknown> | null
   metadata?: Record<string, unknown> | null
 }): Promise<RememberAgentMemoryResult> {
@@ -100,9 +121,25 @@ export async function rememberAgentMemory(input: {
   const kind = normalizeMemoryKind(input.kind)
   const scopeType = normalizeMemoryScopeType(input.scopeType)
   const memoryType = normalizeMemoryType(input.memoryType)
-  const status = normalizeMemoryStatus(input.status, memoryType)
+  const lane = input.lane ? normalizeMemoryLane(input.lane, memoryType) : undefined
+  const status = input.status ? normalizeMemoryStatus(input.status, memoryType) : undefined
   const sensitivity = normalizeMemorySensitivity(input.sensitivity)
   const key = normalizeMemoryKey(input.key, value, kind)
+  const policy = decideMemoryCandidate({
+    kind,
+    scopeType,
+    memoryType,
+    key,
+    value,
+    confidence: normalizeConfidence(input.confidence),
+    expiresAt: input.expiresAt ?? null,
+    ...(status ? { status } : {}),
+    ...(lane ? { lane } : {}),
+    ...(input.injectable != null ? { injectable: input.injectable } : {}),
+    ...(input.sourceKind !== undefined ? { sourceKind: input.sourceKind } : {}),
+    ...(input.evidenceScore !== undefined ? { evidenceScore: input.evidenceScore } : {}),
+  })
+  if (policy.decision === 'reject') return { memory: null, rejectedReason: 'secret' }
   const now = utcNow()
   const id = newId()
   await input.db
@@ -111,42 +148,56 @@ export async function rememberAgentMemory(input: {
       id,
       workspace_id: input.workspace.id,
       user_id: input.user.id,
-      thread_id: input.threadId,
+      thread_id: input.threadId ?? null,
       kind,
       scope_type: scopeType,
       memory_type: memoryType,
-      status,
+      lane: policy.lane,
+      status: policy.status,
       key,
       value,
       confidence: normalizeConfidence(input.confidence),
+      evidence_score: policy.evidenceScore,
       sensitivity,
+      injectable: policy.injectable ? 1 : 0,
+      normalized_hash: policy.normalizedHash,
       source_message_id: input.messageId ?? null,
       source_run_id: input.runId ?? null,
+      source_kind: policy.sourceKind,
       evidence_json: input.evidence ? JSON.stringify(input.evidence) : null,
       last_used_at: null,
-      promoted_at: status === 'promoted' ? now : null,
-      expires_at: null,
+      last_verified_at: input.lastVerifiedAt ?? null,
+      promoted_at: policy.status === 'promoted' ? now : null,
+      expires_at: policy.expiresAt,
+      superseded_by: input.supersededBy ?? null,
       metadata_json: input.metadata ? JSON.stringify(input.metadata) : null,
       created_at: now,
       updated_at: now,
-      archived_at: null,
+      archived_at: policy.status === 'archived' ? now : null,
     })
     .execute()
   await addMemoryEvent(input.db, {
     memoryId: id,
-    workspaceId: input.workspace.id,
-    userId: input.user.id,
-    threadId: input.threadId,
-    runId: input.runId ?? null,
-    eventType: status === 'rejected' ? 'rejected' : 'captured',
+      workspaceId: input.workspace.id,
+      userId: input.user.id,
+      threadId: input.threadId ?? null,
+      runId: input.runId ?? null,
+    eventType: policy.status === 'rejected' ? 'rejected' : 'captured',
     evidence: input.evidence ?? null,
     metadata: {
       source: input.metadata?.source ?? 'memory_store',
       kind,
       scopeType,
       memoryType,
-      status,
+      lane: policy.lane,
+      status: policy.status,
       sensitivity,
+      injectable: policy.injectable,
+      normalizedHash: policy.normalizedHash,
+      evidenceScore: policy.evidenceScore,
+      sourceKind: policy.sourceKind,
+      decision: policy.decision,
+      reason: policy.reason,
     },
   })
   return {
@@ -161,9 +212,7 @@ export async function listAgentMemories(db: Kysely<Database>, workspace: Row<'wo
     .selectAll()
     .where('workspace_id', '=', workspace.id)
     .where('user_id', '=', user.id)
-    .where('archived_at', 'is', null)
     .where('status', '!=', 'rejected')
-    .where('status', '!=', 'expired')
     .orderBy('updated_at', 'desc')
     .execute()
 }
@@ -182,7 +231,7 @@ export async function archiveAgentMemory(db: Kysely<Database>, workspace: Row<'w
   if (!memory) throw notFound('Agent memory not found')
   if (memory.workspace_id !== workspace.id || memory.user_id !== user.id) throw forbidden()
   const now = utcNow()
-  await db.updateTable('agent_memories').set({ status: 'archived', archived_at: now, updated_at: now }).where('id', '=', memoryId).execute()
+  await db.updateTable('agent_memories').set({ status: 'archived', injectable: 0, archived_at: now, updated_at: now }).where('id', '=', memoryId).execute()
   await addMemoryEvent(db, {
     memoryId,
     workspaceId: workspace.id,
@@ -192,6 +241,40 @@ export async function archiveAgentMemory(db: Kysely<Database>, workspace: Row<'w
     eventType: 'archived',
     evidence: { memoryId },
   })
+}
+
+export async function promoteAgentMemory(db: Kysely<Database>, workspace: Row<'workspaces'>, user: CurrentUser, memoryId: string) {
+  const memory = await db.selectFrom('agent_memories').selectAll().where('id', '=', memoryId).executeTakeFirst()
+  if (!memory) throw notFound('Agent memory not found')
+  if (memory.workspace_id !== workspace.id || memory.user_id !== user.id) throw forbidden()
+  if (memory.lane === 'diagnostic' || memory.kind === 'diagnostic') throw forbidden('Diagnostic memories cannot be promoted into prompt context')
+  if (memory.status !== 'candidate') throw forbidden('Only candidate memories can be promoted')
+  const lane = memory.lane === 'procedural' || memory.memory_type === 'procedural' ? 'procedural' : 'semantic'
+  const now = utcNow()
+  await db
+    .updateTable('agent_memories')
+    .set({
+      lane,
+      memory_type: lane,
+      status: 'promoted',
+      injectable: 1,
+      promoted_at: now,
+      updated_at: now,
+      archived_at: null,
+      last_verified_at: now,
+    })
+    .where('id', '=', memoryId)
+    .execute()
+  await addMemoryEvent(db, {
+    memoryId,
+    workspaceId: workspace.id,
+    userId: user.id,
+    threadId: memory.thread_id,
+    runId: null,
+    eventType: 'promoted',
+    evidence: { memoryId, source: 'user_memory_center' },
+  })
+  return db.selectFrom('agent_memories').selectAll().where('id', '=', memoryId).executeTakeFirstOrThrow()
 }
 
 export async function loadAgentRuntimeContext(input: {
@@ -291,16 +374,23 @@ export function serializeMemory(row: Row<'agent_memories'>) {
     kind: row.kind,
     scopeType: row.scope_type as never,
     memoryType: row.memory_type as never,
+    lane: row.lane as never,
     status: row.status as never,
     key: row.key,
     value: row.value,
     confidence: row.confidence,
+    evidenceScore: row.evidence_score,
     sensitivity: row.sensitivity as never,
+    injectable: Number(row.injectable) === 1,
+    normalizedHash: row.normalized_hash,
+    sourceKind: row.source_kind,
     evidence: row.evidence_json ? parseJson<Record<string, unknown> | null>(row.evidence_json, null) : null,
     sourceRunId: row.source_run_id,
     lastUsedAt: row.last_used_at,
+    lastVerifiedAt: row.last_verified_at,
     promotedAt: row.promoted_at,
     expiresAt: row.expires_at,
+    supersededBy: row.superseded_by,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }

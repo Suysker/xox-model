@@ -383,17 +383,24 @@ export async function runMigrations(db: Kysely<Database>) {
       kind VARCHAR(64) NOT NULL,
       scope_type VARCHAR(32) NOT NULL DEFAULT 'workspace',
       memory_type VARCHAR(32) NOT NULL DEFAULT 'semantic',
+      lane VARCHAR(32) NOT NULL DEFAULT 'semantic',
       status VARCHAR(32) NOT NULL DEFAULT 'active',
       key VARCHAR(128) NOT NULL,
       value TEXT NOT NULL,
       confidence REAL NOT NULL,
+      evidence_score REAL NOT NULL DEFAULT 0,
       sensitivity VARCHAR(32) NOT NULL DEFAULT 'normal',
+      injectable INTEGER NOT NULL DEFAULT 1,
+      normalized_hash VARCHAR(96),
       source_message_id VARCHAR(36),
       source_run_id VARCHAR(36),
+      source_kind VARCHAR(64),
       evidence_json JSON,
       last_used_at DATETIME,
+      last_verified_at DATETIME,
       promoted_at DATETIME,
       expires_at DATETIME,
+      superseded_by VARCHAR(36),
       metadata_json JSON,
       created_at DATETIME NOT NULL,
       updated_at DATETIME NOT NULL,
@@ -402,8 +409,15 @@ export async function runMigrations(db: Kysely<Database>) {
   )
   await addColumnIfMissing(db, 'agent_memories', 'scope_type', "VARCHAR(32) NOT NULL DEFAULT 'workspace'")
   await addColumnIfMissing(db, 'agent_memories', 'memory_type', "VARCHAR(32) NOT NULL DEFAULT 'semantic'")
+  await addColumnIfMissing(db, 'agent_memories', 'lane', "VARCHAR(32) NOT NULL DEFAULT 'semantic'")
   await addColumnIfMissing(db, 'agent_memories', 'status', "VARCHAR(32) NOT NULL DEFAULT 'active'")
   await addColumnIfMissing(db, 'agent_memories', 'sensitivity', "VARCHAR(32) NOT NULL DEFAULT 'normal'")
+  await addColumnIfMissing(db, 'agent_memories', 'injectable', "INTEGER NOT NULL DEFAULT 1")
+  await addColumnIfMissing(db, 'agent_memories', 'normalized_hash', 'VARCHAR(96)')
+  await addColumnIfMissing(db, 'agent_memories', 'evidence_score', "REAL NOT NULL DEFAULT 0")
+  await addColumnIfMissing(db, 'agent_memories', 'superseded_by', 'VARCHAR(36)')
+  await addColumnIfMissing(db, 'agent_memories', 'source_kind', 'VARCHAR(64)')
+  await addColumnIfMissing(db, 'agent_memories', 'last_verified_at', 'DATETIME')
   await addColumnIfMissing(db, 'agent_memories', 'source_run_id', 'VARCHAR(36)')
   await addColumnIfMissing(db, 'agent_memories', 'evidence_json', 'JSON')
   await addColumnIfMissing(db, 'agent_memories', 'last_used_at', 'DATETIME')
@@ -426,8 +440,82 @@ export async function runMigrations(db: Kysely<Database>) {
     )`,
   )
   await exec(db, 'CREATE INDEX IF NOT EXISTS idx_agent_memories_scope ON agent_memories (workspace_id, user_id, archived_at, status)')
+  await exec(db, 'CREATE INDEX IF NOT EXISTS idx_agent_memories_recall ON agent_memories (workspace_id, user_id, injectable, lane, status)')
+  await exec(db, 'CREATE INDEX IF NOT EXISTS idx_agent_memories_hash ON agent_memories (workspace_id, user_id, normalized_hash)')
   await exec(db, 'CREATE INDEX IF NOT EXISTS idx_agent_memory_events_memory ON agent_memory_events (memory_id, event_type)')
   await exec(db, 'CREATE INDEX IF NOT EXISTS idx_agent_memory_events_run ON agent_memory_events (run_id, event_type)')
+  await exec(
+    db,
+    `UPDATE agent_memories
+     SET normalized_hash = COALESCE(normalized_hash, lower(substr(key || ':' || value, 1, 96))),
+         lane = CASE
+           WHEN key LIKE 'agent.evaluator.finding.%' OR value LIKE 'Evaluator 发现目标未满足%' THEN 'diagnostic'
+           WHEN key LIKE 'agent.goal.completed.%' THEN 'episodic'
+           WHEN key LIKE 'workspace.recent_related_entity.%' THEN 'working'
+           WHEN memory_type IN ('semantic', 'procedural', 'working', 'episodic') THEN memory_type
+           ELSE lane
+         END,
+         source_kind = CASE
+           WHEN key LIKE 'agent.evaluator.finding.%' OR value LIKE 'Evaluator 发现目标未满足%' THEN 'evaluator_result'
+           WHEN key LIKE 'agent.goal.completed.%' THEN 'completed_goal'
+           WHEN key LIKE 'workspace.episode.%' OR key LIKE 'ledger.episode.%' THEN 'confirmed_action'
+           WHEN key LIKE 'workspace.recent_related_entity.%' THEN 'working_context'
+           ELSE source_kind
+         END,
+         injectable = CASE
+           WHEN status = 'candidate' THEN 0
+           WHEN status IN ('archived', 'rejected', 'expired', 'superseded') THEN 0
+           WHEN key LIKE 'agent.evaluator.finding.%' OR value LIKE 'Evaluator 发现目标未满足%' THEN 0
+           WHEN key LIKE 'workspace.episode.%' OR key LIKE 'ledger.episode.%' OR key LIKE 'agent.goal.completed.%' THEN 0
+           WHEN key LIKE 'workspace.recent_related_entity.%' THEN 0
+           WHEN memory_type IN ('semantic', 'procedural') AND status IN ('active', 'promoted') THEN 1
+           ELSE 0
+         END`,
+  )
+  await exec(
+    db,
+    `UPDATE agent_memories
+     SET status = 'archived',
+         archived_at = COALESCE(archived_at, updated_at),
+         updated_at = updated_at,
+         injectable = 0,
+         lane = 'diagnostic',
+         kind = 'diagnostic',
+         source_kind = 'evaluator_result'
+     WHERE key LIKE 'agent.evaluator.finding.%'
+        OR value LIKE 'Evaluator 发现目标未满足%'`,
+  )
+  await exec(
+    db,
+    `UPDATE agent_memories
+     SET status = 'archived',
+         archived_at = COALESCE(archived_at, updated_at),
+         injectable = 0,
+         lane = 'episodic',
+         source_kind = 'completed_goal'
+     WHERE key LIKE 'agent.goal.completed.%'`,
+  )
+  await exec(
+    db,
+    `UPDATE agent_memories
+     SET status = 'expired',
+         expires_at = COALESCE(expires_at, updated_at),
+         injectable = 0,
+         lane = 'working',
+         source_kind = 'working_context'
+     WHERE key LIKE 'workspace.recent_related_entity.%'`,
+  )
+  await exec(
+    db,
+    `UPDATE agent_memories
+     SET status = 'archived',
+         archived_at = COALESCE(archived_at, updated_at),
+         injectable = 0,
+         lane = 'episodic',
+         source_kind = COALESCE(source_kind, 'confirmed_action')
+     WHERE key LIKE 'workspace.episode.%'
+        OR key LIKE 'ledger.episode.%'`,
+  )
   await exec(
     db,
     `CREATE TABLE IF NOT EXISTS agent_context_snapshots (

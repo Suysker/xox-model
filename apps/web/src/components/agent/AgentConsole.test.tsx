@@ -48,7 +48,11 @@ function memoryRecord(index: number): AgentConsoleProps['memories'][number] {
     kind: 'agent_run',
     scopeType: 'workspace',
     memoryType: 'episodic',
+    lane: 'episodic',
     status: 'active',
+    injectable: false,
+    evidenceScore: 0.72,
+    sourceKind: 'confirmed_action',
     key: `memory.${index}`,
     value: `记忆内容 ${index}`,
     confidence: 0.8,
@@ -100,6 +104,7 @@ function props(overrides: Partial<AgentConsoleProps> = {}): AgentConsoleProps {
     onRefreshThreads: () => undefined,
     onRefreshMemories: () => undefined,
     onDeleteMemory: () => undefined,
+    onPromoteMemory: () => undefined,
     onRefreshProviderSetting: () => undefined,
     onAutomationLevelChange: () => undefined,
     onSaveProviderSetting: () => undefined,
@@ -139,6 +144,14 @@ function setInputValue(input: HTMLInputElement, value: string) {
   act(() => {
     setter?.call(input, value)
     input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+}
+
+function setSelectValue(select: HTMLSelectElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value')?.set
+  act(() => {
+    setter?.call(select, value)
+    select.dispatchEvent(new Event('change', { bubbles: true }))
   })
 }
 
@@ -210,7 +223,7 @@ describe('AgentConsole', () => {
       const memoryToolbar = rendered.container.querySelector('[data-testid="agent-memory-toolbar"]') as HTMLElement | null
       expect(panelRegion).not.toBeNull()
       expect(memoryToolbar?.querySelector('input[placeholder="搜索记忆"]')).not.toBeNull()
-      expect(memoryToolbar?.querySelector('select[title="按记忆类型过滤"]')).not.toBeNull()
+      expect(memoryToolbar?.querySelector('select[title="按记忆分层过滤"]')).not.toBeNull()
       expect(memoryToolbar?.querySelector('button[title="按关键词刷新记忆"]')).not.toBeNull()
       expect(panelRegion?.className).toContain('flex-1')
       expect(panelRegion?.style.gridTemplateRows).toContain('minmax(0, 1fr)')
@@ -219,6 +232,56 @@ describe('AgentConsole', () => {
       expect(rendered.container.innerHTML).not.toContain('max-h-28')
       expect(rendered.container.innerHTML).not.toContain('max-h-24')
       expect(rendered.container.querySelector('textarea')?.getAttribute('placeholder')).toBe('输入指令')
+    } finally {
+      rendered.cleanup()
+    }
+  })
+
+  it('separates injectable memory from candidates and promotes selected candidates', () => {
+    const promoted: string[] = []
+    const rendered = renderConsole(props({
+      memories: [
+        {
+          ...memoryRecord(1),
+          id: 'memory-active',
+          kind: 'preference',
+          memoryType: 'semantic',
+          lane: 'semantic',
+          status: 'promoted',
+          injectable: true,
+          value: '默认记账成员是 成员 1',
+        },
+        {
+          ...memoryRecord(2),
+          id: 'memory-candidate',
+          kind: 'business_fact',
+          memoryType: 'semantic',
+          lane: 'semantic',
+          status: 'candidate',
+          injectable: false,
+          value: '默认审批人是 李雷',
+        },
+      ],
+      onPromoteMemory: (id) => promoted.push(id),
+    }))
+    try {
+      const memoryButton = rendered.container.querySelector('button[title="记忆"]') as HTMLButtonElement | null
+      if (!memoryButton) throw new Error('memory button missing')
+      act(() => memoryButton.click())
+
+      expect(rendered.container.textContent).toContain('默认记账成员是 成员 1')
+      expect(rendered.container.textContent).not.toContain('默认审批人是 李雷')
+
+      const filter = rendered.container.querySelector('select[title="按记忆分层过滤"]') as HTMLSelectElement | null
+      if (!filter) throw new Error('memory filter missing')
+      setSelectValue(filter, 'candidate')
+
+      expect(rendered.container.textContent).toContain('默认审批人是 李雷')
+      expect(rendered.container.textContent).not.toContain('默认记账成员是 成员 1')
+      const promoteButton = rendered.container.querySelector('button[title="提升为长期记忆"]') as HTMLButtonElement | null
+      if (!promoteButton) throw new Error('promote button missing')
+      act(() => promoteButton.click())
+      expect(promoted).toEqual(['memory-candidate'])
     } finally {
       rendered.cleanup()
     }

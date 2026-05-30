@@ -7,6 +7,7 @@ import type { FastifyInstance } from 'fastify'
 import { sql, type Kysely } from 'kysely'
 import { createApp } from '../src/server.js'
 import { createDatabase } from '../src/db/database.js'
+import { runMigrations } from '../src/db/migrations.js'
 import type { Database } from '../src/db/schema.js'
 import type { Settings } from '../src/core/settings.js'
 import { AGENT_MANUAL_CAPABILITY_COVERAGE, agentWritableConfigPatterns, buildAgentWritableConfigCatalog } from '../src/agent/tool-coverage.js'
@@ -17,6 +18,13 @@ import { resolveActionAuthority } from '../src/agent/tool-policy.js'
 import { createProductDefaultModel, projectModel } from '@xox/domain'
 import { recoverRunningAgentRuns } from '../src/agent/run-worker.js'
 import { rememberAgentMemory } from '../src/agent/memory.js'
+import { retrieveAgentMemories } from '../src/agent/memory-retriever.js'
+import { decideMemoryCandidate } from '../src/agent/memory-promotion-policy.js'
+import {
+  memoryCandidateFromCompletedGoal,
+  memoryCandidateFromEvaluatorFinding,
+  memoryCandidatesFromExecutedActions,
+} from '../src/agent/memory-candidate-detector.js'
 
 type JsonResponse = {
   statusCode: number
@@ -3321,6 +3329,8 @@ describe('xox TypeScript API', () => {
       expect(firstMemories.json.memories).toHaveLength(1)
       expect(firstMemories.json.memories[0].value).toContain('成员 A')
       expect(firstMemories.json.memories[0].status).toBe('promoted')
+      expect(firstMemories.json.memories[0].lane).toBe('semantic')
+      expect(firstMemories.json.memories[0].injectable).toBe(true)
       const searchedMemories = await firstClient.get('/api/v1/agent/memories?query=%E9%BB%98%E8%AE%A4%E6%88%90%E5%91%98')
       expect(searchedMemories.json.memories).toHaveLength(1)
       expect((await secondClient.get('/api/v1/agent/memories')).json.memories).toHaveLength(0)
@@ -3343,7 +3353,7 @@ describe('xox TypeScript API', () => {
         runId: remembered.json.runId,
         kind: 'fact',
         scopeType: 'workspace',
-        memoryType: 'episodic',
+        memoryType: 'semantic',
         status: 'candidate',
         key: 'workspace.fact.defaultApprover',
         value: '默认审批人是 李雷',
@@ -3351,14 +3361,20 @@ describe('xox TypeScript API', () => {
         evidence: { test: 'promotion' },
       })
       expect(candidateMemory.memory?.status).toBe('candidate')
+      expect(candidateMemory.memory?.injectable).toBe(0)
       const firstRecall = await firstClient.post('/api/v1/agent/messages', { threadId, message: '默认审批人是谁？' })
       expect(firstRecall.statusCode).toBe(200)
       const secondRecall = await firstClient.post('/api/v1/agent/messages', { threadId, message: '默认审批人是谁？' })
       expect(secondRecall.statusCode).toBe(200)
-      expect(secondRecall.json.runEvents.some((event: any) => event.type === 'memory_promoted')).toBe(true)
+      expect(secondRecall.json.runEvents.some((event: any) => event.type === 'memory_promoted')).toBe(false)
+      const searchedCandidate = await firstClient.get('/api/v1/agent/memories?query=%E9%BB%98%E8%AE%A4%E5%AE%A1%E6%89%B9%E4%BA%BA')
+      expect(searchedCandidate.json.memories.some((memory: any) => memory.id === candidateMemory.memory!.id && memory.status === 'candidate')).toBe(true)
+      const promotedResponse = await firstClient.post(`/api/v1/agent/memories/${candidateMemory.memory!.id}/promote`)
+      expect(promotedResponse.statusCode).toBe(200)
       const promotedMemory = await harness.db.selectFrom('agent_memories').selectAll().where('id', '=', candidateMemory.memory!.id).executeTakeFirstOrThrow()
       expect(promotedMemory.status).toBe('promoted')
       expect(promotedMemory.memory_type).toBe('semantic')
+      expect(promotedMemory.injectable).toBe(1)
 
       const secretRemember = await firstClient.post('/api/v1/agent/messages', {
         threadId,
@@ -3387,10 +3403,298 @@ describe('xox TypeScript API', () => {
 
       expect((await firstClient.delete(`/api/v1/agent/memories/${firstMemories.json.memories[0].id}`)).statusCode).toBe(200)
       const afterDelete = await firstClient.get('/api/v1/agent/memories')
-      expect(afterDelete.json.memories.some((memory: any) => memory.id === firstMemories.json.memories[0].id)).toBe(false)
+      const archivedMemory = afterDelete.json.memories.find((memory: any) => memory.id === firstMemories.json.memories[0].id)
+      expect(archivedMemory?.status).toBe('archived')
+      expect(archivedMemory?.injectable).toBe(false)
       await closeHarness(harness)
     })
   }, 10_000)
+
+  it('applies Memory Kernel v2 lane, capture, recall, and cleanup gates', async () => {
+    const diagnosticDecision = decideMemoryCandidate({
+      kind: 'diagnostic',
+      scopeType: 'procedural',
+      memoryType: 'episodic',
+      key: 'agent.evaluator.finding.test',
+      value: '目标要求 1 个股东，当前草稿为 5 个。',
+      confidence: 0.7,
+    })
+    expect(diagnosticDecision.lane).toBe('diagnostic')
+    expect(diagnosticDecision.injectable).toBe(false)
+    expect(diagnosticDecision.decision).toBe('diagnostic_only')
+
+    const actionCandidates = memoryCandidatesFromExecutedActions({
+      runId: 'run-memory-v2',
+      actionRows: [{
+        id: 'action-operating-model',
+        status: 'executed',
+        kind: 'workspace.update_draft',
+        title: '确认修改模型草稿',
+        target_label: '星河 50 期启动测算',
+        payload_json: JSON.stringify({
+          source: 'workspace_configure_operating_model',
+          workspaceName: '星河 50 期启动测算',
+          config: {
+            teamMembers: Array.from({ length: 50 }, (_, index) => ({ id: `m-${index}`, name: `成员 ${index + 1}` })),
+            months: Array.from({ length: 12 }, (_, index) => ({ id: `month-${index}`, label: `${index + 1}月` })),
+            shareholders: Array.from({ length: 5 }, (_, index) => ({ id: `s-${index}`, name: `股东 ${index + 1}` })),
+          },
+        }),
+      } as any],
+    })
+    const draftEpisode = actionCandidates.find((candidate) => candidate.key === 'workspace.episode.action-operating-model')
+    expect(draftEpisode?.lane).toBe('episodic')
+    expect(draftEpisode?.status).toBe('archived')
+    expect(draftEpisode?.injectable).toBe(false)
+    const reusableWorkflow = actionCandidates.find((candidate) => candidate.key === 'agent.workflow.operating_model_configured_by_high_level_tool')
+    expect(reusableWorkflow?.lane).toBe('procedural')
+    expect(reusableWorkflow?.status).toBe('promoted')
+    expect(reusableWorkflow?.injectable).toBe(true)
+
+    const evaluatorCandidate = memoryCandidateFromEvaluatorFinding({
+      runId: 'run-memory-v2',
+      evaluation: {
+        id: 'evaluation-memory-v2',
+        status: 'fail',
+        unsatisfied_json: JSON.stringify([{ message: '运行图存在失败动作。' }]),
+        iteration_no: 1,
+      } as any,
+    })
+    expect(evaluatorCandidate?.lane).toBe('diagnostic')
+    expect(evaluatorCandidate?.injectable).toBe(false)
+    expect(memoryCandidateFromCompletedGoal({ goal: {} as any })).toBeNull()
+
+    const harness = await buildHarness('memory-kernel-v2')
+    try {
+      const client = new Client(harness.app)
+      const registered = await registerUser(client, 'memory-kernel-v2@example.com')
+      const workspace = await harness.db.selectFrom('workspaces').selectAll().where('owner_id', '=', registered.id).executeTakeFirstOrThrow()
+      const user = await harness.db.selectFrom('users').selectAll().where('id', '=', registered.id).executeTakeFirstOrThrow()
+      const now = new Date().toISOString()
+      const threadId = 'thread-memory-v2'
+      const otherThreadId = 'thread-memory-v2-other'
+      await harness.db.insertInto('agent_threads').values([
+        { id: threadId, workspace_id: workspace.id, user_id: user.id, title: 'Memory v2', created_at: now, updated_at: now },
+        { id: otherThreadId, workspace_id: workspace.id, user_id: user.id, title: 'Memory v2 other', created_at: now, updated_at: now },
+      ]).execute()
+
+      const semantic = await rememberAgentMemory({
+        db: harness.db,
+        workspace,
+        user,
+        threadId: null,
+        kind: 'preference',
+        scopeType: 'workspace',
+        memoryType: 'semantic',
+        key: 'workspace.preference.defaultLedgerMember',
+        value: '默认记账成员是 成员 1',
+        confidence: 0.92,
+      })
+      const candidate = await rememberAgentMemory({
+        db: harness.db,
+        workspace,
+        user,
+        threadId: null,
+        kind: 'business_fact',
+        scopeType: 'workspace',
+        memoryType: 'semantic',
+        status: 'candidate',
+        key: 'workspace.fact.defaultApprover',
+        value: '默认审批人是 李雷',
+        confidence: 0.82,
+      })
+      const diagnostic = await rememberAgentMemory({
+        db: harness.db,
+        workspace,
+        user,
+        threadId: null,
+        kind: 'diagnostic',
+        scopeType: 'procedural',
+        memoryType: 'episodic',
+        key: 'agent.evaluator.finding.shareholder_count',
+        value: '目标要求 1 个股东，当前草稿为 5 个。',
+        confidence: 0.7,
+      })
+      const episode = await rememberAgentMemory({
+        db: harness.db,
+        workspace,
+        user,
+        threadId: null,
+        kind: 'episode',
+        scopeType: 'workspace',
+        memoryType: 'episodic',
+        key: 'workspace.episode.executedLedger',
+        value: '已通过 Agent 执行账本动作：成员 1 入账 680。',
+        confidence: 0.75,
+      })
+      const working = await rememberAgentMemory({
+        db: harness.db,
+        workspace,
+        user,
+        threadId,
+        kind: 'fact',
+        scopeType: 'thread',
+        memoryType: 'working',
+        lane: 'working',
+        status: 'active',
+        injectable: true,
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        key: 'thread.working.lastMentionedMember',
+        value: '本轮提到的成员是 成员 2。',
+        confidence: 0.7,
+      })
+      const otherThreadWorking = await rememberAgentMemory({
+        db: harness.db,
+        workspace,
+        user,
+        threadId: otherThreadId,
+        kind: 'fact',
+        scopeType: 'thread',
+        memoryType: 'working',
+        lane: 'working',
+        status: 'active',
+        injectable: true,
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        key: 'thread.working.other',
+        value: '本轮提到的成员是 成员 3。',
+        confidence: 0.7,
+      })
+
+      expect(candidate.memory?.injectable).toBe(0)
+      expect(diagnostic.memory?.lane).toBe('diagnostic')
+      expect(diagnostic.memory?.injectable).toBe(0)
+      expect(episode.memory?.status).toBe('archived')
+      expect(episode.memory?.injectable).toBe(0)
+
+      const promptRecall = await retrieveAgentMemories({
+        db: harness.db,
+        workspace,
+        user,
+        query: '默认记账成员 成员 1 本轮提到 成员 2 默认审批人 股东数量',
+        forPrompt: true,
+        threadId,
+        limit: 10,
+      })
+      const promptIds = promptRecall.map((item) => item.memory.id)
+      expect(promptIds).toContain(semantic.memory!.id)
+      expect(promptIds).toContain(working.memory!.id)
+      expect(promptIds).not.toContain(candidate.memory!.id)
+      expect(promptIds).not.toContain(diagnostic.memory!.id)
+      expect(promptIds).not.toContain(episode.memory!.id)
+      expect(promptIds).not.toContain(otherThreadWorking.memory!.id)
+
+      const governedSearch = await retrieveAgentMemories({
+        db: harness.db,
+        workspace,
+        user,
+        query: '默认审批人 股东 草稿 成员 入账',
+        includeCandidates: true,
+        includeArchived: true,
+        includeDiagnostics: true,
+        includeNonInjectable: true,
+        limit: 20,
+      })
+      const governedIds = governedSearch.map((item) => item.memory.id)
+      expect(governedIds).toContain(candidate.memory!.id)
+      expect(governedIds).toContain(diagnostic.memory!.id)
+      expect(governedIds).toContain(episode.memory!.id)
+      expect((await client.post(`/api/v1/agent/memories/${diagnostic.memory!.id}/promote`)).statusCode).toBe(403)
+      expect((await client.post(`/api/v1/agent/memories/${episode.memory!.id}/promote`)).statusCode).toBe(403)
+      const promotedCandidate = await client.post(`/api/v1/agent/memories/${candidate.memory!.id}/promote`)
+      expect(promotedCandidate.statusCode).toBe(200)
+      expect(promotedCandidate.json.memory.status).toBe('promoted')
+      expect(promotedCandidate.json.memory.injectable).toBe(true)
+
+      const legacyRows = [
+        {
+          id: 'legacy-diagnostic',
+          kind: 'workflow',
+          scope_type: 'procedural',
+          memory_type: 'procedural',
+          lane: 'procedural',
+          status: 'promoted',
+          key: 'agent.evaluator.finding.legacy',
+          value: 'Evaluator 发现目标未满足：目标要求 1 个股东，当前草稿为 5 个。',
+          injectable: 1,
+        },
+        {
+          id: 'legacy-goal',
+          kind: 'episode',
+          scope_type: 'workspace',
+          memory_type: 'episodic',
+          lane: 'episodic',
+          status: 'active',
+          key: 'agent.goal.completed.legacy',
+          value: 'Agent 已完成目标：完整用户目标原文。',
+          injectable: 1,
+        },
+        {
+          id: 'legacy-recent-entity',
+          kind: 'fact',
+          scope_type: 'workspace',
+          memory_type: 'episodic',
+          lane: 'episodic',
+          status: 'active',
+          key: 'workspace.recent_related_entity.member1',
+          value: '最近一次 Agent 账本动作关联对象是 成员 1。',
+          injectable: 1,
+        },
+        {
+          id: 'legacy-episode',
+          kind: 'episode',
+          scope_type: 'workspace',
+          memory_type: 'episodic',
+          lane: 'episodic',
+          status: 'active',
+          key: 'workspace.episode.legacy',
+          value: '已通过 Agent 更新草稿：星河 50 期启动测算。',
+          injectable: 1,
+        },
+      ]
+      await harness.db.insertInto('agent_memories').values(legacyRows.map((row) => ({
+        ...row,
+        workspace_id: workspace.id,
+        user_id: user.id,
+        thread_id: null,
+        confidence: 0.7,
+        evidence_score: 0,
+        sensitivity: 'normal',
+        normalized_hash: null,
+        source_message_id: null,
+        source_run_id: null,
+        source_kind: null,
+        evidence_json: null,
+        last_used_at: null,
+        last_verified_at: null,
+        promoted_at: null,
+        expires_at: null,
+        superseded_by: null,
+        metadata_json: null,
+        created_at: now,
+        updated_at: now,
+        archived_at: null,
+      }))).execute()
+      await runMigrations(harness.db)
+      const cleanedRows = await harness.db
+        .selectFrom('agent_memories')
+        .selectAll()
+        .where('id', 'in', legacyRows.map((row) => row.id))
+        .execute()
+      const byId = new Map(cleanedRows.map((row) => [row.id, row]))
+      expect(byId.get('legacy-diagnostic')?.lane).toBe('diagnostic')
+      expect(byId.get('legacy-diagnostic')?.kind).toBe('diagnostic')
+      expect(byId.get('legacy-diagnostic')?.status).toBe('archived')
+      expect(byId.get('legacy-diagnostic')?.injectable).toBe(0)
+      expect(byId.get('legacy-goal')?.status).toBe('archived')
+      expect(byId.get('legacy-goal')?.injectable).toBe(0)
+      expect(byId.get('legacy-recent-entity')?.status).toBe('expired')
+      expect(byId.get('legacy-recent-entity')?.injectable).toBe(0)
+      expect(byId.get('legacy-episode')?.status).toBe('archived')
+      expect(byId.get('legacy-episode')?.injectable).toBe(0)
+    } finally {
+      await closeHarness(harness)
+    }
+  })
 
   it('injects tenant-scoped memory into a new agent thread for real provider planning', async () => {
     const secretValue = ['sk', 'providersecretvalue123456'].join('-')

@@ -2,8 +2,14 @@ import { parseJson } from '../db/database.js'
 import type { Row } from '../db/schema.js'
 import type { AgentMemoryCandidate } from './memory-consolidator.js'
 
+const WORKING_MEMORY_TTL_MS = 6 * 60 * 60 * 1000
+
 function compactValue(value: string) {
   return value.replace(/\s+/g, ' ').trim().slice(0, 420)
+}
+
+function ttlFromNow(ms: number) {
+  return new Date(Date.now() + ms).toISOString()
 }
 
 export function memoryCandidatesFromExecutedActions(input: {
@@ -24,9 +30,14 @@ export function memoryCandidatesFromExecutedActions(input: {
         kind: 'episode',
         scopeType: 'workspace',
         memoryType: 'episodic',
+        lane: 'episodic',
+        status: 'archived',
+        injectable: false,
+        sourceKind: 'confirmed_action',
         key: `workspace.episode.${action.id}`,
         value: compactValue(`已通过 Agent 更新草稿：${workspaceName}，成员 ${memberCount ?? '未知'} 个，股东 ${shareholderCount ?? '未知'} 个，预测 ${monthCount ?? '未知'} 个月。`),
         confidence: 0.78,
+        evidenceScore: 0.75,
         evidence: { runId: input.runId, actionRequestId: action.id, actionKind: action.kind },
       })
       if (payload?.source === 'workspace_configure_operating_model' && memberCount && monthCount) {
@@ -34,9 +45,14 @@ export function memoryCandidatesFromExecutedActions(input: {
           kind: 'workflow',
           scopeType: 'procedural',
           memoryType: 'procedural',
+          lane: 'procedural',
+          status: 'promoted',
+          injectable: true,
+          sourceKind: 'confirmed_action',
           key: 'agent.workflow.operating_model_configured_by_high_level_tool',
           value: '完整经营简报应优先使用 workspace_configure_operating_model 生成一张可编辑草稿确认卡，再由 evaluator 检查成员、股东、成本和月份节奏。',
           confidence: 0.82,
+          evidenceScore: 0.86,
           evidence: { runId: input.runId, actionRequestId: action.id, memberCount, monthCount },
         })
       }
@@ -51,19 +67,30 @@ export function memoryCandidatesFromExecutedActions(input: {
         kind: 'episode',
         scopeType: 'workspace',
         memoryType: 'episodic',
+        lane: 'episodic',
+        status: 'archived',
+        injectable: false,
+        sourceKind: 'confirmed_action',
         key: `ledger.episode.${action.id}`,
         value: compactValue(`已通过 Agent 执行账本动作：${action.title}${monthLabel ? `，账期 ${monthLabel}` : ''}${relatedName ? `，对象 ${relatedName}` : ''}${amount ? `，金额 ${amount}` : ''}。`),
         confidence: 0.72,
+        evidenceScore: 0.75,
         evidence: { runId: input.runId, actionRequestId: action.id, actionKind: action.kind },
       })
       if (relatedName) {
         candidates.push({
           kind: 'fact',
-          scopeType: 'workspace',
-          memoryType: 'episodic',
+          scopeType: 'thread',
+          memoryType: 'working',
+          lane: 'working',
+          status: 'active',
+          injectable: true,
+          sourceKind: 'working_context',
           key: `workspace.recent_related_entity.${relatedName}`,
           value: compactValue(`最近一次 Agent 账本动作关联对象是 ${relatedName}。这只是短期情节记忆，不等于默认成员。`),
           confidence: 0.58,
+          evidenceScore: 0.5,
+          expiresAt: ttlFromNow(WORKING_MEMORY_TTL_MS),
           evidence: { runId: input.runId, actionRequestId: action.id, relatedName },
         })
       }
@@ -75,9 +102,14 @@ export function memoryCandidatesFromExecutedActions(input: {
         kind: 'episode',
         scopeType: 'workspace',
         memoryType: 'episodic',
+        lane: 'episodic',
+        status: 'archived',
+        injectable: false,
+        sourceKind: 'confirmed_action',
         key: `workspace.episode.${action.id}`,
         value: compactValue(`已通过 Agent 执行业务动作：${action.title}。`),
         confidence: 0.7,
+        evidenceScore: 0.75,
         evidence: { runId: input.runId, actionRequestId: action.id, actionKind: action.kind },
       })
     }
@@ -92,11 +124,15 @@ export function memoryCandidateFromEditedAction(input: {
   return {
     kind: 'correction',
     scopeType: 'workspace',
-    memoryType: 'episodic',
+    memoryType: 'procedural',
+    lane: 'procedural',
     status: 'candidate',
+    injectable: false,
+    sourceKind: 'edited_confirmation',
     key: `agent.correction.action_edit.${input.action.id}`,
     value: compactValue(`用户编辑了 Agent 确认卡：${input.action.title}。后续相似动作应参考用户编辑后的确认卡内容，并继续通过确认卡执行。`),
     confidence: 0.68,
+    evidenceScore: 0.72,
     evidence: { runId: input.runId, actionRequestId: input.action.id, actionKind: input.action.kind, lifecycle: 'edited' },
   }
 }
@@ -109,10 +145,14 @@ export function memoryCandidateFromCancelledAction(input: {
     kind: 'correction',
     scopeType: 'workspace',
     memoryType: 'episodic',
-    status: 'candidate',
+    lane: 'diagnostic',
+    status: 'active',
+    injectable: false,
+    sourceKind: 'cancelled_confirmation',
     key: `agent.correction.action_cancel.${input.action.id}`,
     value: compactValue(`用户取消了 Agent 确认卡：${input.action.title}。这表示该动作在当时上下文中不应继续自动推进。`),
     confidence: 0.62,
+    evidenceScore: 0.62,
     evidence: { runId: input.runId, actionRequestId: input.action.id, actionKind: input.action.kind, lifecycle: 'cancelled' },
   }
 }
@@ -126,13 +166,17 @@ export function memoryCandidateFromEvaluatorFinding(input: {
   const firstFinding = unsatisfied.map((item) => item.message).find((message): message is string => Boolean(message))
   if (!firstFinding) return null
   return {
-    kind: 'workflow',
+    kind: 'diagnostic',
     scopeType: 'procedural',
     memoryType: 'episodic',
-    status: 'candidate',
+    lane: 'diagnostic',
+    status: 'active',
+    injectable: false,
+    sourceKind: 'evaluator_result',
     key: `agent.evaluator.finding.${input.evaluation.id}`,
-    value: compactValue(`Evaluator 发现目标未满足：${firstFinding}。后续类似任务必须优先补齐该类缺口，再判断完成。`),
+    value: compactValue(`Completion Evaluator 诊断：${firstFinding}`),
     confidence: 0.7,
+    evidenceScore: 0.45,
     evidence: {
       runId: input.runId,
       evaluationId: input.evaluation.id,
@@ -144,15 +188,7 @@ export function memoryCandidateFromEvaluatorFinding(input: {
 
 export function memoryCandidateFromCompletedGoal(input: {
   goal: Row<'agent_goals'>
-}): AgentMemoryCandidate {
-  return {
-    kind: 'episode',
-    scopeType: 'workspace',
-    memoryType: 'episodic',
-    status: 'candidate',
-    key: `agent.goal.completed.${input.goal.id}`,
-    value: compactValue(`Agent 已完成目标：${input.goal.objective}`),
-    confidence: 0.64,
-    evidence: { runId: input.goal.run_id, goalId: input.goal.id, status: input.goal.status },
-  }
+}): AgentMemoryCandidate | null {
+  void input
+  return null
 }

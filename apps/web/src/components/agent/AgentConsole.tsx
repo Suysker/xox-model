@@ -51,6 +51,7 @@ export function AgentConsole(props: {
   onRefreshThreads: () => void
   onRefreshMemories: (query?: string) => void
   onDeleteMemory: (id: string) => void
+  onPromoteMemory: (id: string) => void
   onRefreshProviderSetting: () => void
   onAutomationLevelChange: (level: AgentAutomationLevel) => void
   onSaveProviderSetting: (payload: AgentProviderSettingUpdatePayload) => Promise<void> | void
@@ -61,7 +62,7 @@ export function AgentConsole(props: {
   const draftRef = useRef<HTMLTextAreaElement | null>(null)
   const [memoryOpen, setMemoryOpen] = useState(false)
   const [memorySearch, setMemorySearch] = useState('')
-  const [memoryTypeFilter, setMemoryTypeFilter] = useState('all')
+  const [memoryLaneFilter, setMemoryLaneFilter] = useState('active')
   const [historyOpen, setHistoryOpen] = useState(false)
   const [providerOpen, setProviderOpen] = useState(false)
   const [sideAutomationMenuOpen, setSideAutomationMenuOpen] = useState(false)
@@ -71,11 +72,27 @@ export function AgentConsole(props: {
     model: 'deepseek-v4-pro',
     apiKey: '',
   })
+  const memoryFilterOptions = [
+    { value: 'active', label: '可注入' },
+    { value: 'all', label: '全部' },
+    { value: 'working', label: '短期' },
+    { value: 'candidate', label: '候选' },
+    { value: 'episodic', label: '事件' },
+    { value: 'diagnostic', label: '诊断' },
+    { value: 'archived', label: '归档' },
+  ]
   const visibleMemories = props.memories.filter((memory) => {
-    if (memoryTypeFilter !== 'all' && memory.memoryType !== memoryTypeFilter) return false
+    const lane = memory.lane ?? memory.memoryType ?? 'semantic'
+    const status = memory.status ?? 'active'
+    if (memoryLaneFilter === 'active' && !(memory.injectable && ['semantic', 'procedural', 'working', 'session'].includes(lane) && ['active', 'promoted'].includes(status))) return false
+    if (memoryLaneFilter === 'working' && lane !== 'working' && lane !== 'session') return false
+    if (memoryLaneFilter === 'candidate' && status !== 'candidate') return false
+    if (memoryLaneFilter === 'episodic' && lane !== 'episodic') return false
+    if (memoryLaneFilter === 'diagnostic' && lane !== 'diagnostic') return false
+    if (memoryLaneFilter === 'archived' && !['archived', 'expired', 'superseded'].includes(status) && lane !== 'archived') return false
     const query = memorySearch.trim().toLowerCase()
     if (!query) return true
-    return `${memory.value} ${memory.key} ${memory.kind} ${memory.memoryType ?? ''} ${memory.status ?? ''}`.toLowerCase().includes(query)
+    return `${memory.value} ${memory.key} ${memory.kind} ${memory.memoryType ?? ''} ${memory.lane ?? ''} ${memory.status ?? ''} ${memory.sourceKind ?? ''}`.toLowerCase().includes(query)
   })
   const actionDiffsById = new Map<string, Array<{ label: string; value: string }>>()
   flattenTranscriptNodes(props.transcriptNodes)
@@ -622,17 +639,14 @@ export function AgentConsole(props: {
                     placeholder="搜索记忆"
                   />
                   <select
-                    value={memoryTypeFilter}
-                    onChange={(event) => setMemoryTypeFilter(event.target.value)}
+                    value={memoryLaneFilter}
+                    onChange={(event) => setMemoryLaneFilter(event.target.value)}
                     className="h-7 w-32 shrink-0 rounded-md border border-stone-900/10 px-2 text-[11px] outline-none transition focus:border-emerald-500"
-                    title="按记忆类型过滤"
+                    title="按记忆分层过滤"
                   >
-                    <option value="all">全部类型</option>
-                    <option value="working">working</option>
-                    <option value="episodic">episodic</option>
-                    <option value="semantic">semantic</option>
-                    <option value="procedural">procedural</option>
-                    <option value="commitment">commitment</option>
+                    {memoryFilterOptions.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
                   </select>
                   <button
                     type="button"
@@ -646,30 +660,51 @@ export function AgentConsole(props: {
                 </div>
                 <div className="mt-2 min-h-0 flex-1 overflow-y-auto">
                   {visibleMemories.length > 0 ? (
-                    visibleMemories.map((memory) => (
-                      <div key={memory.id} className="flex items-start gap-2 border-t border-stone-100 py-1.5 first:border-t-0">
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate font-medium text-stone-800">{memory.value}</p>
-                          <p className="text-[10px] text-stone-400">
-                            {memory.kind} / {memory.memoryType ?? 'semantic'} / {memory.status ?? 'active'} / {memory.confidence.toFixed(2)}
-                          </p>
-                          {memory.evidence ? (
-                            <p className="truncate text-[10px] text-stone-400">
-                              证据 {String(memory.evidence.runId ?? memory.evidence.actionRequestId ?? memory.evidence.snapshotId ?? '已记录')}
+                    visibleMemories.map((memory) => {
+                      const lane = memory.lane ?? memory.memoryType ?? 'semantic'
+                      const status = memory.status ?? 'active'
+                      const canPromote = status === 'candidate' && lane !== 'diagnostic'
+                      return (
+                        <div key={memory.id} className="flex items-start gap-2 border-t border-stone-100 py-1.5 first:border-t-0">
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate font-medium text-stone-800">{memory.value}</p>
+                            <p className="flex flex-wrap items-center gap-1 text-[10px] text-stone-400">
+                              <span>{memory.kind}</span>
+                              <span>/ {lane}</span>
+                              <span>/ {status}</span>
+                              {memory.injectable ? <span className="rounded bg-emerald-50 px-1 text-emerald-700">可注入</span> : <span className="rounded bg-stone-100 px-1 text-stone-500">仅审计</span>}
+                              <span>{(memory.evidenceScore ?? memory.confidence).toFixed(2)}</span>
+                              {memory.sourceKind ? <span>/ {memory.sourceKind}</span> : null}
                             </p>
+                            {memory.evidence ? (
+                              <p className="truncate text-[10px] text-stone-400">
+                                证据 {String(memory.evidence.runId ?? memory.evidence.actionRequestId ?? memory.evidence.snapshotId ?? '已记录')}
+                              </p>
+                            ) : null}
+                          </div>
+                          {canPromote ? (
+                            <button
+                              type="button"
+                              onClick={() => props.onPromoteMemory(memory.id)}
+                              disabled={props.busy}
+                              className="inline-flex h-6 w-6 items-center justify-center rounded-md text-stone-400 transition hover:bg-emerald-50 hover:text-emerald-700 disabled:opacity-50"
+                              title="提升为长期记忆"
+                            >
+                              <ShieldCheck className="h-3.5 w-3.5" />
+                            </button>
                           ) : null}
+                          <button
+                            type="button"
+                            onClick={() => props.onDeleteMemory(memory.id)}
+                            disabled={props.busy}
+                            className="inline-flex h-6 w-6 items-center justify-center rounded-md text-stone-400 transition hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+                            title="归档记忆"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => props.onDeleteMemory(memory.id)}
-                          disabled={props.busy}
-                          className="inline-flex h-6 w-6 items-center justify-center rounded-md text-stone-400 transition hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
-                          title="删除记忆"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    ))
+                      )
+                    })
                   ) : (
                     <p className="py-2 text-stone-500">暂无记忆。</p>
                   )}

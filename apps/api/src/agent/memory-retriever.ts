@@ -3,8 +3,9 @@ import type { Database, Row } from '../db/schema.js'
 import type { CurrentUser } from '../modules/auth.js'
 import { utcNow } from '../core/time.js'
 import { redactSecretLikeContent } from './memory-safety.js'
-import { countMemoryEvents, addMemoryEvent } from './memory-events.js'
+import { addMemoryEvent } from './memory-events.js'
 import { touchAgentMemories } from './memory.js'
+import { isMemoryPromptInjectable, type AgentMemoryLane, type AgentMemoryStatus } from './memory-promotion-policy.js'
 
 export type AgentMemoryRetrievalResult = {
   memory: Row<'agent_memories'>
@@ -12,11 +13,19 @@ export type AgentMemoryRetrievalResult = {
   reasons: string[]
 }
 
-type SearchableMemoryStatus = 'candidate' | 'active' | 'promoted'
+type SearchableMemoryStatus = AgentMemoryStatus
 
-const SEARCHABLE_STATUSES = new Set<SearchableMemoryStatus>(['candidate', 'active', 'promoted'])
+const SEARCHABLE_STATUSES = new Set<SearchableMemoryStatus>(['candidate', 'active', 'promoted', 'archived', 'expired', 'superseded'])
 const CJK_CHAR = /[\u3400-\u9fff]/
 const WORD_OR_CJK = /[a-z0-9_]+|[\u3400-\u9fff]/gi
+const DEFAULT_PROMPT_LANE_LIMITS: Record<string, number> = {
+  working: 3,
+  semantic: 4,
+  procedural: 3,
+  episodic: 0,
+  diagnostic: 0,
+  archived: 0,
+}
 
 function normalize(value: string) {
   return redactSecretLikeContent(value).toLowerCase().replace(/\s+/g, ' ').trim()
@@ -52,8 +61,9 @@ function statusBoost(row: Row<'agent_memories'>) {
 }
 
 function typeBoost(row: Row<'agent_memories'>) {
-  if (row.memory_type === 'semantic' || row.memory_type === 'procedural') return 0.12
-  if (row.memory_type === 'episodic') return 0.04
+  if (row.lane === 'semantic' || row.lane === 'procedural') return 0.14
+  if (row.lane === 'working') return 0.1
+  if (row.lane === 'episodic') return 0.02
   return 0
 }
 
@@ -66,7 +76,7 @@ function scopeBoost(row: Row<'agent_memories'>) {
 
 function scoreMemory(row: Row<'agent_memories'>, query: string): AgentMemoryRetrievalResult {
   const queryTokens = tokenize(query)
-  const memoryTokens = new Set(tokenize(`${row.key} ${row.kind} ${row.scope_type} ${row.memory_type} ${row.value}`))
+  const memoryTokens = new Set(tokenize(`${row.key} ${row.kind} ${row.scope_type} ${row.memory_type} ${row.lane} ${row.value}`))
   const overlap = queryTokens.filter((token) => memoryTokens.has(token))
   const lexical = queryTokens.length > 0 ? overlap.length / queryTokens.length : 0
   const phrase = normalize(row.value).includes(normalize(query)) && query.trim().length >= 3 ? 0.18 : 0
@@ -78,9 +88,56 @@ function scoreMemory(row: Row<'agent_memories'>, query: string): AgentMemoryRetr
     phrase > 0 ? 'phrase_match' : null,
     keyHit > 0 ? 'key_match' : null,
     row.status === 'candidate' ? 'candidate_memory' : `${row.status}_memory`,
+    row.injectable ? 'injectable' : 'non_injectable',
+    row.lane,
     row.memory_type,
   ].filter((item): item is string => Boolean(item))
   return { memory: row, score: Number(score.toFixed(4)), reasons }
+}
+
+// Inspired by OpenClaw's MIT-licensed memory MMR utility. This local version
+// reranks DB-backed SaaS memory rows instead of filesystem snippets.
+function jaccard(left: Set<string>, right: Set<string>) {
+  if (left.size === 0 || right.size === 0) return 0
+  let intersection = 0
+  for (const token of left) if (right.has(token)) intersection += 1
+  return intersection / (left.size + right.size - intersection)
+}
+
+function applyMmr(results: AgentMemoryRetrievalResult[], lambda = 0.72) {
+  if (results.length <= 2) return results
+  const remaining = [...results]
+  const selected: AgentMemoryRetrievalResult[] = []
+  const tokens = new Map<string, Set<string>>()
+  for (const result of results) tokens.set(result.memory.id, new Set(tokenize(`${result.memory.key} ${result.memory.value}`)))
+  while (remaining.length > 0) {
+    let bestIndex = 0
+    let bestScore = -Infinity
+    for (let index = 0; index < remaining.length; index += 1) {
+      const candidate = remaining[index]!
+      const candidateTokens = tokens.get(candidate.memory.id) ?? new Set<string>()
+      const maxSimilarity = selected.reduce((max, item) => Math.max(max, jaccard(candidateTokens, tokens.get(item.memory.id) ?? new Set<string>())), 0)
+      const score = lambda * candidate.score - (1 - lambda) * maxSimilarity
+      if (score > bestScore) {
+        bestScore = score
+        bestIndex = index
+      }
+    }
+    selected.push(remaining.splice(bestIndex, 1)[0]!)
+  }
+  return selected
+}
+
+function applyPromptLaneBudgets(results: AgentMemoryRetrievalResult[]) {
+  const counts = new Map<string, number>()
+  return results.filter((result) => {
+    const lane = result.memory.lane as AgentMemoryLane
+    const limit = DEFAULT_PROMPT_LANE_LIMITS[lane] ?? 0
+    const current = counts.get(lane) ?? 0
+    if (current >= limit) return false
+    counts.set(lane, current + 1)
+    return true
+  })
 }
 
 export async function retrieveAgentMemories(input: {
@@ -90,26 +147,35 @@ export async function retrieveAgentMemories(input: {
   query: string
   limit?: number
   includeCandidates?: boolean
+  includeArchived?: boolean
+  includeNonInjectable?: boolean
+  includeDiagnostics?: boolean
+  forPrompt?: boolean
+  threadId?: string | null
 }): Promise<AgentMemoryRetrievalResult[]> {
   const rows = await input.db
     .selectFrom('agent_memories')
     .selectAll()
     .where('workspace_id', '=', input.workspace.id)
     .where('user_id', '=', input.user.id)
-    .where('archived_at', 'is', null)
     .orderBy('updated_at', 'desc')
     .limit(80)
     .execute()
 
   const scored = rows
     .filter((row) => SEARCHABLE_STATUSES.has(row.status as SearchableMemoryStatus))
-    .filter((row) => input.includeCandidates !== false || row.status !== 'candidate')
+    .filter((row) => input.includeCandidates === true || row.status !== 'candidate')
+    .filter((row) => input.includeArchived === true || !['archived', 'expired', 'superseded'].includes(row.status))
+    .filter((row) => input.includeDiagnostics === true || row.lane !== 'diagnostic')
+    .filter((row) => input.includeNonInjectable === true || input.forPrompt === true || Number(row.injectable) === 1)
+    .filter((row) => !input.forPrompt || isMemoryPromptInjectable(row, { now: utcNow(), ...(input.threadId !== undefined ? { threadId: input.threadId } : {}) }))
     .map((row) => scoreMemory(row, input.query))
     .filter((result) => result.score >= 0.32 || result.reasons.some((reason) => reason.startsWith('token_overlap:')))
     .sort((left, right) => right.score - left.score)
-    .slice(0, Math.max(1, Math.min(12, input.limit ?? 6)))
+  const ranked = applyMmr(input.forPrompt ? applyPromptLaneBudgets(scored) : scored)
+    .slice(0, Math.max(1, Math.min(50, input.limit ?? 6)))
 
-  return scored
+  return ranked
 }
 
 export async function markAgentMemoriesRecalled(input: {
@@ -123,7 +189,6 @@ export async function markAgentMemoriesRecalled(input: {
 }) {
   if (input.memories.length === 0) return []
   await touchAgentMemories(input.db, input.memories)
-  const promoted: Row<'agent_memories'>[] = []
   for (const memory of input.memories) {
     await addMemoryEvent(input.db, {
       memoryId: memory.id,
@@ -135,33 +200,6 @@ export async function markAgentMemoriesRecalled(input: {
       evidence: { query: redactSecretLikeContent(input.query).slice(0, 500) },
       metadata: { memoryType: memory.memory_type, status: memory.status },
     })
-    const recallCount = await countMemoryEvents(input.db, memory.id, 'recalled')
-    if (memory.status !== 'candidate' || recallCount < 2 || memory.confidence < 0.65 || memory.kind === 'episode') continue
-    const nextType = memory.kind === 'workflow' ? 'procedural' : 'semantic'
-    await input.db
-      .updateTable('agent_memories')
-      .set({
-        status: 'promoted',
-        memory_type: nextType,
-        promoted_at: utcNow(),
-        updated_at: utcNow(),
-      })
-      .where('id', '=', memory.id)
-      .where('workspace_id', '=', input.workspace.id)
-      .where('user_id', '=', input.user.id)
-      .execute()
-    await addMemoryEvent(input.db, {
-      memoryId: memory.id,
-      workspaceId: input.workspace.id,
-      userId: input.user.id,
-      threadId: input.threadId,
-      runId: input.runId,
-      eventType: 'promoted',
-      evidence: { recallCount, fromType: memory.memory_type, toType: nextType },
-      metadata: { reason: 'repeated_scoped_recall' },
-    })
-    const updated = await input.db.selectFrom('agent_memories').selectAll().where('id', '=', memory.id).executeTakeFirst()
-    if (updated) promoted.push(updated)
   }
-  return promoted
+  return []
 }

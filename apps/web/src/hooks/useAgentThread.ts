@@ -422,6 +422,19 @@ export function useAgentThread(props: {
     }
   }
 
+  async function promoteMemory(memoryId: string) {
+    setBusy(true)
+    setError(null)
+    try {
+      await api.promoteAgentMemory(memoryId)
+      await refreshMemories()
+    } catch (promoteError) {
+      setError(promoteError instanceof Error ? promoteError.message : String(promoteError))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function saveProviderSetting(payload: AgentProviderSettingUpdatePayload) {
     setBusy(true)
     setError(null)
@@ -499,6 +512,7 @@ export function useAgentThread(props: {
     refreshProviderSetting,
     setAutomationLevel,
     deleteMemory,
+    promoteMemory,
     saveProviderSetting,
     probeProviderSetting,
     deleteProviderSetting,

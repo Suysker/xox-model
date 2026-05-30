@@ -73,8 +73,8 @@
 - [x] 配置 `AGENT_PROVIDER_KEY_ENCRYPTION_SECRET` 后，用户 provider key 以 `enc:v1` ciphertext 入库；API 测试覆盖密文存储、运行时解密调用 provider、旧明文记录升级后仍可读取
 - [x] Agent prompts、tool catalog、memory/context 模块有独立代码边界，不把系统提示词散在路由代码里
 - [x] 普通对话、问候、身份说明和能力说明通过 provider assistant 文本直接返回；`agent_reply` 废弃工具已删除，真实 DeepSeek smoke 覆盖“你好，告诉我你是谁”，不会把基础对话误判为规划失败
-- [x] Agent memory 按用户和工作区隔离，支持查询、搜索、过滤和删除；长对话会生成同租户上下文摘要，并把压缩结果作为带证据的 working memory 候选
-- [x] OpenClaw-inspired Memory Kernel 已落地：`active-memory-recall.ts` 在 provider planning 前做当前用户/工作区 ranked recall，`memory-retriever.ts` 做中文友好的 token/bigram 排名，`agent_memory_events` 记录 captured/recalled/injected/promoted/archived 事件，统一时间线/技术日志展示 `memory_recall_*`、`memory_injected`、`memory_candidate_stored` 和 `memory_promoted`
+- [x] Agent memory 按用户和工作区隔离，支持按 lane/status 查询、搜索、过滤、归档和候选晋升；长对话会生成同租户上下文摘要，并把压缩结果作为带证据的 working memory 候选
+- [x] OpenClaw-inspired Memory Kernel v2 已落地：`active-memory-recall.ts` 在 provider planning 前做当前用户/工作区 ranked recall，`memory-retriever.ts` 做中文友好的 token/bigram 排名、MMR/diversity 和 prompt lane budget；`agent_memories` 区分 `working / session / semantic / procedural / episodic / diagnostic / archived`，`candidate / diagnostic / archived / expired / superseded` 不进入普通 provider context，召回不再按次数自动晋升候选；`agent_memory_events` 记录 captured/recalled/injected/promoted/archived 事件，Memory Center 展示可注入、短期、候选、事件、诊断和归档记忆
 - [x] 新建对话后，真实 provider 请求只注入同用户 / 同工作区的相关 memory；注入内容以 `memory_context trust="untrusted"` 进入 Context Pack，不能覆盖当前用户指令、确认卡策略、租户隔离或工具 schema
 - [x] 记账类命令会生成 server-owned action request；manual 下停在可编辑确认卡，medium/high 下 eligible 中风险记账可自动执行并刷新工作台
 - [x] 线上系数试算类命令只读执行，不修改草稿

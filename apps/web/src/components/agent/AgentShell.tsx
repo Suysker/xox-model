@@ -176,6 +176,7 @@ export function AgentShell(props: {
     onRefreshThreads: () => void agent.refreshThreads(),
     onRefreshMemories: (query?: string) => void agent.refreshMemories(query),
     onDeleteMemory: (id: string) => void agent.deleteMemory(id),
+    onPromoteMemory: (id: string) => void agent.promoteMemory(id),
     onRefreshProviderSetting: () => void agent.refreshProviderSetting(),
     onAutomationLevelChange: agent.setAutomationLevel,
     onSaveProviderSetting: (payload: Parameters<typeof agent.saveProviderSetting>[0]) => agent.saveProviderSetting(payload),

@@ -1,6 +1,6 @@
 # Agent OS 设计
 
-本文件描述 `xox-model` 的目标 Agent OS 架构。正式 runtime 采用策略见 [ADR 0001](adr/0001-agent-runtime-architecture.md)，Harness Agent 分层架构见 [ADR 0002](adr/0002-harness-agent-architecture.md)，历史收敛记录见 [ADR 0003](adr/0003-xox-model-agent-os-target-architecture.md)，当前可靠性核心以 [ADR 0004: Evaluator-Centered Harness Agent 架构](adr/0004-evaluator-centered-harness-agent.md) 为准；后续架构收束以 [ADR 0018: AgentRunEngine v2 Single-Loop Harness Upgrade](adr/0018-agent-run-engine-v2-single-loop-harness.md) 为准，目标是把 `AgentRunEngine`、turn resolution、context、tool runtime、agent actions、evaluator、sandbox 和 transcript/trace 收束到一个更清晰的单循环 harness。受控代码执行边界见 [ADR 0016: Manifest-Scoped Sandbox Tool](adr/0016-manifest-scoped-sandbox-tool.md)，它只能在服务端生成的 manifest 内运行并产生 observation 和临时产物，不提供业务写入通道。
+本文件描述 `xox-model` 的目标 Agent OS 架构。正式 runtime 采用策略见 [ADR 0001](adr/0001-agent-runtime-architecture.md)，Harness Agent 分层架构见 [ADR 0002](adr/0002-harness-agent-architecture.md)，历史收敛记录见 [ADR 0003](adr/0003-xox-model-agent-os-target-architecture.md)，当前可靠性核心以 [ADR 0004: Evaluator-Centered Harness Agent 架构](adr/0004-evaluator-centered-harness-agent.md) 为准；后续架构收束以 [ADR 0018: AgentRunEngine v2 Single-Loop Harness Upgrade](adr/0018-agent-run-engine-v2-single-loop-harness.md) 为准，目标是把 `AgentRunEngine`、turn resolution、context、tool runtime、agent actions、evaluator、sandbox 和 transcript/trace 收束到一个更清晰的单循环 harness。受控代码执行边界见 [ADR 0016: Manifest-Scoped Sandbox Tool](adr/0016-manifest-scoped-sandbox-tool.md)，它只能在服务端生成的 manifest 内运行并产生 observation 和临时产物，不提供业务写入通道。Memory Kernel 后续以 [ADR 0019: OpenClaw-First Memory Kernel v2](adr/0019-openclaw-first-memory-kernel-v2.md) 为准：记忆不是日志池，必须按 working/session/semantic/procedural/episodic/diagnostic/archive 分层治理，OpenClaw 是 active recall、hybrid retrieval、promotion 和 compaction flush 的优先参考。
 
 ## 目标
 
@@ -1152,6 +1152,7 @@ Agent: workspace_import_bundle
 - 任何 SDK 原生成熟化增强都必须进入 provider-neutral run events 或 Tool Policy hooks，不能替代确认卡、租户隔离、domain services 或 audit。
 - ADR 0017 已落地第一版 Tool Runtime Maturity Layer：吸收 OpenAI Agents JS 的 tool/approval/guardrail/turn-resolution 思想、OpenClaw 的 effective tool inventory 和 stricter approval composition、Hermes 的 provider sanitation 与 tool-loop guardrails，但保留 xox 的 SaaS harness 作为主线，不引入本地 agent control plane。实现模块包括 `tool-runtime/effective-tool-inventory.ts`、`tool-runtime/tool-call-supervisor.ts`、`tool-runtime/tool-loop-guardrails.ts`、`runtime/provider-payload-sanitizer.ts` 和 `tool-runtime/approval-policy-composer.ts`。
 - ADR 0018 的单循环核心已落地：不再继续增加并列 sidecar，而是把当前成熟部件重新组织到 `AgentRunEngine v2` 单循环内。`TurnResolver` 负责模型输出到 next step 的分类，`ContextEngine` 负责上下文/记忆/压缩入口，`ToolRuntime` 负责模型已选工具的监督，`AgentActionRuntime` 负责 Agent 发起的写入生命周期，`CompletionEvaluator` 负责完成判定，Transcript/Trace 分别负责用户可见和技术诊断投影。
+- ADR 0019 的 Memory Kernel v2 已落地：记忆不再是日志池，而是受 `AgentRunEngine` 调用的上下文能力。`agent_memories` 增加 lane、injectable、normalized hash、evidence score、source kind 和 supersession 字段；普通 prompt 只允许相关的可注入 working/semantic/procedural 记忆进入，candidate/diagnostic/episodic archive/expired/superseded 默认不可注入；evaluator finding 和 completed-goal 文本不会因为重复召回变成长期提示上下文，候选需要策略或用户在 Memory Center 显式晋升。
 
 ## 迁移顺序
 

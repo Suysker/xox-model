@@ -78,7 +78,7 @@ function buildSummary(results: AgentMemoryRetrievalResult[]) {
   const lines = results.slice(0, 6).map((result, index) => {
     const memory = result.memory
     const value = redactSecretLikeContent(memory.value).replace(/\s+/g, ' ').trim()
-    return `${index + 1}. [${memory.kind}/${memory.memory_type}/${memory.status}] ${value}`
+    return `${index + 1}. [memory:${memory.id} lane=${memory.lane} kind=${memory.kind} status=${memory.status} evidence=${memory.evidence_json ? 'present' : 'none'}] ${value}`
   })
   return [
     '<memory_context trust="untrusted" scope="current_user_current_workspace">',
@@ -130,7 +130,7 @@ export async function recallActiveAgentMemory(input: {
   const cached = recallCache.get(key)
   if (cached && cached.expiresAt > Date.now()) {
     if (cached.result.memories.length > 0) {
-      const promoted = await markAgentMemoriesRecalled({
+      await markAgentMemoriesRecalled({
         db: input.db,
         memories: cached.result.memories,
         workspace: input.workspace,
@@ -164,21 +164,6 @@ export async function recallActiveAgentMemory(input: {
           retrieval: cached.result.retrieval,
         },
       })
-      if (promoted.length > 0) {
-        await addRunEvent(input.db, {
-          threadId: input.threadId,
-          runId: input.runId,
-          type: 'memory_promoted',
-          title: '记忆已晋升',
-          message: `有 ${promoted.length} 条候选记忆因重复有效召回晋升为长期记忆。`,
-          status: 'info',
-          data: {
-            memoryIds: promoted.map((memory) => memory.id),
-            memoryTypes: promoted.map((memory) => memory.memory_type),
-            cachedRecall: true,
-          },
-        })
-      }
     }
     cacheRecallForRun(input, cached.result)
     return cached.result
@@ -201,7 +186,9 @@ export async function recallActiveAgentMemory(input: {
       user: input.user,
       query: input.message,
       limit: 6,
-      includeCandidates: true,
+      includeCandidates: false,
+      forPrompt: true,
+      threadId: input.threadId,
     }),
     ACTIVE_RECALL_TIMEOUT_MS,
   )
@@ -245,7 +232,7 @@ export async function recallActiveAgentMemory(input: {
     return result
   }
 
-  const promoted = await markAgentMemoriesRecalled({
+  await markAgentMemoriesRecalled({
     db: input.db,
     memories,
     workspace: input.workspace,
@@ -265,20 +252,6 @@ export async function recallActiveAgentMemory(input: {
     evidence: { memoryIds: usedMemoryIds },
     metadata: { confidence, retrieval },
   })
-  if (promoted.length > 0) {
-    await addRunEvent(input.db, {
-      threadId: input.threadId,
-      runId: input.runId,
-      type: 'memory_promoted',
-      title: '记忆已晋升',
-      message: `有 ${promoted.length} 条候选记忆因重复有效召回晋升为长期记忆。`,
-      status: 'info',
-      data: {
-        memoryIds: promoted.map((memory) => memory.id),
-        memoryTypes: promoted.map((memory) => memory.memory_type),
-      },
-    })
-  }
   await addRunEvent(input.db, {
     threadId: input.threadId,
     runId: input.runId,
@@ -291,6 +264,12 @@ export async function recallActiveAgentMemory(input: {
       memoryCount: memories.length,
       confidence,
       retrieval,
+      citations: recalled.map((item) => ({
+        memoryId: item.memory.id,
+        lane: item.memory.lane,
+        score: item.score,
+        evidenceRefs: item.memory.evidence_json ? ['evidence_json'] : [],
+      })),
     },
   })
   await addRunEvent(input.db, {
@@ -303,9 +282,14 @@ export async function recallActiveAgentMemory(input: {
     data: {
       memoryIds: usedMemoryIds,
       memoryCount: memories.length,
-      promotedMemoryIds: promoted.map((memory) => memory.id),
       confidence,
       retrieval,
+      citations: recalled.map((item) => ({
+        memoryId: item.memory.id,
+        lane: item.memory.lane,
+        score: item.score,
+        evidenceRefs: item.memory.evidence_json ? ['evidence_json'] : [],
+      })),
     },
   })
 

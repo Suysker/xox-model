@@ -683,16 +683,23 @@ export type AgentMemoryRecord = {
   kind: string
   scopeType?: 'thread' | 'workspace' | 'user' | 'procedural' | 'commitment'
   memoryType?: 'working' | 'episodic' | 'semantic' | 'procedural' | 'commitment'
-  status?: 'candidate' | 'active' | 'promoted' | 'archived' | 'rejected' | 'expired'
+  lane?: 'working' | 'session' | 'semantic' | 'procedural' | 'episodic' | 'diagnostic' | 'archived'
+  status?: 'candidate' | 'active' | 'promoted' | 'archived' | 'rejected' | 'expired' | 'superseded'
   key: string
   value: string
   confidence: number
+  evidenceScore?: number
   sensitivity?: 'normal' | 'private' | 'restricted'
+  injectable?: boolean
+  normalizedHash?: string | null
+  sourceKind?: string | null
   evidence?: Record<string, unknown> | null
   sourceRunId?: string | null
   lastUsedAt?: string | null
+  lastVerifiedAt?: string | null
   promotedAt?: string | null
   expiresAt?: string | null
+  supersededBy?: string | null
   createdAt: string
   updatedAt: string
 }

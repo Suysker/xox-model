@@ -11,6 +11,7 @@ import { getWorkspaceForUser } from '../modules/workspace.js'
 import {
   archiveAgentMemory,
   listAgentMemories,
+  promoteAgentMemory,
   serializeMemory,
 } from './memory.js'
 import { retrieveAgentMemories } from './memory-retriever.js'
@@ -217,12 +218,38 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
     try {
       const user = await requireCurrentUser(db, settings, request)
       const workspace = await getWorkspaceForUser(db, user)
-      const query = request.query as { query?: string; q?: string }
+      const query = request.query as { query?: string; q?: string; lane?: string; status?: string }
       const search = (query.query ?? query.q ?? '').trim()
       const memories = search
-        ? (await retrieveAgentMemories({ db, workspace, user, query: search, limit: 30, includeCandidates: true })).map((result) => result.memory)
+        ? (await retrieveAgentMemories({
+            db,
+            workspace,
+            user,
+            query: search,
+            limit: 50,
+            includeCandidates: true,
+            includeArchived: true,
+            includeDiagnostics: true,
+            includeNonInjectable: true,
+          })).map((result) => result.memory)
         : await listAgentMemories(db, workspace, user)
-      return { memories: memories.map(serializeMemory) }
+      const filtered = memories
+        .filter((memory) => !query.lane || memory.lane === query.lane)
+        .filter((memory) => !query.status || memory.status === query.status)
+      return { memories: filtered.map(serializeMemory) }
+    } catch (error) {
+      const { sendError } = await import('../core/http.js')
+      return sendError(reply, error)
+    }
+  })
+
+  app.post('/api/v1/agent/memories/:memoryId/promote', async (request, reply) => {
+    try {
+      const user = await requireCurrentUser(db, settings, request)
+      const workspace = await getWorkspaceForUser(db, user)
+      const { memoryId } = request.params as { memoryId: string }
+      const memory = await promoteAgentMemory(db, workspace, user, memoryId)
+      return { memory: serializeMemory(memory) }
     } catch (error) {
       const { sendError } = await import('../core/http.js')
       return sendError(reply, error)
