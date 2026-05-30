@@ -6,6 +6,9 @@ import { newId } from '../core/security.js'
 import { utcNow } from '../core/time.js'
 import { agentThreadEvents } from './thread-events.js'
 
+const runEventQueues = new Map<string, Promise<void>>()
+const MAX_SEQUENCE_RETRIES = 5
+
 function runEventStatus(value: string): AgentRunEventStatus {
   if (
     value === 'queued' ||
@@ -19,6 +22,37 @@ function runEventStatus(value: string): AgentRunEventStatus {
     return value
   }
   return 'info'
+}
+
+function isRunEventSequenceConflict(error: unknown) {
+  const code = typeof (error as { code?: unknown })?.code === 'string' ? (error as { code: string }).code : ''
+  const message = error instanceof Error ? error.message : String(error)
+  return (
+    code === 'SQLITE_CONSTRAINT_UNIQUE' ||
+    (message.includes('UNIQUE constraint failed') &&
+      message.includes('agent_run_events.run_id') &&
+      message.includes('agent_run_events.sequence_no'))
+  )
+}
+
+async function waitForRunEventTurn<T>(runId: string, work: () => Promise<T>): Promise<T> {
+  const previous = runEventQueues.get(runId) ?? Promise.resolve()
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const next = previous.catch(() => undefined).then(() => gate)
+  runEventQueues.set(runId, next)
+
+  await previous.catch(() => undefined)
+  try {
+    return await work()
+  } finally {
+    release()
+    if (runEventQueues.get(runId) === next) {
+      runEventQueues.delete(runId)
+    }
+  }
 }
 
 export function serializeRunEvent(row: Row<'agent_run_events'>): AgentRunEvent {
@@ -36,7 +70,7 @@ export function serializeRunEvent(row: Row<'agent_run_events'>): AgentRunEvent {
   }
 }
 
-export async function addRunEvent(
+async function insertRunEvent(
   db: Kysely<Database>,
   input: {
     threadId: string
@@ -70,8 +104,33 @@ export async function addRunEvent(
       created_at: utcNow(),
     })
     .execute()
-  agentThreadEvents.publish(input.threadId, 'run_trace')
   return db.selectFrom('agent_run_events').selectAll().where('id', '=', id).executeTakeFirstOrThrow()
+}
+
+export async function addRunEvent(
+  db: Kysely<Database>,
+  input: {
+    threadId: string
+    runId: string
+    type: string
+    title: string
+    message: string
+    status: AgentRunEventStatus
+    data?: Record<string, unknown> | null
+  },
+) {
+  const row = await waitForRunEventTurn(input.runId, async () => {
+    for (let attempt = 0; attempt < MAX_SEQUENCE_RETRIES; attempt += 1) {
+      try {
+        return await insertRunEvent(db, input)
+      } catch (error) {
+        if (!isRunEventSequenceConflict(error) || attempt === MAX_SEQUENCE_RETRIES - 1) throw error
+      }
+    }
+    throw new Error('Unable to append agent run event after sequence retries')
+  })
+  agentThreadEvents.publish(input.threadId, 'run_trace')
+  return row
 }
 
 export async function listSerializedRunEvents(db: Kysely<Database>, runId: string): Promise<AgentRunEvent[]> {

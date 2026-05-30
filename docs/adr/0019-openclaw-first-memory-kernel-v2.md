@@ -553,6 +553,10 @@ Implementation validation:
 - add API tests for memory list/search/archive/promote/delete;
 - add a real-provider smoke proving a cross-domain run is not influenced by old shareholder-count evaluator diagnostics.
 
+Implementation note:
+
+- The real-provider smoke also validates two harness invariants needed for Memory Kernel v2 reliability: `agent_run_events` are appended through a serialized run-scoped writer so provider streaming cannot collide on `sequence_no`, and plain assistant text is not accepted as completion when the goal requires a tool-backed write or confirmation card.
+
 Manual validation:
 
 - inspect Memory Center after a complex run and verify only useful candidates appear;

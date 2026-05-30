@@ -1,6 +1,6 @@
 import { projectModel, type ModelConfig } from '@xox/domain'
 import type { AgentNavigationEvent } from '@xox/contracts'
-import { listEntries, listSubjectsForPeriod } from '../modules/ledger.js'
+import { listEntries, listPeriods, listSubjectsForPeriod } from '../modules/ledger.js'
 import { utcNow } from '../core/time.js'
 import type { AgentActionDraft } from './approval-executor.js'
 import type { PlannedItem, ReadDraft, RuntimePlannerStep } from './action-draft-builder.js'
@@ -392,22 +392,53 @@ function entryIncludesKeyword(entry: LedgerEntry, keyword: string) {
   return haystack.some((item) => item && normalizedLookup(item).includes(normalized))
 }
 
+async function findLedgerEntryById(
+  ctx: PlannerContext,
+  entryId: string,
+  desiredStatus: 'posted' | 'voided',
+): Promise<EntryLookup> {
+  const initial = await ctx.db
+    .selectFrom('actual_entries')
+    .select(['workspace_id', 'ledger_period_id'])
+    .where('id', '=', entryId)
+    .executeTakeFirst()
+  if (!initial || initial.workspace_id !== ctx.workspace.id) {
+    return { status: 'missing', message: `没有找到分录 ${entryId}。`, period: null }
+  }
+
+  await listEntries(ctx.db, ctx.workspace, initial.ledger_period_id)
+  const refreshed = await ctx.db
+    .selectFrom('actual_entries')
+    .select(['workspace_id', 'ledger_period_id', 'status'])
+    .where('id', '=', entryId)
+    .executeTakeFirst()
+  if (!refreshed || refreshed.workspace_id !== ctx.workspace.id) {
+    return { status: 'missing', message: `没有找到分录 ${entryId}。`, period: null }
+  }
+  const period = (await listPeriods(ctx.db, ctx.workspace)).find((item) => item.id === refreshed.ledger_period_id) ?? null
+  if (!period) return { status: 'missing', message: `没有找到分录 ${entryId} 所属账期。`, period: null }
+  if (refreshed.status !== desiredStatus) {
+    return { status: 'missing', message: `分录状态不是${desiredStatus === 'posted' ? '已过账' : '已作废'}。`, period }
+  }
+
+  const entries = await listEntries(ctx.db, ctx.workspace, period.id)
+  const entry = entries.find((item) => item.id === entryId)
+  if (!entry) return { status: 'missing', message: `没有找到分录 ${entryId}。`, period }
+  return { status: 'found', entry, period }
+}
+
 async function findLedgerEntryForStep(
   ctx: PlannerContext,
   step: RuntimePlannerStep,
   desiredStatus: 'posted' | 'voided',
 ): Promise<EntryLookup> {
+  const entryId = asNonEmptyString(step.entryId)
+  if (entryId) return findLedgerEntryById(ctx, entryId, desiredStatus)
+
   const monthLabel = asNonEmptyString(step.monthLabel)
   const period = monthLabel ? await periodForMonth(ctx, monthLabel) : null
   if (!period) return { status: 'missing', message: '需要指定账本月份。', period: null }
   const entries = await listEntries(ctx.db, ctx.workspace, period.id)
-  const entryId = asNonEmptyString(step.entryId)
-  if (entryId) {
-    const entry = entries.find((item) => item.id === entryId)
-    if (!entry) return { status: 'missing', message: `没有找到分录 ${entryId}。`, period }
-    if (entry.status !== desiredStatus) return { status: 'missing', message: `分录状态不是${desiredStatus === 'posted' ? '已过账' : '已作废'}。`, period }
-    return { status: 'found', entry, period }
-  }
 
   const amount = moneyAmount(step.amount)
   const occurredOn = asNonEmptyString(step.occurredOn)

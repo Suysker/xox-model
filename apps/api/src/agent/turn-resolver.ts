@@ -44,20 +44,6 @@ export function resolveAfterPlanning(input: {
     }
   }
 
-  const hasAssistantOnlyOutput =
-    Boolean(input.pendingAssistantText?.trim()) &&
-    input.actionRows.length === 0 &&
-    input.planRows.length === 0 &&
-    input.observations.length === 0
-
-  if (hasAssistantOnlyOutput) {
-    return {
-      type: 'final_output',
-      reason: 'assistant_text_only',
-      assistantText: input.pendingAssistantText,
-    }
-  }
-
   return {
     type: 'evaluate',
     reason: 'planning_outputs_require_evaluation',

@@ -134,16 +134,31 @@ export async function executeAgentRun(
     if (planned.assistantText?.trim()) {
       pendingAssistantText = planned.assistantText.trim()
     }
-    if (
-      pendingAssistantText &&
+    const assistantOnlyNoGraph =
+      Boolean(pendingAssistantText) &&
       planned.actionRows.length === 0 &&
       planned.planRows.length === 0 &&
       planned.observations.length === 0
-    ) {
-      assistantParts.push(pendingAssistantText)
+    if (assistantOnlyNoGraph && lastEvaluation?.status === 'continue') {
+      const reason = '模型连续返回纯文本，但当前目标仍缺少必要的工具调用或确认卡。'
+      await updateGoalStatus(ctx.db, goal, 'failed', { blockedReason: reason })
+      await addRunEvent(ctx.db, {
+        threadId: ctx.thread.id,
+        runId: ctx.runId,
+        type: 'tool_loop_guardrail',
+        title: '工具调用缺失',
+        message: reason,
+        status: 'failed',
+        data: {
+          goalId: goal.id,
+          iteration,
+          previousEvaluationStatus: lastEvaluation.status,
+          previousUnsatisfiedCount: lastEvaluation.unsatisfiedCriteria.length,
+        },
+      })
+      assistantParts.push(reason)
       break
     }
-
     const guardrailFindings = evaluateToolLoopGuardrails({
       iteration,
       priorObservations,

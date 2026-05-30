@@ -25,6 +25,7 @@ import {
   memoryCandidateFromEvaluatorFinding,
   memoryCandidatesFromExecutedActions,
 } from '../src/agent/memory-candidate-detector.js'
+import { addRunEvent } from '../src/agent/run-events.js'
 
 type JsonResponse = {
   statusCode: number
@@ -592,6 +593,74 @@ describe('xox TypeScript API', () => {
     expect(second.statusCode).toBe(200)
     expect(JSON.parse(first.body).email).toBe('auth-concurrent@example.com')
     expect(JSON.parse(second.body).email).toBe('auth-concurrent@example.com')
+    await closeHarness(harness)
+  })
+
+  it('serializes concurrent agent run events for one run', async () => {
+    const harness = await buildHarness('run-event-concurrency')
+    const client = new Client(harness.app)
+    await registerUser(client, 'run-event-concurrency@example.com', 'Run Event')
+    const me = (await client.get('/api/v1/auth/me')).json
+    const workspace = await harness.db
+      .selectFrom('workspaces')
+      .selectAll()
+      .where('owner_id', '=', me.id)
+      .executeTakeFirstOrThrow()
+    const now = new Date().toISOString()
+    const threadId = 'thread-run-event-concurrency'
+    const runId = 'run-run-event-concurrency'
+    const messageId = 'message-run-event-concurrency'
+
+    await harness.db.insertInto('agent_threads').values({
+      id: threadId,
+      workspace_id: workspace.id,
+      user_id: me.id,
+      title: 'Agent 对话',
+      created_at: now,
+      updated_at: now,
+    }).execute()
+    await harness.db.insertInto('agent_messages').values({
+      id: messageId,
+      thread_id: threadId,
+      role: 'user',
+      content: '并发事件测试',
+      created_at: now,
+    }).execute()
+    await harness.db.insertInto('agent_runs').values({
+      id: runId,
+      thread_id: threadId,
+      user_id: me.id,
+      status: 'running',
+      input_message_id: messageId,
+      input_message: '并发事件测试',
+      planner_source: null,
+      automation_level: 'manual',
+      goal_status: 'interpreting',
+      worker_id: null,
+      lease_expires_at: null,
+      heartbeat_at: null,
+      created_at: now,
+      completed_at: null,
+    }).execute()
+
+    await Promise.all(Array.from({ length: 24 }, (_, index) => addRunEvent(harness.db, {
+      threadId,
+      runId,
+      type: `concurrent_${index}`,
+      title: `并发事件 ${index}`,
+      message: `event ${index}`,
+      status: 'info',
+    })))
+
+    const events = await harness.db
+      .selectFrom('agent_run_events')
+      .select(['sequence_no', 'event_type'])
+      .where('run_id', '=', runId)
+      .orderBy('sequence_no', 'asc')
+      .execute()
+    expect(events).toHaveLength(24)
+    expect(events.map((event) => event.sequence_no)).toEqual(Array.from({ length: 24 }, (_, index) => index + 1))
+    expect(new Set(events.map((event) => event.event_type)).size).toBe(24)
     await closeHarness(harness)
   })
 
@@ -2046,7 +2115,7 @@ describe('xox TypeScript API', () => {
     })
   })
 
-  it('persists provider assistant text without falling back to regex rules', async () => {
+  it('does not fall back to regex rules when a write-intent provider reply has no tool call', async () => {
     let callCount = 0
     await withFakeOpenAICompatibleProvider(() => {
       callCount += 1
@@ -2065,11 +2134,12 @@ describe('xox TypeScript API', () => {
         message: '把 3 月成员 A 线下 1 张入账',
       })
       expect(planned.statusCode).toBe(200)
-      expect(callCount).toBe(1)
+      expect(callCount).toBe(2)
       expect(planned.json.planner).toBe('openai_compatible_tool_calls')
       expect(planned.json.actionRequests).toHaveLength(0)
       expect(planned.json.planSteps).toHaveLength(0)
-      expect(planned.json.messages.at(-1).content).toContain('这不是 tool call')
+      expect(planned.json.messages.at(-1).content).toContain('缺少必要的工具调用或确认卡')
+      expect(planned.json.runEvents.some((event: any) => event.type === 'tool_loop_guardrail' && event.status === 'failed')).toBe(true)
       const entries = await client.get(`/api/v1/ledger/entries?periodId=${(await client.get('/api/v1/ledger/periods')).json[0].id}`)
       expect(entries.json).toHaveLength(0)
       await closeHarness(harness)
@@ -2424,6 +2494,50 @@ describe('xox TypeScript API', () => {
         finalizerRequests.push(body)
         return fakeObservationFinalizerResponse(body)
       },
+    })
+  })
+
+  it('does not accept assistant text that claims a write confirmation without a tool call', async () => {
+    let planningRequests = 0
+    await withFakeOpenAICompatibleProvider((body) => {
+      const toolNames = Array.isArray(body?.tools)
+        ? body.tools.map((tool: any) => tool?.function?.name ?? tool?.name)
+        : []
+      expect(toolNames).toContain('ledger_create_member_income')
+      planningRequests += 1
+      if (planningRequests === 1) {
+        return fakeAssistantTextResponse('已为你生成记账确认卡，请确认。')
+      }
+      return fakeToolResponse('ledger_create_member_income', {
+        monthLabel: '3月',
+        memberName: '成员 A',
+        offlineUnits: 1,
+        onlineUnits: 0,
+      })
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-fake-confirmation-text', {
+        llmProvider: 'openai-compatible',
+        openaiCompatibleProvider: 'deepseek',
+        openaiCompatibleModel: 'deepseek-v4-pro',
+        openaiCompatibleBaseUrl: baseUrl,
+        openaiCompatibleApiKey: 'test-key',
+      })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-fake-confirmation-text@example.com')
+
+      const response = await client.post('/api/v1/agent/messages', {
+        message: '把 3 月成员 A 线下 1 张入账，只生成确认卡',
+      })
+      expect(response.statusCode).toBe(200)
+      expect(planningRequests).toBeGreaterThanOrEqual(2)
+      expect(response.json.actionRequests).toHaveLength(1)
+      expect(response.json.actionRequests[0].kind).toBe('ledger.create_entry')
+      expect(response.json.runEvents.some((event: any) =>
+        event.type === 'goal_evaluated' &&
+        event.data?.evaluationStatus === 'continue',
+      )).toBe(true)
+      expect(String(response.json.messages.at(-1)?.content ?? '')).not.toContain('已为你生成记账确认卡')
+      await closeHarness(harness)
     })
   })
 
@@ -4785,6 +4899,7 @@ describe('xox TypeScript API', () => {
       const instruction = prompt.split('用户指令：').at(-1) ?? prompt
       const entryId = instruction.match(/entry:([a-zA-Z0-9-]+)/)?.[1]
       if (instruction.includes('修改')) return fakeToolResponse('ledger_update_entry', { monthLabel: '3月', entryId, newAmount: 456, description: 'Agent 修改历史分录' })
+      if (instruction.includes('错月作废')) return fakeToolResponse('ledger_void_entry', { monthLabel: '4月', entryId })
       if (instruction.includes('精确作废')) return fakeToolResponse('ledger_void_entry', { monthLabel: '3月', entryId })
       if (instruction.includes('恢复')) return fakeToolResponse('ledger_restore_entry', { monthLabel: '3月', entryId })
       return fakeAssistantTextResponse('我是 xox-model Agent OS。')
@@ -4825,6 +4940,15 @@ describe('xox TypeScript API', () => {
 
       const restored = await sendAndConfirm(`恢复 entry:${created.json.id}`)
       expect(restored.planned.actionRequests[0].kind).toBe('ledger.restore_entry')
+      expect((await client.get(`/api/v1/ledger/entries?periodId=${period.id}`)).json.find((entry: any) => entry.id === created.json.id).status).toBe('posted')
+
+      const wrongMonthVoided = await sendAndConfirm(`错月作废 entry:${created.json.id}`)
+      expect(wrongMonthVoided.planned.actionRequests[0].kind).toBe('ledger.void_entry')
+      expect(wrongMonthVoided.planned.actionRequests[0].targetLabel).toContain('3月')
+      expect((await client.get(`/api/v1/ledger/entries?periodId=${period.id}`)).json.find((entry: any) => entry.id === created.json.id).status).toBe('voided')
+
+      const restoredAfterWrongMonth = await sendAndConfirm(`恢复 entry:${created.json.id}`)
+      expect(restoredAfterWrongMonth.planned.actionRequests[0].kind).toBe('ledger.restore_entry')
       expect((await client.get(`/api/v1/ledger/entries?periodId=${period.id}`)).json.find((entry: any) => entry.id === created.json.id).status).toBe('posted')
 
       await closeHarness(harness)

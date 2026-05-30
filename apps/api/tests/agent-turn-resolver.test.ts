@@ -29,14 +29,14 @@ function evaluation(status: AgentEvaluationResult['status'], overrides: Partial<
 }
 
 describe('Agent turn resolver', () => {
-  it('treats plain assistant text as final output only when no graph output exists', () => {
+  it('routes plain assistant text through evaluation before it can become final output', () => {
     expect(resolveAfterPlanning({
       pendingAssistantText: '你好，我可以帮你处理经营模型。',
       actionRows: [],
       planRows: [],
       observations: [],
       guardrailFindings: [],
-    })).toMatchObject({ type: 'final_output', assistantText: '你好，我可以帮你处理经营模型。' })
+    })).toMatchObject({ type: 'evaluate' })
   })
 
   it('preserves assistant text plus tool observations as work that still needs evaluation', () => {
