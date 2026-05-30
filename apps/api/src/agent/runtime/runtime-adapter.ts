@@ -1,4 +1,4 @@
-import type { AgentPlannerSource } from '@xox/contracts'
+import type { AgentPlannerSource, AgentToolInventorySnapshot } from '@xox/contracts'
 import type { Settings } from '../../core/settings.js'
 import type { AgentToolCallStep, ChatTool } from '../tool-catalog.js'
 
@@ -16,6 +16,7 @@ export type RuntimePlanResult = {
   source: RuntimePlannerSource
   steps: AgentToolCallStep[]
   assistantText?: string
+  toolInventorySnapshot?: AgentToolInventorySnapshot
   error?: RuntimePlanError
 }
 

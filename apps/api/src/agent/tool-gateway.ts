@@ -4,6 +4,7 @@ import type { Database } from '../db/schema.js'
 import { redactSecretLikeContent } from './memory.js'
 import { addRunEvent } from './run-events.js'
 import { planWithRuntimeAdapter } from './runtime/adapter-router.js'
+import { buildEffectiveToolInventorySnapshot } from './tool-runtime/effective-tool-inventory.js'
 import {
   AGENT_TOOL_REGISTRY,
   type AgentToolCapability,
@@ -19,6 +20,9 @@ type ToolGatewayContext = {
   message?: string
   context?: unknown
   abortSignal?: AbortSignal
+  userId?: string
+  workspaceId?: string
+  automationLevel?: 'manual' | 'low' | 'medium' | 'high'
 }
 
 export type ToolCatalogProjectionStrategy = 'full_registry' | 'model_selected_capabilities' | 'router_fallback_business_core'
@@ -30,6 +34,7 @@ export type RuntimeToolCatalogProjection = {
   toolNames: string[]
   toolCapabilities: AgentToolMetadata[]
   selectedCapabilities: AgentToolCapability[]
+  inventorySnapshot: ReturnType<typeof buildEffectiveToolInventorySnapshot>
   routerReason?: string
 }
 
@@ -137,6 +142,10 @@ export function buildRuntimeToolCatalogProjection(input?: {
   selectedCapabilities?: AgentToolCapability[] | null
   strategy?: ToolCatalogProjectionStrategy
   routerReason?: string
+  settings?: Settings
+  userId?: string
+  workspaceId?: string
+  automationLevel?: 'manual' | 'low' | 'medium' | 'high'
 }): RuntimeToolCatalogProjection {
   const selectedCapabilities = safeCapabilities(input?.selectedCapabilities)
   const hasModelSelection = input?.selectedCapabilities !== undefined && input.selectedCapabilities !== null
@@ -151,13 +160,27 @@ export function buildRuntimeToolCatalogProjection(input?: {
     ? AGENT_TOOL_REGISTRY.filter((entry) => allowedCapabilities.has(entry.capability) || expandedToolNames.has(entry.name))
     : AGENT_TOOL_REGISTRY
 
+  const toolCapabilities = entries.map(toolMetadata)
+  const settings = input?.settings
+  const inventorySnapshot = buildEffectiveToolInventorySnapshot({
+    userId: input?.userId ?? 'unknown_user',
+    workspaceId: input?.workspaceId ?? 'unknown_workspace',
+    automationLevel: input?.automationLevel ?? 'manual',
+    ...(settings ? { settings } : { provider: 'unknown', model: 'unknown' }),
+    strategy,
+    toolCapabilities,
+    selectedCapabilities,
+    ...(input?.routerReason ? { routerReason: redactSecretLikeContent(input.routerReason).slice(0, 300) } : {}),
+  })
+
   return {
     strategy,
     tools: entries.map((entry) => entry.tool),
     toolCount: entries.length,
     toolNames: entries.map((entry) => entry.name),
-    toolCapabilities: entries.map(toolMetadata),
+    toolCapabilities,
     selectedCapabilities,
+    inventorySnapshot,
     ...(input?.routerReason ? { routerReason: redactSecretLikeContent(input.routerReason).slice(0, 300) } : {}),
   }
 }
@@ -214,7 +237,13 @@ async function selectCapabilitiesWithModel(ctx: ToolGatewayContext) {
 
 export async function provideRuntimeToolCatalog(ctx: ToolGatewayContext) {
   const selection = await selectCapabilitiesWithModel(ctx)
-  const projection = buildRuntimeToolCatalogProjection(selection)
+  const projection = buildRuntimeToolCatalogProjection({
+    ...selection,
+    ...(ctx.settings ? { settings: ctx.settings } : {}),
+    ...(ctx.userId ? { userId: ctx.userId } : {}),
+    ...(ctx.workspaceId ? { workspaceId: ctx.workspaceId } : {}),
+    ...(ctx.automationLevel ? { automationLevel: ctx.automationLevel } : {}),
+  })
   await addRunEvent(ctx.db, {
     threadId: ctx.threadId,
     runId: ctx.runId,
@@ -228,6 +257,7 @@ export async function provideRuntimeToolCatalog(ctx: ToolGatewayContext) {
       toolNames: projection.toolNames,
       toolCapabilities: projection.toolCapabilities,
       selectedCapabilities: projection.selectedCapabilities,
+      inventorySnapshot: projection.inventorySnapshot,
       routerReason: projection.routerReason ?? null,
     },
   })

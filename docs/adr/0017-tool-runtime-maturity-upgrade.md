@@ -1,6 +1,6 @@
 # ADR 0017: OpenAI/OpenClaw/Hermes-Inspired Tool Runtime Maturity Upgrade
 
-Status: Proposed
+Status: Accepted
 
 Date: 2026-05-30
 
@@ -146,6 +146,24 @@ Domain Services own business writes.
 Confirmation Cards own user-visible write approval.
 Evaluator owns completion.
 ```
+
+## Implementation Status
+
+As of 2026-05-30, the first implementation pass is complete:
+
+- `packages/contracts/src/index.ts` defines `AgentToolInventorySnapshot`, `AgentToolRuntimeEvent`, `AgentToolLoopGuardrailFinding` and `AgentToolExecutionObservation`.
+- `apps/api/src/agent/tool-runtime/effective-tool-inventory.ts` builds provider/model/workspace/user-aware inventory snapshots from the existing tool catalog projection, including authority class, provider compatibility flags and provenance.
+- `apps/api/src/agent/tool-runtime/tool-call-supervisor.ts` supervises model-selected tool calls before they enter intent handlers, preserves tool identity, blocks tools outside the effective inventory and returns structured execution observations. It intentionally does not write per-tool run events by default, because provider stream trace events already own the run-event sequence during planning.
+- `apps/api/src/agent/tool-runtime/tool-loop-guardrails.ts` adds pure Hermes-style loop findings for repeated failures, no-progress repair turns and reapplying already executed write actions.
+- `apps/api/src/agent/runtime/provider-payload-sanitizer.ts` centralizes OpenAI-compatible request sanitation below `provider-request-shaper.ts`.
+- `apps/api/src/agent/tool-runtime/approval-policy-composer.ts` cleanly separates automation authority from planning effort and is used by `tool-policy.ts`.
+- `THIRD_PARTY_NOTICES.md` records the MIT upstream references used as architectural/runtime inspiration.
+- `apps/api/tests/tool-runtime.test.ts` covers inventory, sanitizer, supervisor, guardrails and approval composition.
+
+Validation evidence:
+
+- `npm.cmd run build:api` passed.
+- `npm.cmd run test:api` passed with 127/127 tests.
 
 ## Module Plan
 

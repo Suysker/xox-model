@@ -1,7 +1,6 @@
 import type { AgentPlannerSource } from '@xox/contracts'
 import type { PlannerContext } from './planning-context.js'
 import {
-  buildPlannedItemFromRuntimeStep,
   isActionDraft,
   type ActionDraftBuilderHandlers,
   type PlannedItem,
@@ -9,6 +8,7 @@ import {
 import type { RuntimePlanResult } from './runtime/runtime-adapter.js'
 import { configuredRuntimePlannerSource, readDraftFromRuntimeResult } from './runtime-plan-reader.js'
 import { extractWorkspaceBundleArtifact } from './workspace-bundle-artifact.js'
+import { superviseRuntimeToolCalls } from './tool-runtime/tool-call-supervisor.js'
 
 type RuntimePlanner = (ctx: PlannerContext) => Promise<RuntimePlanResult | null>
 
@@ -148,15 +148,13 @@ export async function runPlanningSession(
         ? 'openai_agents'
         : 'openai_compatible_tool_calls'
 
-    const partItems: PlannedItem[] = []
-    for (const step of result.steps) {
-      const item = await buildPlannedItemFromRuntimeStep(planningCtx, step, input.handlers)
-      if (Array.isArray(item)) {
-        partItems.push(...item)
-      } else if (item) {
-        partItems.push(item)
-      }
+    const supervisorInput: Parameters<typeof superviseRuntimeToolCalls>[1] = {
+      steps: result.steps,
+      handlers: input.handlers,
+      ...(result.toolInventorySnapshot ? { inventorySnapshot: result.toolInventorySnapshot } : {}),
     }
+    const supervised = await superviseRuntimeToolCalls(planningCtx, supervisorInput)
+    const partItems = supervised.items
     if (partItems.length > 0) {
       items.push(...partItems)
     } else if (requiredSource) {

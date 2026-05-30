@@ -24,6 +24,7 @@ import {
   runtimeMessagesFromThreadConversationLog,
   threadConversationLogFromContext,
 } from './runtime-conversation-log.js'
+import type { RuntimeToolCatalogProjection } from './tool-gateway.js'
 
 function plannerTokenBudget(message: string) {
   const structuredLineCount = message.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).length
@@ -148,6 +149,10 @@ async function addNonStreamPlanningPreface(ctx: PlannerContext, result: RuntimeP
   })
 }
 
+function attachToolInventory(result: RuntimePlanResult | null, toolCatalog: RuntimeToolCatalogProjection): RuntimePlanResult | null {
+  return result ? { ...result, toolInventorySnapshot: toolCatalog.inventorySnapshot } : result
+}
+
 export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePlanResult | null> {
   const context = await buildAgentContextPack({
     db: ctx.db,
@@ -167,6 +172,9 @@ export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePl
     message: ctx.message,
     context,
     ...(ctx.abortSignal ? { abortSignal: ctx.abortSignal } : {}),
+    userId: ctx.user.id,
+    workspaceId: ctx.workspace.id,
+    automationLevel: ctx.automationLevel,
   })
 
   const maxTokens = runtimeMaxTokens({ message: ctx.message, tools: toolCatalog.tools })
@@ -230,10 +238,11 @@ export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePl
         requestTimeoutMs: retryInput.requestTimeoutMs ?? ctx.settings.agentProviderRequestTimeoutMs,
       },
     })
-    const retry = await planWithRuntimeAdapter(retryInput)
+    const retry = attachToolInventory(await planWithRuntimeAdapter(retryInput), toolCatalog)
     await addNonStreamPlanningPreface(ctx, retry)
     return retry
   }
-  await addNonStreamPlanningPreface(ctx, first)
-  return first
+  const result = attachToolInventory(first, toolCatalog)
+  await addNonStreamPlanningPreface(ctx, result)
+  return result
 }

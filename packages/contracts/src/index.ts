@@ -253,6 +253,80 @@ export type AgentRunEvent = {
   createdAt: string
 }
 
+export type AgentToolInventorySource =
+  | 'full_registry'
+  | 'model_selected_capabilities'
+  | 'business_core_fallback'
+
+export type AgentToolInventoryFreshness = 'fresh' | 'stale' | 'fallback'
+
+export type AgentToolAuthorityClass =
+  | 'read'
+  | 'sandbox_compute'
+  | 'confirmation_write'
+  | 'manual_only'
+
+export type AgentToolNavigationTarget = 'dashboard' | 'inputs' | 'bookkeeping' | 'variance' | 'workspace' | null
+
+export type AgentToolInventoryItem = {
+  name: string
+  capability: string
+  risk: 'read' | 'low' | 'medium' | 'high'
+  confirmationMode: 'never' | 'always' | 'conditional'
+  navigationTarget: AgentToolNavigationTarget
+  authorityClass: AgentToolAuthorityClass
+  providerCompatibility: string[]
+  provenance: 'xox' | 'openai_agents_js_inspired' | 'openclaw_inspired' | 'hermes_inspired'
+}
+
+export type AgentToolInventorySnapshot = {
+  snapshotId: string
+  userId: string
+  workspaceId: string
+  provider: string
+  model: string
+  automationLevel: AgentAutomationLevel
+  source: AgentToolInventorySource
+  freshness: AgentToolInventoryFreshness
+  capabilities: string[]
+  tools: AgentToolInventoryItem[]
+  routerReason?: string | null
+  createdAt: string
+}
+
+export type AgentToolRuntimeEvent = {
+  kind:
+    | 'inventory_ready'
+    | 'tool_call_started'
+    | 'tool_call_completed'
+    | 'tool_call_failed'
+    | 'tool_loop_guardrail'
+  runId: string
+  toolCallId?: string | null
+  toolName?: string | null
+  status: AgentRunEventStatus
+  summary: string
+  payload?: Record<string, unknown> | null
+}
+
+export type AgentToolLoopGuardrailFinding = {
+  severity: 'warn' | 'block'
+  pattern: 'repeated_failure' | 'no_progress' | 'stale_clarification' | 'executed_write_reapplied'
+  toolName?: string
+  evidence: string[]
+  repairBrief: string
+}
+
+export type AgentToolExecutionObservation = {
+  toolCallId: string
+  toolName: string
+  status: 'completed' | 'failed' | 'cancelled'
+  authorityClass: AgentToolAuthorityClass
+  arguments: Record<string, unknown>
+  resultPreview?: string
+  errorMessage?: string
+}
+
 export type AgentAgUiEventType =
   | 'RUN_STARTED'
   | 'RUN_FINISHED'

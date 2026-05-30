@@ -2,6 +2,7 @@ import { plannerSystemPrompt } from '../prompt-registry.js'
 import type { ChatTool } from '../tool-catalog.js'
 import type { RuntimePlanningInput } from './runtime-adapter.js'
 import { resolveProviderModelProfile, type ProviderModelProfile } from './provider-model-profile.js'
+import { sanitizeOpenAICompatibleRequestBody } from './provider-payload-sanitizer.js'
 import { normalizeProviderToolSchemas } from './provider-tool-schema.js'
 
 export type ProviderRequestShape = {
@@ -68,5 +69,10 @@ export function shapeOpenAICompatibleChatRequest(
     body.tool_choice = toolChoiceForProfile(profile)
   }
   if (profile.supportsParallelToolCalls) body.parallel_tool_calls = true
-  return { profile, body }
+  return {
+    profile,
+    body: sanitizeOpenAICompatibleRequestBody(body, profile, {
+      ...(options.omitToolChoice !== undefined ? { omitToolChoice: options.omitToolChoice } : {}),
+    }),
+  }
 }

@@ -17,6 +17,7 @@ import { addRunEvent } from './run-events.js'
 import { addMessage } from './thread-store.js'
 import { continueModelAfterToolObservations, type AgentToolObservation } from './tool-observation-continuation.js'
 import { buildClarificationResumeContext } from './clarification-resume.js'
+import { evaluateToolLoopGuardrails } from './tool-runtime/tool-loop-guardrails.js'
 
 export type AgentGoalRunResult = {
   plannerSource: AgentPlannerSource
@@ -123,6 +124,7 @@ export async function executeAgentGoalRun(
       priorObservations: iteration === 1 ? [] : observations,
     })
     if (!(await options.beforeStateWrite())) return null
+    const priorObservations = observations.slice()
     plannerSource = planned.plannerSource
     navigationEvents.push(...planned.navigationEvents)
     actionRows.push(...planned.actionRows)
@@ -138,6 +140,35 @@ export async function executeAgentGoalRun(
       planned.observations.length === 0
     ) {
       assistantParts.push(pendingAssistantText)
+      break
+    }
+
+    const guardrailFindings = evaluateToolLoopGuardrails({
+      iteration,
+      priorObservations,
+      newObservations: planned.observations,
+      planRows: planned.planRows,
+      actionRows: planned.actionRows,
+    })
+    for (const finding of guardrailFindings) {
+      await addRunEvent(ctx.db, {
+        threadId: ctx.thread.id,
+        runId: ctx.runId,
+        type: 'tool_loop_guardrail',
+        title: finding.severity === 'block' ? '工具循环已阻断' : '工具循环检查',
+        message: finding.repairBrief,
+        status: finding.severity === 'block' ? 'failed' : 'info',
+        data: {
+          goalId: goal.id,
+          iteration,
+          finding,
+        },
+      })
+    }
+    const blockingGuardrail = guardrailFindings.find((finding) => finding.severity === 'block')
+    if (blockingGuardrail) {
+      await updateGoalStatus(ctx.db, goal, 'failed', { blockedReason: blockingGuardrail.repairBrief })
+      if (assistantParts.length === 0) assistantParts.push(blockingGuardrail.repairBrief)
       break
     }
 
