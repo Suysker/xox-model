@@ -1150,6 +1150,7 @@ Agent: workspace_import_bundle
 - OpenAI Agents SDK adapter 已形成可验证 runtime adapter 路径，并把 runner lifecycle / function tool execute 映射为 provider-neutral run events；SDK 原生 streaming/tracing/guardrail/human-in-the-loop event 细节后续必须进入 provider-neutral run events 或 harness hooks。
 - 前端已有后端状态刷新式 unified timeline / memory panel，OpenAI-compatible provider chunk 和 OpenAI Agents SDK lifecycle/tool trace 已进入统一时间线；后续要继续做跨实例 pubsub 和 SDK tracing。
 - 任何 SDK 原生成熟化增强都必须进入 provider-neutral run events 或 Tool Policy hooks，不能替代确认卡、租户隔离、domain services 或 audit。
+- ADR 0017 定义下一阶段 Tool Runtime Maturity Layer：吸收 OpenAI Agents JS 的 tool/approval/guardrail/turn-resolution 思想、OpenClaw 的 effective tool inventory 和 stricter approval composition、Hermes 的 provider sanitation 与 tool-loop guardrails，但保留 xox 的 SaaS harness 作为主线，不引入本地 agent control plane。
 
 ## 迁移顺序
 
@@ -1183,6 +1184,7 @@ Agent: workspace_import_bundle
 ## 参考资料
 
 - ADR 0004：`docs/adr/0004-evaluator-centered-harness-agent.md`
+- ADR 0017：`docs/adr/0017-tool-runtime-maturity-upgrade.md`
 - OpenAI Agents guide：`https://platform.openai.com/docs/guides/agents`
 - OpenAI Agents SDK JS：`https://openai.github.io/openai-agents-js/`
 - OpenAI Agents SDK running agents：`https://openai.github.io/openai-agents-js/guides/running-agents/`
