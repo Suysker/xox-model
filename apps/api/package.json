@@ -13,6 +13,7 @@
     "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^11.1.0",
     "@openai/agents": "^0.11.4",
+    "@xox/agent-memory-core": "file:../../packages/agent-memory-core",
     "@xox/contracts": "file:../../packages/contracts",
     "@xox/domain": "file:../../packages/domain",
     "argon2": "^0.44.0",

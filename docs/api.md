@@ -142,8 +142,10 @@
   - 把某快照发布为正式版由 `workspace_promote_version` 生成 `workspace.promote_version` action request；执行时先恢复指定版本到草稿，再发布新的不可变正式版，历史版本不改写
   - 账号登录、退出、注销、删除账号和密码类请求会被拒绝自动执行
 - `GET /api/v1/agent/memories`
-  - 返回当前登录用户在当前工作区内可用的 Agent 记忆
-  - 不返回其他用户、其他工作区或已删除记忆
+  - 返回当前登录用户在当前工作区内的 Memory Center 状态：`memories`、`dailyNotes`、`recallSignals`、`dreamReports`
+  - `memories` 是长期/候选/诊断/归档记忆行；`dailyNotes` 是 OpenClaw-style daily/session notes；`recallSignals` 是短期召回信号；`dreamReports` 是 reviewable dreaming/consolidation 报告
+  - `query` / `q` 会搜索长期记忆并过滤日记忆；`lane` / `status` 只过滤 `memories`
+  - 不返回其他用户、其他工作区或已删除记忆；日记忆、召回信号和 dreaming 报告同样按当前用户和当前工作区过滤
 - `DELETE /api/v1/agent/memories/{id}`
   - 软删除当前登录用户 / 当前工作区下的一条记忆
   - 删除其他用户或其他工作区的记忆返回 `403`

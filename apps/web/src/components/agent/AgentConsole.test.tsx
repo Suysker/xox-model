@@ -80,6 +80,7 @@ function props(overrides: Partial<AgentConsoleProps> = {}): AgentConsoleProps {
     threadId: 'thread-1',
     planner: null,
     transcriptNodes: [node()],
+    memoryCenter: { memories: [], dailyNotes: [], recallSignals: [], dreamReports: [] },
     memories: [],
     providerSetting: null,
     providerProbe: null,

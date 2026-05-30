@@ -3514,6 +3514,11 @@ describe('xox TypeScript API', () => {
       expect(snapshots[0]?.summary).toContain('user:')
       expect(snapshots[0]?.summary).not.toContain(secretValue)
       expect(snapshots[0]?.summary).toContain('[redacted-api-key]')
+      const memoryCenterAfterFlush = await firstClient.get('/api/v1/agent/memories')
+      expect(memoryCenterAfterFlush.statusCode).toBe(200)
+      expect(memoryCenterAfterFlush.json.dailyNotes.length).toBeGreaterThan(0)
+      expect(memoryCenterAfterFlush.json.dailyNotes[0].content).toContain('user:')
+      expect(memoryCenterAfterFlush.json.dailyNotes[0].content).not.toContain(secretValue)
 
       expect((await firstClient.delete(`/api/v1/agent/memories/${firstMemories.json.memories[0].id}`)).statusCode).toBe(200)
       const afterDelete = await firstClient.get('/api/v1/agent/memories')
@@ -3889,6 +3894,8 @@ describe('xox TypeScript API', () => {
       const memoryEvent = plannedFromNewThread.json.runEvents.find((event: any) => event.type === 'memory_injected')
       expect(memoryEvent?.data.memoryCount).toBe(1)
       expect(memoryEvent?.data.memoryIds).toHaveLength(1)
+      const memoryCenterAfterRecall = await client.get('/api/v1/agent/memories')
+      expect(memoryCenterAfterRecall.json.recallSignals.some((signal: any) => signal.memoryId === memoryEvent.data.memoryIds[0])).toBe(true)
       const recalledEvents = await harness.db
         .selectFrom('agent_memory_events')
         .selectAll()

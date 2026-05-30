@@ -446,6 +446,64 @@ export async function runMigrations(db: Kysely<Database>) {
   await exec(db, 'CREATE INDEX IF NOT EXISTS idx_agent_memory_events_run ON agent_memory_events (run_id, event_type)')
   await exec(
     db,
+    `CREATE TABLE IF NOT EXISTS agent_memory_notes (
+      id VARCHAR(36) PRIMARY KEY,
+      workspace_id VARCHAR(36) NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      thread_id VARCHAR(36) REFERENCES agent_threads(id) ON DELETE SET NULL,
+      run_id VARCHAR(36) REFERENCES agent_runs(id) ON DELETE SET NULL,
+      note_date VARCHAR(10) NOT NULL,
+      layer VARCHAR(32) NOT NULL DEFAULT 'daily',
+      title VARCHAR(180) NOT NULL,
+      content TEXT NOT NULL,
+      evidence_json JSON,
+      created_at DATETIME NOT NULL,
+      updated_at DATETIME NOT NULL,
+      archived_at DATETIME
+    )`,
+  )
+  await exec(
+    db,
+    `CREATE TABLE IF NOT EXISTS agent_memory_recall_signals (
+      id VARCHAR(36) PRIMARY KEY,
+      memory_id VARCHAR(36) NOT NULL REFERENCES agent_memories(id) ON DELETE CASCADE,
+      workspace_id VARCHAR(36) NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      recall_count INTEGER NOT NULL DEFAULT 0,
+      total_score REAL NOT NULL DEFAULT 0,
+      max_score REAL NOT NULL DEFAULT 0,
+      query_hashes_json JSON NOT NULL DEFAULT '[]',
+      recall_days_json JSON NOT NULL DEFAULT '[]',
+      first_recalled_at DATETIME NOT NULL,
+      last_recalled_at DATETIME NOT NULL,
+      promoted_at DATETIME,
+      metadata_json JSON,
+      UNIQUE(memory_id, workspace_id, user_id)
+    )`,
+  )
+  await exec(
+    db,
+    `CREATE TABLE IF NOT EXISTS agent_memory_dream_reports (
+      id VARCHAR(36) PRIMARY KEY,
+      workspace_id VARCHAR(36) NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      thread_id VARCHAR(36) REFERENCES agent_threads(id) ON DELETE SET NULL,
+      run_id VARCHAR(36) REFERENCES agent_runs(id) ON DELETE SET NULL,
+      status VARCHAR(32) NOT NULL DEFAULT 'review',
+      title VARCHAR(180) NOT NULL,
+      summary TEXT NOT NULL,
+      candidate_ids_json JSON NOT NULL DEFAULT '[]',
+      promoted_ids_json JSON NOT NULL DEFAULT '[]',
+      score_json JSON,
+      created_at DATETIME NOT NULL,
+      updated_at DATETIME NOT NULL
+    )`,
+  )
+  await exec(db, 'CREATE INDEX IF NOT EXISTS idx_agent_memory_notes_scope ON agent_memory_notes (workspace_id, user_id, note_date, archived_at)')
+  await exec(db, 'CREATE INDEX IF NOT EXISTS idx_agent_memory_recall_signals_scope ON agent_memory_recall_signals (workspace_id, user_id, last_recalled_at)')
+  await exec(db, 'CREATE INDEX IF NOT EXISTS idx_agent_memory_dream_reports_scope ON agent_memory_dream_reports (workspace_id, user_id, created_at)')
+  await exec(
+    db,
     `UPDATE agent_memories
      SET normalized_hash = COALESCE(normalized_hash, lower(substr(key || ':' || value, 1, 96))),
          lane = CASE

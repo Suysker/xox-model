@@ -7,6 +7,7 @@ import {
   type AgentAutomationLevel,
   type AgentEvaluationResult,
   type AgentGoalRecord,
+  type AgentMemoryCenterState,
   type AgentMemoryRecord,
   type AgentMessage,
   type AgentNavigationEvent,
@@ -24,6 +25,12 @@ import {
 } from '../lib/api'
 
 const CURRENT_THREAD_STORAGE_KEY = 'xox.agent.currentThreadId'
+const EMPTY_MEMORY_CENTER_STATE: AgentMemoryCenterState = {
+  memories: [],
+  dailyNotes: [],
+  recallSignals: [],
+  dreamReports: [],
+}
 
 function readCurrentThreadId() {
   try {
@@ -93,6 +100,7 @@ export function useAgentThread(props: {
   const [agUiEvents, setAgUiEvents] = useState<AgentAgUiEvent[]>([])
   const [transcriptNodes, setTranscriptNodes] = useState<AgentTranscriptNode[]>([])
   const [planner, setPlanner] = useState<AgentSendResponse['planner'] | null>(null)
+  const [memoryCenter, setMemoryCenter] = useState<AgentMemoryCenterState>(EMPTY_MEMORY_CENTER_STATE)
   const [memories, setMemories] = useState<AgentMemoryRecord[]>([])
   const [providerSetting, setProviderSetting] = useState<AgentProviderSettingRecord | null>(null)
   const [providerProbe, setProviderProbe] = useState<AgentProviderProbeResult | null>(null)
@@ -132,6 +140,12 @@ export function useAgentThread(props: {
   async function refreshMemories(query?: string) {
     try {
       const response = await api.listAgentMemories(query)
+      setMemoryCenter({
+        memories: response.memories,
+        dailyNotes: response.dailyNotes ?? [],
+        recallSignals: response.recallSignals ?? [],
+        dreamReports: response.dreamReports ?? [],
+      })
       setMemories(response.memories)
     } catch (memoryError) {
       setError(memoryError instanceof Error ? memoryError.message : String(memoryError))
@@ -491,6 +505,7 @@ export function useAgentThread(props: {
     agUiEvents,
     transcriptNodes,
     planner,
+    memoryCenter,
     memories,
     providerSetting,
     providerProbe,

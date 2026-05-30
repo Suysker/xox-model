@@ -342,6 +342,54 @@ export type AgentMemoryEventTable = {
   created_at: Timestamp
 }
 
+export type AgentMemoryNoteTable = {
+  id: Generated<string>
+  workspace_id: string
+  user_id: string
+  thread_id: string | null
+  run_id: string | null
+  note_date: string
+  layer: string
+  title: string
+  content: string
+  evidence_json: JsonText | null
+  created_at: Timestamp
+  updated_at: Timestamp
+  archived_at: string | null
+}
+
+export type AgentMemoryRecallSignalTable = {
+  id: Generated<string>
+  memory_id: string
+  workspace_id: string
+  user_id: string
+  recall_count: number
+  total_score: number
+  max_score: number
+  query_hashes_json: JsonText
+  recall_days_json: JsonText
+  first_recalled_at: Timestamp
+  last_recalled_at: Timestamp
+  promoted_at: string | null
+  metadata_json: JsonText | null
+}
+
+export type AgentMemoryDreamReportTable = {
+  id: Generated<string>
+  workspace_id: string
+  user_id: string
+  thread_id: string | null
+  run_id: string | null
+  status: string
+  title: string
+  summary: string
+  candidate_ids_json: JsonText
+  promoted_ids_json: JsonText
+  score_json: JsonText | null
+  created_at: Timestamp
+  updated_at: Timestamp
+}
+
 export type AgentContextSnapshotTable = {
   id: Generated<string>
   workspace_id: string
@@ -390,6 +438,9 @@ export type Database = {
   agent_plan_steps: AgentPlanStepTable
   agent_memories: AgentMemoryTable
   agent_memory_events: AgentMemoryEventTable
+  agent_memory_notes: AgentMemoryNoteTable
+  agent_memory_recall_signals: AgentMemoryRecallSignalTable
+  agent_memory_dream_reports: AgentMemoryDreamReportTable
   agent_context_snapshots: AgentContextSnapshotTable
   agent_provider_settings: AgentProviderSettingTable
 }

@@ -93,6 +93,7 @@ export type AgentToolCallStep = {
   mainTab?: 'dashboard' | 'inputs' | 'bookkeeping' | 'variance'
   secondaryTab?: string
   question?: string
+  query?: string
   purpose?: string
   language?: 'python' | 'javascript'
   code?: string
@@ -108,11 +109,16 @@ export type AgentToolCallStep = {
   kind?: 'preference' | 'fact' | 'business_rule' | 'workflow'
   key?: string
   value?: string
+  id?: string
+  memoryId?: string
   confidence?: number
   scope?: 'workspace_summary' | 'period_summary' | 'member_summary' | 'team_summary' | 'entity_summary' | 'top_months' | 'variance_detail' | 'ledger_history'
   metrics?: string[]
   order?: 'asc' | 'desc'
   limit?: number
+  maxResults?: number
+  includeDailyNotes?: boolean
+  includeDurable?: boolean
   patches?: Array<{ path: string; value: unknown; label?: string }>
   bundle?: unknown
   useProvidedBundle?: boolean
@@ -856,6 +862,54 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
   {
     type: 'function',
     function: {
+      name: 'memory_search',
+      description:
+        'OpenClaw-style 记忆搜索工具。只读搜索当前用户、当前工作区授权范围内的长期记忆和日记忆，用于用户询问“之前记住了什么 / 默认设置 / 历史偏好 / 回忆一下相关规则”或主 Agent 需要查证记忆时调用。返回带引用的观察结果；不要用它读取业务数据库当前事实，当前业务数据用 data_query_workspace。',
+      parameters: objectSchema({
+        query: {
+          type: 'string',
+          description: '要检索的记忆问题或关键词。必须是当前任务真正需要的记忆线索。',
+        },
+        maxResults: {
+          type: 'number',
+          description: '最多返回多少条，默认 8，服务端会强制上限。',
+        },
+        limit: {
+          type: 'number',
+          description: 'maxResults 的兼容别名。',
+        },
+        includeDailyNotes: {
+          type: 'boolean',
+          description: '是否包含日记忆/会话笔记，默认 true。',
+        },
+        includeDurable: {
+          type: 'boolean',
+          description: '是否包含长期记忆，默认 true。',
+        },
+      }, ['query']),
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'memory_get',
+      description:
+        'OpenClaw-style 精确读取记忆工具。只读读取当前用户、当前工作区授权范围内的一条 memory_search 返回的记忆详情；必须提供 memoryId。不能读取跨用户、跨工作区或任意数据库记录。',
+      parameters: objectSchema({
+        memoryId: {
+          type: 'string',
+          description: 'memory_search 返回的记忆 id。',
+        },
+        id: {
+          type: 'string',
+          description: 'memoryId 的兼容别名。',
+        },
+      }),
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'memory_remember',
       description:
         '保存当前用户在当前工作区内的长期记忆。仅当用户明确要求“记住/以后默认/以后都”某个稳定偏好、默认业务习惯或长期规则时调用。不要保存 API key、token、密码、验证码、账号凭据或一次性秘密；普通业务执行不要调用本工具。',
@@ -1007,9 +1061,21 @@ const TOOL_METADATA: Record<string, Omit<AgentToolMetadata, 'name'>> = {
     confirmationMode: 'always',
     navigationTarget: 'bookkeeping',
   },
+  memory_get: {
+    capability: 'memory',
+    riskLevel: 'read',
+    confirmationMode: 'never',
+    navigationTarget: null,
+  },
   memory_remember: {
     capability: 'memory',
     riskLevel: 'low',
+    confirmationMode: 'never',
+    navigationTarget: null,
+  },
+  memory_search: {
+    capability: 'memory',
+    riskLevel: 'read',
     confirmationMode: 'never',
     navigationTarget: null,
   },
@@ -1224,6 +1290,10 @@ export function toolCallToPlannerStep(toolName: string, args: Record<string, unk
       return { intent: 'data.query_workspace', ...args }
     case 'sandbox_run_code':
       return { intent: 'sandbox.run_code', ...args }
+    case 'memory_search':
+      return { intent: 'memory.search', ...args }
+    case 'memory_get':
+      return { intent: 'memory.get', ...args }
     case 'memory_remember':
       return { intent: 'memory.remember', ...args }
     case 'ask_user_clarification':

@@ -1,10 +1,12 @@
 import type { Kysely } from 'kysely'
+import { buildMemoryFlushPlan } from '@xox/agent-memory-core'
 import type { Database, Row } from '../db/schema.js'
 import type { CurrentUser } from '../modules/auth.js'
 import { addRunEvent } from './run-events.js'
 import { compactThreadContextIfNeeded } from './memory.js'
 import { memoryCandidatesFromExecutedActions } from './memory-candidate-detector.js'
 import { storeMemoryCandidates, type AgentMemoryCandidate } from './memory-consolidator.js'
+import { storeDailyMemoryNote } from './memory/daily-notes.js'
 
 export async function consolidateAgentMemoryCandidates(input: {
   db: Kysely<Database>
@@ -79,34 +81,39 @@ export async function flushThreadContextToMemoryIfNeeded(input: {
   })
   if (!snapshot) return null
 
-  await addRunEvent(input.db, {
-    threadId: input.threadId,
-    runId: input.runId,
-    type: 'memory_context_flushed',
-    title: '长对话上下文已压缩',
-    message: '已把长对话摘要保存为当前线程的上下文快照，并作为带证据的工作记忆候选处理。',
-    status: 'info',
-    data: { snapshotId: snapshot.id, messageCount: snapshot.message_count },
-  })
-
-  await consolidateAgentMemoryCandidates({
+  const flushPlan = buildMemoryFlushPlan()
+  const dailyNote = await storeDailyMemoryNote({
     db: input.db,
     workspace: input.workspace,
     user: input.user,
     threadId: input.threadId,
     runId: input.runId,
-    candidates: [{
-      kind: 'episode',
-      scopeType: 'thread',
-      memoryType: 'working',
-      status: 'candidate',
-      key: `thread.context_summary.${snapshot.id}`,
-      value: `当前对话长上下文摘要：${snapshot.summary.slice(0, 420)}`,
-      confidence: 0.66,
-      evidence: { runId: input.runId, snapshotId: snapshot.id, messageCount: snapshot.message_count },
-    }],
-    title: '上下文摘要已进入记忆候选',
-    message: '长对话压缩结果已作为当前线程工作记忆候选保存，后续召回仍受用户/工作区隔离限制。',
+    noteDate: flushPlan.noteDate,
+    title: `对话压缩摘要 ${flushPlan.noteDate}`,
+    content: `当前对话长上下文摘要：${snapshot.summary}`,
+    evidence: {
+      runId: input.runId,
+      snapshotId: snapshot.id,
+      messageCount: snapshot.message_count,
+      source: 'openclaw_pre_compaction_flush',
+    },
   })
+
+  await addRunEvent(input.db, {
+    threadId: input.threadId,
+    runId: input.runId,
+    type: 'memory_context_flushed',
+    title: '长对话上下文已压缩',
+    message: '已按 OpenClaw-style pre-compaction flush 把长对话摘要保存为当前用户/工作区的日记忆，后续由 dreaming/promotion 决定是否晋升。',
+    status: 'info',
+    data: {
+      snapshotId: snapshot.id,
+      dailyNoteId: dailyNote?.id ?? null,
+      noteDate: flushPlan.noteDate,
+      messageCount: snapshot.message_count,
+      source: 'openclaw_pre_compaction_flush',
+    },
+  })
+
   return snapshot
 }

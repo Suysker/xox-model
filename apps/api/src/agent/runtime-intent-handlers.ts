@@ -41,6 +41,7 @@ import {
   planWorkspaceRename,
 } from './workspace-action-drafts.js'
 import { rememberAgentMemory, redactSecretLikeContent } from './memory.js'
+import { runMemoryGetTool, runMemorySearchTool } from './memory/memory-tools.js'
 import { planSandboxRunCode } from './sandbox-service.js'
 import type { ReadDraft, RuntimePlannerStep } from './action-draft-builder.js'
 
@@ -162,6 +163,8 @@ export const runtimeIntentHandlers: ActionDraftBuilderHandlers<PlannerContext> =
     ...(step.versionName !== undefined ? { versionName: step.versionName } : {}),
     revoke: true,
   }),
+  'memory.search': runMemorySearchTool,
+  'memory.get': runMemoryGetTool,
   'memory.remember': rememberFromToolCall,
   'data.query_workspace': answerWorkspaceDataQuestion,
   'sandbox.run_code': planSandboxRunCode,

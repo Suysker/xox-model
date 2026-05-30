@@ -10,6 +10,7 @@ import type {
   AgentLedgerHistoryFilters,
   AgentEvaluationResult,
   AgentGoalRecord,
+  AgentMemoryCenterState,
   AgentMemoryRecord,
   AgentMessage,
   AgentNavigationEvent,
@@ -171,6 +172,7 @@ export type {
   AgentLedgerHistoryFilters,
   AgentEvaluationResult,
   AgentGoalRecord,
+  AgentMemoryCenterState,
   AgentMemoryRecord,
   AgentMessage,
   AgentNavigationEvent,
@@ -401,7 +403,7 @@ export const api = {
   cancelAgentRun: (runId: string) =>
     apiRequest<AgentThreadState>('POST', `/api/v1/agent/runs/${encodeURIComponent(runId)}/cancel`),
   listAgentMemories: (query?: string) =>
-    apiRequest<{ memories: AgentMemoryRecord[] }>('GET', query?.trim() ? `/api/v1/agent/memories?query=${encodeURIComponent(query.trim())}` : '/api/v1/agent/memories'),
+    apiRequest<AgentMemoryCenterState>('GET', query?.trim() ? `/api/v1/agent/memories?query=${encodeURIComponent(query.trim())}` : '/api/v1/agent/memories'),
   promoteAgentMemory: (memoryId: string) =>
     apiRequest<{ memory: AgentMemoryRecord }>('POST', `/api/v1/agent/memories/${memoryId}/promote`),
   deleteAgentMemory: (memoryId: string) =>

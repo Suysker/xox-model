@@ -704,6 +704,61 @@ export type AgentMemoryRecord = {
   updatedAt: string
 }
 
+export type AgentMemoryDailyNoteRecord = {
+  id: string
+  workspaceId: string
+  userId: string
+  threadId: string | null
+  runId: string | null
+  noteDate: string
+  layer: string
+  title: string
+  content: string
+  evidence?: Record<string, unknown> | null
+  createdAt: string
+  updatedAt: string
+  archivedAt: string | null
+}
+
+export type AgentMemoryRecallSignalRecord = {
+  id: string
+  memoryId: string
+  workspaceId: string
+  userId: string
+  recallCount: number
+  totalScore: number
+  maxScore: number
+  queryCount: number
+  recallDayCount: number
+  firstRecalledAt: string
+  lastRecalledAt: string
+  promotedAt: string | null
+  metadata?: Record<string, unknown> | null
+}
+
+export type AgentMemoryDreamReportRecord = {
+  id: string
+  workspaceId: string
+  userId: string
+  threadId: string | null
+  runId: string | null
+  status: string
+  title: string
+  summary: string
+  candidateIds: string[]
+  promotedIds: string[]
+  score: unknown[]
+  createdAt: string
+  updatedAt: string
+}
+
+export type AgentMemoryCenterState = {
+  memories: AgentMemoryRecord[]
+  dailyNotes: AgentMemoryDailyNoteRecord[]
+  recallSignals: AgentMemoryRecallSignalRecord[]
+  dreamReports: AgentMemoryDreamReportRecord[]
+}
+
 export type AgentProviderSettingRecord = {
   provider: string
   baseUrl: string

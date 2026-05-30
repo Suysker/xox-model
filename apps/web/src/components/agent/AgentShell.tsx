@@ -152,6 +152,7 @@ export function AgentShell(props: {
     threadId: agent.threadId,
     planner: agent.planner,
     transcriptNodes: agent.transcriptNodes,
+    memoryCenter: agent.memoryCenter,
     memories: agent.memories,
     providerSetting: agent.providerSetting,
     providerProbe: agent.providerProbe,

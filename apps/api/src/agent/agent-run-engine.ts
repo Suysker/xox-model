@@ -8,6 +8,7 @@ import {
   consolidateExecutedActionMemory,
   flushThreadContextToMemoryIfNeeded,
 } from './memory-kernel.js'
+import { runMemoryDreamingSweep } from './memory/dreaming-worker.js'
 import {
   memoryCandidateFromCompletedGoal,
   memoryCandidateFromEvaluatorFinding,
@@ -359,6 +360,28 @@ export async function executeAgentRun(
     ? await addMessage(ctx.db, ctx.thread.id, 'assistant', assistantParts.join('\n\n'))
     : null
   await flushThreadContextToMemoryIfNeeded({ db: ctx.db, workspace: ctx.workspace, user: ctx.user, threadId: ctx.thread.id, runId: ctx.runId })
+  const dreamReport = await runMemoryDreamingSweep({
+    db: ctx.db,
+    workspace: ctx.workspace,
+    user: ctx.user,
+    threadId: ctx.thread.id,
+    runId: ctx.runId,
+  })
+  if (dreamReport) {
+    await addRunEvent(ctx.db, {
+      threadId: ctx.thread.id,
+      runId: ctx.runId,
+      type: 'memory_dreaming_reported',
+      title: '记忆整理报告已生成',
+      message: dreamReport.summary,
+      status: 'info',
+      data: {
+        dreamReportId: dreamReport.id,
+        candidateIds: JSON.parse(dreamReport.candidate_ids_json),
+        source: 'openclaw_dreaming_sweep',
+      },
+    })
+  }
   const finalGoal = await ctx.db.selectFrom('agent_goals').select('status').where('id', '=', goal.id).executeTakeFirst()
   if (!(await options.beforeStateWrite())) return null
   return {

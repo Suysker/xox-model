@@ -9,6 +9,7 @@ import {
   type AgentMemoryRetrievalResult,
 } from './memory-retriever.js'
 import { redactSecretLikeContent } from './memory-safety.js'
+import { buildOpenClawActiveMemoryPromptPack } from './memory/active-memory-subagent.js'
 
 const ACTIVE_RECALL_TIMEOUT_MS = 1200
 const ACTIVE_RECALL_CACHE_TTL_MS = 10_000
@@ -32,6 +33,9 @@ export type ActiveMemoryRecallResult = {
   skippedReason?: 'disabled' | 'timeout' | 'circuit_open' | 'no_relevant_memory' | 'no_provider'
   confidence: number
   retrieval: Array<{ memoryId: string; score: number; reasons: string[] }>
+  citations?: Array<{ memoryId: string; layer: string; evidenceRefs: string[]; score?: number; usedAt?: string }>
+  budget?: { maxItems: number; maxChars: number; usedChars: number }
+  source?: 'openclaw_active_memory'
 }
 
 function scopeKey(input: { workspace: Row<'workspaces'>; user: CurrentUser }) {
@@ -71,20 +75,6 @@ function recordTimeout(key: string) {
 
 function recordSuccess(key: string) {
   circuitByScope.delete(key)
-}
-
-function buildSummary(results: AgentMemoryRetrievalResult[]) {
-  if (results.length === 0) return null
-  const lines = results.slice(0, 6).map((result, index) => {
-    const memory = result.memory
-    const value = redactSecretLikeContent(memory.value).replace(/\s+/g, ' ').trim()
-    return `${index + 1}. [memory:${memory.id} lane=${memory.lane} kind=${memory.kind} status=${memory.status} evidence=${memory.evidence_json ? 'present' : 'none'}] ${value}`
-  })
-  return [
-    '<memory_context trust="untrusted" scope="current_user_current_workspace">',
-    ...lines,
-    '</memory_context>',
-  ].join('\n')
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | 'timeout'> {
@@ -138,6 +128,11 @@ export async function recallActiveAgentMemory(input: {
         threadId: input.threadId,
         runId: input.runId,
         query: input.message,
+        retrieval: cached.result.retrieval.map((item) => ({
+          memoryId: item.memoryId,
+          score: item.score,
+          reasons: item.reasons,
+        })),
       })
       await addMemoryEvent(input.db, {
         memoryId: null,
@@ -211,8 +206,9 @@ export async function recallActiveAgentMemory(input: {
 
   recordSuccess(scopedKey)
   const memories = recalled.map((item) => item.memory)
-  const usedMemoryIds = memories.map((memory) => memory.id)
-  const injectedSummary = buildSummary(recalled)
+  const promptPack = buildOpenClawActiveMemoryPromptPack({ recalled })
+  const usedMemoryIds = promptPack.usedMemoryIds
+  const injectedSummary = promptPack.injectedSummary
   const confidence = recalled.length > 0 ? Math.max(...recalled.map((item) => item.score)) : 0
   const retrieval = recalled.map((item) => ({ memoryId: item.memory.id, score: item.score, reasons: item.reasons }))
 
@@ -240,6 +236,7 @@ export async function recallActiveAgentMemory(input: {
     threadId: input.threadId,
     runId: input.runId,
     query: input.message,
+    retrieval,
   })
 
   await addMemoryEvent(input.db, {
@@ -270,6 +267,10 @@ export async function recallActiveAgentMemory(input: {
         score: item.score,
         evidenceRefs: item.memory.evidence_json ? ['evidence_json'] : [],
       })),
+      openClawActiveMemory: {
+        budget: promptPack.budget,
+        citations: promptPack.citations,
+      },
     },
   })
   await addRunEvent(input.db, {
@@ -290,10 +291,23 @@ export async function recallActiveAgentMemory(input: {
         score: item.score,
         evidenceRefs: item.memory.evidence_json ? ['evidence_json'] : [],
       })),
+      openClawActiveMemory: {
+        budget: promptPack.budget,
+        citations: promptPack.citations,
+      },
     },
   })
 
-  const result: ActiveMemoryRecallResult = { injectedSummary, memories, usedMemoryIds, confidence, retrieval }
+  const result: ActiveMemoryRecallResult = {
+    injectedSummary,
+    memories,
+    usedMemoryIds,
+    confidence,
+    retrieval,
+    citations: promptPack.citations,
+    budget: promptPack.budget,
+    source: 'openclaw_active_memory',
+  }
   recallCache.set(key, { expiresAt: Date.now() + ACTIVE_RECALL_CACHE_TTL_MS, result })
   cacheRecallForRun(input, result)
   return result

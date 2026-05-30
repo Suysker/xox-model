@@ -1,3 +1,4 @@
+import { applyMmr, lexicalRelevance } from '@xox/agent-memory-core'
 import type { Kysely } from 'kysely'
 import type { Database, Row } from '../db/schema.js'
 import type { CurrentUser } from '../modules/auth.js'
@@ -5,6 +6,7 @@ import { utcNow } from '../core/time.js'
 import { redactSecretLikeContent } from './memory-safety.js'
 import { addMemoryEvent } from './memory-events.js'
 import { touchAgentMemories } from './memory.js'
+import { recordMemoryRecallSignals } from './memory/recall-signals.js'
 import { isMemoryPromptInjectable, type AgentMemoryLane, type AgentMemoryStatus } from './memory-promotion-policy.js'
 
 export type AgentMemoryRetrievalResult = {
@@ -16,8 +18,6 @@ export type AgentMemoryRetrievalResult = {
 type SearchableMemoryStatus = AgentMemoryStatus
 
 const SEARCHABLE_STATUSES = new Set<SearchableMemoryStatus>(['candidate', 'active', 'promoted', 'archived', 'expired', 'superseded'])
-const CJK_CHAR = /[\u3400-\u9fff]/
-const WORD_OR_CJK = /[a-z0-9_]+|[\u3400-\u9fff]/gi
 const DEFAULT_PROMPT_LANE_LIMITS: Record<string, number> = {
   working: 3,
   semantic: 4,
@@ -29,19 +29,6 @@ const DEFAULT_PROMPT_LANE_LIMITS: Record<string, number> = {
 
 function normalize(value: string) {
   return redactSecretLikeContent(value).toLowerCase().replace(/\s+/g, ' ').trim()
-}
-
-function unique<T>(values: T[]) {
-  return [...new Set(values)]
-}
-
-function tokenize(value: string) {
-  const normalized = normalize(value)
-  const raw = normalized.match(WORD_OR_CJK) ?? []
-  const words = raw.filter((token) => !CJK_CHAR.test(token) && token.length >= 2)
-  const cjkChars = raw.filter((token) => CJK_CHAR.test(token))
-  const cjkBigrams = cjkChars.slice(0, -1).map((char, index) => `${char}${cjkChars[index + 1]}`)
-  return unique([...words, ...cjkChars, ...cjkBigrams])
 }
 
 function ageBoost(row: Row<'agent_memories'>) {
@@ -75,17 +62,12 @@ function scopeBoost(row: Row<'agent_memories'>) {
 }
 
 function scoreMemory(row: Row<'agent_memories'>, query: string): AgentMemoryRetrievalResult {
-  const queryTokens = tokenize(query)
-  const memoryTokens = new Set(tokenize(`${row.key} ${row.kind} ${row.scope_type} ${row.memory_type} ${row.lane} ${row.value}`))
-  const overlap = queryTokens.filter((token) => memoryTokens.has(token))
-  const lexical = queryTokens.length > 0 ? overlap.length / queryTokens.length : 0
-  const phrase = normalize(row.value).includes(normalize(query)) && query.trim().length >= 3 ? 0.18 : 0
+  const relevance = lexicalRelevance(query, `${row.key} ${row.kind} ${row.scope_type} ${row.memory_type} ${row.lane} ${row.value}`)
   const keyHit = normalize(row.key).includes(normalize(query)) && query.trim().length >= 3 ? 0.12 : 0
   const confidence = Math.max(0, Math.min(1, row.confidence)) * 0.18
-  const score = lexical * 0.5 + phrase + keyHit + confidence + statusBoost(row) + typeBoost(row) + scopeBoost(row) + ageBoost(row)
+  const score = relevance.score + keyHit + confidence + statusBoost(row) + typeBoost(row) + scopeBoost(row) + ageBoost(row)
   const reasons = [
-    overlap.length > 0 ? `token_overlap:${overlap.slice(0, 6).join(',')}` : null,
-    phrase > 0 ? 'phrase_match' : null,
+    ...relevance.reasons,
     keyHit > 0 ? 'key_match' : null,
     row.status === 'candidate' ? 'candidate_memory' : `${row.status}_memory`,
     row.injectable ? 'injectable' : 'non_injectable',
@@ -93,39 +75,6 @@ function scoreMemory(row: Row<'agent_memories'>, query: string): AgentMemoryRetr
     row.memory_type,
   ].filter((item): item is string => Boolean(item))
   return { memory: row, score: Number(score.toFixed(4)), reasons }
-}
-
-// Inspired by OpenClaw's MIT-licensed memory MMR utility. This local version
-// reranks DB-backed SaaS memory rows instead of filesystem snippets.
-function jaccard(left: Set<string>, right: Set<string>) {
-  if (left.size === 0 || right.size === 0) return 0
-  let intersection = 0
-  for (const token of left) if (right.has(token)) intersection += 1
-  return intersection / (left.size + right.size - intersection)
-}
-
-function applyMmr(results: AgentMemoryRetrievalResult[], lambda = 0.72) {
-  if (results.length <= 2) return results
-  const remaining = [...results]
-  const selected: AgentMemoryRetrievalResult[] = []
-  const tokens = new Map<string, Set<string>>()
-  for (const result of results) tokens.set(result.memory.id, new Set(tokenize(`${result.memory.key} ${result.memory.value}`)))
-  while (remaining.length > 0) {
-    let bestIndex = 0
-    let bestScore = -Infinity
-    for (let index = 0; index < remaining.length; index += 1) {
-      const candidate = remaining[index]!
-      const candidateTokens = tokens.get(candidate.memory.id) ?? new Set<string>()
-      const maxSimilarity = selected.reduce((max, item) => Math.max(max, jaccard(candidateTokens, tokens.get(item.memory.id) ?? new Set<string>())), 0)
-      const score = lambda * candidate.score - (1 - lambda) * maxSimilarity
-      if (score > bestScore) {
-        bestScore = score
-        bestIndex = index
-      }
-    }
-    selected.push(remaining.splice(bestIndex, 1)[0]!)
-  }
-  return selected
 }
 
 function applyPromptLaneBudgets(results: AgentMemoryRetrievalResult[]) {
@@ -172,7 +121,15 @@ export async function retrieveAgentMemories(input: {
     .map((row) => scoreMemory(row, input.query))
     .filter((result) => result.score >= 0.32 || result.reasons.some((reason) => reason.startsWith('token_overlap:')))
     .sort((left, right) => right.score - left.score)
-  const ranked = applyMmr(input.forPrompt ? applyPromptLaneBudgets(scored) : scored)
+  const ranked = applyMmr(
+    (input.forPrompt ? applyPromptLaneBudgets(scored) : scored).map((result) => ({
+      ...result,
+      id: result.memory.id,
+      key: result.memory.key,
+      value: result.memory.value,
+    })),
+  )
+    .map(({ id: _id, key: _key, value: _value, ...result }) => result)
     .slice(0, Math.max(1, Math.min(50, input.limit ?? 6)))
 
   return ranked
@@ -186,9 +143,25 @@ export async function markAgentMemoriesRecalled(input: {
   threadId: string
   runId: string
   query: string
+  retrieval?: Array<{ memoryId: string; score: number; reasons: string[] }>
 }) {
   if (input.memories.length === 0) return []
   await touchAgentMemories(input.db, input.memories)
+  const retrievalByMemoryId = new Map((input.retrieval ?? []).map((item) => [item.memoryId, item]))
+  await recordMemoryRecallSignals({
+    db: input.db,
+    workspace: input.workspace,
+    user: input.user,
+    query: input.query,
+    retrieval: input.memories.map((memory) => {
+      const retrieval = retrievalByMemoryId.get(memory.id)
+      return {
+        memory,
+        score: retrieval?.score ?? 0.5,
+        reasons: retrieval?.reasons ?? ['recalled'],
+      }
+    }),
+  })
   for (const memory of input.memories) {
     await addMemoryEvent(input.db, {
       memoryId: memory.id,

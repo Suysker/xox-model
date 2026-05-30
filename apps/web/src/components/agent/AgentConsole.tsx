@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { Bot, Check, ChevronDown, ChevronUp, Database, History, KeyRound, PanelBottom, PanelRight, Plus, RefreshCw, SendHorizontal, Save, ShieldCheck, SquarePen, Trash2, XCircle } from 'lucide-react'
-import type { AgentActionUpdatePayload, AgentAutomationLevel, AgentMemoryRecord, AgentProviderProbePayload, AgentProviderProbeResult, AgentProviderSettingRecord, AgentProviderSettingUpdatePayload, AgentSendResponse, AgentThreadSummary, AgentTranscriptNode } from '../../lib/api'
+import type { AgentActionUpdatePayload, AgentAutomationLevel, AgentMemoryCenterState, AgentMemoryRecord, AgentProviderProbePayload, AgentProviderProbeResult, AgentProviderSettingRecord, AgentProviderSettingUpdatePayload, AgentSendResponse, AgentThreadSummary, AgentTranscriptNode } from '../../lib/api'
 import type { AgentShellLayoutMode, AgentShellSurface } from './agentShellLayout'
 import { AgentChatTimeline } from './AgentChatTimeline'
 
@@ -27,6 +27,7 @@ export function AgentConsole(props: {
   threadId: string | null
   planner: AgentSendResponse['planner'] | null
   transcriptNodes: AgentTranscriptNode[]
+  memoryCenter: AgentMemoryCenterState
   memories: AgentMemoryRecord[]
   providerSetting: AgentProviderSettingRecord | null
   providerProbe: AgentProviderProbeResult | null
@@ -77,22 +78,41 @@ export function AgentConsole(props: {
     { value: 'all', label: '全部' },
     { value: 'working', label: '短期' },
     { value: 'candidate', label: '候选' },
+    { value: 'daily', label: '日记忆' },
+    { value: 'dream', label: 'Dreaming' },
+    { value: 'signals', label: '召回信号' },
     { value: 'episodic', label: '事件' },
     { value: 'diagnostic', label: '诊断' },
     { value: 'archived', label: '归档' },
   ]
+  const memorySearchQuery = memorySearch.trim().toLowerCase()
+  const dailyNotes = props.memoryCenter.dailyNotes ?? []
+  const dreamReports = props.memoryCenter.dreamReports ?? []
+  const recallSignals = props.memoryCenter.recallSignals ?? []
+  const visibleDailyNotes = dailyNotes.filter((note) => {
+    if (!memorySearchQuery) return true
+    return `${note.title} ${note.content} ${note.noteDate}`.toLowerCase().includes(memorySearchQuery)
+  })
+  const visibleDreamReports = dreamReports.filter((report) => {
+    if (!memorySearchQuery) return true
+    return `${report.title} ${report.summary} ${report.status}`.toLowerCase().includes(memorySearchQuery)
+  })
+  const visibleRecallSignals = recallSignals.filter((signal) => {
+    if (!memorySearchQuery) return true
+    return `${signal.memoryId} ${signal.metadata ? JSON.stringify(signal.metadata) : ''}`.toLowerCase().includes(memorySearchQuery)
+  })
   const visibleMemories = props.memories.filter((memory) => {
     const lane = memory.lane ?? memory.memoryType ?? 'semantic'
     const status = memory.status ?? 'active'
+    if (['daily', 'dream', 'signals'].includes(memoryLaneFilter)) return false
     if (memoryLaneFilter === 'active' && !(memory.injectable && ['semantic', 'procedural', 'working', 'session'].includes(lane) && ['active', 'promoted'].includes(status))) return false
     if (memoryLaneFilter === 'working' && lane !== 'working' && lane !== 'session') return false
     if (memoryLaneFilter === 'candidate' && status !== 'candidate') return false
     if (memoryLaneFilter === 'episodic' && lane !== 'episodic') return false
     if (memoryLaneFilter === 'diagnostic' && lane !== 'diagnostic') return false
     if (memoryLaneFilter === 'archived' && !['archived', 'expired', 'superseded'].includes(status) && lane !== 'archived') return false
-    const query = memorySearch.trim().toLowerCase()
-    if (!query) return true
-    return `${memory.value} ${memory.key} ${memory.kind} ${memory.memoryType ?? ''} ${memory.lane ?? ''} ${memory.status ?? ''} ${memory.sourceKind ?? ''}`.toLowerCase().includes(query)
+    if (!memorySearchQuery) return true
+    return `${memory.value} ${memory.key} ${memory.kind} ${memory.memoryType ?? ''} ${memory.lane ?? ''} ${memory.status ?? ''} ${memory.sourceKind ?? ''}`.toLowerCase().includes(memorySearchQuery)
   })
   const actionDiffsById = new Map<string, Array<{ label: string; value: string }>>()
   flattenTranscriptNodes(props.transcriptNodes)
@@ -659,52 +679,78 @@ export function AgentConsole(props: {
                   </button>
                 </div>
                 <div className="mt-2 min-h-0 flex-1 overflow-y-auto">
-                  {visibleMemories.length > 0 ? (
+                  {memoryLaneFilter === 'daily' ? (
+                    visibleDailyNotes.length > 0 ? visibleDailyNotes.map((note) => (
+                      <div key={note.id} className="border-t border-stone-100 py-1.5 first:border-t-0">
+                        <p className="truncate font-medium text-stone-800">{note.title}</p>
+                        <p className="line-clamp-2 text-[11px] leading-4 text-stone-500">{note.content}</p>
+                        <p className="text-[10px] text-stone-400">{note.noteDate}{note.runId ? ` / ${note.runId.slice(0, 8)}` : ''}</p>
+                      </div>
+                    )) : <p className="py-2 text-stone-500">暂无日记忆。</p>
+                  ) : memoryLaneFilter === 'dream' ? (
+                    visibleDreamReports.length > 0 ? visibleDreamReports.map((report) => (
+                      <div key={report.id} className="border-t border-stone-100 py-1.5 first:border-t-0">
+                        <p className="truncate font-medium text-stone-800">{report.title}</p>
+                        <p className="line-clamp-2 text-[11px] leading-4 text-stone-500">{report.summary}</p>
+                        <p className="text-[10px] text-stone-400">{report.status} / 候选 {report.candidateIds.length} / 晋升 {report.promotedIds.length}</p>
+                      </div>
+                    )) : <p className="py-2 text-stone-500">暂无 Dreaming 报告。</p>
+                  ) : memoryLaneFilter === 'signals' ? (
+                    visibleRecallSignals.length > 0 ? visibleRecallSignals.map((signal) => (
+                      <div key={signal.id} className="border-t border-stone-100 py-1.5 first:border-t-0">
+                        <p className="truncate font-medium text-stone-800">{signal.memoryId}</p>
+                        <p className="text-[11px] leading-4 text-stone-500">
+                          召回 {signal.recallCount} 次 / 查询 {signal.queryCount} 类 / 最高分 {signal.maxScore.toFixed(2)}
+                        </p>
+                        <p className="text-[10px] text-stone-400">{formatThreadTime(signal.lastRecalledAt)}</p>
+                      </div>
+                    )) : <p className="py-2 text-stone-500">暂无召回信号。</p>
+                  ) : visibleMemories.length > 0 ? (
                     visibleMemories.map((memory) => {
-                      const lane = memory.lane ?? memory.memoryType ?? 'semantic'
-                      const status = memory.status ?? 'active'
-                      const canPromote = status === 'candidate' && lane !== 'diagnostic'
-                      return (
-                        <div key={memory.id} className="flex items-start gap-2 border-t border-stone-100 py-1.5 first:border-t-0">
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate font-medium text-stone-800">{memory.value}</p>
-                            <p className="flex flex-wrap items-center gap-1 text-[10px] text-stone-400">
-                              <span>{memory.kind}</span>
-                              <span>/ {lane}</span>
-                              <span>/ {status}</span>
-                              {memory.injectable ? <span className="rounded bg-emerald-50 px-1 text-emerald-700">可注入</span> : <span className="rounded bg-stone-100 px-1 text-stone-500">仅审计</span>}
-                              <span>{(memory.evidenceScore ?? memory.confidence).toFixed(2)}</span>
-                              {memory.sourceKind ? <span>/ {memory.sourceKind}</span> : null}
-                            </p>
-                            {memory.evidence ? (
-                              <p className="truncate text-[10px] text-stone-400">
-                                证据 {String(memory.evidence.runId ?? memory.evidence.actionRequestId ?? memory.evidence.snapshotId ?? '已记录')}
+                        const lane = memory.lane ?? memory.memoryType ?? 'semantic'
+                        const status = memory.status ?? 'active'
+                        const canPromote = status === 'candidate' && lane !== 'diagnostic'
+                        return (
+                          <div key={memory.id} className="flex items-start gap-2 border-t border-stone-100 py-1.5 first:border-t-0">
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate font-medium text-stone-800">{memory.value}</p>
+                              <p className="flex flex-wrap items-center gap-1 text-[10px] text-stone-400">
+                                <span>{memory.kind}</span>
+                                <span>/ {lane}</span>
+                                <span>/ {status}</span>
+                                {memory.injectable ? <span className="rounded bg-emerald-50 px-1 text-emerald-700">可注入</span> : <span className="rounded bg-stone-100 px-1 text-stone-500">仅审计</span>}
+                                <span>{(memory.evidenceScore ?? memory.confidence).toFixed(2)}</span>
+                                {memory.sourceKind ? <span>/ {memory.sourceKind}</span> : null}
                               </p>
+                              {memory.evidence ? (
+                                <p className="truncate text-[10px] text-stone-400">
+                                  证据 {String(memory.evidence.runId ?? memory.evidence.actionRequestId ?? memory.evidence.snapshotId ?? '已记录')}
+                                </p>
+                              ) : null}
+                            </div>
+                            {canPromote ? (
+                              <button
+                                type="button"
+                                onClick={() => props.onPromoteMemory(memory.id)}
+                                disabled={props.busy}
+                                className="inline-flex h-6 w-6 items-center justify-center rounded-md text-stone-400 transition hover:bg-emerald-50 hover:text-emerald-700 disabled:opacity-50"
+                                title="提升为长期记忆"
+                              >
+                                <ShieldCheck className="h-3.5 w-3.5" />
+                              </button>
                             ) : null}
-                          </div>
-                          {canPromote ? (
                             <button
                               type="button"
-                              onClick={() => props.onPromoteMemory(memory.id)}
+                              onClick={() => props.onDeleteMemory(memory.id)}
                               disabled={props.busy}
-                              className="inline-flex h-6 w-6 items-center justify-center rounded-md text-stone-400 transition hover:bg-emerald-50 hover:text-emerald-700 disabled:opacity-50"
-                              title="提升为长期记忆"
+                              className="inline-flex h-6 w-6 items-center justify-center rounded-md text-stone-400 transition hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+                              title="归档记忆"
                             >
-                              <ShieldCheck className="h-3.5 w-3.5" />
+                              <Trash2 className="h-3.5 w-3.5" />
                             </button>
-                          ) : null}
-                          <button
-                            type="button"
-                            onClick={() => props.onDeleteMemory(memory.id)}
-                            disabled={props.busy}
-                            className="inline-flex h-6 w-6 items-center justify-center rounded-md text-stone-400 transition hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
-                            title="归档记忆"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      )
-                    })
+                          </div>
+                        )
+                      })
                   ) : (
                     <p className="py-2 text-stone-500">暂无记忆。</p>
                   )}
