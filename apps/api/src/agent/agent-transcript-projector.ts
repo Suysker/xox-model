@@ -52,6 +52,10 @@ function eventOrder(createdAt: string, fallback: number, rank = 0) {
 }
 
 function visibilityForRunEvent(event: AgentRunEvent): 'user' | 'technical' {
+  if (event.channel === 'lifecycle') return 'technical'
+  if (event.channel === 'assistant') return 'user'
+  if (event.channel === 'tool' && event.type === 'provider_tool_call_repaired') return 'technical'
+  if (event.channel === 'tool') return 'user'
   if (INTERNAL_RUN_EVENT_TYPES.has(event.type)) return 'technical'
   const text = `${event.title}\n${event.message}`
   return INTERNAL_LABEL_PATTERNS.some((pattern) => pattern.test(text)) ? 'technical' : 'user'
@@ -216,6 +220,24 @@ function providerStreamItem(event: AgentRunEvent): PendingTranscriptItem | null 
 function runEventToTranscriptItem(event: AgentRunEvent): PendingTranscriptItem | null {
   const streamItem = providerStreamItem(event)
   if (streamItem) return streamItem
+  if (event.channel === 'assistant') {
+    return {
+      id: `transcript-${event.id}`,
+      threadId: event.threadId,
+      runId: event.runId,
+      sequence: event.sequence,
+      kind: 'message',
+      title: event.title || '模型回复',
+      summary: event.message,
+      status: transcriptStatus(event.status),
+      visibility: 'user',
+      sourceType: event.type,
+      agUiEventType: 'TEXT_MESSAGE_END',
+      payload: event.data,
+      createdAt: event.createdAt,
+      order: eventOrder(event.createdAt, event.sequence),
+    }
+  }
   if (visibilityForRunEvent(event) === 'technical') return technicalItem(event)
 
   let kind: AgentTranscriptItemKind = 'status'

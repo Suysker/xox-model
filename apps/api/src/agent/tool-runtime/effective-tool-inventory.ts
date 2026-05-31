@@ -20,7 +20,7 @@ export type EffectiveToolInventoryInput = {
   settings?: Settings
   provider?: string
   model?: string
-  strategy: 'full_registry' | 'model_selected_capabilities' | 'router_fallback_business_core'
+  strategy: 'full_registry' | 'model_selected_capabilities' | 'router_fallback_business_core' | 'progressive_tool_discovery'
   toolCapabilities: AgentToolMetadata[]
   selectedCapabilities: AgentToolCapability[]
   routerReason?: string

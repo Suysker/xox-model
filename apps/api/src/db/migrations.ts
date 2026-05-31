@@ -320,6 +320,7 @@ export async function runMigrations(db: Kysely<Database>) {
       thread_id VARCHAR(36) NOT NULL REFERENCES agent_threads(id) ON DELETE CASCADE,
       run_id VARCHAR(36) NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
       sequence_no INTEGER NOT NULL,
+      channel VARCHAR(16) NOT NULL DEFAULT 'lifecycle',
       event_type VARCHAR(64) NOT NULL,
       title VARCHAR(180) NOT NULL,
       message TEXT NOT NULL,
@@ -329,6 +330,7 @@ export async function runMigrations(db: Kysely<Database>) {
       UNIQUE(run_id, sequence_no)
     )`,
   )
+  await addColumnIfMissing(db, 'agent_run_events', 'channel', "VARCHAR(16) NOT NULL DEFAULT 'lifecycle'")
   await exec(
     db,
     `CREATE TABLE IF NOT EXISTS agent_action_requests (

@@ -4,6 +4,10 @@ import type { Database } from '../db/schema.js'
 import { redactSecretLikeContent } from './memory.js'
 import { addRunEvent } from './run-events.js'
 import { planWithRuntimeAdapter } from './runtime/adapter-router.js'
+import {
+  buildToolContextPack,
+  type ToolContextPack,
+} from './tool-context-engine/index.js'
 import { buildEffectiveToolInventorySnapshot } from './tool-runtime/effective-tool-inventory.js'
 import {
   AGENT_TOOL_REGISTRY,
@@ -25,7 +29,11 @@ type ToolGatewayContext = {
   automationLevel?: 'manual' | 'low' | 'medium' | 'high'
 }
 
-export type ToolCatalogProjectionStrategy = 'full_registry' | 'model_selected_capabilities' | 'router_fallback_business_core'
+export type ToolCatalogProjectionStrategy =
+  | 'full_registry'
+  | 'model_selected_capabilities'
+  | 'router_fallback_business_core'
+  | 'progressive_tool_discovery'
 
 export type RuntimeToolCatalogProjection = {
   strategy: ToolCatalogProjectionStrategy
@@ -35,6 +43,8 @@ export type RuntimeToolCatalogProjection = {
   toolCapabilities: AgentToolMetadata[]
   selectedCapabilities: AgentToolCapability[]
   inventorySnapshot: ReturnType<typeof buildEffectiveToolInventorySnapshot>
+  toolDescriptors: ToolContextPack['toolDescriptors']
+  discoveryTrace: ToolContextPack['discoveryTrace'] | null
   routerReason?: string
 }
 
@@ -42,10 +52,6 @@ const ESSENTIAL_CAPABILITIES: AgentToolCapability[] = ['account', 'clarification
 const ROUTABLE_CAPABILITIES: AgentToolCapability[] = ['data', 'draft', 'import_export', 'ledger', 'memory', 'navigation', 'sandbox', 'share', 'version']
 const BUSINESS_CORE_CAPABILITIES: AgentToolCapability[] = ROUTABLE_CAPABILITIES.filter((capability) => capability !== 'navigation')
 const ALL_CAPABILITIES = new Set<AgentToolCapability>([...ESSENTIAL_CAPABILITIES, ...ROUTABLE_CAPABILITIES])
-const CAPABILITY_TOOL_EXPANSIONS: Partial<Record<AgentToolCapability, string[]>> = {
-  data: ['workspace_update_online_factor'],
-  draft: ['workspace_reset_draft'],
-}
 
 const CAPABILITY_ROUTER_SYSTEM_PROMPT = [
   '你是 xox-model 的 Tool Catalog Gateway capability router。',
@@ -143,6 +149,7 @@ export function buildRuntimeToolCatalogProjection(input?: {
   selectedCapabilities?: AgentToolCapability[] | null
   strategy?: ToolCatalogProjectionStrategy
   routerReason?: string
+  message?: string
   settings?: Settings
   userId?: string
   workspaceId?: string
@@ -150,16 +157,21 @@ export function buildRuntimeToolCatalogProjection(input?: {
 }): RuntimeToolCatalogProjection {
   const selectedCapabilities = safeCapabilities(input?.selectedCapabilities)
   const hasModelSelection = input?.selectedCapabilities !== undefined && input.selectedCapabilities !== null
-  const strategy: ToolCatalogProjectionStrategy = input?.strategy ?? (hasModelSelection ? 'model_selected_capabilities' : 'full_registry')
-  const allowedCapabilities = strategy === 'model_selected_capabilities' || strategy === 'router_fallback_business_core'
-    ? new Set<AgentToolCapability>([...ESSENTIAL_CAPABILITIES, ...selectedCapabilities])
-    : null
-  const expandedToolNames = new Set(
-    selectedCapabilities.flatMap((capability) => CAPABILITY_TOOL_EXPANSIONS[capability] ?? []),
-  )
-  const entries = allowedCapabilities
-    ? AGENT_TOOL_REGISTRY.filter((entry) => allowedCapabilities.has(entry.capability) || expandedToolNames.has(entry.name))
+  const requestedStrategy: ToolCatalogProjectionStrategy = input?.strategy ?? (hasModelSelection ? 'model_selected_capabilities' : 'full_registry')
+  const toolContext = requestedStrategy === 'full_registry'
+    ? null
+    : buildToolContextPack({
+        registry: AGENT_TOOL_REGISTRY,
+        selectedCapabilities,
+        ...(input?.message !== undefined ? { message: input.message } : {}),
+        ...(input?.routerReason !== undefined ? { routerReason: input.routerReason } : {}),
+        ...(input?.automationLevel !== undefined ? { automationLevel: input.automationLevel } : {}),
+      })
+  const byName = new Map(AGENT_TOOL_REGISTRY.map((entry) => [entry.name, entry]))
+  const entries = toolContext
+    ? toolContext.toolNames.map((name) => byName.get(name)).filter((entry): entry is (typeof AGENT_TOOL_REGISTRY)[number] => Boolean(entry))
     : AGENT_TOOL_REGISTRY
+  const strategy: ToolCatalogProjectionStrategy = toolContext ? 'progressive_tool_discovery' : requestedStrategy
 
   const toolCapabilities = entries.map(toolMetadata)
   const settings = input?.settings
@@ -182,6 +194,8 @@ export function buildRuntimeToolCatalogProjection(input?: {
     toolCapabilities,
     selectedCapabilities,
     inventorySnapshot,
+    toolDescriptors: toolContext?.toolDescriptors ?? [],
+    discoveryTrace: toolContext?.discoveryTrace ?? null,
     ...(input?.routerReason ? { routerReason: redactSecretLikeContent(input.routerReason).slice(0, 300) } : {}),
   }
 }
@@ -241,6 +255,7 @@ export async function provideRuntimeToolCatalog(ctx: ToolGatewayContext) {
   const projection = buildRuntimeToolCatalogProjection({
     ...selection,
     ...(ctx.settings ? { settings: ctx.settings } : {}),
+    ...(ctx.message ? { message: ctx.message } : {}),
     ...(ctx.userId ? { userId: ctx.userId } : {}),
     ...(ctx.workspaceId ? { workspaceId: ctx.workspaceId } : {}),
     ...(ctx.automationLevel ? { automationLevel: ctx.automationLevel } : {}),
@@ -259,6 +274,8 @@ export async function provideRuntimeToolCatalog(ctx: ToolGatewayContext) {
       toolCapabilities: projection.toolCapabilities,
       selectedCapabilities: projection.selectedCapabilities,
       inventorySnapshot: projection.inventorySnapshot,
+      toolDescriptors: projection.toolDescriptors,
+      discoveryTrace: projection.discoveryTrace,
       routerReason: projection.routerReason ?? null,
     },
   })

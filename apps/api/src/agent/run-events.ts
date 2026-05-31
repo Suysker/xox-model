@@ -1,5 +1,5 @@
 import type { Kysely } from 'kysely'
-import type { AgentRunEvent, AgentRunEventStatus } from '@xox/contracts'
+import type { AgentRunEvent, AgentRunEventStatus, AgentRuntimeChannel } from '@xox/contracts'
 import type { Database, Row } from '../db/schema.js'
 import { jsonString, parseJson } from '../db/database.js'
 import { newId } from '../core/security.js'
@@ -22,6 +22,38 @@ function runEventStatus(value: string): AgentRunEventStatus {
     return value
   }
   return 'info'
+}
+
+function runEventChannel(value: string | null | undefined): AgentRuntimeChannel {
+  if (value === 'assistant' || value === 'tool' || value === 'lifecycle') return value
+  return 'lifecycle'
+}
+
+function inferredRunEventChannel(input: {
+  type: string
+  data?: Record<string, unknown> | null
+}): AgentRuntimeChannel {
+  if (input.type === 'assistant_final_message') return 'assistant'
+  if (input.type === 'provider_stream_delta') {
+    const kind = input.data?.kind
+    if (kind === 'content_delta') return 'assistant'
+    if (kind === 'tool_call_delta') return 'tool'
+  }
+  if (
+    input.type === 'provider_tool_call_repaired' ||
+    input.type === 'tool_call_started' ||
+    input.type === 'tool_call_completed' ||
+    input.type === 'tool_call_failed' ||
+    input.type === 'action_updated' ||
+    input.type === 'action_executed' ||
+    input.type === 'action_auto_executed' ||
+    input.type === 'action_execution_failed' ||
+    input.type === 'action_auto_execution_failed' ||
+    input.type === 'action_cancelled'
+  ) {
+    return 'tool'
+  }
+  return 'lifecycle'
 }
 
 function isRunEventSequenceConflict(error: unknown) {
@@ -61,6 +93,7 @@ export function serializeRunEvent(row: Row<'agent_run_events'>): AgentRunEvent {
     threadId: row.thread_id,
     runId: row.run_id,
     sequence: row.sequence_no,
+    channel: runEventChannel(row.channel),
     type: row.event_type,
     title: row.title,
     message: row.message,
@@ -79,6 +112,7 @@ async function insertRunEvent(
     title: string
     message: string
     status: AgentRunEventStatus
+    channel?: AgentRuntimeChannel | undefined
     data?: Record<string, unknown> | null
   },
 ) {
@@ -96,6 +130,7 @@ async function insertRunEvent(
       thread_id: input.threadId,
       run_id: input.runId,
       sequence_no: sequence,
+      channel: input.channel ?? inferredRunEventChannel(input),
       event_type: input.type,
       title: input.title.slice(0, 180),
       message: input.message,
@@ -116,6 +151,7 @@ export async function addRunEvent(
     title: string
     message: string
     status: AgentRunEventStatus
+    channel?: AgentRuntimeChannel | undefined
     data?: Record<string, unknown> | null
   },
 ) {

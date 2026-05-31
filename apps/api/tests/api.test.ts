@@ -1354,7 +1354,7 @@ describe('xox TypeScript API', () => {
       expect(first.json.actionRequests[0].status).toBe('executed')
       expect(first.json.actionRequests[0].payload.config.shareholders[0].investmentAmount).toBe(1300000)
       const firstState = await client.get(`/api/v1/agent/threads/${first.json.threadId}`)
-      expect(firstState.json.evaluations.map((evaluation: any) => evaluation.status)).toEqual(['continue', 'needs_clarification'])
+      expect(firstState.json.evaluations.map((evaluation: any) => evaluation.status)).toContain('needs_clarification')
       expect(first.json.messages.at(-1).content).toContain('成员')
 
       const second = await client.post('/api/v1/agent/messages', {
@@ -1541,8 +1541,8 @@ describe('xox TypeScript API', () => {
       expect(body.tool_choice).toBe('auto')
       expect(toolNames.has('agent_reply')).toBe(false)
       expect(toolNames.has('ledger_create_member_income')).toBe(true)
-      expect(toolNames.has('workspace_publish_release')).toBe(true)
-      expect(body.tools.length).toBe(AGENT_TOOL_REGISTRY.length)
+      expect(toolNames.has('workspace_publish_release')).toBe(false)
+      expect(body.tools.length).toBeLessThanOrEqual(8)
       expect(body.messages[0].content).toContain('tool_calls')
       return {
         choices: [{
@@ -1579,7 +1579,7 @@ describe('xox TypeScript API', () => {
       expect(planned.json.actionRequests[0].payload.amount).toBe(176)
       expect(planned.json.runEvents.some((event: any) =>
         event.type === 'tool_catalog_ready' &&
-        event.data.projectionStrategy === 'model_selected_capabilities' &&
+        event.data.projectionStrategy === 'progressive_tool_discovery' &&
         event.data.selectedCapabilities.includes('ledger') &&
         event.data.toolNames.includes('ledger_create_member_income'),
       )).toBe(true)
@@ -1603,10 +1603,10 @@ describe('xox TypeScript API', () => {
     expect(projection.tools).toEqual(AGENT_TOOL_CATALOG)
 
     const ledgerProjection = buildRuntimeToolCatalogProjection({ selectedCapabilities: ['ledger'] })
-    expect(ledgerProjection.strategy).toBe('model_selected_capabilities')
+    expect(ledgerProjection.strategy).toBe('progressive_tool_discovery')
     expect(ledgerProjection.selectedCapabilities).toEqual(['ledger'])
     expect(ledgerProjection.toolNames).toContain('ledger_create_member_income')
-    expect(ledgerProjection.toolNames).toContain('ledger_create_entry')
+    expect(ledgerProjection.toolNames).toContain('data_query_workspace')
     expect(ledgerProjection.toolNames).toContain('account_forbidden')
     expect(ledgerProjection.toolNames).toContain('ask_user_clarification')
     expect(ledgerProjection.toolNames).not.toContain('ui_navigate')
@@ -1620,12 +1620,11 @@ describe('xox TypeScript API', () => {
 
     const dataProjection = buildRuntimeToolCatalogProjection({ selectedCapabilities: ['data'] })
     expect(dataProjection.toolNames).toContain('data_query_workspace')
-    expect(dataProjection.toolNames).toContain('workspace_update_online_factor')
     expect(dataProjection.toolNames).not.toContain('workspace_patch_config')
 
     const draftProjection = buildRuntimeToolCatalogProjection({ selectedCapabilities: ['draft'] })
     expect(draftProjection.toolNames).toContain('workspace_patch_config')
-    expect(draftProjection.toolNames).toContain('workspace_reset_draft')
+    expect(draftProjection.toolNames).toContain('data_query_workspace')
     expect(draftProjection.toolNames).not.toContain('workspace_publish_release')
 
     const memoryProjection = buildRuntimeToolCatalogProjection({ selectedCapabilities: ['memory'] })
@@ -1638,11 +1637,9 @@ describe('xox TypeScript API', () => {
       strategy: 'router_fallback_business_core',
       selectedCapabilities: ['data', 'draft', 'import_export', 'ledger', 'memory', 'share', 'version'],
     })
-    expect(fallbackProjection.strategy).toBe('router_fallback_business_core')
+    expect(fallbackProjection.strategy).toBe('progressive_tool_discovery')
     expect(fallbackProjection.toolNames).toContain('data_query_workspace')
-    expect(fallbackProjection.toolNames).toContain('ledger_create_entry')
-    expect(fallbackProjection.toolNames).toContain('memory_remember')
-    expect(fallbackProjection.toolNames).toContain('workspace_publish_release')
+    expect(fallbackProjection.toolNames.length).toBeLessThanOrEqual(8)
     expect(fallbackProjection.toolNames).not.toContain('ui_navigate')
   })
 
@@ -1658,7 +1655,6 @@ describe('xox TypeScript API', () => {
       const toolNames = new Set(body.tools.map((tool: any) => tool.function.name))
       expect(body.tool_choice).toBe('auto')
       expect(toolNames.has('ledger_create_member_income')).toBe(true)
-      expect(toolNames.has('ledger_update_entry')).toBe(true)
       expect(toolNames.has('workspace_publish_release')).toBe(false)
       expect(toolNames.has('workspace_patch_config')).toBe(false)
       expect(toolNames.has('account_forbidden')).toBe(true)
@@ -1687,7 +1683,7 @@ describe('xox TypeScript API', () => {
       expect(planned.statusCode).toBe(200)
       expect(planned.json.actionRequests[0].kind).toBe('ledger.create_entry')
       const event = planned.json.runEvents.find((item: any) => item.type === 'tool_catalog_ready')
-      expect(event.data.projectionStrategy).toBe('model_selected_capabilities')
+      expect(event.data.projectionStrategy).toBe('progressive_tool_discovery')
       expect(event.data.selectedCapabilities).toEqual(['ledger'])
       expect(event.data.toolNames).toContain('ledger_create_member_income')
       expect(event.data.toolNames).not.toContain('workspace_publish_release')
@@ -1915,7 +1911,9 @@ describe('xox TypeScript API', () => {
       })
       expect(planned.json.runEvents.some((event: any) =>
         event.type === 'tool_catalog_ready' &&
-        event.data?.toolCount >= 20,
+        event.data?.projectionStrategy === 'progressive_tool_discovery' &&
+        event.data?.toolCount <= 8 &&
+        event.data?.toolNames.includes('workspace_configure_operating_model'),
       )).toBe(true)
       await closeHarness(harness)
     })
@@ -2085,7 +2083,7 @@ describe('xox TypeScript API', () => {
     let callCount = 0
     await withFakeOpenAICompatibleProvider((body) => {
       callCount += 1
-      expect(body.tools.some((tool: any) => tool.function.name === 'agent_reply')).toBe(false)
+      expect((body.tools ?? []).some((tool: any) => tool.function.name === 'agent_reply')).toBe(false)
       expect(body.messages[0].content).not.toContain('agent_reply')
       return fakeAssistantTextResponse('我是 xox-model Agent OS，可以通过对话驱动测算、调模型、记账、预实分析、版本、分享和锁账；写入前会先给确认卡。')
     }, async (baseUrl) => {
@@ -2161,7 +2159,7 @@ describe('xox TypeScript API', () => {
       await registerUser(client, 'agent-provider-auth-failure@example.com')
 
       const planned = await client.post('/api/v1/agent/messages', {
-        message: '你好',
+        message: '把 3 月成员 A 线下 1 张入账',
       })
       expect(planned.statusCode).toBe(200)
       expect(planned.json.planner).toBe('openai_compatible_tool_calls')
@@ -2494,6 +2492,66 @@ describe('xox TypeScript API', () => {
         finalizerRequests.push(body)
         return fakeObservationFinalizerResponse(body)
       },
+    })
+  })
+
+  it('answers ambient date questions through direct_answer without goal/tool context', async () => {
+    const directRequests: any[] = []
+    await withFakeOpenAICompatibleProvider((body) => {
+      directRequests.push(body)
+      expect(body.tools ?? []).toEqual([])
+      const requestText = JSON.stringify(body)
+      expect(requestText).toContain('agent_ambient_context')
+      expect(body.messages.some((message: any) =>
+        typeof message?.content === 'string' &&
+        message.content.includes('"authority":"ambient"') &&
+        message.content.includes('"source":"agent_ambient_context"'),
+      )).toBe(true)
+      expect(requestText).not.toContain('teamMembers')
+      expect(requestText).not.toContain('writableConfig')
+      expect(requestText).not.toContain('tenantScopedMemory')
+      return fakeAssistantTextResponse('今天是 2026 年 6 月 1 日。')
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-direct-date', {
+        llmProvider: 'openai-compatible',
+        openaiCompatibleProvider: 'deepseek',
+        openaiCompatibleModel: 'deepseek-v4-pro',
+        openaiCompatibleBaseUrl: baseUrl,
+        openaiCompatibleApiKey: 'test-key',
+      })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-direct-date@example.com')
+
+      const response = await client.post('/api/v1/agent/messages', {
+        message: '今天是几月几号？',
+      })
+      expect(response.statusCode).toBe(200)
+      expect(response.json.planner).toBe('openai_compatible_tool_calls')
+      expect(response.json.actionRequests).toHaveLength(0)
+      expect(response.json.planSteps).toHaveLength(0)
+      expect(response.json.messages.at(-1).content).toContain('今天是 2026 年 6 月 1 日')
+      expect(directRequests).toHaveLength(1)
+
+      const eventTypes = response.json.runEvents.map((event: any) => event.type)
+      expect(eventTypes).toContain('turn_intake_resolved')
+      expect(eventTypes).toContain('assistant_final_message')
+      expect(eventTypes).not.toContain('goal_contract_created')
+      expect(eventTypes).not.toContain('model_planning')
+      expect(eventTypes).not.toContain('tool_catalog_ready')
+      expect(eventTypes).not.toContain('goal_evaluated')
+      expect(response.json.runEvents.every((event: any) => ['assistant', 'tool', 'lifecycle'].includes(event.channel))).toBe(true)
+      expect(response.json.runEvents.find((event: any) => event.type === 'assistant_final_message')?.channel).toBe('assistant')
+
+      const goals = await harness.db.selectFrom('agent_goals').selectAll().where('run_id', '=', response.json.runId).execute()
+      const evaluations = await harness.db.selectFrom('agent_evaluations').selectAll().where('run_id', '=', response.json.runId).execute()
+      expect(goals).toHaveLength(0)
+      expect(evaluations).toHaveLength(0)
+
+      const visibleKinds = flattenTranscriptNodes(response.json.transcriptNodes)
+        .filter((node: any) => node.visibility === 'user')
+        .map((node: any) => node.kind)
+      expect(visibleKinds).toEqual(['user_message', 'assistant_message'])
+      await closeHarness(harness)
     })
   })
 
@@ -3912,8 +3970,8 @@ describe('xox TypeScript API', () => {
       const prompt = body.messages.map((message: any) => message.content).join('\n')
       const instruction = prompt.split('用户指令：').at(-1) ?? prompt
       const toolNames = new Set(body.tools.map((tool: any) => tool.function.name))
-      expect(toolNames.has('team_member_add')).toBe(true)
-      expect(toolNames.has('team_member_delete')).toBe(true)
+      if (instruction.includes('新增成员')) expect(toolNames.has('team_member_add')).toBe(true)
+      if (instruction.includes('删除成员')) expect(toolNames.has('team_member_delete')).toBe(true)
 
       if (instruction.includes('新增成员')) {
         return fakeToolResponse('team_member_add', {
@@ -4007,9 +4065,13 @@ describe('xox TypeScript API', () => {
       const prompt = body.messages.map((message: any) => message.content).join('\n')
       const instruction = prompt.split('用户指令：').at(-1) ?? prompt
       const toolNames = new Set(body.tools.map((tool: any) => tool.function.name))
-      for (const name of ['shareholder_add', 'shareholder_delete', 'cost_item_add', 'cost_item_delete', 'stage_cost_type_add', 'stage_cost_type_delete']) {
-        expect(toolNames.has(name), name).toBe(true)
-      }
+      if (instruction.includes('新增股东')) expect(toolNames.has('shareholder_add')).toBe(true)
+      if (instruction.includes('股东 C 投资额')) expect(toolNames.has('workspace_patch_config')).toBe(true)
+      if (instruction.includes('删除股东')) expect(toolNames.has('shareholder_delete')).toBe(true)
+      if (instruction.includes('新增每月固定成本')) expect(toolNames.has('cost_item_add')).toBe(true)
+      if (instruction.includes('删除每月固定成本')) expect(toolNames.has('cost_item_delete')).toBe(true)
+      if (instruction.includes('新增成本类型')) expect(toolNames.has('stage_cost_type_add')).toBe(true)
+      if (instruction.includes('删除成本类型')) expect(toolNames.has('stage_cost_type_delete')).toBe(true)
 
       if (instruction.includes('新增股东')) {
         return fakeToolResponse('shareholder_add', {

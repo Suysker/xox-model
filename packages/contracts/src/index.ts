@@ -240,11 +240,14 @@ export type AgentRunRecord = {
 
 export type AgentRunEventStatus = 'queued' | 'running' | 'info' | 'blocked' | 'completed' | 'failed' | 'cancelled'
 
+export type AgentRuntimeChannel = 'assistant' | 'tool' | 'lifecycle'
+
 export type AgentRunEvent = {
   id: string
   threadId: string
   runId: string
   sequence: number
+  channel: AgentRuntimeChannel
   type: string
   title: string
   message: string
@@ -256,9 +259,12 @@ export type AgentRunEvent = {
 export type AgentToolInventorySource =
   | 'full_registry'
   | 'model_selected_capabilities'
+  | 'progressive_tool_discovery'
   | 'business_core_fallback'
 
 export type AgentToolInventoryFreshness = 'fresh' | 'stale' | 'fallback'
+
+export type AgentObservationAuthority = 'ambient' | 'domain' | 'action'
 
 export type AgentToolAuthorityClass =
   | 'read'

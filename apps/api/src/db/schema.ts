@@ -252,6 +252,7 @@ export type AgentRunEventTable = {
   thread_id: string
   run_id: string
   sequence_no: number
+  channel: string
   event_type: string
   title: string
   message: string

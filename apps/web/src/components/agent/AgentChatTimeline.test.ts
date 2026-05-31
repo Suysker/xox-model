@@ -299,6 +299,64 @@ describe('AgentChatTimeline helpers', () => {
     expect(html).not.toContain('<strong>workspace_rename</strong>')
   })
 
+  it('top-aligns transcript rows so user bubbles and work blocks do not stretch into empty space', () => {
+    const html = renderToStaticMarkup(createElement(AgentChatTimeline, {
+      nodes: [
+        item({
+          id: 'user-message',
+          kind: 'user_message',
+          title: '用户',
+          summary: '我们现在有几个人啊',
+          status: 'completed',
+        }),
+        item({
+          id: 'work',
+          kind: 'work_group',
+          title: 'Worked for 8s / 1 tools / 0 pending',
+          status: 'completed',
+          defaultOpen: true,
+          children: [
+            item({
+              id: 'tool-group',
+              kind: 'tool_group',
+              title: '调用 1 个工具',
+              status: 'completed',
+              defaultOpen: true,
+              children: [
+                item({
+                  id: 'navigation',
+                  kind: 'navigation',
+                  title: '已打开：看测算',
+                  summary: '',
+                  status: 'completed',
+                }),
+              ],
+            }),
+          ],
+        }),
+        item({
+          id: 'assistant',
+          kind: 'assistant_message',
+          title: '回复',
+          content: '目前团队共有 **7 人**。',
+          summary: '目前团队共有 7 人。',
+          status: 'completed',
+        }),
+      ],
+      busy: false,
+      actionDiffsById: new Map(),
+      onCancel: () => undefined,
+      onConfirm: () => undefined,
+      onUpdate: () => undefined,
+      className: 'min-h-0 flex-1',
+    }))
+
+    expect(html).toContain('grid content-start gap-1.5 overflow-y-auto')
+    expect(html).toContain('grid content-start gap-1.5')
+    expect(html).toContain('flex items-start justify-end')
+    expect(html).toContain('flex items-start justify-start')
+  })
+
   it('keeps completed tool details collapsed by default', () => {
     const html = renderToStaticMarkup(createElement(AgentChatTimeline, {
       nodes: [

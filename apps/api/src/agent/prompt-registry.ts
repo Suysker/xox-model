@@ -23,3 +23,7 @@ export function memorySystemPrompt() {
 export function toolObservationFinalizerSystemPrompt() {
   return readPrompt('./prompts/tool-observation-finalizer.system.md')
 }
+
+export function directAnswerSystemPrompt() {
+  return readPrompt('./prompts/direct-answer.system.md')
+}

@@ -429,7 +429,7 @@ function TimelineMessage(props: { node: AgentTranscriptNode }) {
   const source = props.node.content ?? props.node.summary ?? ''
   if (!isUser) {
     return (
-      <div className="flex justify-start" data-transcript-kind={props.node.kind} data-transcript-id={props.node.id}>
+      <div className="flex items-start justify-start" data-transcript-kind={props.node.kind} data-transcript-id={props.node.id}>
         <AgentMarkdown
           source={source}
           streaming={isStream}
@@ -439,7 +439,7 @@ function TimelineMessage(props: { node: AgentTranscriptNode }) {
     )
   }
   return (
-    <div className="flex justify-end" data-transcript-kind={props.node.kind} data-transcript-id={props.node.id}>
+    <div className="flex items-start justify-end" data-transcript-kind={props.node.kind} data-transcript-id={props.node.id}>
       <p className="max-w-[92%] whitespace-pre-wrap break-words rounded-lg bg-stone-950 px-3 py-1.5 text-right text-sm font-medium leading-6 text-white shadow-sm">
         {source}
       </p>
@@ -796,8 +796,8 @@ export function AgentChatTimeline(props: {
   }
 
   return (
-    <div className={['mt-3 grid gap-1.5 overflow-y-auto pr-1', props.className ?? 'max-h-72'].join(' ')}>
-      <div className="grid gap-1.5">
+    <div className={['mt-3 grid content-start gap-1.5 overflow-y-auto pr-1', props.className ?? 'max-h-72'].join(' ')}>
+      <div className="grid content-start gap-1.5">
         {visible.map((node, index) => {
           const turnTiming = turnTimingByNodeId.get(node.id)
           const turnActive = props.busy && Boolean(turnTiming?.startedAt) && !turnTiming?.endedAt

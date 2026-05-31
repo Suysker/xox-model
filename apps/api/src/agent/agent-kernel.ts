@@ -2,6 +2,8 @@ import type { AgentGoalStatus, AgentNavigationEvent, AgentPlannerSource } from '
 import type { Row } from '../db/schema.js'
 import type { PlannerContext } from './planning-context.js'
 import { executeAgentRun } from './agent-run-engine.js'
+import { executeDirectAnswerRun } from './direct-answer-runtime.js'
+import { resolveTurnIntake } from './turn-intake-resolver.js'
 
 export type AgentKernelRunResult = {
   plannerSource: AgentPlannerSource
@@ -16,5 +18,18 @@ export async function executeAgentKernelRun(
   ctx: PlannerContext & { thread: Row<'agent_threads'> },
   options: { beforeStateWrite: () => Promise<boolean> },
 ): Promise<AgentKernelRunResult | null> {
+  const resolution = await resolveTurnIntake({
+    db: ctx.db,
+    workspace: ctx.workspace,
+    user: ctx.user,
+    thread: ctx.thread,
+    message: ctx.message,
+  })
+  if (resolution.lane === 'direct_answer') {
+    return executeDirectAnswerRun(ctx, {
+      resolution,
+      beforeStateWrite: options.beforeStateWrite,
+    })
+  }
   return executeAgentRun(ctx, options)
 }

@@ -18,16 +18,29 @@ function navigation(): AgentNavigationEvent {
 }
 
 function runEvent(overrides: Partial<AgentRunEvent>): AgentRunEvent {
+  const type = overrides.type ?? 'run_queued'
+  const data = overrides.data ?? null
+  const inferredChannel =
+    overrides.channel ??
+    (type === 'assistant_final_message' ||
+    (type === 'provider_stream_delta' && data?.kind === 'content_delta')
+      ? 'assistant'
+      : type === 'provider_stream_delta' && data?.kind === 'tool_call_delta'
+        ? 'tool'
+        : type.startsWith('tool_call_') || type.startsWith('action_') || type === 'provider_tool_call_repaired'
+          ? 'tool'
+          : 'lifecycle')
   return {
     id: `event-${overrides.sequence ?? 1}`,
     threadId: 'thread-1',
     runId: 'run-1',
     sequence: overrides.sequence ?? 1,
-    type: 'run_queued',
+    channel: inferredChannel,
+    type,
     title: 'Run 已入队',
     message: '用户指令已持久化，等待 Agent worker 认领执行。',
     status: 'queued',
-    data: null,
+    data,
     createdAt,
     ...overrides,
   }
@@ -126,7 +139,7 @@ describe('Agent execution transcript projection', () => {
     const visibleText = transcript.filter((item) => item.visibility === 'user').map((item) => `${item.title}\n${item.summary}`).join('\n')
     expect(visibleText).toContain('正在理解你的目标')
     expect(visibleText).toContain('已拆解业务目标')
-    expect(visibleText).toContain('正在规划下一步')
+    expect(visibleText).not.toContain('正在规划下一步')
     expect(visibleText).not.toContain('Run 已入队')
     expect(visibleText).not.toContain('Worker 已认领')
     expect(visibleText).not.toContain('run lease')
@@ -136,6 +149,7 @@ describe('Agent execution transcript projection', () => {
     expect(technicalText).toContain('Run 已入队')
     expect(technicalText).toContain('Worker 已认领')
     expect(technicalText).toContain('目标循环 1')
+    expect(technicalText).toContain('模型规划中')
   })
 
   it('projects tool-call streaming, confirmation interrupts, edits, and execution results', () => {
