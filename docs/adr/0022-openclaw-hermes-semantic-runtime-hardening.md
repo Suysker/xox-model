@@ -441,6 +441,7 @@ Implemented on 2026-06-02:
 - Removed transcript visibility rules based on event title/message regex; user visibility now follows canonical event channels and typed event categories.
 - Added API tests for Chinese and English ambient-date direct answers, English payback tool discovery, and a production semantic-hardening audit for removed shortcut markers.
 - Started H5 migration by introducing scriptable fake-provider fixtures in API tests. The first migrated fixtures now express provider behavior as ordered tool-call turns instead of `instruction.includes(...)` branches, including multi-step forbidden-account repair, edited ledger policy, OpenAI adapter planning, and SSE thread-state planning.
+- Continued H5 migration across memory/provider and dedicated entity-action tests, replacing fake provider branches for memory injection, team member add/delete, employee add/delete, and workspace rename with explicit ordered tool-call scripts.
 
 ## Non-Goals
 

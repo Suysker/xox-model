@@ -3991,13 +3991,31 @@ describe('xox TypeScript API', () => {
 
   it('injects tenant-scoped memory into a new agent thread for real provider planning', async () => {
     const secretValue = ['sk', 'providersecretvalue123456'].join('-')
-    await withFakeOpenAICompatibleProvider((body) => {
-      const prompt = body.messages.map((message: any) => message.content).join('\n')
-      const instruction = prompt.split('用户指令：').at(-1) ?? prompt
-      if (instruction.includes('默认成员线下')) {
+    await withFakeOpenAICompatibleProvider(scriptedProvider([
+      (body) => {
+        expectProviderTools(body, ['memory_remember'])
+        return fakeToolResponse('memory_remember', {
+          value: '默认记账成员是 成员 A',
+          kind: 'preference',
+          key: 'user.preference.defaultLedgerMember',
+        })
+      },
+      (body) => {
+        const prompt = body.messages.map((message: any) => message.content).join('\n')
+        expect(prompt).not.toContain(secretValue)
+        expect(prompt).toContain('[redacted-api-key]')
+        expectProviderTools(body, ['memory_remember'])
+        return fakeToolResponse('memory_remember', {
+          value: `DeepSeek API key 是 ${secretValue}`,
+          kind: 'preference',
+        })
+      },
+      (body) => {
+        const prompt = body.messages.map((message: any) => message.content).join('\n')
         expect(prompt).toContain('默认记账成员是 成员 A')
         expect(prompt).toContain('tenantScopedMemory')
         expect(prompt).not.toContain(secretValue)
+        expectProviderTools(body, ['ledger_create_member_income'])
         return {
           choices: [{
             message: {
@@ -4019,28 +4037,8 @@ describe('xox TypeScript API', () => {
             },
           }],
         }
-      }
-
-      if (instruction.includes('DeepSeek API key')) {
-        expect(prompt).not.toContain(secretValue)
-        expect(prompt).toContain('[redacted-api-key]')
-        return fakeToolResponse('memory_remember', {
-          value: `DeepSeek API key 是 ${secretValue}`,
-          kind: 'preference',
-        })
-      }
-
-      if (instruction.includes('记住')) {
-        expect(prompt).toContain('记住')
-        return fakeToolResponse('memory_remember', {
-          value: '默认记账成员是 成员 A',
-          kind: 'preference',
-          key: 'user.preference.defaultLedgerMember',
-        })
-      }
-
-      return fakeAssistantTextResponse('已处理。')
-    }, async (baseUrl) => {
+      },
+    ]), async (baseUrl) => {
       const harness = await buildHarness('agent-memory-provider', { llmProvider: 'doubao', openaiCompatibleProvider: 'doubao', openaiCompatibleBaseUrl: baseUrl, openaiCompatibleApiKey: 'test-key' })
       const client = new Client(harness.app)
       await registerUser(client, 'agent-memory-provider@example.com')
@@ -4082,28 +4080,24 @@ describe('xox TypeScript API', () => {
   })
 
   it('plans team member add and delete through dedicated editable Agent confirmations', async () => {
-    await withFakeOpenAICompatibleProvider((body) => {
-      const prompt = body.messages.map((message: any) => message.content).join('\n')
-      const instruction = prompt.split('用户指令：').at(-1) ?? prompt
-      const toolNames = new Set(body.tools.map((tool: any) => tool.function.name))
-      if (instruction.includes('新增成员')) expect(toolNames.has('team_member_add')).toBe(true)
-      if (instruction.includes('删除成员')) expect(toolNames.has('team_member_delete')).toBe(true)
-
-      if (instruction.includes('新增成员')) {
+    await withFakeOpenAICompatibleProvider(scriptedProvider([
+      (body) => {
+        expectProviderTools(body, ['team_member_add'])
         return fakeToolResponse('team_member_add', {
           memberName: '成员 G',
           commissionRate: 0.3,
           baseUnitsPerEvent: 18,
         })
-      }
-      if (instruction.includes('删除成员 G')) {
+      },
+      (body) => {
+        expectProviderTools(body, ['team_member_delete'])
         return fakeToolResponse('team_member_delete', { memberName: '成员 G' })
-      }
-      if (instruction.includes('删除成员 文臣')) {
+      },
+      (body) => {
+        expectProviderTools(body, ['team_member_delete'])
         return fakeToolResponse('team_member_delete', { memberName: '文臣' })
-      }
-      return fakeToolResponse('ui_navigate', { mainTab: 'inputs', secondaryTab: 'revenue' })
-    }, async (baseUrl) => {
+      },
+    ]), async (baseUrl) => {
       const harness = await buildHarness('agent-team-member-tools', { llmProvider: 'openai-compatible', openaiCompatibleProvider: 'test-compatible', openaiCompatibleBaseUrl: baseUrl, openaiCompatibleApiKey: 'test-key' })
       const client = new Client(harness.app)
       await registerUser(client, 'agent-team-member-tools@example.com')
@@ -4317,21 +4311,25 @@ describe('xox TypeScript API', () => {
   }, 10_000)
 
   it('plans employee add/delete and workspace rename through model-selected tools', async () => {
-    await withFakeOpenAICompatibleProvider((body) => {
-      const prompt = body.messages.map((message: any) => message.content).join('\n')
-      const instruction = prompt.split('用户指令：').at(-1) ?? prompt
-      if (instruction.includes('新增员工')) {
+    await withFakeOpenAICompatibleProvider(scriptedProvider([
+      (body) => {
+        expectProviderTools(body, ['employee_add'])
         return fakeToolResponse('employee_add', {
           newEmployeeName: '场务 C',
           role: '场务',
           monthlyBasePay: 3200,
           perEventCost: 180,
         })
-      }
-      if (instruction.includes('删除员工')) return fakeToolResponse('employee_delete', { employeeName: '场务 C' })
-      if (instruction.includes('改名')) return fakeToolResponse('workspace_rename', { workspaceName: 'Agent 运营工作区' })
-      return fakeAssistantTextResponse('我是 xox-model Agent OS。')
-    }, async (baseUrl) => {
+      },
+      (body) => {
+        expectProviderTools(body, ['workspace_rename'])
+        return fakeToolResponse('workspace_rename', { workspaceName: 'Agent 运营工作区' })
+      },
+      (body) => {
+        expectProviderTools(body, ['employee_delete'])
+        return fakeToolResponse('employee_delete', { employeeName: '场务 C' })
+      },
+    ]), async (baseUrl) => {
       const harness = await buildHarness('agent-employee-rename-tools', { llmProvider: 'openai-compatible', openaiCompatibleProvider: 'test-compatible', openaiCompatibleBaseUrl: baseUrl, openaiCompatibleApiKey: 'test-key' })
       const client = new Client(harness.app)
       await registerUser(client, 'agent-employee-rename-tools@example.com')
