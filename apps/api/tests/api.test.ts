@@ -1163,22 +1163,19 @@ describe('xox TypeScript API', () => {
   })
 
   it('plans multiple agent steps and lets users edit pending action payloads before execution', async () => {
-    await withFakeOpenAICompatibleProvider((body) => {
-      const instruction = fakeCurrentInstruction(body)
-      if (instruction.includes('线上系数')) {
-        return fakeToolResponse('workspace_update_online_factor', {
-          monthLabel: '4月',
-          onlineSalesFactor: 0.3,
-          mode: 'write',
-        })
-      }
-      return fakeToolResponse('ledger_create_member_income', {
+    await withFakeOpenAICompatibleProvider(scriptedProvider([
+      () => fakeToolResponse('ledger_create_member_income', {
         monthLabel: '3月',
         memberName: '成员 B',
         offlineUnits: 1,
         onlineUnits: 1,
-      })
-    }, async (baseUrl) => {
+      }),
+      () => fakeToolResponse('workspace_update_online_factor', {
+        monthLabel: '4月',
+        onlineSalesFactor: 0.3,
+        mode: 'write',
+      }),
+    ]), async (baseUrl) => {
       const harness = await buildHarness('agent-multi-edit', fakeProviderSettings(baseUrl))
       const client = new Client(harness.app)
       await registerUser(client, 'agent-multi-edit@example.com')
@@ -5199,19 +5196,15 @@ describe('xox TypeScript API', () => {
   })
 
   it('answers variance deep questions and ledger history filters with visible navigation filters', async () => {
-    await withFakeOpenAICompatibleProvider((body) => {
-      const prompt = body.messages.map((message: any) => message.content).join('\n')
-      const instruction = prompt.split('用户指令：').at(-1) ?? prompt
-      if (instruction.includes('排练费差异')) {
-        return fakeToolResponse('data_query_workspace', {
+    await withFakeOpenAICompatibleProvider(scriptedProvider([
+      () => fakeToolResponse('data_query_workspace', {
           question: '3 月排练费差异为什么这么大',
           scope: 'variance_detail',
           monthLabel: '3月',
           subjectKey: 'cost.training.rehearsal',
           keyword: '排练',
-        })
-      }
-      return fakeToolResponse('data_query_workspace', {
+      }),
+      () => fakeToolResponse('data_query_workspace', {
         question: '筛选 3 月 2026-03-12 已作废 排练',
         scope: 'ledger_history',
         monthLabel: '3月',
@@ -5219,8 +5212,8 @@ describe('xox TypeScript API', () => {
         dateMode: 'day',
         day: '2026-03-12',
         keyword: '排练',
-      })
-    }, async (baseUrl) => {
+      }),
+    ]), async (baseUrl) => {
       const harness = await buildHarness('agent-data-deep-filter', { llmProvider: 'openai-compatible', openaiCompatibleProvider: 'test-compatible', openaiCompatibleBaseUrl: baseUrl, openaiCompatibleApiKey: 'test-key' })
       const client = new Client(harness.app)
       await registerUser(client, 'agent-data-deep-filter@example.com')
@@ -5510,15 +5503,14 @@ describe('xox TypeScript API', () => {
   }, 25_000)
 
   it('keeps agent read-only forecasts non-mutating and refuses account actions', async () => {
-    await withFakeOpenAICompatibleProvider((body) => {
-      const instruction = fakeCurrentInstruction(body)
-      if (instruction.includes('注销账号')) return fakeToolResponse('account_forbidden')
-      return fakeToolResponse('workspace_update_online_factor', {
+    await withFakeOpenAICompatibleProvider(scriptedProvider([
+      () => fakeToolResponse('workspace_update_online_factor', {
         monthLabel: '4月',
         newFactor: 0.3,
         mode: 'forecast',
-      })
-    }, async (baseUrl) => {
+      }),
+      () => fakeToolResponse('account_forbidden'),
+    ]), async (baseUrl) => {
       const harness = await buildHarness('agent-read', fakeProviderSettings(baseUrl))
       const client = new Client(harness.app)
       await registerUser(client, 'agent-read@example.com')
@@ -5554,17 +5546,15 @@ describe('xox TypeScript API', () => {
       lastSavedAt: null,
     }
 
-    await withFakeOpenAICompatibleProvider((body) => {
-      const prompt = String(body.messages?.map((message: any) => message.content).join('\n') ?? '')
-      const instruction = prompt.split('用户指令：').at(-1) ?? prompt
-      if (instruction.includes('导出')) return fakeToolResponse('workspace_export_bundle')
-      if (instruction.includes('导入')) {
+    await withFakeOpenAICompatibleProvider(scriptedProvider([
+      () => fakeToolResponse('workspace_export_bundle'),
+      (body) => {
+        const prompt = String(body.messages?.map((message: any) => message.content).join('\n') ?? '')
         expect(prompt).toContain('WorkspaceBundle JSON artifact parsed by server')
         expect(prompt).not.toContain('"offlineUnitPrice":321')
         return fakeToolResponse('workspace_import_bundle', { useProvidedBundle: true })
-      }
-      return fakeToolResponse('ui_navigate', { mainTab: 'dashboard', secondaryTab: 'overview' })
-    }, async (baseUrl) => {
+      },
+    ]), async (baseUrl) => {
       const harness = await buildHarness('agent-bundle-tools', { llmProvider: 'openai-compatible', openaiCompatibleProvider: 'test-compatible', openaiCompatibleBaseUrl: baseUrl, openaiCompatibleApiKey: 'test-key' })
       const client = new Client(harness.app)
       await registerUser(client, 'agent-bundle-tools@example.com')

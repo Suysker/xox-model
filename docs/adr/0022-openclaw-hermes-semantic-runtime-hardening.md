@@ -444,6 +444,7 @@ Implemented on 2026-06-02:
 - Continued H5 migration across memory/provider and dedicated entity-action tests, replacing fake provider branches for memory injection, team member add/delete, employee add/delete, and workspace rename with explicit ordered tool-call scripts.
 - Migrated the shareholder and cost-structure coverage fixture to ordered provider scripts across add/edit/delete shareholder, fixed cost item, and stage cost type flows.
 - Migrated generic ledger and ledger edit/void/restore fixtures to ordered provider scripts. Dynamic ledger entry ids now come from test setup state instead of prompt regex extraction.
+- Migrated multi-step edit, variance/history, read-only forecast/account refusal, and import/export fixtures to ordered provider scripts while preserving evaluator repair ordering where the harness naturally splits the work into multiple turns.
 
 ## Non-Goals
 
