@@ -440,6 +440,7 @@ Implemented on 2026-06-02:
 - Changed tool retrieval metadata from localized `aliases` to non-authoritative `searchHints`, and removed alias scoring as a semantic authority.
 - Removed transcript visibility rules based on event title/message regex; user visibility now follows canonical event channels and typed event categories.
 - Added API tests for Chinese and English ambient-date direct answers, English payback tool discovery, and a production semantic-hardening audit for removed shortcut markers.
+- Started H5 migration by introducing scriptable fake-provider fixtures in API tests. The first migrated fixtures now express provider behavior as ordered tool-call turns instead of `instruction.includes(...)` branches, including multi-step forbidden-account repair, edited ledger policy, OpenAI adapter planning, and SSE thread-state planning.
 
 ## Non-Goals
 

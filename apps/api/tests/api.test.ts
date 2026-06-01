@@ -267,6 +267,27 @@ function fakeToolResponse(name: string, args: Record<string, unknown> = {}) {
   return fakeToolResponses([{ name, args }])
 }
 
+type FakeProviderScriptStep =
+  | unknown
+  | ((body: any, request: IncomingMessage, index: number) => unknown | Promise<unknown>)
+
+function scriptedProvider(steps: FakeProviderScriptStep[]) {
+  let index = 0
+  return async (body: any, request: IncomingMessage) => {
+    const step = steps[index]
+    if (step === undefined) throw new Error(`Unexpected fake provider planning request #${index + 1}`)
+    index += 1
+    return typeof step === 'function'
+      ? await step(body, request, index - 1)
+      : step
+  }
+}
+
+function expectProviderTools(body: any, expected: string[]) {
+  const toolNames = new Set((body.tools ?? []).map((tool: any) => tool?.function?.name ?? tool?.name))
+  for (const name of expected) expect(toolNames.has(name)).toBe(true)
+}
+
 function fakeAssistantTextResponse(content: string) {
   return {
     choices: [{
@@ -1469,16 +1490,21 @@ describe('xox TypeScript API', () => {
   })
 
   it('keeps allowed steps when a multi-step message also contains a forbidden account action', async () => {
-    await withFakeOpenAICompatibleProvider((body) => {
-      const instruction = fakeCurrentInstruction(body)
-      if (instruction.includes('注销账号')) return fakeToolResponse('account_forbidden')
-      return fakeToolResponse('ledger_create_member_income', {
-        monthLabel: '3月',
-        memberName: '成员 A',
-        offlineUnits: 1,
-        onlineUnits: 0,
-      })
-    }, async (baseUrl) => {
+    await withFakeOpenAICompatibleProvider(scriptedProvider([
+      (body) => {
+        expectProviderTools(body, ['ledger_create_member_income'])
+        return fakeToolResponse('ledger_create_member_income', {
+          monthLabel: '3月',
+          memberName: '成员 A',
+          offlineUnits: 1,
+          onlineUnits: 0,
+        })
+      },
+      (body) => {
+        expectProviderTools(body, ['account_forbidden'])
+        return fakeToolResponse('account_forbidden')
+      },
+    ]), async (baseUrl) => {
       const harness = await buildHarness('agent-mixed-account-step', fakeProviderSettings(baseUrl))
       const client = new Client(harness.app)
       await registerUser(client, 'agent-mixed-account-step@example.com')
@@ -1504,15 +1530,20 @@ describe('xox TypeScript API', () => {
   })
 
   it('enforces Agent tool policy for edited payload ownership and derived ledger entries', async () => {
-    await withFakeOpenAICompatibleProvider((body) => {
-      const instruction = fakeCurrentInstruction(body)
-      return fakeToolResponse('ledger_create_member_income', {
+    await withFakeOpenAICompatibleProvider(scriptedProvider([
+      () => fakeToolResponse('ledger_create_member_income', {
         monthLabel: '3月',
-        memberName: instruction.includes('成员 B') ? '成员 B' : '成员 A',
+        memberName: '成员 A',
         offlineUnits: 1,
         onlineUnits: 0,
-      })
-    }, async (baseUrl) => {
+      }),
+      () => fakeToolResponse('ledger_create_member_income', {
+        monthLabel: '3月',
+        memberName: '成员 B',
+        offlineUnits: 1,
+        onlineUnits: 0,
+      }),
+    ]), async (baseUrl) => {
       const harness = await buildHarness('agent-tool-policy', fakeProviderSettings(baseUrl))
       const firstClient = new Client(harness.app)
       const secondClient = new Client(harness.app)
@@ -3360,26 +3391,27 @@ describe('xox TypeScript API', () => {
   })
 
   it('uses OpenAI Agents SDK adapter for OpenAI provider planning', async () => {
-    await withFakeOpenAICompatibleProvider((body) => {
-      expect(body.messages.some((message: any) => typeof message.content === 'string' && message.content.includes('需要操作系统能力时，通过 tool_calls 表达意图'))).toBe(true)
-      const instruction = fakeCurrentInstruction(body)
-      if (instruction.includes('如果 4 月线上系数变成 0.3')) {
-        expect(body.tools.some((tool: any) => tool.function.name === 'workspace_update_online_factor')).toBe(true)
-        expect(body.tools.some((tool: any) => tool.function.name === 'ledger_create_member_income')).toBe(true)
+    await withFakeOpenAICompatibleProvider(scriptedProvider([
+      (body) => {
+        expect(body.messages.some((message: any) => typeof message.content === 'string' && message.content.includes('需要操作系统能力时，通过 tool_calls 表达意图'))).toBe(true)
+        expectProviderTools(body, ['workspace_update_online_factor', 'ledger_create_member_income'])
         return fakeOpenAIChatToolResponse('workspace_update_online_factor', {
           monthLabel: '4月',
           onlineSalesFactor: 0.3,
           mode: 'forecast',
         })
-      }
-      expect(body.tools.some((tool: any) => tool.function.name === 'ledger_create_member_income')).toBe(true)
-      return fakeOpenAIChatToolResponse('ledger_create_member_income', {
-        monthLabel: '3月',
-        memberName: '成员 A',
-        offlineUnits: 1,
-        onlineUnits: 0,
-      })
-    }, async (baseUrl) => {
+      },
+      (body) => {
+        expect(body.messages.some((message: any) => typeof message.content === 'string' && message.content.includes('需要操作系统能力时，通过 tool_calls 表达意图'))).toBe(true)
+        expectProviderTools(body, ['ledger_create_member_income'])
+        return fakeOpenAIChatToolResponse('ledger_create_member_income', {
+          monthLabel: '3月',
+          memberName: '成员 A',
+          offlineUnits: 1,
+          onlineUnits: 0,
+        })
+      },
+    ]), async (baseUrl) => {
       const harness = await buildHarness('agent-openai-sdk', {
         llmProvider: 'openai',
         openaiBaseUrl: baseUrl,
@@ -3491,18 +3523,15 @@ describe('xox TypeScript API', () => {
   })
 
   it('streams server-owned thread state through SSE and keeps events tenant scoped', async () => {
-    await withFakeOpenAICompatibleProvider((body) => {
-      const instruction = fakeCurrentInstruction(body)
-      if (instruction.includes('线下')) {
-        return fakeToolResponse('ledger_create_member_income', {
-          monthLabel: '3月',
-          memberName: '成员 A',
-          offlineUnits: 1,
-          onlineUnits: 0,
-        })
-      }
-      return fakeToolResponse('ui_navigate', { mainTab: 'dashboard', secondaryTab: 'overview' })
-    }, async (providerBaseUrl) => {
+    await withFakeOpenAICompatibleProvider(scriptedProvider([
+      () => fakeToolResponse('ui_navigate', { mainTab: 'dashboard', secondaryTab: 'overview' }),
+      () => fakeToolResponse('ledger_create_member_income', {
+        monthLabel: '3月',
+        memberName: '成员 A',
+        offlineUnits: 1,
+        onlineUnits: 0,
+      }),
+    ]), async (providerBaseUrl) => {
       const harness = await buildHarness('agent-thread-events', fakeProviderSettings(providerBaseUrl))
       const client = new Client(harness.app)
       await registerUser(client, 'agent-thread-events@example.com')
