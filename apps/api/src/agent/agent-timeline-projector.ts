@@ -273,14 +273,21 @@ function mergeAssistantStreamText(existing: string | undefined, next: string | u
 function providerToolCallCompletedStatus(state: AgentProjectionState, runId: string | null | undefined): AgentTimelineItem['status'] | null {
   if (!runId) return null
   let streamCompleted = false
+  let runCancelled = false
+  let runFailed = false
+  let runCompleted = false
   for (const event of state.runEvents) {
     if (event.runId !== runId) continue
-    if (event.type === 'run_failed') return 'failed'
-    if (event.type === 'run_cancelled') return 'cancelled'
-    if (event.type === 'run_completed') return 'completed'
+    if (event.type === 'run_failed') runFailed = true
+    if (event.type === 'run_cancelled') runCancelled = true
+    if (event.type === 'run_completed') runCompleted = true
     if (event.type === 'provider_stream_completed') streamCompleted = true
   }
-  return streamCompleted ? 'completed' : null
+  if (streamCompleted) return 'completed'
+  if (runCancelled) return 'cancelled'
+  if (runFailed) return 'failed'
+  if (runCompleted) return 'completed'
+  return null
 }
 
 function finalizeProviderToolCallStatus(state: AgentProjectionState, item: PendingTimelineItem): PendingTimelineItem {
@@ -770,6 +777,7 @@ function attachReadResultToToolNode(toolNode: PendingTranscriptNode, readNode: P
   const sections = upsertToolResultSection(toolNode.sections ?? [], toolNode.id, result)
   return {
     ...toolNode,
+    status: readNode.status,
     ...(toolNode.navigation ? {} : readNode.navigation ? { navigation: readNode.navigation } : {}),
     sections,
     ...(toolNode.tool ? { tool: { ...toolNode.tool, resultPreview: result } } : {}),

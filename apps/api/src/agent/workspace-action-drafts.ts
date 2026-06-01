@@ -27,8 +27,8 @@ import type { AgentActionDraft } from './approval-executor.js'
 import type { ReadDraft, RuntimePlannerStep } from './action-draft-builder.js'
 import { currentDraftConfig, finiteNumber } from './action-draft-utils.js'
 import { cloneModelConfig, getConfigPath, setConfigPath } from './config-patch.js'
-import { extractAgentGoalFacts } from './goal-fact-extractor.js'
 import type { PlannerContext } from './planning-context.js'
+import { readRuntimeGoalFacts } from './runtime-goal-facts.js'
 
 function modelWorkbenchNavigation(reason: string): AgentNavigationEvent {
   return {
@@ -710,7 +710,7 @@ export async function planOperatingModelFromStep(ctx: PlannerContext, step: Runt
 
   const result = buildOperatingModelConfig(config, rawPlan, assumptions)
   const normalized = result.config
-  const goalWorkspaceName = extractAgentGoalFacts(ctx.message).workspaceName
+  const goalWorkspaceName = (await readRuntimeGoalFacts(ctx.db, ctx.runId)).workspaceName
   const workspaceName = goalWorkspaceName || firstString(rawPlan, 'workspaceName', 'projectName') || ctx.workspace.name
   const summary = projectionSummary(normalized)
   const navigation = operatingModelNavigation('完整经营模型配置需要打开调模型页面，从资本和输入结构开始核对。')

@@ -20,26 +20,30 @@ function uniqueCapabilities(values: AgentToolCapability[]) {
 
 function materializationBudget(input: {
   selectedCapabilities: AgentToolCapability[]
+  requiredActionCapabilities?: AgentToolCapability[]
   automationLevel?: AgentAutomationLevel
 }) {
   const count = uniqueCapabilities(input.selectedCapabilities).length
-  if (count >= 6) return 8
-  if (count >= 3) return 7
-  return 6
+  const requiredWriteCount = uniqueCapabilities(input.requiredActionCapabilities ?? []).length
+  const base = count >= 6 ? 8 : count >= 3 ? 7 : 6
+  return Math.min(12, base + requiredWriteCount * 3)
 }
 
 export function buildToolContextPack(input: {
   registry: AgentToolRegistryEntry[]
   selectedCapabilities: AgentToolCapability[]
+  requiredActionCapabilities?: AgentToolCapability[]
   message?: string
   routerReason?: string
   automationLevel?: AgentAutomationLevel
 }): ToolContextPack {
   const selectedCapabilities = uniqueCapabilities(input.selectedCapabilities)
+  const requiredActionCapabilities = uniqueCapabilities(input.requiredActionCapabilities ?? [])
   const manifests = buildToolManifests(input.registry)
   const ranked = rankToolManifests({
     manifests,
     selectedCapabilities,
+    requiredActionCapabilities,
     ...(input.message !== undefined ? { message: input.message } : {}),
     ...(input.routerReason !== undefined ? { routerReason: input.routerReason } : {}),
   })
@@ -47,6 +51,7 @@ export function buildToolContextPack(input: {
     ranked,
     maxTools: materializationBudget({
       selectedCapabilities,
+      requiredActionCapabilities,
       ...(input.automationLevel !== undefined ? { automationLevel: input.automationLevel } : {}),
     }),
   })

@@ -136,8 +136,8 @@ Complex goal loop:
 
 ```mermaid
 flowchart TD
-  UserGoal[User Objective] --> GoalFacts[Goal Fact Extractor<br/>model + deterministic schema]
-  GoalFacts --> Contract[Goal Contract]
+  UserGoal[User Objective] --> Catalog[Tool Catalog Gateway<br/>model-selected capabilities + goalFacts]
+  Catalog --> Contract[Goal Contract Runtime Inputs]
   Contract --> Planner[Planner / Provider Runtime]
   Planner --> ActionGraph[Action Graph]
   ActionGraph --> Observe[Observation Collector]
@@ -160,8 +160,8 @@ flowchart TD
 | Name Normalizer | `apps/api/src/agent/runtime/tool-call-name-normalizer.ts` | Trim/prefix/id-based tool name normalization against allowed provider tool names. | Candidate for MIT-derived port from `attempt.tool-call-normalization.ts`, reduced to xox needs. |
 | Tool Call Validator | `apps/api/src/agent/runtime/tool-call-validator.ts` | Validate repaired arguments against provider tool schemas and internal contracts. | Local implementation using current registry/Zod. |
 | Runtime Retry Policy | `apps/api/src/agent/runtime/provider-failover-policy.ts` | Retry failed tool only, non-stream fallback, unsupported parameter shaping, visible failure. | Extends ADR 0005 implementation. |
-| Goal Fact Extractor | `apps/api/src/agent/goal-fact-extractor.ts` | Extract objective facts such as member count, horizon, required/no-publish constraints. | Local business harness module, not OpenClaw. |
-| Evaluator Fact Checks | `apps/api/src/agent/completion-evaluator.ts` | Compare original goal facts against domain state/action graph, not only generated graph. | Local business harness module, not OpenClaw. |
+| Runtime Goal Facts | `apps/api/src/agent/runtime-goal-facts.ts` | Sanitize model-provided `goalFacts` from Tool Catalog Gateway; no prose keyword routing. | Local SaaS harness boundary inspired by OpenClaw prompt/tool separation. |
+| Evaluator Fact Checks | `apps/api/src/agent/completion-evaluator.ts` | Compare model-provided goal facts and runtime tool obligations against domain state/action graph. | Local business harness module, not OpenClaw. |
 | Typed Operating Workflow | `apps/api/src/agent/workflows/operating-model-workflow.ts` | Optional deterministic workflow for large operating model setup. | Inspired by Lobster, implemented as xox domain workflow. |
 
 ## Dependency Graph
@@ -248,9 +248,16 @@ type AgentGoalFacts = {
   expectedStartMonth?: number
   requiresForecastSummary?: boolean
   forbiddenActions?: Array<'publish_release' | 'share_link' | 'account_action'>
-  requiredCapabilities?: Array<'workspace_rename' | 'operating_model' | 'ledger' | 'version' | 'share'>
 }
 ```
+
+Later ADRs intentionally removed text-derived `requiredCapabilities` and the
+local prose parser. Goal facts are verifiable domain facts emitted as structured
+model output by `tool_catalog_select_capabilities`, then sanitized by
+`runtime-goal-facts.ts`; they are not a hidden keyword router. Tool choice and
+write obligations belong to the runtime/tool-discovery/model-call loop, and
+evaluator repair is driven by domain fact mismatches, explicit
+`requiredActionCapabilities`, or invalid action payloads.
 
 Evaluator must compare these facts against observation:
 
@@ -350,11 +357,11 @@ This keeps LLM semantic understanding while moving deterministic expansion and v
 - `apps/api/src/agent/runtime/high-volume-tool-policy.ts`
   - Centralizes the high-volume structured tool policy: `workspace_configure_operating_model`, `48000` output tokens, `360000ms` timeout.
   - The same values are used for first attempt and retry.
-- `apps/api/src/agent/goal-fact-extractor.ts`
-  - Stores hard objective facts in `AgentGoalContract.facts`.
-  - Extracts facts such as workspace name, member count, shareholder count, start month, horizon, forecast-summary requirement, and no-publish/no-share constraints.
+- `apps/api/src/agent/runtime-goal-facts.ts`
+  - Sanitizes hard objective facts emitted by `tool_catalog_select_capabilities` into `AgentGoalContract` evaluation inputs.
+  - Does not parse the user's prose locally; workspace name, member count, shareholder count, start month, horizon, forecast-summary requirement, and no-publish/no-share constraints must come from model-owned structured goal facts or domain tool results.
 - `apps/api/src/agent/workspace-action-drafts.ts`
-  - Uses extracted goal facts as a deterministic safety net for high-level operating-model confirmation cards, so a model that omits `plan.workspaceName` from a large argument still produces the requested project/workspace name.
+  - Uses runtime goal facts as a deterministic safety net for high-level operating-model confirmation cards, so a model that omits `plan.workspaceName` from a large argument still produces the requested project/workspace name.
 - `apps/api/src/agent/completion-evaluator.ts`
   - Compares original goal facts against domain observation and action graph.
   - Prevents rename-only completion when the original objective asks for a 50-member/12-month operating model.

@@ -13,7 +13,6 @@ import { jsonString, parseJson } from '../db/database.js'
 import { newId } from '../core/security.js'
 import { utcNow } from '../core/time.js'
 import type { CurrentUser } from '../modules/auth.js'
-import { extractAgentGoalFacts } from './goal-fact-extractor.js'
 
 const DEFAULT_GOAL_PAGES: AgentGoalContract['scope']['pages'] = ['model', 'ledger', 'variance', 'versions', 'share']
 const DEFAULT_CAPABILITIES = ['data', 'draft', 'import_export', 'ledger', 'memory', 'share', 'version']
@@ -38,13 +37,6 @@ function defaultCriteria(): AgentGoalContract['acceptanceCriteria'] {
       id: 'graph.write_actions_have_cards',
       label: '写入动作有确认卡',
       description: '所有写入动作必须先创建可编辑确认卡；任何自动化级别都不能绕过用户确认。',
-      kind: 'action_graph',
-      required: true,
-    },
-    {
-      id: 'graph.required_capability_planned',
-      label: '目标能力已覆盖',
-      description: '复杂目标里每个明确业务动作都必须对应可见的只读工具调用或待确认写入卡，不能只完成其中一部分就结束。',
       kind: 'action_graph',
       required: true,
     },
@@ -94,7 +86,7 @@ export function buildInitialGoalContract(input: {
       allowedCapabilities: DEFAULT_CAPABILITIES,
     },
     acceptanceCriteria: defaultCriteria(),
-    facts: extractAgentGoalFacts(input.objective),
+    facts: {},
     forbiddenActions: [
       {
         id: 'account.manual_only',
@@ -132,7 +124,7 @@ export function serializeGoal(row: Row<'agent_goals'>): AgentGoalRecord {
       objective: row.objective,
       scope: { workspace: 'current', pages: DEFAULT_GOAL_PAGES, allowedCapabilities: DEFAULT_CAPABILITIES },
       acceptanceCriteria: defaultCriteria(),
-      facts: extractAgentGoalFacts(row.objective),
+      facts: {},
       forbiddenActions: [],
       humanCheckpoints: [],
       automationLevel: 'manual',

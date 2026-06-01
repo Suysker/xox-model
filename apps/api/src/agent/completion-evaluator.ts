@@ -1,10 +1,11 @@
 import type { AgentEvaluationFinding, AgentEvaluationResult, AgentGoalContract, AgentGoalFacts } from '@xox/contracts'
+import type { AgentToolCapability } from './tool-catalog.js'
 import type { Kysely } from 'kysely'
 import type { Database, Row } from '../db/schema.js'
 import { parseJson } from '../db/database.js'
 import { collectAgentObservation } from './observation-collector.js'
 import { addEvaluationResult, updateGoalStatus } from './goal-contract.js'
-import { extractAgentGoalFacts } from './goal-fact-extractor.js'
+import { goalFactsFromRunEvent, mergeAgentGoalFacts } from './runtime-goal-facts.js'
 
 function finding(input: {
   id: string
@@ -30,6 +31,11 @@ function payloadConfig(action: Row<'agent_action_requests'>) {
 function payloadWorkspaceName(action: Row<'agent_action_requests'>) {
   const payload = parseJson<any>(action.payload_json, null)
   return typeof payload?.workspaceName === 'string' ? payload.workspaceName : null
+}
+
+function payloadSource(action: Row<'agent_action_requests'>) {
+  const payload = parseJson<any>(action.payload_json, null)
+  return typeof payload?.source === 'string' ? payload.source : null
 }
 
 function positiveNumber(value: unknown) {
@@ -67,65 +73,151 @@ function hasPositiveOperatingInput(config: any) {
 
 function goalFactsFromRow(goal: Row<'agent_goals'>): AgentGoalFacts {
   const contract = parseJson<Partial<AgentGoalContract>>(goal.contract_json, {})
-  return contract.facts && typeof contract.facts === 'object'
-    ? contract.facts
-    : extractAgentGoalFacts(goal.objective)
+  return contract.facts && typeof contract.facts === 'object' ? contract.facts : {}
 }
 
-function actionPayload(action: Row<'agent_action_requests'>) {
-  return parseJson<any>(action.payload_json, null)
+function runtimeGoalFacts(runEvents: Row<'agent_run_events'>[]) {
+  return mergeAgentGoalFacts(...runEvents.map(goalFactsFromRunEvent))
 }
 
-function clarificationMissingFields(steps: Row<'agent_plan_steps'>[]) {
+function isOperatingModelConfigAction(action: Row<'agent_action_requests'>) {
+  return action.kind === 'workspace.update_draft' && payloadSource(action) === 'workspace_configure_operating_model'
+}
+
+function evaluatePlannedOperatingModelAction(action: Row<'agent_action_requests'>) {
+  const config = payloadConfig(action)
+  if (config && hasPositiveOperatingInput(config)) {
+    return {
+      findings: [],
+      satisfied: ['graph.operating_model_inputs_planned'],
+    }
+  }
+  return {
+    findings: [finding({
+      id: 'graph.operating_model_inputs_planned',
+      criterionId: 'domain.goal_facts_match_outcome',
+      severity: 'blocking',
+      message: '经营模型确认卡缺少可验证的非零收入驱动或成本驱动输入，需要继续修复成员销量、场次、单价或成本结构。',
+      evidence: { actionId: action.id, hasConfig: Boolean(config) },
+    })],
+    satisfied: [],
+  }
+}
+
+function runtimeToolSignals(runEvents: Row<'agent_run_events'>[]) {
+  const selectedCapabilities = new Set<AgentToolCapability>()
+  const requiredActionCapabilities = new Set<AgentToolCapability>()
+  let fallbackBusinessCore = false
+  for (const event of runEvents) {
+    if (event.event_type !== 'tool_catalog_ready') continue
+    const data = parseJson<Record<string, unknown>>(event.data_json, {})
+    if (data.projectionStrategy === 'router_fallback_business_core') fallbackBusinessCore = true
+    for (const capability of safeRuntimeCapabilities(data.selectedCapabilities)) selectedCapabilities.add(capability)
+    for (const capability of safeRuntimeCapabilities(data.requiredActionCapabilities)) requiredActionCapabilities.add(capability)
+  }
+  return { selectedCapabilities, requiredActionCapabilities, fallbackBusinessCore }
+}
+
+function safeRuntimeCapabilities(value: unknown): AgentToolCapability[] {
+  const allowed = new Set<AgentToolCapability>([
+    'data',
+    'draft',
+    'import_export',
+    'ledger',
+    'memory',
+    'navigation',
+    'sandbox',
+    'share',
+    'version',
+  ])
+  const values = Array.isArray(value) ? value : []
+  return values.filter((item): item is AgentToolCapability => typeof item === 'string' && allowed.has(item as AgentToolCapability))
+}
+
+function actionCoversCapability(action: Row<'agent_action_requests'>, capability: AgentToolCapability) {
+  if (capability === 'draft') return action.kind === 'workspace.update_draft' || action.kind === 'workspace.rename'
+  if (capability === 'ledger') return action.kind.startsWith('ledger.')
+  if (capability === 'share') return action.kind.startsWith('share.')
+  if (capability === 'version') {
+    return [
+      'workspace.save_snapshot',
+      'workspace.publish_release',
+      'workspace.promote_version',
+      'workspace.rollback_version',
+      'workspace.delete_version',
+      'workspace.reset_draft',
+    ].includes(action.kind)
+  }
+  if (capability === 'import_export') return action.kind === 'workspace.import_bundle'
+  return false
+}
+
+function clarificationMissingFields(planSteps: Row<'agent_plan_steps'>[]) {
   const fields = new Set<string>()
-  for (const step of steps) {
-    const args = parseJson<any>(step.tool_arguments_json, null)
-    if (Array.isArray(args?.missingFields)) {
-      for (const field of args.missingFields) {
-        if (typeof field === 'string' && field.trim()) fields.add(field.trim())
+  for (const step of planSteps) {
+    if (step.tool_name !== 'ask_user_clarification') continue
+    const args = parseJson<Record<string, unknown>>(step.tool_arguments_json, {})
+    const candidates = [args.missingFields]
+    for (const candidate of candidates) {
+      if (!Array.isArray(candidate)) continue
+      for (const item of candidate) {
+        if (typeof item === 'string' && item.trim()) fields.add(item.trim())
       }
     }
   }
   return fields
 }
 
-function findingBlockedByClarification(input: {
-  finding: AgentEvaluationFinding
-  clarificationFields: Set<string>
-}) {
-  if (input.clarificationFields.size === 0) return false
-  if (input.finding.id === 'goal.required_ledger_action_planned') {
-    return [
-      'memberName',
-      'memberId',
-      'monthLabel',
-      'offlineUnits',
-      'onlineUnits',
-      'amount',
-      'subjectKey',
-      'subjectName',
-      'direction',
-      'entryId',
-    ].some((field) => input.clarificationFields.has(field))
+function findingBlockedByClarification(item: AgentEvaluationFinding, missingFields: Set<string>) {
+  if (missingFields.size === 0) return false
+  if (item.id === 'runtime.capability.ledger_action_missing') {
+    return ['memberName', 'monthLabel', 'offlineUnits', 'onlineUnits', 'amount', 'entryId', 'occurredAt']
+      .some((field) => missingFields.has(field))
   }
-  if (input.finding.id === 'goal.required_draft_action_planned') {
-    return [
-      'workspaceName',
-      'shareholderName',
-      'shareholderId',
-      'investmentAmount',
-      'dividendRate',
-      'costItemName',
-      'stageCostItemName',
-    ].some((field) => input.clarificationFields.has(field))
+  if (item.id === 'runtime.capability.draft_action_missing') {
+    return ['shareholderName', 'currentInvestmentAmount', 'workspaceName', 'employeeName', 'costItemName']
+      .some((field) => missingFields.has(field))
   }
   return false
 }
 
-function isOperatingModelAction(action: Row<'agent_action_requests'>) {
-  if (action.kind !== 'workspace.update_draft') return false
-  const payload = actionPayload(action)
-  return payload?.source === 'workspace_configure_operating_model'
+function evaluateRuntimeToolCoverage(input: {
+  runEvents: Row<'agent_run_events'>[]
+  planSteps: Row<'agent_plan_steps'>[]
+  actions: Row<'agent_action_requests'>[]
+}) {
+  const signals = runtimeToolSignals(input.runEvents)
+  const findings: AgentEvaluationFinding[] = []
+  const satisfied: string[] = []
+
+  for (const capability of signals.requiredActionCapabilities) {
+    if (input.actions.some((action) => actionCoversCapability(action, capability))) {
+      satisfied.push(`runtime.capability.${capability}_action`)
+      continue
+    }
+    findings.push(finding({
+      id: `runtime.capability.${capability}_action_missing`,
+      criterionId: 'graph.visible_steps',
+      severity: 'blocking',
+      message: `Tool Catalog Gateway 判定本轮需要 ${capability} 写入动作，但运行图还没有对应确认卡或执行结果。`,
+      evidence: { capability },
+    }))
+  }
+
+  const hasVisibleToolOutput =
+    input.actions.length > 0 ||
+    input.planSteps.some((step) => step.tool_name && step.tool_name !== 'ask_user_clarification' && step.status !== 'failed')
+  if (signals.fallbackBusinessCore && !hasVisibleToolOutput) {
+    findings.push(finding({
+      id: 'runtime.tool_output_missing',
+      criterionId: 'graph.visible_steps',
+      severity: 'blocking',
+      message: 'Tool Catalog Gateway 已暴露业务工具，但模型没有产生工具调用、确认卡或可验证观察结果。',
+      evidence: { projectionStrategy: 'router_fallback_business_core' },
+    }))
+  }
+
+  return { findings, satisfied }
 }
 
 function evaluateGoalFacts(input: {
@@ -136,9 +228,7 @@ function evaluateGoalFacts(input: {
   const findings: AgentEvaluationFinding[] = []
   const policyFindings: AgentEvaluationFinding[] = []
   const satisfied: string[] = []
-  const requiredCapabilities = new Set(input.facts.requiredCapabilities ?? [])
   const forbiddenActions = new Set(input.facts.forbiddenActions ?? [])
-  const operatingModelAction = [...input.actions].reverse().find(isOperatingModelAction)
   const plannedConfigs = input.actions
     .filter((action) => action.kind === 'workspace.update_draft')
     .map(payloadConfig)
@@ -217,57 +307,6 @@ function evaluateGoalFacts(input: {
         severity: 'blocking',
         message: `目标要求从 ${input.facts.expectedStartMonth} 月开始，当前草稿从 ${input.observation.draft.startMonth} 月开始。`,
         evidence: { expected: input.facts.expectedStartMonth, actual: input.observation.draft.startMonth },
-      }))
-    }
-  }
-
-  if (requiredCapabilities.has('operating_model')) {
-    const operatingConfig = operatingModelAction ? payloadConfig(operatingModelAction) : null
-    if (!operatingModelAction) {
-      findings.push(finding({
-        id: 'goal.required_operating_model_action_planned',
-        criterionId: 'graph.required_capability_planned',
-        severity: 'blocking',
-        message: '目标要求生成经营模型，但当前运行还没有生成经营模型草稿确认卡。',
-      }))
-    } else if (operatingConfig && hasPositiveOperatingInput(operatingConfig)) {
-      satisfied.push('goal.required_operating_model')
-    } else {
-      findings.push(finding({
-        id: 'goal.required_operating_model',
-        criterionId: 'graph.required_capability_planned',
-        severity: 'blocking',
-        message: '目标要求生成经营模型，但当前确认卡缺少可验证的非零收入驱动或成本驱动输入。',
-        evidence: {
-          hasOperatingModelAction: Boolean(operatingModelAction),
-          hasOperatingConfig: Boolean(operatingConfig),
-        },
-      }))
-    }
-  }
-
-  if (requiredCapabilities.has('ledger')) {
-    if (input.actions.some((action) => action.kind.startsWith('ledger.'))) {
-      satisfied.push('goal.required_ledger_action_planned')
-    } else {
-      findings.push(finding({
-        id: 'goal.required_ledger_action_planned',
-        criterionId: 'graph.required_capability_planned',
-        severity: 'blocking',
-        message: '目标包含记账动作，但当前运行还没有生成账本写入确认卡。',
-      }))
-    }
-  }
-
-  if (requiredCapabilities.has('draft')) {
-    if (input.actions.some((action) => action.kind === 'workspace.update_draft' || action.kind === 'workspace.rename')) {
-      satisfied.push('goal.required_draft_action_planned')
-    } else {
-      findings.push(finding({
-        id: 'goal.required_draft_action_planned',
-        criterionId: 'graph.required_capability_planned',
-        severity: 'blocking',
-        message: '目标包含模型草稿修改动作，但当前运行还没有生成模型修改确认卡。',
       }))
     }
   }
@@ -400,16 +439,17 @@ export async function evaluateAgentGoal(input: {
   goal: Row<'agent_goals'>
   iteration: number
 }): Promise<Row<'agent_evaluations'>> {
-  const [planSteps, actions, observation] = await Promise.all([
+  const [planSteps, actions, observation, runEvents] = await Promise.all([
     input.db.selectFrom('agent_plan_steps').selectAll().where('run_id', '=', input.goal.run_id).orderBy('sequence_no', 'asc').execute(),
     input.db.selectFrom('agent_action_requests').selectAll().where('run_id', '=', input.goal.run_id).orderBy('created_at', 'asc').execute(),
     collectAgentObservation({ db: input.db, workspace: input.workspace, runId: input.goal.run_id }),
+    input.db.selectFrom('agent_run_events').selectAll().where('run_id', '=', input.goal.run_id).orderBy('sequence_no', 'asc').execute(),
   ])
 
   const satisfied = new Set<string>(['policy.no_forbidden_actions', 'context.memory_scoped'])
   const unsatisfied: AgentEvaluationFinding[] = []
   const policyFindings: AgentEvaluationFinding[] = []
-  const facts = goalFactsFromRow(input.goal)
+  const facts = mergeAgentGoalFacts(goalFactsFromRow(input.goal), runtimeGoalFacts(runEvents))
 
   if (planSteps.length > 0 || actions.length > 0) {
     satisfied.add('graph.visible_steps')
@@ -480,6 +520,15 @@ export async function evaluateAgentGoal(input: {
     unsatisfied.push(...result.findings)
   }
 
+  const latestPlannedOperatingModelAction = [...actions].reverse().find((action) =>
+    action.status !== 'executed' && isOperatingModelConfigAction(action),
+  )
+  if (latestPlannedOperatingModelAction) {
+    const result = evaluatePlannedOperatingModelAction(latestPlannedOperatingModelAction)
+    result.satisfied.forEach((id) => satisfied.add(id))
+    unsatisfied.push(...result.findings)
+  }
+
   if (executedActions.length === 0 || observation.audit.executedActionCount >= executedActions.length) {
     satisfied.add('domain.executed_actions_match_outcome')
   } else {
@@ -496,12 +545,12 @@ export async function evaluateAgentGoal(input: {
   factResult.satisfied.forEach((id) => satisfied.add(id))
   unsatisfied.push(...factResult.findings)
   policyFindings.push(...factResult.policyFindings)
-  const missingPlannedCapabilities = unsatisfied.filter((item) => item.criterionId === 'graph.required_capability_planned')
-  const clarificationFields = clarificationMissingFields(clarificationSteps)
-  const independentlyMissingCapabilities = missingPlannedCapabilities.filter((item) =>
-    !findingBlockedByClarification({ finding: item, clarificationFields }),
-  )
-  const hasMissingPlannedCapability = missingPlannedCapabilities.length > 0
+  const toolCoverageResult = evaluateRuntimeToolCoverage({ runEvents, planSteps, actions })
+  toolCoverageResult.satisfied.forEach((id) => satisfied.add(id))
+  unsatisfied.push(...toolCoverageResult.findings)
+  const blockingFindings = unsatisfied.filter((item) => item.severity === 'blocking')
+  const missingFields = clarificationMissingFields(planSteps)
+  const independentBlockingFindings = blockingFindings.filter((item) => !findingBlockedByClarification(item, missingFields))
 
   let status: AgentEvaluationResult['status'] = 'pass'
   let nextPlannerBrief: string | null = null
@@ -516,26 +565,21 @@ export async function evaluateAgentGoal(input: {
     status = 'failed'
     blocker = '运行图存在失败动作。'
     confidence = 0.95
-  } else if (clarificationSteps.length > 0 && independentlyMissingCapabilities.length > 0) {
-    status = 'continue'
-    nextPlannerBrief = `当前已有澄清问题等待用户，但还存在不依赖该澄清的缺失动作。只补齐这些独立确认卡，不要重复已生成的确认卡，也不要猜测澄清依赖的信息：${independentlyMissingCapabilities.map((item) => item.message).join('；')}`
-    confidence = 0.9
-  } else if (clarificationSteps.length > 0) {
+  } else if (clarificationSteps.length > 0 && independentBlockingFindings.length === 0) {
     status = 'needs_clarification'
     nextPlannerBrief = '等待用户补充当前澄清问题，不要继续猜测或生成依赖缺失信息的写入动作。'
     confidence = 0.96
-  } else if (hasMissingPlannedCapability) {
+  } else if (blockingFindings.length > 0) {
     status = 'continue'
-    nextPlannerBrief = `继续完成目标，只生成缺失的独立确认卡或只读查询，不要重复已生成的确认卡：${unsatisfied.filter((item) => item.criterionId === 'graph.required_capability_planned').map((item) => item.message).join('；')}`
-    confidence = 0.9
+    const targetFindings = clarificationSteps.length > 0 ? independentBlockingFindings : blockingFindings
+    nextPlannerBrief = clarificationSteps.length > 0
+      ? `继续完成不依赖该澄清的缺失动作或事实：${targetFindings.map((item) => item.message).join('；')}`
+      : `继续完成目标，只修复这些未满足事实或执行结果：${targetFindings.map((item) => item.message).join('；')}`
+    confidence = 0.86
   } else if (pendingActions.length > 0) {
     status = 'needs_confirmation'
     nextPlannerBrief = '等待用户处理当前确认卡。不要继续规划依赖这些写入结果的后续动作。'
     confidence = 0.98
-  } else if (unsatisfied.some((item) => item.severity === 'blocking')) {
-    status = 'continue'
-    nextPlannerBrief = `继续完成目标，只修复这些未满足项：${unsatisfied.map((item) => item.message).join('；')}`
-    confidence = 0.86
   }
 
   const row = await addEvaluationResult(input.db, input.goal, {

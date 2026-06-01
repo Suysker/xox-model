@@ -760,6 +760,66 @@ describe('Agent execution transcript projection', () => {
     })
   })
 
+  it('does not mark a successful read tool failed when the later goal loop fails', () => {
+    const state = projectionState({
+      messages: [
+        { id: 'message-user-roi', threadId: 'thread-1', role: 'user', content: '给我预测一下投资回报率', createdAt },
+      ],
+      runEvents: [
+        runEvent({
+          sequence: 1,
+          type: 'provider_stream_delta',
+          title: '工具调用片段',
+          message: 'data_query_workspace',
+          status: 'running',
+          data: {
+            kind: 'tool_call_delta',
+            toolCallIndex: 0,
+            toolName: 'data_query_workspace',
+            argumentsPreview: '{"scope":"workspace_summary","metrics":["roi","cash","payback"]}',
+          },
+        }),
+        runEvent({
+          sequence: 2,
+          type: 'provider_stream_completed',
+          title: 'Provider 流已结束',
+          message: '模型流已结束。',
+          status: 'completed',
+          data: { toolCallCount: 1 },
+        }),
+        runEvent({
+          sequence: 3,
+          type: 'run_failed',
+          title: '运行未完成',
+          message: '目标循环未能完成所有要求。',
+          status: 'failed',
+        }),
+      ],
+      planSteps: [
+        planStep({
+          id: 'step-read-roi',
+          actionRequestId: null,
+          title: '回答工作区数据问题',
+          description: '{"roi":6.27,"paybackMonthLabel":"4月"}',
+          status: 'executed',
+          toolName: 'data_query_workspace',
+          toolCallId: 'call-read-roi',
+          toolArguments: { scope: 'workspace_summary', metrics: ['roi', 'cash', 'payback'] },
+        }),
+      ],
+      actionRequests: [],
+    })
+
+    const timeline = buildAgentTimelineItems(state)
+    const toolCall = timeline.find((item) => item.kind === 'tool_call' && item.toolName === 'data_query_workspace')
+    expect(toolCall?.status).toBe('completed')
+
+    const nodes = flattenNodes(buildAgentTranscriptNodes(state))
+    expect(nodes.find((node) => node.kind === 'tool_call' && node.tool?.name === 'data_query_workspace')?.status).toBe('completed')
+    expect(nodes.find((node) => node.kind === 'navigation')?.status).toBe('completed')
+    expect(nodes.some((node) => node.kind === 'evaluation' && node.title === '业务检查')).toBe(false)
+  })
+
   it('keeps provider tool calls running while the provider stream is still open', () => {
     const timeline = buildAgentTimelineItems(projectionState({
       messages: [

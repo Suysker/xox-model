@@ -1,9 +1,11 @@
 import type { Kysely } from 'kysely'
+import type { AgentGoalFacts } from '@xox/contracts'
 import type { Settings } from '../core/settings.js'
 import type { Database } from '../db/schema.js'
 import { redactSecretLikeContent } from './memory.js'
 import { addRunEvent } from './run-events.js'
 import { planWithRuntimeAdapter } from './runtime/adapter-router.js'
+import { sanitizeAgentGoalFacts } from './runtime-goal-facts.js'
 import {
   buildToolContextPack,
   type ToolContextPack,
@@ -42,6 +44,8 @@ export type RuntimeToolCatalogProjection = {
   toolNames: string[]
   toolCapabilities: AgentToolMetadata[]
   selectedCapabilities: AgentToolCapability[]
+  requiredActionCapabilities: AgentToolCapability[]
+  goalFacts: AgentGoalFacts
   inventorySnapshot: ReturnType<typeof buildEffectiveToolInventorySnapshot>
   toolDescriptors: ToolContextPack['toolDescriptors']
   discoveryTrace: ToolContextPack['discoveryTrace'] | null
@@ -57,6 +61,8 @@ const CAPABILITY_ROUTER_SYSTEM_PROMPT = [
   '你是 xox-model 的 Tool Catalog Gateway capability router。',
   '你的任务不是执行业务，也不是选择具体业务工具，而是为本轮用户指令选择需要暴露给主 Agent 的能力域。',
   '必须调用 tool_catalog_select_capabilities。可以选择多个能力域；普通问候、身份说明或闲聊可以传空数组。',
+  '如果用户显式要求写入、保存、入账、发布、分享、导入、修改模型或生成确认卡，把对应能力域放进 requiredActionCapabilities；只读查询、解释、问候和“如果怎样”的纯测算不要放入 requiredActionCapabilities。',
+  'goalFacts 只填写用户原话里明确、可验证的结构化事实，例如工作区名称、成员数量、预测月数、起始月份、股东/分红主体数量、是否明确要求不要发布/分享。没有把握就留空，不要用关键词猜测。',
   '用户明确要求“记住/以后默认/以后都”某个稳定偏好或默认业务习惯时选择 memory。',
   '用户询问以前保存的记忆、历史偏好、默认习惯、让 Agent 回忆某件事或需要查证已记住规则时选择 memory。',
   '用户做模型参数假设、试算或问“如果某参数变成 X 会怎样”时选择 draft；普通当前数据查询才选择 data。',
@@ -104,6 +110,35 @@ const CAPABILITY_SELECTION_TOOL: ChatTool = {
             enum: ROUTABLE_CAPABILITIES,
           },
         },
+        requiredActionCapabilities: {
+          type: 'array',
+          description: '用户本轮明确要求产生写入动作、保存动作或确认卡的能力域。只读查询和不保存的试算不要填写。',
+          items: {
+            type: 'string',
+            enum: ROUTABLE_CAPABILITIES,
+          },
+        },
+        goalFacts: {
+          type: 'object',
+          description: '用户原话中明确出现且可由领域状态验证的目标事实；不确定时省略字段。',
+          additionalProperties: false,
+          properties: {
+            workspaceName: { type: 'string', description: '明确要求的项目/工作区名称。' },
+            expectedMemberCount: { type: 'number', description: '明确要求的成员数量。' },
+            expectedShareholderCount: { type: 'number', description: '明确要求的股东或分红主体数量，含明确声明的预留池。' },
+            expectedHorizonMonths: { type: 'number', description: '明确要求的预测周期月数。' },
+            expectedStartMonth: { type: 'number', description: '明确要求的开始月份，1-12。' },
+            requiresForecastSummary: { type: 'boolean', description: '用户明确要求输出收入、成本、利润、现金或回本等预测摘要。' },
+            forbiddenActions: {
+              type: 'array',
+              description: '用户明确禁止的动作。',
+              items: {
+                type: 'string',
+                enum: ['publish_release', 'share_link', 'account_action'],
+              },
+            },
+          },
+        },
         reason: {
           type: 'string',
           description: '一句话说明选择原因，避免包含密钥、token 或 provider 原始响应。',
@@ -135,6 +170,20 @@ function capabilitiesFromRouterStep(step: unknown) {
   return safeCapabilities(value)
 }
 
+function requiredActionCapabilitiesFromRouterStep(step: unknown) {
+  const value = step && typeof step === 'object'
+    ? (step as any).requiredActionCapabilities ??
+      (step as any).actionRequiredCapabilities ??
+      (step as any).writeCapabilities
+    : null
+  return safeCapabilities(value)
+}
+
+function goalFactsFromRouterStep(step: unknown): AgentGoalFacts {
+  const value = step && typeof step === 'object' ? (step as any).goalFacts : null
+  return sanitizeAgentGoalFacts(value)
+}
+
 function toolMetadata(entry: (typeof AGENT_TOOL_REGISTRY)[number]): AgentToolMetadata {
   return {
     name: entry.name,
@@ -147,6 +196,8 @@ function toolMetadata(entry: (typeof AGENT_TOOL_REGISTRY)[number]): AgentToolMet
 
 export function buildRuntimeToolCatalogProjection(input?: {
   selectedCapabilities?: AgentToolCapability[] | null
+  requiredActionCapabilities?: AgentToolCapability[] | null
+  goalFacts?: AgentGoalFacts | null
   strategy?: ToolCatalogProjectionStrategy
   routerReason?: string
   message?: string
@@ -156,6 +207,9 @@ export function buildRuntimeToolCatalogProjection(input?: {
   automationLevel?: 'manual' | 'low' | 'medium' | 'high'
 }): RuntimeToolCatalogProjection {
   const selectedCapabilities = safeCapabilities(input?.selectedCapabilities)
+  const requiredActionCapabilities = safeCapabilities(input?.requiredActionCapabilities)
+    .filter((capability) => selectedCapabilities.length === 0 || selectedCapabilities.includes(capability))
+  const goalFacts = sanitizeAgentGoalFacts(input?.goalFacts)
   const hasModelSelection = input?.selectedCapabilities !== undefined && input.selectedCapabilities !== null
   const requestedStrategy: ToolCatalogProjectionStrategy = input?.strategy ?? (hasModelSelection ? 'model_selected_capabilities' : 'full_registry')
   const toolContext = requestedStrategy === 'full_registry'
@@ -163,6 +217,7 @@ export function buildRuntimeToolCatalogProjection(input?: {
     : buildToolContextPack({
         registry: AGENT_TOOL_REGISTRY,
         selectedCapabilities,
+        requiredActionCapabilities,
         ...(input?.message !== undefined ? { message: input.message } : {}),
         ...(input?.routerReason !== undefined ? { routerReason: input.routerReason } : {}),
         ...(input?.automationLevel !== undefined ? { automationLevel: input.automationLevel } : {}),
@@ -193,6 +248,8 @@ export function buildRuntimeToolCatalogProjection(input?: {
     toolNames: entries.map((entry) => entry.name),
     toolCapabilities,
     selectedCapabilities,
+    requiredActionCapabilities,
+    goalFacts,
     inventorySnapshot,
     toolDescriptors: toolContext?.toolDescriptors ?? [],
     discoveryTrace: toolContext?.discoveryTrace ?? null,
@@ -223,6 +280,8 @@ async function callCapabilityRouter(
   const routerReason = typeof selectedStep?.reason === 'string' ? selectedStep.reason : ''
   return {
     selectedCapabilities: capabilitiesFromRouterStep(selectedStep),
+    requiredActionCapabilities: requiredActionCapabilitiesFromRouterStep(selectedStep),
+    goalFacts: goalFactsFromRouterStep(selectedStep),
     ...(routerReason ? { routerReason } : {}),
   }
 }
@@ -242,9 +301,15 @@ async function selectCapabilitiesWithModel(ctx: ToolGatewayContext) {
   if (first.selectedCapabilities.length > 0) return first
   const retry = await callCapabilityRouter(routerCtx, CAPABILITY_ROUTER_RETRY_SYSTEM_PROMPT)
   return retry.selectedCapabilities.length > 0
-    ? { ...retry, routerReason: retry.routerReason ?? 'router-retry-selected-capabilities' }
+    ? {
+        ...retry,
+        goalFacts: Object.keys(retry.goalFacts).length > 0 ? retry.goalFacts : first.goalFacts,
+        routerReason: retry.routerReason ?? 'router-retry-selected-capabilities',
+      }
     : {
         selectedCapabilities: BUSINESS_CORE_CAPABILITIES,
+        requiredActionCapabilities: [],
+        goalFacts: first.goalFacts,
         strategy: 'router_fallback_business_core' as const,
         routerReason: 'router-empty-fallback-business-core',
       }
@@ -273,6 +338,8 @@ export async function provideRuntimeToolCatalog(ctx: ToolGatewayContext) {
       toolNames: projection.toolNames,
       toolCapabilities: projection.toolCapabilities,
       selectedCapabilities: projection.selectedCapabilities,
+      requiredActionCapabilities: projection.requiredActionCapabilities,
+      goalFacts: projection.goalFacts,
       inventorySnapshot: projection.inventorySnapshot,
       toolDescriptors: projection.toolDescriptors,
       discoveryTrace: projection.discoveryTrace,

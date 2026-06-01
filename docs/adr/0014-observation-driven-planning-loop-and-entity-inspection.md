@@ -55,8 +55,8 @@ flowchart TD
   - Does not call the final-answer continuation until the evaluator reaches a terminal state or iterations are exhausted.
   - If iterations are exhausted while the evaluator still says `continue`, the run must not be presented as successfully completed.
 
-- `goal-fact-extractor.ts` / `completion-evaluator.ts`
-  - Must distinguish write goals from read-only inspections. Phrases like ledger history filtering, variance questions, and explicit no-write checks are read goals unless the user asks to create, edit, void, restore, save, or publish business state.
+- `runtime-goal-facts.ts` / `completion-evaluator.ts`
+  - Must distinguish write obligations from read-only inspections through model-provided `requiredActionCapabilities` and tool observations, not local keyword parsing. Ledger history filtering, variance questions, and explicit no-write checks remain read goals unless the model emits a write obligation and a matching business tool call.
   - No-op write tool arguments are observations, not missing confirmation cards.
 
 - `tool-catalog.ts`

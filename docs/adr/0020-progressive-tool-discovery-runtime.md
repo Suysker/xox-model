@@ -161,6 +161,31 @@ AgentActionRuntime owns writes.
 CompletionEvaluator owns completion judgment.
 ```
 
+Boundary rule:
+
+```text
+Goal fact extraction is not tool routing.
+```
+
+The goal contract may consume hard facts that can be verified against workspace
+state or the action graph, such as workspace name, expected member count,
+shareholder count, forecast horizon, start month, forbidden publish/share
+actions, or whether a forecast summary must be computable. Those facts are
+model-provided structured `goalFacts` from `tool_catalog_select_capabilities`
+and then sanitized by `runtime-goal-facts.ts`; they are not parsed from prose by
+a server-side keyword/regex extractor. The same router can emit
+`requiredActionCapabilities` when the user explicitly asks for a write,
+confirmation card, save, publish, share, import, or ledger mutation. The
+evaluator consumes those runtime obligations instead of deriving `draft`,
+`ledger`, `version`, `share`, or similar required capabilities from keywords in
+the user's prose.
+
+This follows the same split used by OpenClaw/Hermes: the run loop owns the
+next step, the tool context engine owns the visible tool surface, and the model
+selects provider-native tools from that surface. The evaluator can reject an
+invalid generated confirmation card, or continue when verified domain facts do
+not match, but it must not smuggle a local intent classifier into goal facts.
+
 ## Progressive Disclosure Layers
 
 ### Layer 0: Stable Capability Map

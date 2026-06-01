@@ -122,7 +122,7 @@ export async function executeAgentRun(
     const planned = await planResponse({
       ...planningCtx,
       message: nextMessage,
-      planningTurn: iteration === 1 ? 'user_objective' : 'evaluator_repair',
+      planningTurn: iteration === 1 && !resumeContext ? 'user_objective' : 'evaluator_repair',
       priorObservations: iteration === 1 ? [] : observations,
     })
     if (!(await options.beforeStateWrite())) return null

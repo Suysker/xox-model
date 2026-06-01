@@ -75,8 +75,8 @@ The original thread messages remain available through `threadConversationLog`, b
 
 | Module | Path | Responsibility |
 | --- | --- | --- |
-| Goal fact extraction | `apps/api/src/agent/goal-fact-extractor.ts` | Extract hard goal facts without confusing ordinal references with target counts. |
-| Completion evaluator | `apps/api/src/agent/completion-evaluator.ts` | Continue independent missing capabilities even when another step needs clarification. |
+| Runtime goal facts | `apps/api/src/agent/runtime-goal-facts.ts` | Validate model-provided hard goal facts without parsing user prose locally. |
+| Completion evaluator | `apps/api/src/agent/completion-evaluator.ts` | Continue independent runtime tool obligations even when another step needs clarification. |
 | Clarification resume | `apps/api/src/agent/clarification-resume.ts` | Build a scoped resume objective from the previous `needs_clarification` goal, latest evaluation, and latest clarification step. |
 | Goal run engine | `apps/api/src/agent/goal-run-engine.ts` | Use the resume objective for planning/evaluation while preserving the user message in thread history. |
 | Ledger action drafts | `apps/api/src/agent/ledger-action-drafts.ts` | Resolve normalized member names and return visible clarification observations instead of silent nulls. |

@@ -20,21 +20,7 @@ export type ClarificationResumeContext = {
 }
 
 type FindingLike = {
-  id?: string
-  criterionId?: string
   message?: string
-}
-
-function missingCapabilityLabels(findings: FindingLike[]) {
-  const labels: string[] = []
-  for (const finding of findings) {
-    if (finding.criterionId !== 'graph.required_capability_planned') continue
-    if (finding.id === 'goal.required_ledger_action_planned') labels.push('记账写入确认卡')
-    else if (finding.id === 'goal.required_draft_action_planned') labels.push('模型草稿修改确认卡')
-    else if (finding.id === 'goal.required_operating_model_action_planned') labels.push('经营模型草稿确认卡')
-    else if (finding.message) labels.push(finding.message)
-  }
-  return [...new Set(labels)]
 }
 
 function clarificationQuestion(step: Row<'agent_plan_steps'> | undefined) {
@@ -89,10 +75,12 @@ export async function buildClarificationResumeContext(input: ResumeContextInput)
   const findings = latestEvaluation
     ? parseJson<FindingLike[]>(latestEvaluation.unsatisfied_json, [])
     : []
-  const missingLabels = missingCapabilityLabels(findings)
   const question = clarificationQuestion(latestClarificationStep)
-  const missingLine = missingLabels.length > 0
-    ? `本轮只补齐这些仍缺失的能力：${missingLabels.join('、')}。`
+  const openFindings = findings
+    .map((finding) => typeof finding.message === 'string' ? finding.message.trim() : '')
+    .filter((message) => message.length > 0)
+  const missingLine = openFindings.length > 0
+    ? `本轮只补齐上一轮仍未满足的事实或执行结果：${openFindings.join('；')}。`
     : '本轮补齐上一轮澄清问题依赖的业务动作。'
 
   const objective = [

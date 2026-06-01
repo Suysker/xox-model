@@ -592,7 +592,6 @@ export type AgentGoalFacts = {
   expectedStartMonth?: number
   requiresForecastSummary?: boolean
   forbiddenActions?: Array<'publish_release' | 'share_link' | 'account_action'>
-  requiredCapabilities?: Array<'workspace_rename' | 'operating_model' | 'draft' | 'ledger' | 'memory' | 'sandbox' | 'version' | 'share'>
 }
 
 export type AgentGoalContract = {

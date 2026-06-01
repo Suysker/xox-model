@@ -78,8 +78,8 @@ Goal Interpreter
 - `agent-run-engine.ts` 在每轮 provider planning 后运行 Completion Evaluator；`continue` 会把上一轮工具 observation 注入下一轮带工具 planning，`needs_confirmation` 会停止等待用户确认，`pass/blocked/failed` 会终止目标。达到最大修复轮次仍未满足时，run/goal 必须 fail closed，不能伪装完成。
 - `data_query_workspace(scope=entity_summary)` 是当前成员、股东、员工和成本对象的只读实体检查工具。模型遇到“第一个股东”“当前成员”“现有投资额”等工作区内已有事实时，应先读取该工具，再继续生成写入确认卡或澄清真正缺失的信息。
 - `planning-context.ts` 的 `planningTurn='evaluator_repair'` 让修复回合作为一次 harness-driven model call，不被用户多步骤分隔逻辑拆散。
-- `completion-evaluator.ts` 以 action graph、确认卡、audit 和领域投影为硬事实；经营模型草稿还会检查非零收入/成本驱动输入，避免空壳草稿被默认值误判通过。
-- `goal-fact-extractor.ts` 只识别需要确认卡的写入目标；账本历史筛选、偏差追问和明确“不要写入”的检查是只读目标，不会触发缺失写入确认卡的修复循环。无变化的 `workspace_patch_config` 作为 observation 返回给模型，不生成伪确认卡。
+- `completion-evaluator.ts` 以 action graph、确认卡、audit、Tool Catalog Gateway 的结构化信号和领域投影为硬事实；经营模型草稿还会检查非零收入/成本驱动输入，避免空壳草稿被默认值误判通过。
+- `runtime-goal-facts.ts` 只校验模型在 `tool_catalog_select_capabilities` 中给出的结构化 `goalFacts`；服务端不再从用户原话做关键词/正则式目标推断。无变化的 `workspace_patch_config` 作为 observation 返回给模型，不生成伪确认卡。
 - `memory-candidate-detector.ts` 和 `memory-consolidator.ts` 会在 action 执行后主动沉淀 scoped episodic/procedural memory；显式 `memory_remember` 仍保留为用户可控记忆入口。
 - `sandbox-service.ts` 已实现 manifest-scoped sandbox tool 的核心边界：模型只能请求 `sandbox_run_code`，服务端生成只读 `SandboxManifest`、最小化数据包和输出策略，fake backend 返回结构化 observation；它不执行生产写入、不读取 API 进程环境变量、不访问数据库/内部 API/provider key。后续真实隔离后端只能替换 `SandboxBackend`，不能改变业务只读和 confirmation-card 约束。
 - React `AgentConsole` 已显示最新目标、评估轮次、满足/未满足数量、blocker 和下一轮 planner brief。

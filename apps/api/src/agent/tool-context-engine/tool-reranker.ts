@@ -29,6 +29,10 @@ const CANONICAL_TOOLS_BY_CAPABILITY: Partial<Record<AgentToolCapability, string[
   version: ['workspace_save_snapshot', 'workspace_publish_release', 'workspace_rollback_version'],
 }
 
+export function canonicalToolNamesForCapabilities(capabilities: AgentToolCapability[]) {
+  return [...new Set(capabilities.flatMap((capability) => CANONICAL_TOOLS_BY_CAPABILITY[capability] ?? []))]
+}
+
 function uniqueCapabilities(values: AgentToolCapability[]) {
   return [...new Set(values)]
 }
@@ -61,14 +65,17 @@ function workflowPrerequisiteNames(manifests: ToolManifest[], selectedCapabiliti
 export function rankToolManifests(input: {
   manifests: ToolManifest[]
   selectedCapabilities: AgentToolCapability[]
+  requiredActionCapabilities?: AgentToolCapability[]
   message?: string
   routerReason?: string
 }): RankedToolManifest[] {
   const allowed = input.manifests.filter((manifest) => isAllowedByCapability(manifest, input.selectedCapabilities))
+  const requiredCanonicalTools = new Set(canonicalToolNamesForCapabilities(input.requiredActionCapabilities ?? []))
   const searchQuery = [
     input.message ?? '',
     input.routerReason ?? '',
     ...input.selectedCapabilities,
+    ...(input.requiredActionCapabilities ?? []),
   ].join(' ')
   const index = createToolSearchIndex(toolSearchDocumentsFromManifests(allowed))
   const searchHits = new Map(searchToolIndex(index, searchQuery).map((hit) => [hit.name, hit]))
@@ -90,6 +97,10 @@ export function rankToolManifests(input: {
     if ((CANONICAL_TOOLS_BY_CAPABILITY[manifest.capability] ?? []).includes(manifest.name)) {
       score += 2
       reasons.push('canonical_capability_tool')
+    }
+    if (requiredCanonicalTools.has(manifest.name)) {
+      score += 120
+      reasons.push('required_action_capability')
     }
     if (prerequisites.has(manifest.name)) {
       score += 5
