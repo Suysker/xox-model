@@ -4171,55 +4171,55 @@ describe('xox TypeScript API', () => {
   })
 
   it('plans shareholder and cost structure add/delete through dedicated Agent confirmations', async () => {
-    await withFakeOpenAICompatibleProvider((body) => {
-      const prompt = body.messages.map((message: any) => message.content).join('\n')
-      const instruction = prompt.split('用户指令：').at(-1) ?? prompt
-      const toolNames = new Set(body.tools.map((tool: any) => tool.function.name))
-      if (instruction.includes('新增股东')) expect(toolNames.has('shareholder_add')).toBe(true)
-      if (instruction.includes('股东 C 投资额')) expect(toolNames.has('workspace_patch_config')).toBe(true)
-      if (instruction.includes('删除股东')) expect(toolNames.has('shareholder_delete')).toBe(true)
-      if (instruction.includes('新增每月固定成本')) expect(toolNames.has('cost_item_add')).toBe(true)
-      if (instruction.includes('删除每月固定成本')) expect(toolNames.has('cost_item_delete')).toBe(true)
-      if (instruction.includes('新增成本类型')) expect(toolNames.has('stage_cost_type_add')).toBe(true)
-      if (instruction.includes('删除成本类型')) expect(toolNames.has('stage_cost_type_delete')).toBe(true)
-
-      if (instruction.includes('新增股东')) {
+    await withFakeOpenAICompatibleProvider(scriptedProvider([
+      (body) => {
+        expectProviderTools(body, ['shareholder_add'])
         return fakeToolResponse('shareholder_add', {
           newShareholderName: '股东 C',
           investmentAmount: 10000,
           dividendRate: 0.1,
         })
-      }
-      if (instruction.includes('股东 C 投资额')) {
+      },
+      (body) => {
+        expectProviderTools(body, ['workspace_patch_config'])
         return fakeToolResponse('workspace_patch_config', {
           patches: [{ path: 'shareholders[2].investmentAmount', value: 20000, label: '股东 C 投资额' }],
         })
-      }
-      if (instruction.includes('删除股东 C')) return fakeToolResponse('shareholder_delete', { shareholderName: '股东 C' })
-      if (instruction.includes('删除股东 A')) return fakeToolResponse('shareholder_delete', { shareholderName: '股东 A' })
-      if (instruction.includes('新增每月固定成本')) {
+      },
+      (body) => {
+        expectProviderTools(body, ['shareholder_delete'])
+        return fakeToolResponse('shareholder_delete', { shareholderName: '股东 C' })
+      },
+      (body) => {
+        expectProviderTools(body, ['shareholder_delete'])
+        return fakeToolResponse('shareholder_delete', { shareholderName: '股东 A' })
+      },
+      (body) => {
+        expectProviderTools(body, ['cost_item_add'])
         return fakeToolResponse('cost_item_add', {
           costCategory: 'monthlyFixed',
           newCostItemName: '房租',
           amount: 1200,
         })
-      }
-      if (instruction.includes('删除每月固定成本房租')) {
+      },
+      (body) => {
+        expectProviderTools(body, ['cost_item_delete'])
         return fakeToolResponse('cost_item_delete', { costCategory: 'monthlyFixed', costItemName: '房租' })
-      }
-      if (instruction.includes('新增成本类型')) {
+      },
+      (body) => {
+        expectProviderTools(body, ['stage_cost_type_add'])
         return fakeToolResponse('stage_cost_type_add', {
           costTypeName: '摄影',
           costMode: 'perEvent',
           amount: 300,
           count: 1,
         })
-      }
-      if (instruction.includes('删除成本类型摄影')) {
+      },
+      (body) => {
+        expectProviderTools(body, ['stage_cost_type_delete'])
         return fakeToolResponse('stage_cost_type_delete', { newStageCostItemName: '摄影' })
-      }
-      return fakeToolResponse('ui_navigate', { mainTab: 'inputs', secondaryTab: 'cost' })
-    }, async (baseUrl) => {
+      },
+    ]), async (baseUrl) => {
       const harness = await buildHarness('agent-shareholder-cost-tools', { llmProvider: 'openai-compatible', openaiCompatibleProvider: 'test-compatible', openaiCompatibleBaseUrl: baseUrl, openaiCompatibleApiKey: 'test-key' })
       const client = new Client(harness.app)
       await registerUser(client, 'agent-shareholder-cost-tools@example.com')
