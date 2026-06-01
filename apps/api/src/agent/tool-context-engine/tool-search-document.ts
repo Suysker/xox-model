@@ -5,7 +5,7 @@ export type ToolSearchDocument = {
   name: string
   capability: AgentToolCapability
   text: string
-  aliases: string[]
+  searchHints: string[]
   parameterNames: string[]
   entityTags: string[]
 }
@@ -18,13 +18,13 @@ export function toolSearchDocumentFromManifest(manifest: ToolManifest): ToolSear
       manifest.name,
       manifest.title,
       manifest.summary,
-      ...manifest.aliases,
+      ...manifest.searchHints,
       ...manifest.entityTags,
       ...manifest.parameterNames,
       ...manifest.requiredFacts,
       ...manifest.resolvesFacts,
     ].join(' '),
-    aliases: manifest.aliases,
+    searchHints: manifest.searchHints,
     parameterNames: manifest.parameterNames,
     entityTags: manifest.entityTags,
   }

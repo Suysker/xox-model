@@ -227,6 +227,27 @@ export type AgentMessage = {
 
 export type AgentPlannerSource = 'openai_agents' | 'openai_compatible_tool_calls' | 'rules'
 
+export type AgentTurnLane = 'direct_answer' | 'agent_goal'
+
+export type AgentTurnLaneReasonCode =
+  | 'ordinary_conversation'
+  | 'ambient_session_fact'
+  | 'requires_workspace_tools'
+  | 'requires_write_or_confirmation'
+  | 'pending_action'
+  | 'pending_clarification'
+  | 'uncertain'
+  | 'provider_unavailable'
+
+export type AgentTurnLaneResolution = {
+  lane: AgentTurnLane
+  requiresTools: boolean
+  reasonCode: AgentTurnLaneReasonCode
+  confidence: number
+  missingContext: string[]
+  reason?: string
+}
+
 export type AgentRunRecord = {
   id: string
   threadId: string

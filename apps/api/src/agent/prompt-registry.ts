@@ -27,3 +27,7 @@ export function toolObservationFinalizerSystemPrompt() {
 export function directAnswerSystemPrompt() {
   return readPrompt('./prompts/direct-answer.system.md')
 }
+
+export function turnLaneSystemPrompt() {
+  return readPrompt('./prompts/turn-lane.system.md')
+}

@@ -20,6 +20,18 @@ describe('Progressive Tool Discovery Runtime', () => {
     })
   })
 
+  it('discovers the same payback data tool for English wording', () => {
+    const pack = buildToolContextPack({
+      registry: AGENT_TOOL_REGISTRY,
+      selectedCapabilities: ['data'],
+      message: 'How many months until payback?',
+    })
+
+    expect(pack.strategy).toBe('progressive_tool_discovery')
+    expect(pack.toolNames).toContain('data_query_workspace')
+    expect(pack.toolNames.length).toBeLessThanOrEqual(4)
+  })
+
   it('fuses capability disclosure and retrieval for cross-domain SaaS goals', () => {
     const pack = buildToolContextPack({
       registry: AGENT_TOOL_REGISTRY,

@@ -1,7 +1,7 @@
-import type { AgentGoalStatus, AgentNavigationEvent, AgentPlannerSource } from '@xox/contracts'
+import type { AgentGoalStatus, AgentNavigationEvent, AgentPlannerSource, AgentTurnLaneResolution } from '@xox/contracts'
 import type { Row } from '../db/schema.js'
 import type { PlannerContext } from './planning-context.js'
-import { buildAgentAmbientContext, formatChineseLocalDate } from './ambient-context.js'
+import { buildAgentAmbientContext } from './ambient-context.js'
 import { directAnswerSystemPrompt } from './prompt-registry.js'
 import { addRuntimeStreamRunEvent } from './runtime-trace-events.js'
 import { planWithRuntimeAdapter } from './runtime/adapter-router.js'
@@ -9,9 +9,8 @@ import type { RuntimeChatMessage, RuntimePlanResult } from './runtime/runtime-ad
 import { redactSecretLikeContent } from './memory.js'
 import { addRunEvent } from './run-events.js'
 import { addMessage } from './thread-store.js'
-import type { AgentTurnIntakeResolution } from './turn-intake-resolver.js'
 import { storePlannedActionGraph } from './action-graph-store.js'
-import { readDraftFromRuntimeResult } from './runtime-plan-reader.js'
+import { configuredRuntimePlannerSource, readDraftFromRuntimeResult } from './runtime-plan-reader.js'
 
 export type DirectAnswerRunResult = {
   plannerSource: AgentPlannerSource
@@ -24,25 +23,6 @@ export type DirectAnswerRunResult = {
 
 function compactJson(value: unknown) {
   return JSON.stringify(value)
-}
-
-function fallbackDirectAnswer(input: {
-  message: string
-  reason: string
-  localDate: string
-  timezone: string
-}) {
-  const text = input.message.replace(/\s+/g, ' ').trim().toLowerCase()
-  if (input.reason === 'ambient_session_fact' || text.includes('今天') || text.includes('current date')) {
-    return `今天是 ${formatChineseLocalDate(input.localDate)}。`
-  }
-  if (text.includes('你是谁')) {
-    return '我是 xox-model Agent OS，可以通过对话帮你操作当前测算工作区。'
-  }
-  if (text.includes('能做什么') || text.includes('帮我做哪些事')) {
-    return '我可以帮你查询测算、调整模型、记账、管理版本和处理需要确认的动作。涉及当前工作区数据或写入时，我会进入 Agent 目标流程。'
-  }
-  return '你好，我是 xox-model Agent OS。'
 }
 
 function directAnswerMessages(input: {
@@ -81,7 +61,7 @@ function usableAssistantText(result: RuntimePlanResult | null) {
 export async function executeDirectAnswerRun(
   ctx: PlannerContext & { thread: Row<'agent_threads'> },
   input: {
-    resolution: AgentTurnIntakeResolution
+    resolution: AgentTurnLaneResolution
     beforeStateWrite: () => Promise<boolean>
   },
 ): Promise<DirectAnswerRunResult | null> {
@@ -100,11 +80,12 @@ export async function executeDirectAnswerRun(
     data: {
       lane: input.resolution.lane,
       reason: input.resolution.reason,
+      reasonCode: input.resolution.reasonCode,
       ambientAuthority: 'ambient',
     },
   })
 
-  let plannerSource: AgentPlannerSource = 'rules'
+  let plannerSource: AgentPlannerSource = configuredRuntimePlannerSource(ctx.settings) ?? 'rules'
   let assistantText: string | null = null
   if (ctx.settings.llmProvider !== 'rules') {
     const result = await planWithRuntimeAdapter({
@@ -153,12 +134,47 @@ export async function executeDirectAnswerRun(
     }
   }
 
-  assistantText ??= fallbackDirectAnswer({
-    message: ctx.message,
-    reason: input.resolution.reason,
-    localDate: ambientContext.localDate,
-    timezone: ambientContext.timezone,
-  })
+  if (!assistantText) {
+    await addRunEvent(ctx.db, {
+      threadId: ctx.thread.id,
+      runId: ctx.runId,
+      channel: 'lifecycle',
+      type: 'direct_answer_provider_failed',
+      title: '直接回答模型调用未完成',
+      message: '模型没有返回可用的 assistant 文本，direct_answer 不使用本地语义 fallback。',
+      status: 'failed',
+      data: {
+        lane: input.resolution.lane,
+        reasonCode: input.resolution.reasonCode,
+      },
+    })
+    if (!(await input.beforeStateWrite())) return null
+    const source = configuredRuntimePlannerSource(ctx.settings) ?? 'openai_compatible_tool_calls'
+    const stored = await storePlannedActionGraph(ctx, {
+      items: [readDraftFromRuntimeResult({
+        source,
+        steps: [],
+        error: {
+          kind: 'provider_response_error',
+          message: 'Direct answer provider did not return assistant text.',
+        },
+      })],
+      plannerSource: source,
+    })
+    await ctx.db
+      .updateTable('agent_runs')
+      .set({ goal_status: 'failed' })
+      .where('id', '=', ctx.runId)
+      .execute()
+    return {
+      plannerSource: source,
+      assistantMessage: null,
+      navigationEvents: stored.navigationEvents,
+      actionRows: stored.actionRows,
+      planRows: stored.planRows,
+      goalStatus: 'failed',
+    }
+  }
 
   if (!(await input.beforeStateWrite())) return null
   const assistantMessage = await addMessage(ctx.db, ctx.thread.id, 'assistant', assistantText)

@@ -1,6 +1,6 @@
 # ADR 0022: OpenClaw/Hermes-Inspired Semantic Runtime Hardening
 
-Status: Proposed
+Status: Accepted
 
 Date: 2026-06-02
 
@@ -430,6 +430,16 @@ Required before implementation is complete:
 7. Replace fake-provider phrase branches with scriptable fixtures.
 8. Add static semantic audit and multilingual acceptance tests.
 9. Run full web/api/build/test suite.
+
+## Implementation Notes
+
+Implemented on 2026-06-02:
+
+- Added `AgentTurnLaneResolution` as a shared contract and moved turn-lane choice into a model-owned `turn_lane_resolve` tool contract.
+- Removed the production keyword lane detector and direct-answer keyword fallback; direct answers are now model-authored, with ambient session facts supplied as stable context.
+- Changed tool retrieval metadata from localized `aliases` to non-authoritative `searchHints`, and removed alias scoring as a semantic authority.
+- Removed transcript visibility rules based on event title/message regex; user visibility now follows canonical event channels and typed event categories.
+- Added API tests for Chinese and English ambient-date direct answers, English payback tool discovery, and a production semantic-hardening audit for removed shortcut markers.
 
 ## Non-Goals
 

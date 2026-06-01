@@ -1,3 +1,5 @@
+import type { AgentTurnLane, AgentTurnLaneReasonCode } from '@xox/contracts'
+
 export type AgentToolCapability =
   | 'account'
   | 'clarification'
@@ -112,6 +114,10 @@ export type AgentToolCallStep = {
   id?: string
   memoryId?: string
   confidence?: number
+  lane?: AgentTurnLane
+  requiresTools?: boolean
+  reasonCode?: AgentTurnLaneReasonCode
+  missingContext?: string[]
   scope?: 'workspace_summary' | 'period_summary' | 'member_summary' | 'team_summary' | 'entity_summary' | 'top_months' | 'variance_detail' | 'ledger_history'
   metrics?: string[]
   order?: 'asc' | 'desc'
@@ -1218,6 +1224,8 @@ export const AGENT_TOOL_REGISTRY: AgentToolRegistryEntry[] = AGENT_TOOL_CATALOG.
 
 export function toolCallToPlannerStep(toolName: string, args: Record<string, unknown>): AgentToolCallStep | null {
   switch (toolName) {
+    case 'turn_lane_resolve':
+      return { intent: 'turn_lane.resolve', ...args }
     case 'tool_catalog_select_capabilities':
       return { intent: 'tool_catalog.select_capabilities', ...args }
     case 'ledger_create_member_income':

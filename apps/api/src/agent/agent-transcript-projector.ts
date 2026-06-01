@@ -22,17 +22,6 @@ const INTERNAL_RUN_EVENT_TYPES = new Set([
   'provider_tool_call_repaired',
 ])
 
-const INTERNAL_LABEL_PATTERNS = [
-  /Run 已入队/i,
-  /Worker 已认领/i,
-  /run lease/i,
-  /lease guard/i,
-  /目标契约已建立/i,
-  /目标循环\s*\d+/i,
-  /Completion Evaluator 已运行/i,
-  /后台 worker/i,
-]
-
 function asString(value: unknown) {
   return typeof value === 'string' ? value : ''
 }
@@ -57,8 +46,7 @@ function visibilityForRunEvent(event: AgentRunEvent): 'user' | 'technical' {
   if (event.channel === 'tool' && event.type === 'provider_tool_call_repaired') return 'technical'
   if (event.channel === 'tool') return 'user'
   if (INTERNAL_RUN_EVENT_TYPES.has(event.type)) return 'technical'
-  const text = `${event.title}\n${event.message}`
-  return INTERNAL_LABEL_PATTERNS.some((pattern) => pattern.test(text)) ? 'technical' : 'user'
+  return 'technical'
 }
 
 function transcriptStatus(status: AgentRunEvent['status']): AgentTranscriptItemStatus {

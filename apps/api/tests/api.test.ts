@@ -36,6 +36,7 @@ type FakeCapability = 'data' | 'draft' | 'import_export' | 'ledger' | 'memory' |
 
 type FakeProviderOptions = {
   autoSelectCapabilities?: boolean
+  turnLane?: 'agent_goal' | 'direct_answer' | ((body: any, request: IncomingMessage) => unknown | Promise<unknown>)
   capabilities?: FakeCapability[]
   requiredActionCapabilities?: FakeCapability[]
   goalFacts?: Record<string, unknown>
@@ -81,6 +82,24 @@ function isCapabilityRouterRequest(body: any) {
     : []
   return toolNames.includes('tool_catalog_select_capabilities') ||
     JSON.stringify(body).includes('Tool Catalog Gateway capability router')
+}
+
+function isTurnLaneResolverRequest(body: any) {
+  const toolNames = Array.isArray(body?.tools)
+    ? body.tools.map((tool: any) => tool?.function?.name ?? tool?.name)
+    : []
+  return toolNames.includes('turn_lane_resolve')
+}
+
+function fakeTurnLaneResolutionResponse(lane: 'agent_goal' | 'direct_answer' = 'agent_goal') {
+  return fakeOpenAIChatToolResponse('turn_lane_resolve', {
+    lane,
+    requiresTools: lane === 'agent_goal',
+    reasonCode: lane === 'direct_answer' ? 'ordinary_conversation' : 'requires_workspace_tools',
+    confidence: 0.95,
+    missingContext: [],
+    reason: 'test-turn-lane',
+  })
 }
 
 function fakeCapabilitySelectionResponse(
@@ -132,6 +151,10 @@ async function withFakeOpenAICompatibleProvider(
       ? options.finalizerResponse
         ? await options.finalizerResponse(body, request)
         : fakeObservationFinalizerResponse(body)
+      : isTurnLaneResolverRequest(body)
+        ? typeof options.turnLane === 'function'
+          ? await options.turnLane(body, request)
+          : fakeTurnLaneResolutionResponse(options.turnLane ?? 'agent_goal')
       : (options.autoSelectCapabilities ?? true) && isCapabilityRouterRequest(body)
         ? fakeCapabilitySelectionResponse(options.capabilities ?? DEFAULT_FAKE_CAPABILITIES, {
             ...(options.requiredActionCapabilities ? { requiredActionCapabilities: options.requiredActionCapabilities } : {}),
@@ -2137,7 +2160,7 @@ describe('xox TypeScript API', () => {
       expect(JSON.stringify(visibleTimeline)).not.toContain('正在规划下一步')
       expect(JSON.stringify(visibleTimeline)).not.toContain('业务步骤已生成')
       await closeHarness(harness)
-    })
+    }, { turnLane: 'direct_answer' })
   })
 
   it('does not fall back to regex rules when a write-intent provider reply has no tool call', async () => {
@@ -2579,7 +2602,42 @@ describe('xox TypeScript API', () => {
         .map((node: any) => node.kind)
       expect(visibleKinds).toEqual(['user_message', 'assistant_message'])
       await closeHarness(harness)
-    })
+    }, { turnLane: 'direct_answer' })
+  })
+
+  it('answers English ambient date questions through the same direct_answer lane', async () => {
+    const directRequests: any[] = []
+    await withFakeOpenAICompatibleProvider((body) => {
+      directRequests.push(body)
+      expect(body.tools ?? []).toEqual([])
+      const requestText = JSON.stringify(body)
+      expect(requestText).toContain('agent_ambient_context')
+      expect(requestText).not.toContain('teamMembers')
+      expect(requestText).not.toContain('writableConfig')
+      expect(requestText).not.toContain('tenantScopedMemory')
+      return fakeAssistantTextResponse('Today is June 1, 2026.')
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-direct-date-english', {
+        llmProvider: 'openai-compatible',
+        openaiCompatibleProvider: 'deepseek',
+        openaiCompatibleModel: 'deepseek-v4-pro',
+        openaiCompatibleBaseUrl: baseUrl,
+        openaiCompatibleApiKey: 'test-key',
+      })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-direct-date-english@example.com')
+
+      const response = await client.post('/api/v1/agent/messages', {
+        message: 'What date is it today?',
+      })
+      expect(response.statusCode).toBe(200)
+      expect(response.json.actionRequests).toHaveLength(0)
+      expect(response.json.planSteps).toHaveLength(0)
+      expect(response.json.messages.at(-1).content).toContain('June 1, 2026')
+      expect(directRequests).toHaveLength(1)
+      expect(response.json.runEvents.map((event: any) => event.type)).not.toContain('model_planning')
+      await closeHarness(harness)
+    }, { turnLane: 'direct_answer' })
   })
 
   it('does not accept assistant text that claims a write confirmation without a tool call', async () => {

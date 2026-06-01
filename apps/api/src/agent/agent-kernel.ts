@@ -20,10 +20,12 @@ export async function executeAgentKernelRun(
 ): Promise<AgentKernelRunResult | null> {
   const resolution = await resolveTurnIntake({
     db: ctx.db,
+    settings: ctx.settings,
     workspace: ctx.workspace,
     user: ctx.user,
     thread: ctx.thread,
     message: ctx.message,
+    ...(ctx.abortSignal ? { abortSignal: ctx.abortSignal } : {}),
   })
   if (resolution.lane === 'direct_answer') {
     return executeDirectAnswerRun(ctx, {

@@ -4,8 +4,6 @@ export type ToolSearchHit = {
   name: string
   score: number
   lexicalScore: number
-  aliasScore: number
-  matchedAliases: string[]
 }
 
 type IndexedDocument = ToolSearchDocument & {
@@ -104,32 +102,14 @@ function bm25Score(input: {
   return score
 }
 
-function aliasMatchScore(query: string, aliases: string[]) {
-  const normalized = query.toLowerCase()
-  const matchedAliases: string[] = []
-  let score = 0
-  for (const alias of aliases) {
-    const candidate = alias.toLowerCase().trim()
-    if (!candidate) continue
-    if (normalized.includes(candidate)) {
-      matchedAliases.push(alias)
-      score += Math.min(6, 1.5 + candidate.length / 4)
-    }
-  }
-  return { score, matchedAliases }
-}
-
 export function searchToolIndex(index: ToolSearchIndex, query: string, options: { limit?: number } = {}): ToolSearchHit[] {
   const queryTokens = tokenizeToolText(query)
   const hits = index.documents.map((document) => {
     const lexicalScore = bm25Score({ queryTokens, document, index })
-    const alias = aliasMatchScore(query, document.aliases)
     return {
       name: document.name,
-      score: lexicalScore + alias.score,
+      score: lexicalScore,
       lexicalScore,
-      aliasScore: alias.score,
-      matchedAliases: alias.matchedAliases,
     }
   }).filter((hit) => hit.score > 0)
 

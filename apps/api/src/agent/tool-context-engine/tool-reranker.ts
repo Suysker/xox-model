@@ -88,7 +88,6 @@ export function rankToolManifests(input: {
 
     if (hit) {
       reasons.push('retrieval')
-      if (hit.matchedAliases.length > 0) reasons.push(`alias:${hit.matchedAliases.slice(0, 3).join('|')}`)
     }
     if (input.selectedCapabilities.includes(manifest.capability)) {
       score += 0.75
