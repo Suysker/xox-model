@@ -271,15 +271,36 @@ type FakeProviderScriptStep =
   | unknown
   | ((body: any, request: IncomingMessage, index: number) => unknown | Promise<unknown>)
 
+function resolveFakeProviderScriptStep(
+  step: FakeProviderScriptStep,
+  body: any,
+  request: IncomingMessage,
+  index: number,
+) {
+  return typeof step === 'function'
+    ? step(body, request, index)
+    : step
+}
+
 function scriptedProvider(steps: FakeProviderScriptStep[]) {
   let index = 0
   return async (body: any, request: IncomingMessage) => {
     const step = steps[index]
     if (step === undefined) throw new Error(`Unexpected fake provider planning request #${index + 1}`)
     index += 1
-    return typeof step === 'function'
-      ? await step(body, request, index - 1)
-      : step
+    return await resolveFakeProviderScriptStep(step, body, request, index - 1)
+  }
+}
+
+function mutableScriptedProvider(initialStep: FakeProviderScriptStep) {
+  let step = initialStep
+  return {
+    setStep(nextStep: FakeProviderScriptStep) {
+      step = nextStep
+    },
+    handler: async (body: any, request: IncomingMessage) => {
+      return await resolveFakeProviderScriptStep(step, body, request, 0)
+    },
   }
 }
 
@@ -3578,24 +3599,21 @@ describe('xox TypeScript API', () => {
 
   it('keeps agent memory scoped by user and workspace and compacts long thread context', async () => {
     const secretValue = ['sk', 'memorysecretvalue123456'].join('-')
-    await withFakeOpenAICompatibleProvider((body) => {
-      const instruction = fakeCurrentInstruction(body)
-      if (instruction.includes('默认记账成员')) {
-        return fakeToolResponse('memory_remember', {
+    await withFakeOpenAICompatibleProvider(scriptedProvider([
+      () => fakeToolResponse('memory_remember', {
           value: '默认记账成员是 成员 A',
           kind: 'preference',
           key: 'user.preference.defaultLedgerMember',
           confidence: 0.95,
-        })
-      }
-      if (instruction.includes('DeepSeek API key')) {
-        return fakeToolResponse('memory_remember', {
-          value: `DeepSeek API key 是 ${secretValue}`,
-          kind: 'preference',
-        })
-      }
-      return fakeAssistantTextResponse('已处理。')
-    }, async (baseUrl) => {
+      }),
+      fakeAssistantTextResponse('已处理。'),
+      fakeAssistantTextResponse('已处理。'),
+      () => fakeToolResponse('memory_remember', {
+        value: `DeepSeek API key 是 ${secretValue}`,
+        kind: 'preference',
+      }),
+      ...Array.from({ length: 5 }, () => fakeAssistantTextResponse('已处理。')),
+    ]), async (baseUrl) => {
       const harness = await buildHarness('agent-memory', { llmProvider: 'openai-compatible', openaiCompatibleBaseUrl: baseUrl, openaiCompatibleApiKey: 'test-key' })
       const firstClient = new Client(harness.app)
       const secondClient = new Client(harness.app)
@@ -5254,108 +5272,14 @@ describe('xox TypeScript API', () => {
   })
 
   it('validates a broad Agent OS capability matrix through backend APIs', async () => {
-    await withFakeOpenAICompatibleProvider((body) => {
-      const prompt = body.messages.map((message: any) => message.content).join('\n')
-      const instruction = prompt.split('用户指令：').at(-1) ?? prompt
-
-      if (instruction.includes('记住：默认记账成员是 成员 A')) {
-        return fakeToolResponse('memory_remember', {
-          value: '默认记账成员是 成员 A',
-          kind: 'preference',
-          key: 'user.preference.defaultLedgerMember',
-        })
-      }
-      if (instruction.includes('默认成员线下 1 张')) {
-        expect(prompt).toContain('默认记账成员是 成员 A')
-        expect(prompt).toContain('tenantScopedMemory')
-        return fakeToolResponse('ledger_create_member_income', {
-          monthLabel: '3月',
-          memberName: '成员 A',
-          offlineUnits: 1,
-          onlineUnits: 0,
-        })
-      }
-      if (instruction.includes('如果 4 月线上系数变成 0.3')) {
-        return fakeToolResponse('workspace_update_online_factor', {
-          monthLabel: '4月',
-          onlineSalesFactor: 0.3,
-          mode: 'forecast',
-        })
-      }
-      if (instruction.includes('3 月计划收入和计划成本')) {
-        return fakeToolResponse('data_query_workspace', {
-          question: '3 月计划收入和计划成本是多少',
-          scope: 'period_summary',
-          monthLabel: '3月',
-          metrics: ['plannedRevenue', 'plannedCost', 'plannedProfit'],
-        })
-      }
-      if (instruction.includes('把 4 月线上系数改成 0.3 并保存')) {
-        return fakeToolResponse('workspace_update_online_factor', {
-          monthLabel: '4月',
-          onlineSalesFactor: 0.3,
-          mode: 'write',
-        })
-      }
-      if (instruction.includes('线下单价改成 111')) {
-        return fakeToolResponse('workspace_patch_config', {
-          patches: [{ path: 'operating.offlineUnitPrice', value: 111, label: '线下单价' }],
-        })
-      }
-      if (instruction.includes('新增一个成员')) {
-        return fakeToolResponse('team_member_add', { newMemberName: '成员 G' })
-      }
-      if (instruction.includes('删除成员 G')) {
-        return fakeToolResponse('team_member_delete', { memberName: '成员 G' })
-      }
-      if (instruction.includes('成员 B 线下 1 张')) {
-        return fakeToolResponse('ledger_create_member_income', {
-          monthLabel: '3月',
-          memberName: '成员 B',
-          offlineUnits: 1,
-          onlineUnits: 0,
-        })
-      }
-      if (instruction.includes('锁定 3 月账期')) {
-        return fakeToolResponse('ledger_set_period_lock', { monthLabel: '3月', locked: true })
-      }
-      if (instruction.includes('解锁 3 月账期')) {
-        return fakeToolResponse('ledger_set_period_lock', { monthLabel: '3月', locked: false })
-      }
-      if (instruction.includes('保存当前草稿快照')) {
-        return fakeToolResponse('workspace_save_snapshot')
-      }
-      if (instruction.includes('线下单价改成 222')) {
-        return fakeToolResponse('workspace_patch_config', {
-          patches: [{ path: 'operating.offlineUnitPrice', value: 222, label: '线下单价' }],
-        })
-      }
-      if (instruction.includes('发布当前版本并创建分享链接')) {
-        return fakeToolResponse('workspace_publish_release', { createShare: true })
-      }
-      if (instruction.includes('撤销发布版 2 的分享链接')) {
-        return fakeToolResponse('share_revoke', { versionNo: 2 })
-      }
-      if (instruction.includes('恢复到版本 1')) {
-        return fakeToolResponse('workspace_rollback_version', { versionNo: 1 })
-      }
-      if (instruction.includes('删除快照 1')) {
-        return fakeToolResponse('workspace_delete_version', { versionNo: 1 })
-      }
-      if (instruction.includes('重置当前草稿')) {
-        return fakeToolResponse('workspace_reset_draft')
-      }
-      if (instruction.includes('帮我注销账号')) {
-        return fakeToolResponse('account_forbidden')
-      }
-
-      return fakeToolResponse('ui_navigate', { mainTab: 'dashboard', secondaryTab: 'overview' })
-    }, async (baseUrl) => {
+    const provider = mutableScriptedProvider(fakeToolResponse('ui_navigate', { mainTab: 'dashboard', secondaryTab: 'overview' }))
+    await withFakeOpenAICompatibleProvider(provider.handler, async (baseUrl) => {
       const harness = await buildHarness('agent-capability-matrix', { llmProvider: 'openai-compatible', openaiCompatibleProvider: 'test-compatible', openaiCompatibleBaseUrl: baseUrl, openaiCompatibleApiKey: 'test-key' })
       const client = new Client(harness.app)
       await registerUser(client, 'agent-capability-matrix@example.com')
 
-      async function send(message: string, threadId?: string) {
+      async function send(message: string, step: FakeProviderScriptStep, threadId?: string) {
+        provider.setStep(step)
         const response = await client.post('/api/v1/agent/messages', { ...(threadId ? { threadId } : {}), message })
         expect(response.statusCode).toBe(200)
         expect(response.json.planner).toBe('openai_compatible_tool_calls')
@@ -5369,54 +5293,88 @@ describe('xox TypeScript API', () => {
         return response.json
       }
 
-      const remembered = await send('记住：默认记账成员是 成员 A')
+      const remembered = await send('记住：默认记账成员是 成员 A', () => fakeToolResponse('memory_remember', {
+        value: '默认记账成员是 成员 A',
+        kind: 'preference',
+        key: 'user.preference.defaultLedgerMember',
+      }))
       const memories = await client.get('/api/v1/agent/memories')
       expect(memories.json.memories).toHaveLength(1)
       expect(memories.json.memories[0].value).toContain('成员 A')
 
-      const defaultMemberLedger = await send('把 3 月默认成员线下 1 张入账')
+      const defaultMemberLedger = await send('把 3 月默认成员线下 1 张入账', (body) => {
+        const prompt = body.messages.map((message: any) => message.content).join('\n')
+        expect(prompt).toContain('默认记账成员是 成员 A')
+        expect(prompt).toContain('tenantScopedMemory')
+        return fakeToolResponse('ledger_create_member_income', {
+          monthLabel: '3月',
+          memberName: '成员 A',
+          offlineUnits: 1,
+          onlineUnits: 0,
+        })
+      })
       expect(defaultMemberLedger.threadId).not.toBe(remembered.threadId)
       expect(defaultMemberLedger.actionRequests[0].targetLabel).toContain('成员 A')
       const defaultMemberResult = await confirm(defaultMemberLedger.actionRequests[0])
       expect(defaultMemberResult.result.amount).toBe(88)
 
-      const forecast = await send('如果 4 月线上系数变成 0.3，利润会怎样')
+      const forecast = await send('如果 4 月线上系数变成 0.3，利润会怎样', () => fakeToolResponse('workspace_update_online_factor', {
+        monthLabel: '4月',
+        onlineSalesFactor: 0.3,
+        mode: 'forecast',
+      }))
       expect(forecast.actionRequests).toHaveLength(0)
       expect(forecast.navigationEvents[0].route.mainTab).toBe('inputs')
       expect(forecast.messages.at(-1).content).toContain('未修改草稿')
 
-      const dataQuestion = await send('3 月计划收入和计划成本是多少？')
+      const dataQuestion = await send('3 月计划收入和计划成本是多少？', () => fakeToolResponse('data_query_workspace', {
+        question: '3 月计划收入和计划成本是多少',
+        scope: 'period_summary',
+        monthLabel: '3月',
+        metrics: ['plannedRevenue', 'plannedCost', 'plannedProfit'],
+      }))
       expect(dataQuestion.actionRequests).toHaveLength(0)
       expect(dataQuestion.messages.at(-1).content).toContain('3月计划收入')
       expect(dataQuestion.messages.at(-1).content).toContain('计划成本')
 
-      const writeFactor = await send('把 4 月线上系数改成 0.3 并保存')
+      const writeFactor = await send('把 4 月线上系数改成 0.3 并保存', () => fakeToolResponse('workspace_update_online_factor', {
+        monthLabel: '4月',
+        onlineSalesFactor: 0.3,
+        mode: 'write',
+      }))
       expect(writeFactor.actionRequests[0].kind).toBe('workspace.update_draft')
       await confirm(writeFactor.actionRequests[0])
       let draft = (await client.get('/api/v1/workspace/draft')).json
       expect(draft.config.months.find((month: any) => month.label === '4月').onlineSalesFactor).toBe(0.3)
 
-      const patchPrice111 = await send('把线下单价改成 111 并保存')
+      const patchPrice111 = await send('把线下单价改成 111 并保存', () => fakeToolResponse('workspace_patch_config', {
+        patches: [{ path: 'operating.offlineUnitPrice', value: 111, label: '线下单价' }],
+      }))
       expect(patchPrice111.actionRequests[0].kind).toBe('workspace.update_draft')
       await confirm(patchPrice111.actionRequests[0])
       draft = (await client.get('/api/v1/workspace/draft')).json
       expect(draft.config.operating.offlineUnitPrice).toBe(111)
 
-      const addMember = await send('新增一个成员，名字叫 成员 G')
+      const addMember = await send('新增一个成员，名字叫 成员 G', () => fakeToolResponse('team_member_add', { newMemberName: '成员 G' }))
       expect(addMember.actionRequests[0].kind).toBe('workspace.update_draft')
       expect(addMember.actionRequests[0].title).toContain('新增')
       await confirm(addMember.actionRequests[0])
       draft = (await client.get('/api/v1/workspace/draft')).json
       expect(draft.config.teamMembers.some((member: any) => member.name === '成员 G')).toBe(true)
 
-      const deleteMember = await send('删除成员 G')
+      const deleteMember = await send('删除成员 G', () => fakeToolResponse('team_member_delete', { memberName: '成员 G' }))
       expect(deleteMember.actionRequests[0].kind).toBe('workspace.update_draft')
       expect(deleteMember.actionRequests[0].title).toContain('删除')
       await confirm(deleteMember.actionRequests[0])
       draft = (await client.get('/api/v1/workspace/draft')).json
       expect(draft.config.teamMembers.some((member: any) => member.name === '成员 G')).toBe(false)
 
-      const editableLedger = await send('把 3 月成员 B 线下 1 张、线上 0 张入账')
+      const editableLedger = await send('把 3 月成员 B 线下 1 张、线上 0 张入账', () => fakeToolResponse('ledger_create_member_income', {
+        monthLabel: '3月',
+        memberName: '成员 B',
+        offlineUnits: 1,
+        onlineUnits: 0,
+      }))
       const editedPayload = {
         ...editableLedger.actionRequests[0].payload,
         amount: 222,
@@ -5435,59 +5393,61 @@ describe('xox TypeScript API', () => {
       const editedResult = await confirm(editableLedger.actionRequests[0])
       expect(editedResult.result.amount).toBe(222)
 
-      const lock = await send('锁定 3 月账期')
+      const lock = await send('锁定 3 月账期', () => fakeToolResponse('ledger_set_period_lock', { monthLabel: '3月', locked: true }))
       expect(lock.actionRequests[0].kind).toBe('ledger.lock_period')
       await confirm(lock.actionRequests[0])
       let march = (await client.get('/api/v1/ledger/periods')).json.find((period: any) => period.monthLabel === '3月')
       expect(march.status).toBe('locked')
 
-      const unlock = await send('解锁 3 月账期')
+      const unlock = await send('解锁 3 月账期', () => fakeToolResponse('ledger_set_period_lock', { monthLabel: '3月', locked: false }))
       expect(unlock.actionRequests[0].kind).toBe('ledger.unlock_period')
       await confirm(unlock.actionRequests[0])
       march = (await client.get('/api/v1/ledger/periods')).json.find((period: any) => period.monthLabel === '3月')
       expect(march.status).toBe('open')
 
-      const snapshot = await send('保存当前草稿快照')
+      const snapshot = await send('保存当前草稿快照', () => fakeToolResponse('workspace_save_snapshot'))
       expect(snapshot.actionRequests[0].kind).toBe('workspace.save_snapshot')
       const snapshotResult = await confirm(snapshot.actionRequests[0])
       expect(snapshotResult.result.kind).toBe('snapshot')
       expect(snapshotResult.result.version_no).toBe(1)
 
-      const patchPrice222 = await send('把线下单价改成 222 并保存')
+      const patchPrice222 = await send('把线下单价改成 222 并保存', () => fakeToolResponse('workspace_patch_config', {
+        patches: [{ path: 'operating.offlineUnitPrice', value: 222, label: '线下单价' }],
+      }))
       await confirm(patchPrice222.actionRequests[0])
       draft = (await client.get('/api/v1/workspace/draft')).json
       expect(draft.config.operating.offlineUnitPrice).toBe(222)
 
-      const publishShare = await send('发布当前版本并创建分享链接')
+      const publishShare = await send('发布当前版本并创建分享链接', () => fakeToolResponse('workspace_publish_release', { createShare: true }))
       expect(publishShare.actionRequests[0].kind).toBe('workspace.publish_release')
       const published = await confirm(publishShare.actionRequests[0])
       expect(published.result.version.kind).toBe('release')
       expect(published.result.share.share_token).toBeTruthy()
 
-      const revokeShare = await send('撤销发布版 2 的分享链接')
+      const revokeShare = await send('撤销发布版 2 的分享链接', () => fakeToolResponse('share_revoke', { versionNo: 2 }))
       expect(revokeShare.actionRequests[0].kind).toBe('share.revoke')
       await confirm(revokeShare.actionRequests[0])
       const releaseV2 = (await client.get('/api/v1/workspace/versions')).json.find((version: any) => version.versionNo === 2)
       expect(releaseV2.activeShare).toBeNull()
 
-      const rollback = await send('恢复到版本 1')
+      const rollback = await send('恢复到版本 1', () => fakeToolResponse('workspace_rollback_version', { versionNo: 1 }))
       expect(rollback.actionRequests[0].kind).toBe('workspace.rollback_version')
       await confirm(rollback.actionRequests[0])
       draft = (await client.get('/api/v1/workspace/draft')).json
       expect(draft.config.operating.offlineUnitPrice).toBe(111)
 
-      const deleteSnapshot = await send('删除快照 1')
+      const deleteSnapshot = await send('删除快照 1', () => fakeToolResponse('workspace_delete_version', { versionNo: 1 }))
       expect(deleteSnapshot.actionRequests[0].kind).toBe('workspace.delete_version')
       await confirm(deleteSnapshot.actionRequests[0])
       expect((await client.get('/api/v1/workspace/versions')).json.some((version: any) => version.versionNo === 1)).toBe(false)
 
-      const reset = await send('重置当前草稿')
+      const reset = await send('重置当前草稿', () => fakeToolResponse('workspace_reset_draft'))
       expect(reset.actionRequests[0].kind).toBe('workspace.reset_draft')
       await confirm(reset.actionRequests[0])
       draft = (await client.get('/api/v1/workspace/draft')).json
       expect(draft.config.operating.offlineUnitPrice).toBe(88)
 
-      const forbiddenAccount = await send('帮我注销账号')
+      const forbiddenAccount = await send('帮我注销账号', () => fakeToolResponse('account_forbidden'))
       expect(forbiddenAccount.actionRequests).toHaveLength(0)
       expect(forbiddenAccount.messages.at(-1).content).toContain('不能由 Agent 自动执行')
 
