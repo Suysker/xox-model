@@ -4998,52 +4998,41 @@ describe('xox TypeScript API', () => {
   })
 
   it('plans generic income, generic expense, and per-person member/employee expenses', async () => {
-    await withFakeOpenAICompatibleProvider((body) => {
-      const prompt = body.messages.map((message: any) => message.content).join('\n')
-      const instruction = prompt.split('用户指令：').at(-1) ?? prompt
-      if (instruction.includes('其他收入')) {
-        return fakeToolResponse('ledger_create_entry', {
-          monthLabel: '3月',
-          direction: 'revenue',
-          subjectKey: 'cost.other.refund',
-          amount: 500,
-          date: '2026-03-08',
-          counterparty: '场地方退款',
-          description: '其他收入测试',
-        })
-      }
-      if (instruction.includes('普通支出')) {
-        return fakeToolResponse('ledger_create_entry', {
-          monthLabel: '3月',
-          direction: 'expense',
-          subjectKey: 'cost.training.rehearsal',
-          amount: 300,
-          occurredAt: '2026-03-09',
-          description: '排练普通支出',
-        })
-      }
-      if (instruction.includes('成员 A 底薪')) {
-        return fakeToolResponse('ledger_create_entry', {
-          monthLabel: '3月',
-          direction: 'expense',
-          subjectKey: 'cost.member.base_pay',
-          amount: 1000,
-          relatedEntityType: 'teamMember',
-          relatedEntityName: '成员 A',
-        })
-      }
-      if (instruction.includes('员工 A 月薪')) {
-        return fakeToolResponse('ledger_create_entry', {
-          monthLabel: '3月',
-          direction: 'expense',
-          subjectKey: 'cost.employee.base_pay',
-          amount: 2500,
-          relatedEntityType: 'employee',
-          relatedEntityName: '员工 A',
-        })
-      }
-      return fakeAssistantTextResponse('我是 xox-model Agent OS。')
-    }, async (baseUrl) => {
+    await withFakeOpenAICompatibleProvider(scriptedProvider([
+      () => fakeToolResponse('ledger_create_entry', {
+        monthLabel: '3月',
+        direction: 'revenue',
+        subjectKey: 'cost.other.refund',
+        amount: 500,
+        date: '2026-03-08',
+        counterparty: '场地方退款',
+        description: '其他收入测试',
+      }),
+      () => fakeToolResponse('ledger_create_entry', {
+        monthLabel: '3月',
+        direction: 'expense',
+        subjectKey: 'cost.training.rehearsal',
+        amount: 300,
+        occurredAt: '2026-03-09',
+        description: '排练普通支出',
+      }),
+      () => fakeToolResponse('ledger_create_entry', {
+        monthLabel: '3月',
+        direction: 'expense',
+        subjectKey: 'cost.member.base_pay',
+        amount: 1000,
+        relatedEntityType: 'teamMember',
+        relatedEntityName: '成员 A',
+      }),
+      () => fakeToolResponse('ledger_create_entry', {
+        monthLabel: '3月',
+        direction: 'expense',
+        subjectKey: 'cost.employee.base_pay',
+        amount: 2500,
+        relatedEntityType: 'employee',
+        relatedEntityName: '员工 A',
+      }),
+    ]), async (baseUrl) => {
       const harness = await buildHarness('agent-generic-ledger-tools', { llmProvider: 'openai-compatible', openaiCompatibleProvider: 'test-compatible', openaiCompatibleBaseUrl: baseUrl, openaiCompatibleApiKey: 'test-key' })
       const client = new Client(harness.app)
       await registerUser(client, 'agent-generic-ledger-tools@example.com')
@@ -5116,16 +5105,14 @@ describe('xox TypeScript API', () => {
   })
 
   it('plans ledger update, precise void, and restore from model-selected locators', async () => {
-    await withFakeOpenAICompatibleProvider((body) => {
-      const prompt = body.messages.map((message: any) => message.content).join('\n')
-      const instruction = prompt.split('用户指令：').at(-1) ?? prompt
-      const entryId = instruction.match(/entry:([a-zA-Z0-9-]+)/)?.[1]
-      if (instruction.includes('修改')) return fakeToolResponse('ledger_update_entry', { monthLabel: '3月', entryId, newAmount: 456, description: 'Agent 修改历史分录' })
-      if (instruction.includes('错月作废')) return fakeToolResponse('ledger_void_entry', { monthLabel: '4月', entryId })
-      if (instruction.includes('精确作废')) return fakeToolResponse('ledger_void_entry', { monthLabel: '3月', entryId })
-      if (instruction.includes('恢复')) return fakeToolResponse('ledger_restore_entry', { monthLabel: '3月', entryId })
-      return fakeAssistantTextResponse('我是 xox-model Agent OS。')
-    }, async (baseUrl) => {
+    let entryId = ''
+    await withFakeOpenAICompatibleProvider(scriptedProvider([
+      () => fakeToolResponse('ledger_update_entry', { monthLabel: '3月', entryId, newAmount: 456, description: 'Agent 修改历史分录' }),
+      () => fakeToolResponse('ledger_void_entry', { monthLabel: '3月', entryId }),
+      () => fakeToolResponse('ledger_restore_entry', { monthLabel: '3月', entryId }),
+      () => fakeToolResponse('ledger_void_entry', { monthLabel: '4月', entryId }),
+      () => fakeToolResponse('ledger_restore_entry', { monthLabel: '3月', entryId }),
+    ]), async (baseUrl) => {
       const harness = await buildHarness('agent-ledger-edit-void-restore', { llmProvider: 'openai-compatible', openaiCompatibleProvider: 'test-compatible', openaiCompatibleBaseUrl: baseUrl, openaiCompatibleApiKey: 'test-key' })
       const client = new Client(harness.app)
       await registerUser(client, 'agent-ledger-edit-void-restore@example.com')
@@ -5141,6 +5128,7 @@ describe('xox TypeScript API', () => {
         allocations: [{ ...subjectMap['cost.training.rehearsal'], amount: 123 }],
       })
       expect(created.statusCode).toBe(200)
+      entryId = created.json.id
 
       async function sendAndConfirm(message: string) {
         const planned = await client.post('/api/v1/agent/messages', { message })

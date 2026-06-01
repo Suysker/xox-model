@@ -443,6 +443,7 @@ Implemented on 2026-06-02:
 - Started H5 migration by introducing scriptable fake-provider fixtures in API tests. The first migrated fixtures now express provider behavior as ordered tool-call turns instead of `instruction.includes(...)` branches, including multi-step forbidden-account repair, edited ledger policy, OpenAI adapter planning, and SSE thread-state planning.
 - Continued H5 migration across memory/provider and dedicated entity-action tests, replacing fake provider branches for memory injection, team member add/delete, employee add/delete, and workspace rename with explicit ordered tool-call scripts.
 - Migrated the shareholder and cost-structure coverage fixture to ordered provider scripts across add/edit/delete shareholder, fixed cost item, and stage cost type flows.
+- Migrated generic ledger and ledger edit/void/restore fixtures to ordered provider scripts. Dynamic ledger entry ids now come from test setup state instead of prompt regex extraction.
 
 ## Non-Goals
 
