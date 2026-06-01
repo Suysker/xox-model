@@ -446,6 +446,7 @@ Implemented on 2026-06-02:
 - Migrated generic ledger and ledger edit/void/restore fixtures to ordered provider scripts. Dynamic ledger entry ids now come from test setup state instead of prompt regex extraction.
 - Migrated multi-step edit, variance/history, read-only forecast/account refusal, and import/export fixtures to ordered provider scripts while preserving evaluator repair ordering where the harness naturally splits the work into multiple turns.
 - Added a mutable scripted provider test helper for broad per-request capability matrices, so each user turn sets an explicit provider response without reintroducing prompt-phrase branching or coupling unrelated turns through a global queue.
+- Completed the remaining H5 API-test migration by removing `fakeCurrentInstruction` and the last `instruction.includes(...)`, `prompt.includes(...)`, and `routerPrompt.includes(...)` branches from `apps/api/tests/api.test.ts`. Cross-turn fixtures now use explicit provider phases for context, initial goal planning, evaluator repair, and clarification resume so the fake provider models harness sequencing instead of re-parsing localized prompt text.
 
 ## Non-Goals
 

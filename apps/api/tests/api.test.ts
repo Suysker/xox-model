@@ -450,11 +450,6 @@ function fakeOpenAIChatToolResponse(name: string, args: Record<string, unknown> 
   }
 }
 
-function fakeCurrentInstruction(body: any) {
-  const prompt = body.messages.map((message: any) => message.content).join('\n')
-  return prompt.split('用户指令：').at(-1) ?? prompt
-}
-
 async function insertRunningAgentRun(
   db: Kysely<Database>,
   userId: string,
@@ -1258,47 +1253,8 @@ describe('xox TypeScript API', () => {
   it('repairs a cross-domain goal and auto-executes eligible writes under high automation', async () => {
     let goalPlanningCalls = 0
     const finalizerRequests: any[] = []
-    await withFakeOpenAICompatibleProvider((body) => {
-      const prompt = body.messages.map((message: any) => message.content).join('\n')
-      const instruction = fakeCurrentInstruction(body)
-      if (instruction.includes('今天是 5.24')) {
-        return fakeAssistantTextResponse('已按当前对话记录这个上下文。')
-      }
-
-      expect(prompt).toContain('今天是 5.24')
-      expect(prompt).toContain('第一个股东是股东 A')
-      expect(prompt).toContain('[same-thread')
-      expect(body.messages[0].content).not.toContain('shareholders[0].investmentAmount')
-      expect(body.messages[0].content).not.toContain('第一个股东是股东 A')
-
-      goalPlanningCalls += 1
-      if (goalPlanningCalls === 1) {
-        return fakeToolResponse('data_query_workspace', {
-          question: '我们几个月才能回本？',
-          scope: 'workspace_summary',
-          metrics: ['payback', 'cash', 'roi'],
-        })
-      }
-      return fakeToolResponses([
-        {
-          name: 'ledger_create_member_income',
-          args: {
-            memberName: '成员 A',
-            onlineUnits: 10,
-            occurredAt: '2026-05-24',
-          },
-        },
-        {
-          name: 'workspace_patch_config',
-          args: {
-            patches: [
-              { path: 'shareholders[0].name', value: '股东 A', label: '股东 1 名称' },
-              { path: 'shareholders[0].investmentAmount', value: 1065000, label: '股东 1 投资额' },
-            ],
-          },
-        },
-      ])
-    }, async (baseUrl) => {
+    const provider = mutableScriptedProvider(fakeAssistantTextResponse('已按当前对话记录这个上下文。'))
+    await withFakeOpenAICompatibleProvider(provider.handler, async (baseUrl) => {
       const harness = await buildHarness('agent-cross-domain-goal-repair', fakeProviderSettings(baseUrl))
       const client = new Client(harness.app)
       await registerUser(client, 'agent-cross-domain-goal-repair@example.com')
@@ -1307,6 +1263,45 @@ describe('xox TypeScript API', () => {
         message: '今天是 5.24。第一个股东是股东 A，另外的股东不需要删除。',
       })
       expect(contextTurn.statusCode).toBe(200)
+
+      provider.setStep((body) => {
+        const prompt = body.messages.map((message: any) => message.content).join('\n')
+        expect(prompt).toContain('今天是 5.24')
+        expect(prompt).toContain('第一个股东是股东 A')
+        expect(body.messages[0].content).not.toContain('shareholders[0].investmentAmount')
+        expect(body.messages[0].content).not.toContain('第一个股东是股东 A')
+
+        goalPlanningCalls += 1
+        if (goalPlanningCalls === 1) {
+          return fakeToolResponse('data_query_workspace', {
+            question: '我们几个月才能回本？',
+            scope: 'workspace_summary',
+            metrics: ['payback', 'cash', 'roi'],
+          })
+        }
+        if (goalPlanningCalls === 2) {
+          return fakeToolResponses([
+            {
+              name: 'ledger_create_member_income',
+              args: {
+                memberName: '成员 A',
+                onlineUnits: 10,
+                occurredAt: '2026-05-24',
+              },
+            },
+            {
+              name: 'workspace_patch_config',
+              args: {
+                patches: [
+                  { path: 'shareholders[0].name', value: '股东 A', label: '股东 1 名称' },
+                  { path: 'shareholders[0].investmentAmount', value: 1065000, label: '股东 1 投资额' },
+                ],
+              },
+            },
+          ])
+        }
+        return fakeAssistantTextResponse('当前仍未回本；成员入账和股东注资动作已处理。')
+      })
 
       const response = await client.post('/api/v1/agent/messages', {
         threadId: contextTurn.json.threadId,
@@ -1363,20 +1358,19 @@ describe('xox TypeScript API', () => {
   })
 
   it('resumes a clarification turn and completes the missing cross-domain action without duplicating prior cards', async () => {
-    let planningCalls = 0
+    let phase: 'initial' | 'resume' = 'initial'
+    let initialPlanningCalls = 0
+    let resumePlanningCalls = 0
     const finalizerRequests: any[] = []
     await withFakeOpenAICompatibleProvider((body) => {
       if (isCapabilityRouterRequest(body)) {
-        const routerPrompt = JSON.stringify(body)
-        return routerPrompt.includes('继续上一轮等待澄清') || routerPrompt.includes('用户本轮补充')
+        return phase === 'resume'
           ? fakeCapabilitySelectionResponse(['ledger'], { requiredActionCapabilities: ['ledger'] })
           : fakeCapabilitySelectionResponse(['data', 'ledger', 'draft'], { requiredActionCapabilities: ['ledger', 'draft'] })
       }
-      const prompt = body.messages.map((message: any) => message.content ?? '').join('\n')
-      planningCalls += 1
 
-      if (prompt.includes('用户本轮补充')) {
-        expect(prompt).toContain('[same-thread')
+      if (phase === 'resume') {
+        resumePlanningCalls += 1
         return fakeToolResponse('ledger_create_member_income', {
           memberName: '成员1',
           onlineUnits: 10,
@@ -1384,30 +1378,35 @@ describe('xox TypeScript API', () => {
         })
       }
 
-      if (prompt.includes('不依赖该澄清的缺失动作') || prompt.includes('模型草稿修改动作')) {
+      initialPlanningCalls += 1
+      if (initialPlanningCalls === 1) {
+        return fakeToolResponses([
+          {
+            name: 'data_query_workspace',
+            args: {
+              question: '我们几个月才能回本？',
+              scope: 'workspace_summary',
+              metrics: ['payback', 'cash', 'roi'],
+            },
+          },
+          {
+            name: 'ask_user_clarification',
+            args: {
+              question: '当前团队里没有叫「成员A」的成员。你说的是哪位成员？',
+              missingFields: ['memberName'],
+              suggestions: ['成员 1', '成员 2', '成员 3'],
+            },
+          },
+        ])
+      }
+
+      if (initialPlanningCalls === 2) {
         return fakeToolResponse('workspace_patch_config', {
           patches: [{ path: 'shareholders[0].investmentAmount', value: 1300000, label: '股东 1 投资额' }],
         })
       }
 
-      return fakeToolResponses([
-        {
-          name: 'data_query_workspace',
-          args: {
-            question: '我们几个月才能回本？',
-            scope: 'workspace_summary',
-            metrics: ['payback', 'cash', 'roi'],
-          },
-        },
-        {
-          name: 'ask_user_clarification',
-          args: {
-            question: '当前团队里没有叫「成员A」的成员。你说的是哪位成员？',
-            missingFields: ['memberName'],
-            suggestions: ['成员 1', '成员 2', '成员 3'],
-          },
-        },
-      ])
+      return fakeAssistantTextResponse('回本周期暂未出现；股东注资已按高自动化执行，成员入账还需要你确认具体成员。')
     }, async (baseUrl) => {
       const harness = await buildHarness('agent-clarification-resume-c7b3b3ec', fakeProviderSettings(baseUrl))
       const client = new Client(harness.app)
@@ -1445,6 +1444,7 @@ describe('xox TypeScript API', () => {
       expect(firstState.json.evaluations.map((evaluation: any) => evaluation.status)).toContain('needs_clarification')
       expect(first.json.messages.at(-1).content).toContain('成员')
 
+      phase = 'resume'
       const second = await client.post('/api/v1/agent/messages', {
         threadId: first.json.threadId,
         message: '是的。成员1',
@@ -1452,7 +1452,8 @@ describe('xox TypeScript API', () => {
       })
 
       expect(second.statusCode).toBe(200)
-      expect(planningCalls).toBeGreaterThanOrEqual(3)
+      expect(initialPlanningCalls).toBeGreaterThanOrEqual(2)
+      expect(resumePlanningCalls).toBe(1)
       expect(finalizerRequests.length).toBeGreaterThanOrEqual(1)
       expect(second.json.runEvents.some((event: any) => event.type === 'clarification_resume_context')).toBe(true)
       expect(second.json.actionRequests).toHaveLength(1)
