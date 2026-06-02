@@ -55,6 +55,7 @@ export function resolveAfterEvaluation(input: {
   objective: string
   pendingAssistantText: string | null
   observations: AgentToolObservation[]
+  newObservationCount: number
   actionRows: RowLike[]
 }): AgentNextStep {
   if (input.evaluation.status === 'continue') {
@@ -107,11 +108,11 @@ export function resolveAfterEvaluation(input: {
     }
   }
 
-  if (input.observations.length > 0) {
+  if (input.newObservationCount > 0) {
     return {
       type: 'continue_with_observations',
-      reason: 'evaluation_passed_with_tool_observations',
-      observations: input.observations,
+      reason: 'evaluation_passed_with_new_tool_observations',
+      observations: input.observations.slice(-input.newObservationCount),
     }
   }
 

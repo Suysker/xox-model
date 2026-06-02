@@ -76,6 +76,7 @@ describe('Agent turn resolver', () => {
       objective: '我们几个月才能回本？帮成员 A 记账。',
       pendingAssistantText: null,
       observations: [observation],
+      newObservationCount: 1,
       actionRows: [],
     })).toEqual({
       type: 'run_again',
@@ -93,6 +94,7 @@ describe('Agent turn resolver', () => {
       objective: '股东 A 注资 100 万',
       pendingAssistantText: '已生成确认卡。',
       observations: [observation],
+      newObservationCount: 1,
       actionRows: [
         { id: 'action_pending', status: 'pending' },
         { id: 'action_done', status: 'executed' },
@@ -104,17 +106,33 @@ describe('Agent turn resolver', () => {
     })
   })
 
-  it('requires model continuation after a passing evaluation with tool observations', () => {
+  it('requires main-loop continuation after a passing evaluation with new tool observations', () => {
     expect(resolveAfterEvaluation({
       evaluation: evaluation('pass'),
       objective: '我们几个月回本？',
       pendingAssistantText: null,
       observations: [observation],
+      newObservationCount: 1,
       actionRows: [],
     })).toEqual({
       type: 'continue_with_observations',
-      reason: 'evaluation_passed_with_tool_observations',
+      reason: 'evaluation_passed_with_new_tool_observations',
       observations: [observation],
+    })
+  })
+
+  it('allows final assistant output after observations have already been consumed by a later turn', () => {
+    expect(resolveAfterEvaluation({
+      evaluation: evaluation('pass'),
+      objective: '我们几个月回本？',
+      pendingAssistantText: '目前尚未回本。',
+      observations: [observation],
+      newObservationCount: 0,
+      actionRows: [],
+    })).toEqual({
+      type: 'final_output',
+      reason: 'evaluation_passed_without_observations',
+      assistantText: '目前尚未回本。',
     })
   })
 })

@@ -41,6 +41,7 @@ type FakeProviderOptions = {
   requiredActionCapabilities?: FakeCapability[]
   goalFacts?: Record<string, unknown>
   finalizerResponse?: (body: any, request: IncomingMessage) => unknown | Promise<unknown>
+  observationContinuationResponse?: false | ((body: any, request: IncomingMessage) => unknown | Promise<unknown>)
 }
 
 const DEFAULT_FAKE_CAPABILITIES: FakeCapability[] = ['data', 'draft', 'import_export', 'ledger', 'memory', 'navigation', 'sandbox', 'share', 'version']
@@ -142,15 +143,28 @@ async function withFakeOpenAICompatibleProvider(
     }
     const body = JSON.parse(rawBody)
     const bodyText = JSON.stringify(body)
-    const isObservationFinalizerRequest =
-      (!Array.isArray(body?.tools) || body.tools.length === 0) &&
-      Array.isArray(body?.messages) &&
+    const hasToolObservations = Array.isArray(body?.messages) &&
       (body.messages.some((message: any) => message?.role === 'tool') ||
         bodyText.includes('上一轮模型自己选择的 tool_calls'))
+    const isObservationFinalizerRequest =
+      (!Array.isArray(body?.tools) || body.tools.length === 0) &&
+      hasToolObservations
+    const isObservationContinuationPlanningRequest =
+      Array.isArray(body?.tools) &&
+      body.tools.length > 0 &&
+      hasToolObservations
+    const shouldAutoAnswerObservationPlanning =
+      isObservationContinuationPlanningRequest &&
+      options.observationContinuationResponse !== false &&
+      !(options.requiredActionCapabilities && options.requiredActionCapabilities.length > 0)
     const payload = isObservationFinalizerRequest
       ? options.finalizerResponse
         ? await options.finalizerResponse(body, request)
         : fakeObservationFinalizerResponse(body)
+      : shouldAutoAnswerObservationPlanning
+        ? options.observationContinuationResponse
+          ? await options.observationContinuationResponse(body, request)
+          : fakeObservationFinalizerResponse(body)
       : isTurnLaneResolverRequest(body)
         ? typeof options.turnLane === 'function'
           ? await options.turnLane(body, request)
@@ -1039,6 +1053,7 @@ describe('xox TypeScript API', () => {
       expectedHorizonMonths: 12,
       expectedStartMonth: 3,
       requiresForecastSummary: true,
+      requiresSandboxComputation: true,
       forbiddenActions: ['publish_release', 'unknown'],
       ignored: 'not persisted',
     })
@@ -1049,6 +1064,7 @@ describe('xox TypeScript API', () => {
       expectedHorizonMonths: 12,
       expectedStartMonth: 3,
       requiresForecastSummary: true,
+      requiresSandboxComputation: true,
       forbiddenActions: ['publish_release'],
     })
 
@@ -1356,6 +1372,68 @@ describe('xox TypeScript API', () => {
         finalizerRequests.push(body)
         return fakeAssistantTextResponse('当前仍未回本；高自动化已自动执行 2 个动作：成员 A 今天线上 10 张入账、股东 A 注资 100 万。')
       },
+      observationContinuationResponse: false,
+    })
+  })
+
+  it('continues from domain observations into sandbox computation before the final model answer', async () => {
+    let planningCalls = 0
+    await withFakeOpenAICompatibleProvider((body) => {
+      planningCalls += 1
+      if (planningCalls === 1) {
+        expectProviderTools(body, ['data_query_workspace'])
+        return fakeToolResponse('data_query_workspace', {
+          question: '当前工作区整体ROI、现金、回本情况',
+          scope: 'workspace_summary',
+          metrics: ['roi', 'cash', 'payback'],
+        })
+      }
+      if (planningCalls === 2) {
+        expect(body.messages.some((message: any) => message.role === 'tool')).toBe(true)
+        expectProviderTools(body, ['sandbox_run_code'])
+        return fakeToolResponse('sandbox_run_code', {
+          purpose: '结合当前预测、第一位股东投入、5%通胀和5%贷款年利率计算个人预期回报',
+          language: 'python',
+          code: 'print("compute shareholder roi")',
+          dataRequest: { scope: 'workspace_summary' },
+          expectedOutputs: ['json'],
+        })
+      }
+      if (planningCalls === 3) {
+        const toolMessages = body.messages.filter((message: any) => message.role === 'tool')
+        expect(toolMessages.some((message: any) => String(message.content).includes('sandbox_result'))).toBe(true)
+        expect(JSON.stringify(toolMessages)).toContain('firstShareholder')
+        expect(JSON.stringify(toolMessages)).toContain('shareholders')
+        return fakeAssistantTextResponse('按当前预测、5%通胀和5%贷款年利率估算，第一位股东的个人回报需要以沙箱计算结果为准；本轮最终回答由模型基于 sandbox observation 生成。')
+      }
+      throw new Error(`Unexpected planning call ${planningCalls}`)
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-observation-sandbox-loop', {
+        ...fakeProviderSettings(baseUrl),
+        agentProviderRequestTimeoutMs: 10_000,
+      })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-observation-sandbox-loop@example.com')
+
+      const response = await client.post('/api/v1/agent/messages', {
+        message: '给我预测一下，如果目前的通胀率是5%，我的投资回报率是多少？我是第一个股东，我投入的钱都是银行贷款出来的，银行利率是年利率5%',
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(planningCalls).toBe(3)
+      expect(response.json.actionRequests).toHaveLength(0)
+      expect(response.json.planSteps.map((step: any) => step.toolName).filter(Boolean)).toEqual([
+        'data_query_workspace',
+        'sandbox_run_code',
+      ])
+      expect(response.json.messages.at(-1).content).toContain('个人回报')
+      expect(response.json.messages.at(-1).content).not.toContain('fake_deterministic')
+      expect(response.json.runEvents.map((event: any) => event.type)).toContain('observation_continuation_requested')
+      await closeHarness(harness)
+    }, {
+      capabilities: ['data', 'sandbox'],
+      goalFacts: { requiresSandboxComputation: true },
+      observationContinuationResponse: false,
     })
   })
 
@@ -1481,6 +1559,7 @@ describe('xox TypeScript API', () => {
           ? fakeAssistantTextResponse('回本周期暂未出现；股东注资已按高自动化执行，成员入账还需要你确认具体成员。')
           : fakeAssistantTextResponse('已根据你的补充自动执行成员 1 今天线上 10 张入账；股东注资也已完成。')
       },
+      observationContinuationResponse: false,
     })
   })
 
@@ -2574,15 +2653,10 @@ describe('xox TypeScript API', () => {
       expect(response.json.messages.at(-1).content).toContain('3月计划收入')
       expect(response.json.messages.at(-1).content).toContain('计划成本')
       expect(response.json.messages.at(-1).content).not.toContain('本次只读取当前工作区数据')
-      expect(response.json.runEvents.some((event: any) => event.type === 'model_continuation')).toBe(true)
-      expect(response.json.runEvents.some((event: any) => event.type === 'model_continuation_completed')).toBe(true)
+      expect(response.json.runEvents.some((event: any) => event.type === 'observation_continuation_requested')).toBe(true)
+      expect(response.json.runEvents.some((event: any) => event.type === 'model_continuation')).toBe(false)
       expect(requests).toHaveLength(1)
-      expect(finalizerRequests).toHaveLength(1)
-      expect(finalizerRequests[0].max_tokens).toBeLessThanOrEqual(500)
-      expect(finalizerRequests[0].thinking).toEqual({ type: 'disabled' })
-      expect(finalizerRequests[0].messages.some((message: any) => message.role === 'tool')).toBe(true)
-      expect(JSON.stringify(finalizerRequests[0])).not.toContain('tenantScopedMemory')
-      expect(JSON.stringify(finalizerRequests[0])).not.toContain('writableConfig')
+      expect(finalizerRequests).toHaveLength(0)
       const visibleNodes = flattenTranscriptNodes(response.json.transcriptNodes).filter((node: any) => node.visibility === 'user')
       const assistantNode = visibleNodes.find((node: any) => node.kind === 'assistant_message')
       expect(assistantNode?.content ?? assistantNode?.summary).toContain('3月计划收入')
@@ -2736,7 +2810,7 @@ describe('xox TypeScript API', () => {
     }, { capabilities: ['ledger'], requiredActionCapabilities: ['ledger'] })
   })
 
-  it('fails the run when tool observations cannot be continued into a model answer', async () => {
+  it('answers read-only tool observations through the main loop instead of a finalizer-only path', async () => {
     await withFakeOpenAICompatibleProvider((body) => {
       expect(body.tools.some((tool: any) => tool.function.name === 'data_query_workspace')).toBe(true)
       return fakeToolResponse('data_query_workspace', {
@@ -2759,15 +2833,14 @@ describe('xox TypeScript API', () => {
         message: '3 月计划收入和计划成本是多少？',
       })
       expect(response.statusCode).toBe(200)
-      expect(response.json.messages.map((message: any) => message.role)).toEqual(['user'])
-      expect(response.json.planSteps.map((step: any) => step.status)).toEqual(['executed', 'failed'])
-      expect(response.json.planSteps.at(-1).title).toBe('模型回复失败')
+      expect(response.json.messages.map((message: any) => message.role)).toEqual(['user', 'assistant'])
+      expect(response.json.planSteps.map((step: any) => step.status)).toEqual(['executed'])
+      expect(response.json.messages.at(-1).content).toContain('3月计划收入')
       const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
-      expect(state.json.evaluations.at(-1).status).toBe('failed')
-      expect(response.json.runEvents.some((event: any) => event.type === 'model_continuation_failed')).toBe(true)
+      expect(state.json.evaluations.at(-1).status).toBe('pass')
+      expect(response.json.runEvents.some((event: any) => event.type === 'observation_continuation_requested')).toBe(true)
+      expect(response.json.runEvents.some((event: any) => event.type === 'model_continuation_failed')).toBe(false)
       await closeHarness(harness)
-    }, {
-      finalizerResponse: () => fakeAssistantTextResponse(''),
     })
   })
 
@@ -2931,6 +3004,7 @@ describe('xox TypeScript API', () => {
         finalizerRequests.push(body)
         return fakeAssistantTextResponse('已检查当前股东并按高自动化已自动执行：把第一个股东投资额追加 100 万。')
       },
+      observationContinuationResponse: false,
     })
   })
 
@@ -5012,7 +5086,7 @@ describe('xox TypeScript API', () => {
       expect(base?.totalCost).toBeGreaterThan(0)
 
       await closeHarness(harness)
-    })
+    }, { observationContinuationResponse: false })
   })
 
   it('plans generic income, generic expense, and per-person member/employee expenses', async () => {

@@ -130,6 +130,7 @@ const CAPABILITY_SELECTION_TOOL: ChatTool = {
             expectedHorizonMonths: { type: 'number', description: '明确要求的预测周期月数。' },
             expectedStartMonth: { type: 'number', description: '明确要求的开始月份，1-12。' },
             requiresForecastSummary: { type: 'boolean', description: '用户明确要求输出收入、成本、利润、现金或回本等预测摘要。' },
+            requiresSandboxComputation: { type: 'boolean', description: '用户明确要求跨多个事实、公式、敏感性假设、外部资金成本或临时数据转换的可复核计算，单个领域读工具不足以直接回答。' },
             forbiddenActions: {
               type: 'array',
               description: '用户明确禁止的动作。',

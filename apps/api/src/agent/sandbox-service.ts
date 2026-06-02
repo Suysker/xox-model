@@ -242,18 +242,36 @@ async function buildSandboxDataBundle(ctx: SandboxServiceContext, input: Sandbox
       note: '文件内容由 File Adapter Registry 解析后进入沙箱；当前 fake backend 只处理 manifest 和安全边界。',
     }
   } else {
-    const totalRevenue = baseScenario?.months.reduce((sum, month) => sum + month.grossSales, 0) ?? 0
-    const totalCost = baseScenario?.months.reduce((sum, month) => sum + month.totalCost, 0) ?? 0
+    const months = (baseScenario?.months ?? []).map((month) => ({
+      monthIndex: month.monthIndex,
+      monthLabel: month.label,
+      grossSales: month.grossSales,
+      totalCost: month.totalCost,
+      monthlyProfit: month.monthlyProfit,
+      cumulativeCash: month.cumulativeCash,
+    }))
+    const shareholders = config.shareholders.map((shareholder, index) => ({
+      index: index + 1,
+      id: shareholder.id,
+      name: shareholder.name,
+      investmentAmount: shareholder.investmentAmount,
+      dividendRate: shareholder.dividendRate,
+    }))
+    const totalRevenue = months.reduce((sum, month) => sum + month.grossSales, 0)
+    const totalCost = months.reduce((sum, month) => sum + month.totalCost, 0)
     const totalProfit = totalRevenue - totalCost
     structured = {
       scope,
       workspaceName: ctx.workspace.name,
-      monthCount: baseScenario?.months.length ?? 0,
+      monthCount: months.length,
       grossSales: totalRevenue,
       totalCost,
       totalProfit,
-      endingCash: baseScenario?.months.at(-1)?.cumulativeCash ?? 0,
+      endingCash: months.at(-1)?.cumulativeCash ?? 0,
       paybackMonthLabel: baseScenario?.paybackMonthLabel ?? null,
+      months,
+      shareholders,
+      firstShareholder: shareholders[0] ?? null,
     }
     rows = [structured]
   }

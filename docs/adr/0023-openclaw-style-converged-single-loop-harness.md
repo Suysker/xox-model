@@ -1,6 +1,6 @@
 # ADR 0023: OpenClaw-Style Converged Single-Loop Harness
 
-Status: Proposed
+Status: Accepted - Phase 1 implemented
 
 Date: 2026-06-02
 
@@ -460,6 +460,13 @@ Validation:
 - a read -> read -> sandbox -> final answer fixture passes;
 - a tool result alone cannot complete a run.
 
+Phase 1 implementation note:
+
+- `AgentRunEngine` now re-enters the normal model planning loop after domain-read and sandbox observations, with provider-native tools still available.
+- `TurnResolver` only asks for observation continuation when the current model turn produced new observations; once those observations have been consumed by a later assistant turn, final assistant text can complete the run.
+- Action previews, executed write observations, account-action refusals and clarification observations do not automatically re-enter the full tool inventory after evaluator pass. They are summarized by a model-authored finalizer so the run does not re-apply writes or create duplicate confirmation cards.
+- `observation_continuation_requested` is emitted as the lifecycle marker for the read/sandbox continuation path.
+
 ### Milestone 2: Runtime Channels As Source Of Truth
 
 Goal:
@@ -514,6 +521,11 @@ Validation:
 - sandbox can compute ROI/inflation/loan examples from a manifest bundle;
 - returned result is observation-only.
 
+Phase 1 implementation note:
+
+- The contract path is implemented: `requiresSandboxComputation` is a structured model-owned goal fact, the evaluator can require a `sandbox_run_code` observation, and the workspace summary bundle now exposes month-level metrics plus shareholder facts for model-facing calculations.
+- The isolated execution backend is intentionally not claimed complete in this phase. The current deterministic backend remains a contract/test backend until ADR 0016's real manifest-scoped sandbox backend is installed and independently verified.
+
 ### Milestone 5: Response Sufficiency Evaluator
 
 Goal:
@@ -531,6 +543,11 @@ Validation:
 - global ROI cannot satisfy personal shareholder ROI;
 - missing loan/inflation assumptions cause repair;
 - final answer must be model-authored.
+
+Phase 1 implementation note:
+
+- The evaluator no longer treats progressive tool-discovery capability exposure as a mandatory execution requirement.
+- Mandatory sandbox use is driven only by structured `goalFacts.requiresSandboxComputation`, not by raw-prose keyword routing or selected tool inventory side effects.
 
 ### Milestone 6: Semantic Hardening Cleanup
 
@@ -551,11 +568,12 @@ Validation:
 
 - `AgentRunEngine` is the only module that can transition a run to complete/blocked/failed.
 - Tool results are persisted and replayed as observations, never as assistant answers.
-- After a tool observation, the model can still call additional tools when the evaluator or model requires more facts.
+- After a domain-read or sandbox tool observation, the model can still call additional tools when the evaluator or model requires more facts.
+- After an action-preview or executed-write observation, the run must not automatically expose the full write inventory again after evaluator pass; the model-authored final response should summarize the interruption or executed change from the action observation.
 - `assistant/tool/lifecycle` are canonical runtime channels at event emission time.
 - Direct answers are model-authored, with no production keyword fallback.
 - Tool retrieval produces candidate context only; provider-native tool calls remain the execution intent.
-- `sandbox_run_code` can perform real isolated calculation without business write authority.
+- `sandbox_run_code` is observation-only and evaluator-addressable; real isolated calculation backend completion is tracked by ADR 0016.
 - The ROI + inflation + first shareholder + loan task completes through read tools + sandbox + final assistant explanation.
 - No new server-side prose keyword tables are added for business semantics.
 

@@ -612,6 +612,7 @@ export type AgentGoalFacts = {
   expectedHorizonMonths?: number
   expectedStartMonth?: number
   requiresForecastSummary?: boolean
+  requiresSandboxComputation?: boolean
   forbiddenActions?: Array<'publish_release' | 'share_link' | 'account_action'>
 }
 

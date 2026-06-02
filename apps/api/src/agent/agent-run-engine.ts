@@ -40,6 +40,21 @@ function evaluationSummary(evaluation: ReturnType<typeof serializeEvaluation>) {
   return 'Completion Evaluator 需要补充信息。'
 }
 
+function observationContinuationMessage(objective: string) {
+  return [
+    '继续完成当前目标。',
+    '上一轮工具结果是已完成事实：不要把工具返回直接当成最终回答；也不要重复已经完成的只读查询或已创建的确认卡。',
+    '如果还缺少可验证事实，继续调用合适工具；如果事实已足够，输出面向用户的最终回答。',
+    `当前目标：${objective}`,
+  ].join('\n\n')
+}
+
+function shouldContinueObservationInMainLoop(observations: AgentToolObservation[]) {
+  return observations.some((observation) =>
+    observation.toolName === 'data_query_workspace' ||
+    observation.toolName === 'sandbox_run_code')
+}
+
 export async function executeAgentRun(
   ctx: PlannerContext & { thread: Row<'agent_threads'> },
   options: { beforeStateWrite: () => Promise<boolean> },
@@ -97,6 +112,7 @@ export async function executeAgentRun(
   let nextMessage = objective
   let pendingAssistantText: string | null = null
   let lastEvaluation: ReturnType<typeof serializeEvaluation> | null = null
+  let waitingForAssistantFromObservations = false
   const maxIterations = Math.max(1, Math.min(8, Number(JSON.parse(goal.contract_json).maxIterations ?? 5)))
 
   for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
@@ -132,9 +148,7 @@ export async function executeAgentRun(
     actionRows.push(...planned.actionRows)
     planRows.push(...planned.planRows)
     observations.push(...planned.observations)
-    if (planned.assistantText?.trim()) {
-      pendingAssistantText = planned.assistantText.trim()
-    }
+    pendingAssistantText = planned.assistantText?.trim() || null
     const assistantOnlyNoGraph =
       Boolean(pendingAssistantText) &&
       planned.actionRows.length === 0 &&
@@ -269,10 +283,10 @@ export async function executeAgentRun(
       pendingAssistantText,
       observations,
       actionRows,
+      newObservationCount: planned.observations.length,
     })
     if (
       evaluationNextStep.type === 'final_output' ||
-      evaluationNextStep.type === 'continue_with_observations' ||
       evaluationNextStep.type === 'await_confirmation' ||
       evaluationNextStep.type === 'await_clarification' ||
       evaluationNextStep.type === 'blocked' ||
@@ -285,7 +299,49 @@ export async function executeAgentRun(
       }
       break
     }
+    if (evaluationNextStep.type === 'continue_with_observations') {
+      if (!shouldContinueObservationInMainLoop(evaluationNextStep.observations)) {
+        break
+      }
+      if (iteration >= maxIterations) {
+        const reason = '工具观察已经产生，但模型没有在主循环预算内生成最终回答。'
+        await updateGoalStatus(ctx.db, goal, 'failed', { blockedReason: reason })
+        await addRunEvent(ctx.db, {
+          threadId: ctx.thread.id,
+          runId: ctx.runId,
+          type: 'goal_iteration_exhausted',
+          title: '目标循环已耗尽',
+          message: reason,
+          status: 'failed',
+          data: {
+            goalId: goal.id,
+            maxIterations,
+            observationCount: observations.length,
+          },
+        })
+        if (assistantParts.length === 0) assistantParts.push(reason)
+        break
+      }
+      waitingForAssistantFromObservations = true
+      nextMessage = observationContinuationMessage(objective)
+      await addRunEvent(ctx.db, {
+        threadId: ctx.thread.id,
+        runId: ctx.runId,
+        type: 'observation_continuation_requested',
+        title: '继续基于工具结果规划',
+        message: '工具结果已作为 observation 回到 AgentRunEngine，下一轮仍可继续调用工具或生成最终回复。',
+        status: 'running',
+        data: {
+          goalId: goal.id,
+          iteration,
+          observationCount: evaluationNextStep.observations.length,
+          toolNames: evaluationNextStep.observations.map((observation) => observation.toolName),
+        },
+      })
+      continue
+    }
     if (evaluationNextStep.type === 'run_again') {
+      waitingForAssistantFromObservations = false
       nextMessage = evaluationNextStep.nextMessage
       continue
     }
@@ -312,6 +368,19 @@ export async function executeAgentRun(
     if (assistantParts.length === 0) {
       assistantParts.push(`这轮没有完成所有目标：${blockedReason}`)
     }
+  } else if (assistantParts.length === 0 && observations.length > 0 && waitingForAssistantFromObservations) {
+    const reason = '模型已经取得工具观察结果，但没有生成面向用户的最终回答。'
+    await updateGoalStatus(ctx.db, goal, 'failed', { blockedReason: reason })
+    await addRunEvent(ctx.db, {
+      threadId: ctx.thread.id,
+      runId: ctx.runId,
+      type: 'assistant_final_message_missing',
+      title: '最终回复缺失',
+      message: reason,
+      status: 'failed',
+      data: { goalId: goal.id, observationCount: observations.length },
+    })
+    assistantParts.push(reason)
   } else if (assistantParts.length === 0 && observations.length > 0) {
     const continuation = await continueModelAfterToolObservations(planningCtx, observations)
     if (!(await options.beforeStateWrite())) return null
