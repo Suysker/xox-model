@@ -18,7 +18,10 @@ import { addMessage } from './thread-store.js'
 import { redactSecretLikeContent } from './memory.js'
 import { executeAgentTool } from './tool-executor.js'
 import { evaluateAgentGoal } from './completion-evaluator.js'
-import { getGoalForRun, serializeEvaluation } from './goal-contract.js'
+import { getGoalForRun, serializeEvaluation, updateGoalStatus } from './goal-contract.js'
+import { buildEvidenceLedger } from './evidence-ledger.js'
+import { evaluateAssistantResponse, responseEvaluationSummary } from './response-evaluator.js'
+import { readRuntimeGoalFacts } from './runtime-goal-facts.js'
 import {
   consolidateAgentMemoryCandidates,
   consolidateExecutedActionMemory,
@@ -243,10 +246,11 @@ export async function confirmAgentActionRequest(db: Kysely<Database>, settings: 
   }
 
   const updated = await db.selectFrom('agent_action_requests').selectAll().where('id', '=', action.id).executeTakeFirstOrThrow()
+  const executionObservation = actionExecutionObservation({ action: updated, result })
   const goal = await getGoalForRun(db, action.run_id)
   if (goal) {
     const iteration = await nextEvaluationIteration(db, action.run_id)
-    const evaluationRow = await evaluateAgentGoal({ db, workspace, goal, iteration })
+    const evaluationRow = await evaluateAgentGoal({ db, workspace, goal, iteration, allowComplete: false })
     const evaluation = serializeEvaluation(evaluationRow)
     await addRunEvent(db, {
       threadId: action.thread_id,
@@ -254,9 +258,9 @@ export async function confirmAgentActionRequest(db: Kysely<Database>, settings: 
       type: 'goal_evaluated',
       title: 'Completion Evaluator 已复核',
       message: evaluation.status === 'pass'
-        ? '确认卡执行后，Completion Evaluator 已确认目标满足验收条件。'
+        ? '确认卡执行后，Completion Evaluator 已确认图状态可接受，等待最终回答证据检查。'
         : `确认卡执行后仍需处理：${evaluation.unsatisfiedCriteria.map((item) => item.message).join('；') || evaluation.status}`,
-      status: evaluation.status === 'pass' ? 'completed' : evaluation.status === 'needs_confirmation' ? 'blocked' : evaluation.status === 'failed' || evaluation.status === 'blocked' ? 'failed' : 'info',
+      status: evaluation.status === 'pass' ? 'running' : evaluation.status === 'needs_confirmation' ? 'blocked' : evaluation.status === 'failed' || evaluation.status === 'blocked' ? 'failed' : 'info',
       data: { goalId: goal.id, iteration, evaluationStatus: evaluation.status },
     })
   }
@@ -287,10 +291,51 @@ export async function confirmAgentActionRequest(db: Kysely<Database>, settings: 
     threadId: action.thread_id,
     runId: action.run_id,
     message: await runInputMessage(db, action.run_id, action.title),
-  }, [actionExecutionObservation({ action: updated, result })])
-  const assistant = continuation.status === 'answered'
-    ? await addMessage(db, action.thread_id, 'assistant', continuation.assistantText)
-    : null
+  }, [executionObservation])
+  let assistant: Row<'agent_messages'> | null = null
+  if (continuation.status === 'answered') {
+    if (goal) {
+      const evidence = buildEvidenceLedger({
+        threadId: action.thread_id,
+        runId: action.run_id,
+        observations: [executionObservation],
+      })
+      const pendingActionCount = await db
+        .selectFrom('agent_action_requests')
+        .select(({ fn }) => fn.countAll<number>().as('count'))
+        .where('run_id', '=', action.run_id)
+        .where('status', '=', 'pending')
+        .executeTakeFirst()
+      const responseEvaluation = evaluateAssistantResponse({
+        goal,
+        finalAssistantText: continuation.assistantText,
+        observations: [executionObservation],
+        evidence,
+        runtimeFacts: await readRuntimeGoalFacts(db, action.run_id),
+        pendingActionCount: Number(pendingActionCount?.count ?? 0),
+      })
+      await addRunEvent(db, {
+        threadId: action.thread_id,
+        runId: action.run_id,
+        type: 'response_evaluated',
+        title: '最终回答证据检查',
+        message: responseEvaluationSummary(responseEvaluation),
+        status: responseEvaluation.status === 'pass' ? 'completed' : responseEvaluation.status === 'blocked' ? 'failed' : 'running',
+        data: {
+          goalId: goal.id,
+          evaluationStatus: responseEvaluation.status,
+          confidence: responseEvaluation.confidence,
+          evidenceCount: evidence.length,
+          findings: responseEvaluation.findings,
+          requiredEvidence: responseEvaluation.requiredEvidence,
+        },
+      })
+      if (responseEvaluation.status === 'pass') {
+        await updateGoalStatus(db, goal, 'completed')
+      }
+    }
+    assistant = await addMessage(db, action.thread_id, 'assistant', continuation.assistantText)
+  }
   return {
     actionRequest: updated,
     result,

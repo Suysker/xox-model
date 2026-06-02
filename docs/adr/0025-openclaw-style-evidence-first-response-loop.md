@@ -1,6 +1,6 @@
 # ADR 0025: OpenClaw-Style Evidence-First Response Loop
 
-Status: Proposed
+Status: Accepted
 
 Date: 2026-06-02
 
@@ -110,6 +110,44 @@ EvidenceLedger owns run-scoped ground truth.
 ResponseEvaluator owns final-answer sufficiency.
 No tool, sandbox, memory, gateway, provider adapter or transcript projector can mark a user goal complete.
 ```
+
+## Implementation
+
+Implemented on 2026-06-02.
+
+Code paths:
+
+- `apps/api/src/agent/evidence-ledger.ts`
+  - Builds a run-scoped `EvidenceLedger` from structured tool observations.
+  - Classifies evidence by structured observation type and tool identity, not by parsing user prose.
+  - Keeps evidence in the run loop for now; it is not promoted to memory and is not a write audit substitute.
+- `apps/api/src/agent/response-evaluator.ts`
+  - Evaluates final assistant candidates after tool/action/sandbox observations exist.
+  - Rejects missing final assistant text when observations exist.
+  - Requires completed sandbox evidence when `goalFacts.requiresSandboxComputation` is present.
+  - Requires ordered entity evidence for sandbox-backed shareholder calculations through structured `shareholders` / `firstShareholder` facts.
+  - Treats pending confirmation and pending clarification as human interruptions, not completion.
+- `apps/api/src/agent/agent-run-engine.ts`
+  - Calls `CompletionEvaluator` with `allowComplete: false`; graph/policy/domain checks can move the goal to evaluating/repairing/waiting states, but cannot close the run.
+  - Emits `response_evaluated` only after a final assistant candidate exists.
+  - Marks a goal `completed` only after `ResponseEvaluator` returns `pass`.
+  - Falls back to a tools-disabled final-answer pass when the main loop budget is exhausted after observations.
+- `apps/api/src/agent/approval-executor.ts`
+  - Applies the same evidence-first final-answer check after confirmed or auto-executed actions.
+  - Keeps multi-card pending states open until remaining confirmations are handled.
+- `apps/api/src/agent/completion-evaluator.ts`
+  - Keeps existing graph, policy and domain checks.
+  - Adds `allowComplete` so caller-owned loop phase decides whether a passing graph evaluation may close the goal.
+
+Tests:
+
+- `apps/api/tests/response-evaluator.test.ts`
+  - Tool observations cannot replace final assistant answers.
+  - Sandbox-required goals require sandbox evidence.
+  - Pending confirmation/clarification are interruptions, not completion.
+  - Sandbox evidence with ordered shareholder facts can satisfy the final response evaluator.
+- `apps/api/tests/api.test.ts`
+  - The complex data -> sandbox -> final-answer integration now asserts `response_evaluated: pass`, at least two evidence items, and final goal status `completed`.
 
 ## Architecture
 

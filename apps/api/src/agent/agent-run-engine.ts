@@ -3,6 +3,7 @@ import type { Row } from '../db/schema.js'
 import type { PlannerContext } from './planning-context.js'
 import { createGoalContract, serializeEvaluation, updateGoalStatus } from './goal-contract.js'
 import { evaluateAgentGoal } from './completion-evaluator.js'
+import { buildEvidenceLedger } from './evidence-ledger.js'
 import {
   consolidateAgentMemoryCandidates,
   consolidateExecutedActionMemory,
@@ -20,6 +21,8 @@ import { continueModelAfterToolObservations, type AgentToolObservation } from '.
 import { buildClarificationResumeContext } from './clarification-resume.js'
 import { evaluateToolLoopGuardrails } from './tool-runtime/tool-loop-guardrails.js'
 import { resolveAfterEvaluation, resolveAfterPlanning } from './turn-resolver.js'
+import { evaluateAssistantResponse, responseEvaluationSummary } from './response-evaluator.js'
+import { readRuntimeGoalFacts } from './runtime-goal-facts.js'
 
 export type AgentRunResult = {
   plannerSource: AgentPlannerSource
@@ -39,6 +42,12 @@ function evaluationSummary(evaluation: ReturnType<typeof serializeEvaluation>) {
   if (evaluation.status === 'failed') return `Completion Evaluator 判定目标失败：${evaluation.blocker ?? '存在失败步骤。'}`
   return 'Completion Evaluator 需要补充信息。'
 }
+
+type FinalAnswerDecision =
+  | { status: 'pass'; assistantText: string }
+  | { status: 'interrupt'; assistantText: string | null }
+  | { status: 'continue'; nextMessage: string }
+  | { status: 'failed'; reason: string }
 
 function shouldContinueObservationInMainLoop(observations: AgentToolObservation[]) {
   return observations.some((observation) =>
@@ -103,8 +112,83 @@ export async function executeAgentRun(
   let nextMessage = objective
   let pendingAssistantText: string | null = null
   let lastEvaluation: ReturnType<typeof serializeEvaluation> | null = null
-  let waitingForAssistantFromObservations = false
   const maxIterations = Math.max(1, Math.min(8, Number(JSON.parse(goal.contract_json).maxIterations ?? 5)))
+
+  const evaluateFinalAssistant = async (
+    assistantText: string | null,
+    iteration: number,
+  ): Promise<FinalAnswerDecision> => {
+    const evidence = buildEvidenceLedger({
+      threadId: ctx.thread.id,
+      runId: ctx.runId,
+      observations,
+    })
+    const runtimeFacts = await readRuntimeGoalFacts(ctx.db, ctx.runId)
+    const responseEvaluation = evaluateAssistantResponse({
+      goal,
+      finalAssistantText: assistantText,
+      observations,
+      evidence,
+      runtimeFacts,
+      pendingActionCount: actionRows.filter((action) => action.status === 'pending').length,
+      awaitingClarification: lastEvaluation?.status === 'needs_clarification',
+    })
+    await addRunEvent(ctx.db, {
+      threadId: ctx.thread.id,
+      runId: ctx.runId,
+      type: 'response_evaluated',
+      title: '最终回答证据检查',
+      message: responseEvaluationSummary(responseEvaluation),
+      status:
+        responseEvaluation.status === 'pass'
+          ? 'completed'
+          : responseEvaluation.status === 'blocked'
+            ? 'failed'
+            : 'running',
+      data: {
+        goalId: goal.id,
+        iteration,
+        evaluationStatus: responseEvaluation.status,
+        confidence: responseEvaluation.confidence,
+        evidenceCount: evidence.length,
+        evidence: evidence.map((item) => ({
+          id: item.id,
+          authority: item.authority,
+          source: item.source,
+          subject: item.subject,
+          summary: item.summary,
+        })),
+        findings: responseEvaluation.findings,
+        requiredEvidence: responseEvaluation.requiredEvidence,
+        nextPlannerBrief: responseEvaluation.nextPlannerBrief,
+      },
+    })
+
+    if (responseEvaluation.status === 'pass' && assistantText?.trim()) {
+      await updateGoalStatus(ctx.db, goal, 'completed')
+      return { status: 'pass', assistantText: assistantText.trim() }
+    }
+    if (responseEvaluation.status === 'awaiting_confirmation' || responseEvaluation.status === 'awaiting_clarification') {
+      return { status: 'interrupt', assistantText: assistantText?.trim() || null }
+    }
+    if (
+      responseEvaluation.status === 'needs_calculation' ||
+      responseEvaluation.status === 'needs_more_evidence' ||
+      responseEvaluation.status === 'needs_final_answer'
+    ) {
+      return {
+        status: 'continue',
+        nextMessage: [
+          responseEvaluation.nextPlannerBrief ?? '继续补齐最终回答所需的 evidence。',
+          '上一轮 evidence 会随本次规划一起提供；不要把工具 observation 当成最终回答。',
+          `当前目标：${objective}`,
+        ].join('\n\n'),
+      }
+    }
+    const reason = responseEvaluation.findings.find((finding) => finding.severity === 'fail')?.message ?? '最终回答证据检查失败。'
+    await updateGoalStatus(ctx.db, goal, 'failed', { blockedReason: reason })
+    return { status: 'failed', reason }
+  }
 
   for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
     await addRunEvent(ctx.db, {
@@ -200,8 +284,26 @@ export async function executeAgentRun(
       break
     }
     if (planningNextStep.type === 'final_output') {
-      if (planningNextStep.assistantText?.trim()) assistantParts.push(planningNextStep.assistantText.trim())
-      break
+      const finalDecision = await evaluateFinalAssistant(planningNextStep.assistantText?.trim() ?? null, iteration)
+      if (finalDecision.status === 'pass') {
+        assistantParts.push(finalDecision.assistantText)
+        break
+      }
+      if (finalDecision.status === 'interrupt') {
+        if (finalDecision.assistantText) assistantParts.push(finalDecision.assistantText)
+        break
+      }
+      if (finalDecision.status === 'failed') {
+        if (assistantParts.length === 0) assistantParts.push(finalDecision.reason)
+        break
+      }
+      if (iteration >= maxIterations) {
+        await updateGoalStatus(ctx.db, goal, 'failed', { blockedReason: finalDecision.nextMessage })
+        if (assistantParts.length === 0) assistantParts.push(`这轮没有完成所有目标：${finalDecision.nextMessage}`)
+        break
+      }
+      nextMessage = finalDecision.nextMessage
+      continue
     }
 
     const evaluationRow = await evaluateAgentGoal({
@@ -209,6 +311,7 @@ export async function executeAgentRun(
       workspace: ctx.workspace,
       goal,
       iteration,
+      allowComplete: false,
     })
     if (!(await options.beforeStateWrite())) return null
     const evaluation = serializeEvaluation(evaluationRow)
@@ -221,7 +324,7 @@ export async function executeAgentRun(
       message: evaluationSummary(evaluation),
       status:
         evaluation.status === 'pass'
-          ? 'completed'
+          ? 'running'
           : evaluation.status === 'needs_confirmation'
             ? 'blocked'
             : evaluation.status === 'continue'
@@ -283,8 +386,27 @@ export async function executeAgentRun(
       evaluationNextStep.type === 'blocked' ||
       evaluationNextStep.type === 'failed'
     ) {
-      if (evaluationNextStep.type === 'final_output' && evaluationNextStep.assistantText?.trim()) {
-        assistantParts.push(evaluationNextStep.assistantText.trim())
+      if (evaluationNextStep.type === 'final_output') {
+        const finalDecision = await evaluateFinalAssistant(evaluationNextStep.assistantText?.trim() ?? null, iteration)
+        if (finalDecision.status === 'pass') {
+          assistantParts.push(finalDecision.assistantText)
+          break
+        }
+        if (finalDecision.status === 'interrupt') {
+          if (finalDecision.assistantText) assistantParts.push(finalDecision.assistantText)
+          break
+        }
+        if (finalDecision.status === 'failed') {
+          if (assistantParts.length === 0) assistantParts.push(finalDecision.reason)
+          break
+        }
+        if (iteration >= maxIterations) {
+          await updateGoalStatus(ctx.db, goal, 'failed', { blockedReason: finalDecision.nextMessage })
+          if (assistantParts.length === 0) assistantParts.push(`这轮没有完成所有目标：${finalDecision.nextMessage}`)
+          break
+        }
+        nextMessage = finalDecision.nextMessage
+        continue
       } else if (pendingAssistantText && observations.length === 0) {
         assistantParts.push(pendingAssistantText)
       }
@@ -295,25 +417,21 @@ export async function executeAgentRun(
         break
       }
       if (iteration >= maxIterations) {
-        const reason = '工具观察已经产生，但模型没有在主循环预算内生成最终回答。'
-        await updateGoalStatus(ctx.db, goal, 'failed', { blockedReason: reason })
         await addRunEvent(ctx.db, {
           threadId: ctx.thread.id,
           runId: ctx.runId,
           type: 'goal_iteration_exhausted',
           title: '目标循环已耗尽',
-          message: reason,
-          status: 'failed',
+          message: '工具观察已经产生，主循环预算已耗尽，改由最终回复通道基于 evidence 生成回答。',
+          status: 'running',
           data: {
             goalId: goal.id,
             maxIterations,
             observationCount: observations.length,
           },
         })
-        if (assistantParts.length === 0) assistantParts.push(reason)
         break
       }
-      waitingForAssistantFromObservations = true
       nextMessage = objective
       await addRunEvent(ctx.db, {
         threadId: ctx.thread.id,
@@ -332,7 +450,6 @@ export async function executeAgentRun(
       continue
     }
     if (evaluationNextStep.type === 'run_again') {
-      waitingForAssistantFromObservations = false
       nextMessage = evaluationNextStep.nextMessage
       continue
     }
@@ -359,24 +476,22 @@ export async function executeAgentRun(
     if (assistantParts.length === 0) {
       assistantParts.push(`这轮没有完成所有目标：${blockedReason}`)
     }
-  } else if (assistantParts.length === 0 && observations.length > 0 && waitingForAssistantFromObservations) {
-    const reason = '模型已经取得工具观察结果，但没有生成面向用户的最终回答。'
-    await updateGoalStatus(ctx.db, goal, 'failed', { blockedReason: reason })
-    await addRunEvent(ctx.db, {
-      threadId: ctx.thread.id,
-      runId: ctx.runId,
-      type: 'assistant_final_message_missing',
-      title: '最终回复缺失',
-      message: reason,
-      status: 'failed',
-      data: { goalId: goal.id, observationCount: observations.length },
-    })
-    assistantParts.push(reason)
   } else if (assistantParts.length === 0 && observations.length > 0) {
     const continuation = await continueModelAfterToolObservations(planningCtx, observations)
     if (!(await options.beforeStateWrite())) return null
     if (continuation.status === 'answered') {
-      assistantParts.push(continuation.assistantText.trim())
+      const finalDecision = await evaluateFinalAssistant(continuation.assistantText.trim(), maxIterations + 1)
+      if (finalDecision.status === 'pass') {
+        assistantParts.push(finalDecision.assistantText)
+      } else if (finalDecision.status === 'interrupt') {
+        if (finalDecision.assistantText) assistantParts.push(finalDecision.assistantText)
+      } else {
+        const reason = finalDecision.status === 'failed'
+          ? finalDecision.reason
+          : finalDecision.nextMessage
+        await updateGoalStatus(ctx.db, goal, 'failed', { blockedReason: reason })
+        assistantParts.push(`这轮没有完成所有目标：${reason}`)
+      }
     } else if (continuation.status === 'failed') {
       planRows.push(continuation.planStep)
       const evaluationRow = await evaluateAgentGoal({
@@ -384,6 +499,7 @@ export async function executeAgentRun(
         workspace: ctx.workspace,
         goal,
         iteration: maxIterations + 1,
+        allowComplete: false,
       })
       const evaluation = serializeEvaluation(evaluationRow)
       await addRunEvent(ctx.db, {

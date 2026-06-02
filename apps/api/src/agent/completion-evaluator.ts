@@ -453,6 +453,7 @@ export async function evaluateAgentGoal(input: {
   workspace: Row<'workspaces'>
   goal: Row<'agent_goals'>
   iteration: number
+  allowComplete?: boolean
 }): Promise<Row<'agent_evaluations'>> {
   const [planSteps, actions, observation, runEvents] = await Promise.all([
     input.db.selectFrom('agent_plan_steps').selectAll().where('run_id', '=', input.goal.run_id).orderBy('sequence_no', 'asc').execute(),
@@ -611,7 +612,9 @@ export async function evaluateAgentGoal(input: {
 
   const goalStatus =
     status === 'pass'
-      ? 'completed'
+      ? input.allowComplete === false
+        ? 'evaluating'
+        : 'completed'
       : status === 'needs_confirmation'
         ? 'waiting_for_confirmation'
         : status === 'needs_clarification'

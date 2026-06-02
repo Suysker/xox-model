@@ -1429,6 +1429,13 @@ describe('xox TypeScript API', () => {
       expect(response.json.messages.at(-1).content).toContain('个人回报')
       expect(response.json.messages.at(-1).content).not.toContain('fake_deterministic')
       expect(response.json.runEvents.map((event: any) => event.type)).toContain('observation_continuation_requested')
+      expect(response.json.runEvents.some((event: any) =>
+        event.type === 'response_evaluated' &&
+        event.data?.evaluationStatus === 'pass' &&
+        event.data?.evidenceCount >= 2,
+      )).toBe(true)
+      const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
+      expect(state.json.goals.at(-1).status).toBe('completed')
       await closeHarness(harness)
     }, {
       capabilities: ['data', 'sandbox'],

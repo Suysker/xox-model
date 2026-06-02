@@ -187,6 +187,9 @@
 - Goal facts and required action coverage are runtime contracts, not a hidden backend intent router. The server may sanitize structured `goalFacts` / `requiredActionCapabilities` emitted by the model-selected Tool Catalog Gateway and then verify them against domain state, but must not scan user prose with keyword lists to decide tools or completion obligations.
 - Provider-emitted tool calls are execution intent, not decorative streaming text. If a provider calls a tool outside the current materialized catalog or a catalog tool without a planner mapping, fail closed with a structured provider response error; never silently drop it and let evaluator pass on assistant preface text.
 - Progressive tool discovery must reserve workflow-prerequisite observation tools before ordinary same-capability tools. `data_query_workspace` is required ground truth for fact-dependent draft/ledger/version/share actions and must not be pushed out by the materialization budget.
+- Agent goal completion must be evidence-first and assistant-final. CompletionEvaluator may validate graph, policy and domain state, but a run should become `completed` only after a model-authored final assistant candidate passes ResponseEvaluator against run-scoped evidence.
+- Confirmation and clarification are human interruptions, not successful final answers. Even if the model produces helpful explanatory text after action previews or clarification observations, pending cards/questions must keep the goal in waiting state instead of letting response evaluation close it.
+- Sandbox and tool results are observations for the model, not answers for the user. Derived finance questions that require computation should collect structured domain/sandbox evidence, replay it to the model, and only then evaluate the final assistant response.
 
 ## Testing
 
