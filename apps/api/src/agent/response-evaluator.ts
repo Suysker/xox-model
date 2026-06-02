@@ -2,7 +2,7 @@ import type { AgentGoalFacts } from '@xox/contracts'
 import type { Row } from '../db/schema.js'
 import { parseJson } from '../db/database.js'
 import type { AgentEvidenceAuthority, AgentEvidenceItem } from './evidence-ledger.js'
-import { evidenceContainsKey } from './evidence-ledger.js'
+import { evidenceContainsKey, isExecutedSandboxEvidenceFacts } from './evidence-ledger.js'
 import type { AgentToolObservation } from './tool-observation-continuation.js'
 import type { AgentGoalContract } from '@xox/contracts'
 import { mergeAgentGoalFacts } from './runtime-goal-facts.js'
@@ -55,12 +55,7 @@ function isCompletedObservation(observation: AgentToolObservation) {
 }
 
 function hasCompletedSandboxEvidence(evidence: AgentEvidenceItem[]) {
-  return evidence.some((item) => {
-    if (item.authority !== 'sandbox') return false
-    const completed = item.facts.completed
-    const status = item.facts.status
-    return completed === true || status === 'completed'
-  })
+  return evidence.some((item) => item.authority === 'sandbox' && isExecutedSandboxEvidenceFacts(item.facts))
 }
 
 export function evaluateAssistantResponse(input: {

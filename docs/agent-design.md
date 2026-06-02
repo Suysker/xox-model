@@ -81,7 +81,7 @@ Goal Interpreter
 - `completion-evaluator.ts` 以 action graph、确认卡、audit、Tool Catalog Gateway 的结构化信号和领域投影为硬事实；经营模型草稿还会检查非零收入/成本驱动输入，避免空壳草稿被默认值误判通过。
 - `runtime-goal-facts.ts` 只校验模型在 `tool_catalog_select_capabilities` 中给出的结构化 `goalFacts`；服务端不再从用户原话做关键词/正则式目标推断。无变化的 `workspace_patch_config` 作为 observation 返回给模型，不生成伪确认卡。
 - `memory-candidate-detector.ts` 和 `memory-consolidator.ts` 会在 action 执行后主动沉淀 scoped episodic/procedural memory；显式 `memory_remember` 仍保留为用户可控记忆入口。
-- `sandbox-service.ts` 已实现 manifest-scoped sandbox tool 的核心边界：模型只能请求 `sandbox_run_code`，服务端生成只读 `SandboxManifest`、最小化数据包和输出策略，fake backend 返回结构化 observation；它不执行生产写入、不读取 API 进程环境变量、不访问数据库/内部 API/provider key。后续真实隔离后端只能替换 `SandboxBackend`，不能改变业务只读和 confirmation-card 约束。
+- `sandbox-service.ts` 已收敛为 manifest-scoped sandbox tool façade：模型只能请求 `sandbox_run_code`，服务端生成只读 `SandboxManifest`、最小化数据包和输出策略，再交给 `SandboxBroker` 选择真实 backend 执行。默认 `local-script` backend 在临时工作区启动 Python/Node 子进程；`docker` backend 可通过配置切换。sandbox observation 会记录真实 `executionMode/backendId/exitCode/structuredOutput`，Response Evaluator 只接受 executed + completed + exitCode 0 + structured output 的计算证据；业务写入仍必须走确认卡和领域服务。
 - React `AgentConsole` 已显示最新目标、评估轮次、满足/未满足数量、blocker 和下一轮 planner brief。
 
 验证命令：

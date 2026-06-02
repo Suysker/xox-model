@@ -9,6 +9,7 @@ import {
   sandboxFileAdapters,
 } from '../src/agent/sandbox-file-adapters.js'
 import { sandboxInternalsForTests } from '../src/agent/sandbox-service.js'
+import { SandboxBroker } from '../src/agent/sandbox/sandbox-broker.js'
 
 function bytes(value: string) {
   return Buffer.from(value, 'utf8')
@@ -158,11 +159,23 @@ describe('manifest-scoped sandbox tool', () => {
     expect(manifest.outputPolicy.allowedArtifactKinds).toEqual(expect.arrayContaining(['xlsx', 'pdf', 'docx', 'png']))
   })
 
-  it('fake backend returns observation data without executing code in the API process', async () => {
+  it('runs code through the real local sandbox backend and parses structured output', async () => {
     const input: SandboxRunCodeInput = {
       purpose: '生成校验摘要',
       language: 'python',
-      code: 'open("/etc/passwd").read()',
+      code: [
+        'import json, os, pathlib',
+        'payload = json.load(open(os.environ["XOX_SANDBOX_INPUT_JSON"], encoding="utf-8"))',
+        'result = {',
+        '  "schemaVersion": "xox.sandbox.result.v1",',
+        '  "summary": "计算完成",',
+        '  "structured": {',
+        '    "profit": payload["bundle"]["structured"]["totalProfit"],',
+        '    "secretVisible": "XOX_SANDBOX_SECRET_FOR_TEST" in os.environ',
+        '  }',
+        '}',
+        'pathlib.Path(os.environ["XOX_SANDBOX_OUTPUT_DIR"], "result.json").write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")',
+      ].join('\n'),
       dataRequest: { scope: 'workspace_summary' },
       expectedOutputs: ['json'],
     }
@@ -182,16 +195,124 @@ describe('manifest-scoped sandbox tool', () => {
       threadId: 'thread_1',
       runId: 'run_1',
     } as any, input, bundle, 'tool_call_1') as SandboxManifest
-    const backend = new sandboxInternalsForTests.FakeDeterministicSandboxBackend()
-    const session = await backend.create(manifest)
-    const result = await backend.execute(session, { input, bundle })
+    process.env.XOX_SANDBOX_SECRET_FOR_TEST = 'secret-value-that-must-not-leak'
+    try {
+      const result = await new SandboxBroker().execute({ manifest, toolInput: input, bundle })
+      expect(result.status).toBe('completed')
+      expect(result.executionMode).toBe('executed')
+      expect(result.exitCode).toBe(0)
+      expect(result.backendId).toBe('local-script')
+      expect(result.structuredOutput).toMatchObject({
+        schemaVersion: 'xox.sandbox.result.v1',
+        structured: {
+          profit: 20,
+          secretVisible: false,
+        },
+      })
+      expect(JSON.stringify(result)).not.toContain('secret-value-that-must-not-leak')
+    } finally {
+      delete process.env.XOX_SANDBOX_SECRET_FOR_TEST
+    }
+  })
 
-    expect(result.status).toBe('completed')
+  it('reports a real timeout instead of fabricating sandbox success', async () => {
+    const input: SandboxRunCodeInput = {
+      purpose: '超时校验',
+      language: 'python',
+      code: 'import time\ntime.sleep(2)',
+      dataRequest: { scope: 'workspace_summary' },
+      expectedOutputs: ['json'],
+    }
+    const bundle = {
+      bundleId: 'bundle_timeout',
+      scope: 'workspace_summary' as const,
+      fields: ['grossSales'],
+      rows: [{ grossSales: 100 }],
+      structured: { grossSales: 100 },
+      rowCount: 1,
+      redactions: 0,
+      contentHash: 'hash',
+    }
+    const manifest = sandboxInternalsForTests.buildManifest({
+      workspace: { id: 'workspace_1', owner_id: 'tenant_1' },
+      user: { id: 'user_1' },
+      threadId: 'thread_1',
+      runId: 'run_1',
+    } as any, input, bundle, 'tool_call_timeout') as SandboxManifest
+    manifest.runtime.timeoutMs = 50
+    const result = await new SandboxBroker().execute({ manifest, toolInput: input, bundle })
+
+    expect(result.status).toBe('timeout')
+    expect(result.executionMode).toBe('executed')
+    expect(result.exitCode).toBeNull()
+    expect(result.structuredOutput).toBeNull()
+  })
+
+  it('reports runtime errors with real exit status instead of fabricating sandbox success', async () => {
+    const input: SandboxRunCodeInput = {
+      purpose: '运行时错误校验',
+      language: 'python',
+      code: 'raise RuntimeError("boom")',
+      dataRequest: { scope: 'workspace_summary' },
+      expectedOutputs: ['json'],
+    }
+    const bundle = {
+      bundleId: 'bundle_failure',
+      scope: 'workspace_summary' as const,
+      fields: ['grossSales'],
+      rows: [{ grossSales: 100 }],
+      structured: { grossSales: 100 },
+      rowCount: 1,
+      redactions: 0,
+      contentHash: 'hash',
+    }
+    const manifest = sandboxInternalsForTests.buildManifest({
+      workspace: { id: 'workspace_1', owner_id: 'tenant_1' },
+      user: { id: 'user_1' },
+      threadId: 'thread_1',
+      runId: 'run_1',
+    } as any, input, bundle, 'tool_call_failure') as SandboxManifest
+    const result = await new SandboxBroker().execute({ manifest, toolInput: input, bundle })
+
+    expect(result.status).toBe('failed')
+    expect(result.executionMode).toBe('executed')
+    expect(result.exitCode).not.toBe(0)
+    expect(result.stderr).toContain('RuntimeError')
+    expect(result.structuredOutput).toBeNull()
+  })
+
+  it('blocks invalid sandbox policy before execution without producing executed evidence', async () => {
+    const input: SandboxRunCodeInput = {
+      purpose: '策略阻断校验',
+      language: 'python',
+      code: 'print("should not run")',
+      dataRequest: { scope: 'workspace_summary' },
+      expectedOutputs: ['json'],
+    }
+    const bundle = {
+      bundleId: 'bundle_blocked',
+      scope: 'workspace_summary' as const,
+      fields: ['grossSales'],
+      rows: [{ grossSales: 100 }],
+      structured: { grossSales: 100 },
+      rowCount: 1,
+      redactions: 0,
+      contentHash: 'hash',
+    }
+    const manifest = sandboxInternalsForTests.buildManifest({
+      workspace: { id: 'workspace_1', owner_id: 'tenant_1' },
+      user: { id: 'user_1' },
+      threadId: 'thread_1',
+      runId: 'run_1',
+    } as any, input, bundle, 'tool_call_blocked') as SandboxManifest
+    ;(manifest.capabilities as any).businessWrites = true
+    const result = await new SandboxBroker().execute({ manifest, toolInput: input, bundle })
+
+    expect(result.status).toBe('blocked')
+    expect(result.executionMode).toBe('not_executed')
+    expect(result.exitCode).toBeNull()
     expect(result.result.structured).toMatchObject({
-      executionMode: 'fake_deterministic',
-      manifestScoped: true,
-      businessReadonly: true,
-      dataScope: 'workspace_summary',
+      reason: 'business_writes_forbidden',
     })
   })
 })

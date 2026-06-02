@@ -939,7 +939,17 @@ export type SandboxManifest = {
 export type SandboxObservation = {
   runId: string
   sandboxRunId: string
-  status: 'completed' | 'blocked' | 'failed' | 'timed_out'
+  status: 'completed' | 'blocked' | 'failed' | 'timeout' | 'cancelled'
+  executionMode: 'executed' | 'not_executed'
+  backendId: string
+  sessionId: string
+  exitCode: number | null
+  durationMs: number
+  stdout: string
+  stderr: string
+  structuredOutput: unknown
+  manifestHash: string
+  inputEvidenceIds: string[]
   purpose: string
   language: 'python' | 'javascript'
   manifest: Pick<SandboxManifest, 'schemaVersion' | 'identity' | 'inputBundle' | 'runtime' | 'capabilities' | 'network' | 'outputPolicy'>

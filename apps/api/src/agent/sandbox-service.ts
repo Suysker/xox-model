@@ -17,6 +17,8 @@ import type { CurrentUser } from '../modules/auth.js'
 import { normalizeSandboxArtifactKinds, normalizeSandboxFileKinds } from './sandbox-file-adapters.js'
 import type { ReadDraft, RuntimePlannerStep } from './action-draft-builder.js'
 import type { PlannerContext } from './planning-context.js'
+import { SandboxBroker } from './sandbox/sandbox-broker.js'
+import type { SandboxDataBundle } from './sandbox/backend.js'
 
 type SandboxExpectedOutput = NonNullable<SandboxRunCodeInput['expectedOutputs']>[number]
 
@@ -26,45 +28,6 @@ type SandboxServiceContext = {
   user: CurrentUser
   threadId: string
   runId: string
-}
-
-type SandboxDataBundle = {
-  bundleId: string
-  scope: SandboxDataScope
-  fields: string[]
-  rows?: unknown[]
-  files?: Array<{ fileId: string; kind?: SandboxFileKind }>
-  structured: unknown
-  rowCount?: number
-  fileCount?: number
-  fileKinds?: SandboxFileKind[]
-  redactions: number
-  contentHash: string
-}
-
-type SandboxSessionRef = {
-  id: string
-  manifest: SandboxManifest
-}
-
-type SandboxExecuteInput = {
-  input: SandboxRunCodeInput
-  bundle: SandboxDataBundle
-}
-
-type SandboxExecuteResult = {
-  status: SandboxObservation['status']
-  result: SandboxObservation['result']
-  artifacts: SandboxObservation['artifacts']
-  resourceUsage: SandboxObservation['resourceUsage']
-  errorMessage?: string
-}
-
-interface SandboxBackend {
-  create(manifest: SandboxManifest): Promise<SandboxSessionRef>
-  execute(session: SandboxSessionRef, input: SandboxExecuteInput): Promise<SandboxExecuteResult>
-  collect(session: SandboxSessionRef): Promise<SandboxObservation['artifacts']>
-  destroy(session: SandboxSessionRef): Promise<void>
 }
 
 const DEFAULT_SANDBOX_ARTIFACT_KINDS: SandboxArtifactKind[] = [
@@ -239,7 +202,7 @@ async function buildSandboxDataBundle(ctx: SandboxServiceContext, input: Sandbox
     structured = {
       scope,
       files: fileIds.map((fileId, index) => ({ fileId, kind: fileKinds?.[index] ?? null })),
-      note: '文件内容由 File Adapter Registry 解析后进入沙箱；当前 fake backend 只处理 manifest 和安全边界。',
+      note: '文件内容由 File Adapter Registry 解析后进入 manifest-scoped 沙箱。',
     }
   } else {
     const months = (baseScenario?.months ?? []).map((month) => ({
@@ -360,76 +323,12 @@ function buildManifest(ctx: SandboxServiceContext, input: SandboxRunCodeInput, b
   }
 }
 
-class FakeDeterministicSandboxBackend implements SandboxBackend {
-  async create(manifest: SandboxManifest): Promise<SandboxSessionRef> {
-    return { id: `sandbox_${shortHash(`${manifest.identity.runId}:${manifest.identity.toolCallId}`)}`, manifest }
-  }
-
-  async execute(session: SandboxSessionRef, input: SandboxExecuteInput): Promise<SandboxExecuteResult> {
-    const startedAt = Date.now()
-    const codeBytes = Buffer.byteLength(input.input.code, 'utf8')
-    const blocked = codeBytes > 24_000
-    if (blocked) {
-      return {
-        status: 'blocked',
-        result: {
-          summary: '沙箱代码超过当前 fake backend 的大小限制，已阻断执行。',
-          structured: { reason: 'code_too_large', codeBytes },
-        },
-        artifacts: [],
-        resourceUsage: {
-          wallTimeMs: Math.max(1, Date.now() - startedAt),
-          stdoutBytes: 0,
-          stderrBytes: 0,
-        },
-        errorMessage: 'code_too_large',
-      }
-    }
-    const structured = {
-      executionMode: 'fake_deterministic',
-      manifestScoped: true,
-      businessReadonly: true,
-      purpose: input.input.purpose,
-      dataScope: input.bundle.scope,
-      inputBundle: {
-        fields: input.bundle.fields,
-        rows: input.bundle.rowCount ?? 0,
-        files: input.bundle.fileCount ?? 0,
-        fileKinds: input.bundle.fileKinds ?? [],
-      },
-      data: input.bundle.structured,
-    }
-    return {
-      status: 'completed',
-      result: {
-        summary: `${input.input.purpose} 已在 manifest-scoped fake sandbox 中完成，结果已作为只读 observation 回传。`,
-        structured,
-        tables: input.bundle.rows ? [{ name: input.bundle.scope, rows: input.bundle.rows.slice(0, 20) }] : [],
-        proposedPatches: [],
-      },
-      artifacts: [],
-      resourceUsage: {
-        wallTimeMs: Math.max(1, Date.now() - startedAt),
-        cpuMs: 1,
-        memoryPeakMb: 32,
-        stdoutBytes: 0,
-        stderrBytes: 0,
-      },
-    }
-  }
-
-  async collect(_session: SandboxSessionRef): Promise<SandboxObservation['artifacts']> {
-    return []
-  }
-
-  async destroy(_session: SandboxSessionRef): Promise<void> {
-    // Fake backend has no external resources.
-  }
-}
-
 function displayPreview(observation: SandboxObservation) {
   return JSON.stringify({
     status: observation.status,
+    executionMode: observation.executionMode,
+    backendId: observation.backendId,
+    exitCode: observation.exitCode,
     purpose: observation.purpose,
     scope: observation.dataBundleSummary.scope,
     fields: observation.dataBundleSummary.fields,
@@ -446,31 +345,40 @@ export async function runSandboxCode(ctx: SandboxServiceContext, step: RuntimePl
   const toolCallId = step.providerToolCallId ?? `sandbox_${shortHash(`${ctx.runId}:${input.purpose}`)}`
   const bundle = await buildSandboxDataBundle(ctx, input)
   const manifest = buildManifest(ctx, input, bundle, toolCallId)
-  const backend = new FakeDeterministicSandboxBackend()
-  const session = await backend.create(manifest)
-  try {
-    const execution = await backend.execute(session, { input, bundle })
-    const artifacts = [...execution.artifacts, ...await backend.collect(session)]
-    return {
-      runId: ctx.runId,
-      sandboxRunId: session.id,
-      status: execution.status,
-      purpose: input.purpose,
-      language: input.language,
-      manifest,
-      dataBundleSummary: {
-        scope: bundle.scope,
-        ...(bundle.rowCount !== undefined ? { rows: bundle.rowCount } : {}),
-        ...(bundle.fileCount !== undefined ? { files: bundle.fileCount } : {}),
-        fields: bundle.fields,
-        redactions: bundle.redactions,
-      },
-      result: execution.result,
-      artifacts,
-      resourceUsage: execution.resourceUsage,
-    }
-  } finally {
-    await backend.destroy(session)
+  const broker = new SandboxBroker()
+  const execution = await broker.execute({
+    manifest,
+    toolInput: input,
+    bundle,
+    ...(process.env.XOX_SANDBOX_BACKEND ? { preferredBackendId: process.env.XOX_SANDBOX_BACKEND } : {}),
+  })
+  return {
+    runId: ctx.runId,
+    sandboxRunId: execution.sessionId,
+    status: execution.status,
+    executionMode: execution.executionMode,
+    backendId: execution.backendId,
+    sessionId: execution.sessionId,
+    exitCode: execution.exitCode,
+    durationMs: execution.durationMs,
+    stdout: execution.stdout,
+    stderr: execution.stderr,
+    structuredOutput: execution.structuredOutput,
+    manifestHash: execution.manifestHash,
+    inputEvidenceIds: execution.inputEvidenceIds,
+    purpose: input.purpose,
+    language: input.language,
+    manifest,
+    dataBundleSummary: {
+      scope: bundle.scope,
+      ...(bundle.rowCount !== undefined ? { rows: bundle.rowCount } : {}),
+      ...(bundle.fileCount !== undefined ? { files: bundle.fileCount } : {}),
+      fields: bundle.fields,
+      redactions: bundle.redactions,
+    },
+    result: execution.result,
+    artifacts: execution.artifacts,
+    resourceUsage: execution.resourceUsage,
   }
 }
 
@@ -483,7 +391,7 @@ export async function planSandboxRunCode(ctx: PlannerContext, step: RuntimePlann
     readKind: 'tool_observation',
     modelContent: JSON.stringify({
       observationType: 'sandbox_result',
-      completed: observation.status === 'completed',
+      completed: observation.status === 'completed' && observation.executionMode === 'executed' && observation.exitCode === 0,
       businessReadonly: true,
       manifestScoped: true,
       ...observation,
@@ -497,5 +405,4 @@ export const sandboxInternalsForTests = {
   normalizeSandboxInput,
   buildSandboxDataBundle,
   buildManifest,
-  FakeDeterministicSandboxBackend,
 }

@@ -833,7 +833,7 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
         code: {
           type: 'string',
           description:
-            '要在受控沙箱里运行的代码。不要尝试访问网络、环境变量、内部 API、生产数据库、文件系统任意路径或安装包；输入数据只在 /input，输出只能写 /output。',
+            '要在受控沙箱里运行的代码。不要尝试访问网络、内部 API、生产数据库、任意文件系统路径或安装包；输入数据在当前目录 input.json / input/input.json，也可读环境变量 XOX_SANDBOX_INPUT_JSON；结构化输出优先写 output/result.json 或 XOX_SANDBOX_OUTPUT_DIR/result.json。',
         },
         dataRequest: objectSchema({
           scope: {

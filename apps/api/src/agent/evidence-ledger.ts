@@ -40,9 +40,18 @@ function parseObservationContent(value: string): Record<string, unknown> {
   }
 }
 
+export function isExecutedSandboxEvidenceFacts(facts: Record<string, unknown>) {
+  return facts.observationType === 'sandbox_result' &&
+    facts.executionMode === 'executed' &&
+    facts.status === 'completed' &&
+    facts.exitCode === 0 &&
+    facts.structuredOutput !== null &&
+    facts.structuredOutput !== undefined
+}
+
 function observationAuthority(observation: AgentToolObservation): AgentEvidenceAuthority {
   const content = parseObservationContent(observation.modelContent)
-  if (content.observationType === 'sandbox_result' || observation.toolName === 'sandbox_run_code') return 'sandbox'
+  if (isExecutedSandboxEvidenceFacts(content)) return 'sandbox'
   if (content.observationType === 'action_result' || content.observationType === 'action_preview') return 'action'
   if (observation.toolName === 'memory_search' || observation.toolName === 'memory_remember') return 'memory'
   return 'domain_read'
@@ -52,6 +61,7 @@ function observationSource(observation: AgentToolObservation, authority: AgentEv
   if (authority === 'sandbox') return 'sandbox_run_code'
   if (authority === 'action') return 'agent_action_runtime'
   if (authority === 'memory') return 'memory_recall'
+  if (observation.toolName === 'sandbox_run_code') return 'sandbox_run_code'
   if (observation.toolName === 'data_query_workspace') return 'data_query_workspace'
   return 'data_query_workspace'
 }

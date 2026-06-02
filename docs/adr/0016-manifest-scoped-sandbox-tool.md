@@ -1,6 +1,6 @@
 # ADR 0016: Manifest-Scoped Sandbox Tool
 
-Status: Accepted
+Status: Accepted, refined by ADR 0026
 
 Date: 2026-05-29
 
@@ -137,15 +137,19 @@ flowchart TD
 
 ## Implementation Status
 
-As of 2026-05-30, the core harness boundary is implemented in the TypeScript API:
+As of 2026-06-03, the core harness boundary is implemented in the TypeScript API:
 
 - `packages/contracts` defines `SandboxRunCodeInput`, `SandboxManifest`, `SandboxCapabilityProfile`, `SandboxObservation`, `SandboxFileKind` and `SandboxArtifactKind`.
 - `apps/api/src/agent/tool-catalog.ts` registers provider-native `sandbox_run_code`; `tool-gateway.ts` can project the `sandbox` capability bucket; `runtime-intent-handlers.ts` maps it to `sandbox.run_code`.
-- `apps/api/src/agent/sandbox-service.ts` owns manifest construction, minimized workspace data bundles, a `SandboxBackend` interface and a deterministic fake backend for local verification.
+- `apps/api/src/agent/sandbox-service.ts` is the thin sandbox tool façade for manifest construction, minimized workspace data bundles and tool observation projection.
+- `apps/api/src/agent/sandbox/sandbox-broker.ts` owns policy, backend selection and execution.
+- `apps/api/src/agent/sandbox/backend-registry.ts` registers only real execution backends: default `local-script` and optional `docker`.
+- `apps/api/src/agent/sandbox/backends/local-script-backend.ts` really executes Python/Node in a temporary child process with scrubbed environment.
+- `apps/api/src/agent/sandbox/backends/docker-backend.ts` is selected by `XOX_SANDBOX_BACKEND=docker` and runs the same manifest workspace in a container with network disabled.
 - `apps/api/src/agent/sandbox-file-adapters.ts` owns typed file kind normalization and deterministic file safety checks for common business formats.
 - Sandbox output is returned as a `tool_observation`, so the model must continue and author the final user answer or choose ordinary write tools that create editable confirmation cards.
 
-The fake backend intentionally does not execute model-authored code inside the API process. It proves the SaaS boundary, manifest contract, data minimization and observation loop without granting production runtime authority. A production backend must replace only the `SandboxBackend` implementation and preserve the same manifest, capability and observation contracts.
+ADR 0026 removed the prior non-executing backend from production runtime. A sandbox-required calculation can pass only with `executionMode=executed`, `status=completed`, `exitCode=0` and parseable structured output.
 
 ## Scope
 
@@ -398,7 +402,17 @@ Observation shape:
 type SandboxObservation = {
   runId: string;
   sandboxRunId: string;
-  status: 'completed' | 'blocked' | 'failed' | 'timed_out';
+  status: 'completed' | 'blocked' | 'failed' | 'timeout' | 'cancelled';
+  executionMode: 'executed' | 'not_executed';
+  backendId: string;
+  sessionId: string;
+  exitCode: number | null;
+  durationMs: number;
+  stdout: string;
+  stderr: string;
+  structuredOutput: unknown;
+  manifestHash: string;
+  inputEvidenceIds: string[];
   purpose: string;
   language: 'python' | 'javascript';
   manifest: Pick<SandboxManifest, 'schemaVersion' | 'identity' | 'inputBundle' | 'runtime' | 'capabilities' | 'network' | 'outputPolicy'>;
@@ -754,9 +768,9 @@ Before implementation can be considered complete:
 
 ## Implementation Milestones
 
-1. **Broker interface and fake backend**
+1. **Broker interface and real backend registry**
    - Add contracts for sandbox run input/output and artifacts.
-   - Implement a fake deterministic backend for API tests.
+   - Register only real execution backends; tests may mock broker output outside the runtime registry.
 
 2. **Data Bundle Builder**
    - Build minimized bundles from domain services.

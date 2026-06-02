@@ -92,6 +92,25 @@ sudo systemctl status xox-model-web
 - 工作区 JSON 导入 / 导出已经走 server-side bundle：`GET /api/v1/workspace/bundle` 只读导出，`POST /api/v1/workspace/bundle/import` 覆盖当前草稿。Agent 工具为 `workspace_export_bundle` / `workspace_import_bundle`；导入时用户粘贴的大块 JSON 会先由服务端 artifact parser 解析，模型只选择工具，不负责原样复制 bundle。
 - Agent 写入安全策略集中在 `apps/api/src/agent/tool-policy.ts`。确认卡创建、确认卡编辑和确认执行都会校验 action kind、风险等级、必需导航、payload 所属工作区、账期锁定和派生分录限制；用户可以编辑未执行动作，但不能通过编辑确认卡绕过这些策略。
 
+## Agent Sandbox Runtime
+
+`sandbox_run_code` 是 Agent harness 的只读代码执行工具，不是业务写入接口。服务端会先构造 manifest-scoped 输入包，再通过 `SandboxBroker` 选择真实 backend 执行模型代码。
+
+配置项：
+
+- `XOX_SANDBOX_BACKEND=local-script | docker`：默认 `local-script`。`local-script` 在临时工作区启动 Python/Node 子进程，适合本地开发和 smoke；`docker` 使用容器执行，适合后续自托管隔离环境。
+- `XOX_SANDBOX_PYTHON_BIN=<path>`：local-script Python 命令，默认 `python`。
+- `XOX_SANDBOX_DOCKER_BIN=<path>`：Docker 命令，默认 `docker`。
+- `XOX_SANDBOX_DOCKER_PYTHON_IMAGE=python:3.12-alpine`
+- `XOX_SANDBOX_DOCKER_NODE_IMAGE=node:22-alpine`
+
+运行约束：
+
+- 子进程/容器只接收 scrubbed env；不会继承 provider key、DB URL、session token、cookie 或 memory 内容。
+- 输入文件为 `input.json` 和 `input/input.json`；结构化输出优先写 `output/result.json`。
+- 只有 `executionMode=executed`、`status=completed`、`exitCode=0` 且存在结构化输出的 sandbox observation 能满足可复核计算目标。
+- `executionMode=not_executed` 只表示 policy 在执行前阻断，不是 fake 结果，不能作为计算 evidence。
+
 ### 真实模型 Smoke
 
 `npm.cmd run smoke:agent` 是外网真实 provider 验收命令，不包含在默认 `npm.cmd run test` 中。它会读取根目录 `.env`、`apps/api/.env` 或当前 shell 中的 `OPENAI_COMPATIBLE_API_KEY` / `DEEPSEEK_API_KEY`；这些 `.env` 文件必须保持本地未跟踪，已经由 `.gitignore` 忽略。命令会创建临时 SQLite 数据库，注册临时用户，把真实 provider 保存到当前用户 / 工作区的 provider setting，然后通过真实 HTTP API 验证：

@@ -131,11 +131,11 @@ flowchart TD
   Policy --> Bundle["DataBundleBuilder<br/>tenant-scoped minimized input"]
   Bundle --> Registry["SandboxBackendRegistry"]
 
-  Registry --> LocalPython["LocalPythonDevBackend<br/>dev smoke"]
+  Registry --> LocalScript["LocalScriptSandboxBackend<br/>dev smoke"]
   Registry --> Docker["DockerIsolatedBackend<br/>preferred self-hosted"]
   Registry --> Hosted["HostedSandboxBackend<br/>OpenAI/E2B/Daytona/Modal/etc."]
 
-  LocalPython --> Result["SandboxExecutionResult"]
+  LocalScript --> Result["SandboxExecutionResult"]
   Docker --> Result
   Hosted --> Result
 
@@ -179,7 +179,7 @@ type SandboxExecutionStatus =
 
 interface SandboxExecutionResult {
   status: SandboxExecutionStatus;
-  executionMode: 'executed';
+  executionMode: 'executed' | 'not_executed';
   backendId: string;
   sessionId: string;
   exitCode: number | null;
@@ -209,16 +209,16 @@ exitCode == 0
 structuredOutput is parseable and relevant to the final answer
 ```
 
-There is no `simulated` execution mode in production runtime contracts. Manifest-only tests should mock the broker response or use test-local fixtures that cannot be appended to the evidence ledger as `authority=sandbox`.
+There is no `simulated` execution mode in production runtime contracts. `not_executed` is allowed only for honest pre-execution policy blocks and can never satisfy `requiresSandboxComputation`. Manifest-only tests should mock the broker response or use test-local fixtures that cannot be appended to the evidence ledger as `authority=sandbox`.
 
 ### Output protocol
 
 The sandbox runner stages:
 
-- `input.json`: minimized data bundle and manifest metadata.
+- `input.json` and `input/input.json`: minimized data bundle and manifest metadata.
 - `script.py` or `script.js`: model-authored code.
-- `result.json`: optional structured result written by the script.
-- `artifacts/`: temporary outputs permitted by manifest policy.
+- `output/result.json`: optional structured result written by the script.
+- `output/`: temporary outputs permitted by manifest policy.
 
 The preferred structured output is:
 
@@ -244,8 +244,8 @@ Keep the public tool name and existing manifest contract. Move execution respons
 | Broker | `apps/api/src/agent/sandbox/sandbox-broker.ts` | Create run record, enforce policy, call bundle builder, select backend, execute, parse result. |
 | Backend registry | `apps/api/src/agent/sandbox/backend-registry.ts` | OpenClaw-style backend registration/resolution. |
 | Backend contract | `apps/api/src/agent/sandbox/backend.ts` | `SandboxBackend`, `SandboxSessionRef`, `SandboxExecutionResult`. |
-| Local dev backend | `apps/api/src/agent/sandbox/backends/local-python-backend.ts` | Real local Python execution for development smoke, with scrubbed env and temp workspace. |
-| Docker backend | `apps/api/src/agent/sandbox/backends/docker-backend.ts` | Real isolated container execution. Preferred self-hosted production path. |
+| Local dev backend | `apps/api/src/agent/sandbox/backends/local-script-backend.ts` | Real local Python/Node child-process execution for development smoke, with scrubbed env and temp workspace. |
+| Docker backend | `apps/api/src/agent/sandbox/backends/docker-backend.ts` | Real container execution selected by `XOX_SANDBOX_BACKEND=docker`. Preferred self-hosted production path once Docker is available. |
 | Hosted backend adapter | `apps/api/src/agent/sandbox/backends/hosted-backend.ts` | Optional OpenAI Agents JS / E2B / Daytona / Modal / Vercel adapter. |
 | Policy | `apps/api/src/agent/sandbox/sandbox-policy.ts` | Authority, runtime, network, file, size, timeout and artifact limits. |
 | Data bundle builder | `apps/api/src/agent/sandbox/data-bundle-builder.ts` | Tenant-scoped minimized inputs using existing domain/read services. |
@@ -282,15 +282,15 @@ Forbidden dependencies:
 
 ## Backend Strategy
 
-### 1. LocalPythonDevBackend
+### 1. LocalScriptSandboxBackend
 
 Purpose: local developer smoke and early real execution tests.
 
 Rules:
 
 - creates a per-run temporary directory;
-- writes `input.json`, `script.py`, and an empty `artifacts/`;
-- launches a child Python process;
+- writes `input.json`, `input/input.json`, the selected `script.py` or `script.js`, and an empty `output/`;
+- launches a child Python or Node process;
 - passes scrubbed env only;
 - disables stdin;
 - enforces timeout and output caps;
@@ -299,7 +299,7 @@ Rules:
 
 This backend is not a production SaaS isolation boundary. It is a real execution backend for local validation.
 
-### 2. DockerIsolatedBackend
+### 2. DockerSandboxBackend
 
 Purpose: preferred self-hosted production backend.
 
@@ -313,6 +313,7 @@ Rules:
 - read-only base image plus writable workdir;
 - output copied out through broker only;
 - container removed or recycled after strict cleanup.
+- selected by `XOX_SANDBOX_BACKEND=docker`; Python image defaults to `python:3.12-alpine`, Node image defaults to `node:22-alpine`.
 
 ### 3. HostedSandboxBackend
 
@@ -424,7 +425,7 @@ Expected result:
 
 - `FakeDeterministicSandboxBackend` is removed from production runtime code;
 - backend registry contains no fake or contract-only backend;
-- `SandboxExecutionResult` represents actual execution only;
+- `SandboxExecutionResult` represents real execution or honest pre-execution policy block only;
 - tests that verify manifest construction use test-local fixtures or broker mocks;
 - manifest-only fixtures cannot satisfy sandbox-required goals.
 
@@ -454,10 +455,10 @@ Validation:
 
 Edit paths:
 
-- `apps/api/src/agent/sandbox/backends/local-python-backend.ts`
+- `apps/api/src/agent/sandbox/backends/local-script-backend.ts`
 - `apps/api/src/agent/sandbox/result-parser.ts`
 - `apps/api/src/agent/sandbox/sandbox-policy.ts`
-- `apps/api/tests/sandbox-real-local.test.ts`
+- `apps/api/tests/sandbox-tool.test.ts`
 
 Expected result:
 
@@ -469,7 +470,7 @@ Expected result:
 
 Validation:
 
-- `npm.cmd run test:api -- tests/sandbox-real-local.test.ts`
+- `npm.cmd run test:api -- sandbox-tool.test.ts response-evaluator.test.ts`
 
 ### Phase 4: Docker isolated backend
 
