@@ -74,18 +74,18 @@ function modelToolCallRequiredRead(error?: RuntimePlanError | null): ReadDraft {
   }
 
   if (error?.kind === 'provider_response_error') {
-    if (error.classification === 'unmaterialized_tool_call') {
+    if (error.toolCallBoundary?.code === 'tool_call_not_in_effective_inventory') {
       return {
-        title: '模型调用了未暴露工具',
-        message: `模型选择了本轮工具目录之外的工具，系统没有执行该工具，也不会把前置回复当作最终答案。${error.toolNames?.length ? ` 工具：${error.toolNames.join(', ')}` : ''}${error.message ? ` 错误：${error.message}` : ''}`,
+        title: '工具调用被运行边界拒绝',
+        message: `模型选择了当前有效工具清单之外的工具，系统没有执行该工具，也不会把前置回复当作最终答案。${error.toolCallBoundary.toolNames.length ? ` 工具：${error.toolCallBoundary.toolNames.join(', ')}` : ''}${error.message ? ` 错误：${error.message}` : ''}`,
         readKind: 'status',
         status: 'failed',
       }
     }
-    if (error.classification === 'unregistered_tool') {
+    if (error.toolCallBoundary?.code === 'tool_call_without_registered_handler') {
       return {
-        title: '工具映射未注册',
-        message: `模型选择了已暴露但未接入运行图的工具，系统没有执行该工具。${error.toolNames?.length ? ` 工具：${error.toolNames.join(', ')}` : ''}${error.message ? ` 错误：${error.message}` : ''}`,
+        title: '工具处理器未注册',
+        message: `模型选择了一个没有接入运行图处理器的工具，系统没有执行该工具。${error.toolCallBoundary.toolNames.length ? ` 工具：${error.toolCallBoundary.toolNames.join(', ')}` : ''}${error.message ? ` 错误：${error.message}` : ''}`,
         readKind: 'status',
         status: 'failed',
       }

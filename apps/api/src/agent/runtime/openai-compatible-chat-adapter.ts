@@ -379,7 +379,7 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
         ? `Provider request timed out after ${requestTimeoutMs}ms`
         : error instanceof Error ? error.message : String(error)
       const toolNames = providerToolNamesFromError(error)
-      const classification = error instanceof ProviderToolCallParseError ? error.classification : undefined
+      const toolCallBoundary = error instanceof ProviderToolCallParseError ? error.boundaryViolation() : undefined
       return {
         source: SOURCE,
         steps: [],
@@ -391,7 +391,7 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
               : 'provider_network_error',
           message: safeProviderErrorMessage(message),
           ...(toolNames && toolNames.length > 0 ? { toolNames } : {}),
-          ...(classification ? { classification } : {}),
+          ...(toolCallBoundary ? { toolCallBoundary } : {}),
         },
       }
     } finally {

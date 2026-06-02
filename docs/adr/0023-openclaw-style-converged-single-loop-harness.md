@@ -467,6 +467,7 @@ Phase 1 implementation note:
 - Action previews, executed write observations, account-action refusals and clarification observations do not automatically re-enter the full tool inventory after evaluator pass. They are summarized by a model-authored finalizer so the run does not re-apply writes or create duplicate confirmation cards.
 - Observation continuation uses standard assistant tool-call plus tool-result replay. It must not inject an extra natural-language user prompt such as "continue the goal" into the message stack.
 - `observation_continuation_requested` is emitted as the lifecycle marker for the read/sandbox continuation path.
+- Provider failures and tool-call boundary failures are separate. Auth, billing, rate-limit, HTTP, timeout and context-window issues stay in provider classification; a model calling a tool outside the effective inventory or without a registered handler is represented as a tool-call boundary violation, following OpenClaw's runtime guard / transcript repair / loop detection split.
 
 ### Milestone 2: Runtime Channels As Source Of Truth
 
@@ -577,6 +578,7 @@ Validation:
 - `sandbox_run_code` is observation-only and evaluator-addressable; real isolated calculation backend completion is tracked by ADR 0016.
 - The ROI + inflation + first shareholder + loan task completes through read tools + sandbox + final assistant explanation.
 - No new server-side prose keyword tables are added for business semantics.
+- Provider error taxonomy must not include tool inventory or handler violations. Those belong to the tool-call boundary and should be handled by runtime guardrails and user-visible failed tool/status rows.
 
 ## Validation Plan
 

@@ -249,7 +249,7 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
       expect((error as ProviderToolCallParseError).toolNames[0]).toBe('workspace_configure_operating_model')
     }
 
-    expect(() =>
+    try {
       plannerStepsFromProviderToolCalls({
         allowedToolNames: ['workspace_patch_config'],
         toolCalls: [{
@@ -260,8 +260,17 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
             arguments: '{"scope":"workspace_summary"}',
           },
         }],
-      }),
-    ).toThrow(ProviderToolCallParseError)
+      })
+      throw new Error('Expected unavailable tool call to fail')
+    } catch (error) {
+      expect(error).toBeInstanceOf(ProviderToolCallParseError)
+      expect((error as ProviderToolCallParseError).boundaryViolation()).toMatchObject({
+        code: 'tool_call_not_in_effective_inventory',
+        toolName: 'data_query_workspace',
+        toolNames: ['data_query_workspace'],
+        effectiveToolNames: ['workspace_patch_config'],
+      })
+    }
   })
 
   it('extracts only complete balanced JSON and rejects unbounded streamed pollution', () => {
@@ -355,7 +364,12 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
       steps: [],
       error: {
         kind: 'provider_response_error',
-        classification: 'unmaterialized_tool_call',
+        toolCallBoundary: {
+          code: 'tool_call_not_in_effective_inventory',
+          toolName: 'data_query_workspace',
+          toolNames: ['data_query_workspace'],
+          effectiveToolNames: ['workspace_patch_config'],
+        },
         toolNames: ['data_query_workspace'],
       },
     })).toBe(false)
@@ -401,10 +415,10 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
     }
   })
 
-  it('fails closed when provider emits a tool outside the materialized catalog', async () => {
+  it('fails closed when provider emits a tool outside the effective inventory', async () => {
     const originalFetch = globalThis.fetch
     globalThis.fetch = (async () => new Response(JSON.stringify({
-      id: 'chatcmpl_unmaterialized_tool',
+      id: 'chatcmpl_outside_inventory_tool',
       object: 'chat.completion',
       choices: [{
         index: 0,
@@ -435,8 +449,13 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
       expect(result?.assistantText).toBeUndefined()
       expect(result?.error).toMatchObject({
         kind: 'provider_response_error',
-        classification: 'unmaterialized_tool_call',
         toolNames: ['data_query_workspace'],
+        toolCallBoundary: {
+          code: 'tool_call_not_in_effective_inventory',
+          toolName: 'data_query_workspace',
+          toolNames: ['data_query_workspace'],
+          effectiveToolNames: ['workspace_patch_config'],
+        },
       })
     } finally {
       globalThis.fetch = originalFetch

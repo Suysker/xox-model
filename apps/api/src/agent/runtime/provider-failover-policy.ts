@@ -33,8 +33,7 @@ export function shouldRetryRuntimePlan(result: RuntimePlanResult | null | undefi
   return result?.error?.kind === 'provider_network_error' ||
     (
       result?.error?.kind === 'provider_response_error' &&
-      result.error.classification !== 'unmaterialized_tool_call' &&
-      result.error.classification !== 'unregistered_tool'
+      !result.error.toolCallBoundary
     ) ||
     result?.error?.kind === 'provider_timeout' ||
     isRecoverableHttpError(result?.error)

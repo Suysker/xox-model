@@ -1,6 +1,7 @@
 import { toolCallToPlannerStep, type AgentToolCallStep } from '../tool-catalog.js'
 import { parseToolArgumentsWithRepair, type ToolArgumentRepairPolicy } from './tool-call-argument-repair.js'
 import { repairToolName } from './tool-call-name-normalizer.js'
+import type { RuntimeToolCallBoundaryViolation, ToolCallBoundaryViolationCode } from './runtime-adapter.js'
 
 // OpenClaw-inspired provider output repair boundary. This only normalizes
 // provider-emitted tool-call names/arguments after the model selected a tool.
@@ -9,10 +10,21 @@ export class ProviderToolCallParseError extends Error {
     message: string,
     readonly toolNames: string[],
     readonly failedToolName?: string,
-    readonly classification?: 'unmaterialized_tool_call' | 'unregistered_tool',
+    readonly boundaryCode?: ToolCallBoundaryViolationCode,
+    readonly effectiveToolNames: readonly string[] = [],
   ) {
     super(message)
     this.name = 'ProviderToolCallParseError'
+  }
+
+  boundaryViolation(): RuntimeToolCallBoundaryViolation | undefined {
+    if (!this.boundaryCode) return undefined
+    return {
+      code: this.boundaryCode,
+      ...(this.failedToolName ? { toolName: this.failedToolName } : {}),
+      toolNames: this.toolNames,
+      effectiveToolNames: [...this.effectiveToolNames],
+    }
   }
 }
 
@@ -62,10 +74,11 @@ export function plannerStepsFromProviderToolCalls(input: {
     )
     if (!repairedName) {
       throw new ProviderToolCallParseError(
-        `Provider emitted tool call "${rawToolName}" outside the current materialized tool catalog.`,
+        `Provider emitted tool call "${rawToolName}" outside the current effective tool inventory.`,
         [rawToolName],
         rawToolName,
-        'unmaterialized_tool_call',
+        'tool_call_not_in_effective_inventory',
+        input.allowedToolNames,
       )
     }
     try {
@@ -88,10 +101,11 @@ export function plannerStepsFromProviderToolCalls(input: {
         steps.push(step)
       } else {
         throw new ProviderToolCallParseError(
-          `Provider emitted tool call "${repairedName}" but no planner step is registered for it.`,
+          `Provider emitted tool call "${repairedName}" but no planner handler is registered for it.`,
           [repairedName, ...observedNames.filter((name) => name !== repairedName)],
           repairedName,
-          'unregistered_tool',
+          'tool_call_without_registered_handler',
+          input.allowedToolNames,
         )
       }
       observedNames.push(repairedName)

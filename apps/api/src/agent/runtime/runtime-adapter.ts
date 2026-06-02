@@ -4,12 +4,33 @@ import type { AgentToolCallStep, ChatTool } from '../tool-catalog.js'
 
 export type RuntimePlannerSource = Extract<AgentPlannerSource, 'openai_agents' | 'openai_compatible_tool_calls'>
 
+export type RuntimeProviderErrorClassification =
+  | 'unsupported_parameter'
+  | 'auth'
+  | 'billing'
+  | 'rate_limit'
+  | 'context_overflow'
+  | 'server'
+  | 'http'
+
+export type ToolCallBoundaryViolationCode =
+  | 'tool_call_not_in_effective_inventory'
+  | 'tool_call_without_registered_handler'
+
+export type RuntimeToolCallBoundaryViolation = {
+  code: ToolCallBoundaryViolationCode
+  toolName?: string
+  toolNames: string[]
+  effectiveToolNames: string[]
+}
+
 export type RuntimePlanError = {
   kind: 'missing_api_key' | 'provider_http_error' | 'provider_network_error' | 'provider_response_error' | 'provider_timeout'
   statusCode?: number
   message?: string
   toolNames?: string[]
-  classification?: 'unsupported_parameter' | 'auth' | 'billing' | 'rate_limit' | 'context_overflow' | 'server' | 'http' | 'unmaterialized_tool_call' | 'unregistered_tool'
+  classification?: RuntimeProviderErrorClassification
+  toolCallBoundary?: RuntimeToolCallBoundaryViolation
 }
 
 export type RuntimePlanResult = {
