@@ -82,7 +82,7 @@ function isCapabilityRouterRequest(body: any) {
     ? body.tools.map((tool: any) => tool?.function?.name ?? tool?.name)
     : []
   return toolNames.includes('tool_catalog_select_capabilities') ||
-    JSON.stringify(body).includes('Tool Catalog Gateway capability router')
+    JSON.stringify(body).includes('Tool Context Engine router')
 }
 
 function isTurnLaneResolverRequest(body: any) {

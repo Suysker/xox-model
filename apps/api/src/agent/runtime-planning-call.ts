@@ -100,7 +100,7 @@ function priorObservationMessages(observations: AgentToolObservation[] | undefin
   return [
     {
       role: 'assistant',
-      content: '我已经完成了上一轮工具调用，下面是可用于继续规划的观察结果。',
+      content: null,
       tool_calls: toolCalls,
     },
     ...usable.map((observation, index) => ({
@@ -109,15 +109,6 @@ function priorObservationMessages(observations: AgentToolObservation[] | undefin
       name: observation.toolName,
       content: redactSecretLikeContent(observation.modelContent).slice(0, 12000),
     })),
-    {
-      role: 'user',
-      content: [
-        '继续完成当前目标。',
-        '上面的 tool observations 是已完成事实：不要重复已经完成的只读查询或已创建的确认卡。',
-        '如果观察结果已经足以确定成员、股东、金额或月份，请继续调用对应业务工具生成确认卡。',
-        '只有观察结果和当前上下文仍无法唯一确定时，才调用 ask_user_clarification。',
-      ].join('\n'),
-    },
   ]
 }
 

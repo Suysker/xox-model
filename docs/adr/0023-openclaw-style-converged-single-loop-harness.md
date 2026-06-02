@@ -465,6 +465,7 @@ Phase 1 implementation note:
 - `AgentRunEngine` now re-enters the normal model planning loop after domain-read and sandbox observations, with provider-native tools still available.
 - `TurnResolver` only asks for observation continuation when the current model turn produced new observations; once those observations have been consumed by a later assistant turn, final assistant text can complete the run.
 - Action previews, executed write observations, account-action refusals and clarification observations do not automatically re-enter the full tool inventory after evaluator pass. They are summarized by a model-authored finalizer so the run does not re-apply writes or create duplicate confirmation cards.
+- Observation continuation uses standard assistant tool-call plus tool-result replay. It must not inject an extra natural-language user prompt such as "continue the goal" into the message stack.
 - `observation_continuation_requested` is emitted as the lifecycle marker for the read/sandbox continuation path.
 
 ### Milestone 2: Runtime Channels As Source Of Truth
@@ -547,7 +548,7 @@ Validation:
 Phase 1 implementation note:
 
 - The evaluator no longer treats progressive tool-discovery capability exposure as a mandatory execution requirement.
-- Mandatory sandbox use is driven only by structured `goalFacts.requiresSandboxComputation`, not by raw-prose keyword routing or selected tool inventory side effects.
+- Mandatory sandbox use is driven only by structured `goalFacts.requiresSandboxComputation`, not by raw-prose keyword routing or selected tool inventory side effects. Evaluator findings should name the concrete runtime boundary, such as `runtime.sandbox.observation_missing`, rather than treating every check as a capability-router artifact.
 
 ### Milestone 6: Semantic Hardening Cleanup
 

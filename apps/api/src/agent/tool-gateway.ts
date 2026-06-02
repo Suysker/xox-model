@@ -58,7 +58,7 @@ const BUSINESS_CORE_CAPABILITIES: AgentToolCapability[] = ROUTABLE_CAPABILITIES.
 const ALL_CAPABILITIES = new Set<AgentToolCapability>([...ESSENTIAL_CAPABILITIES, ...ROUTABLE_CAPABILITIES])
 
 const CAPABILITY_ROUTER_SYSTEM_PROMPT = [
-  '你是 xox-model 的 Tool Catalog Gateway capability router。',
+  '你是 xox-model 的 Tool Context Engine router。',
   '你的任务不是执行业务，也不是选择具体业务工具，而是为本轮用户指令选择需要暴露给主 Agent 的能力域。',
   '必须调用 tool_catalog_select_capabilities。可以选择多个能力域；普通问候、身份说明或闲聊可以传空数组。',
   '如果用户显式要求写入、保存、入账、发布、分享、导入、修改模型或生成确认卡，把对应能力域放进 requiredActionCapabilities；只读查询、解释、问候和“如果怎样”的纯测算不要放入 requiredActionCapabilities。',

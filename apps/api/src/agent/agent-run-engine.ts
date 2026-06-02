@@ -40,15 +40,6 @@ function evaluationSummary(evaluation: ReturnType<typeof serializeEvaluation>) {
   return 'Completion Evaluator 需要补充信息。'
 }
 
-function observationContinuationMessage(objective: string) {
-  return [
-    '继续完成当前目标。',
-    '上一轮工具结果是已完成事实：不要把工具返回直接当成最终回答；也不要重复已经完成的只读查询或已创建的确认卡。',
-    '如果还缺少可验证事实，继续调用合适工具；如果事实已足够，输出面向用户的最终回答。',
-    `当前目标：${objective}`,
-  ].join('\n\n')
-}
-
 function shouldContinueObservationInMainLoop(observations: AgentToolObservation[]) {
   return observations.some((observation) =>
     observation.toolName === 'data_query_workspace' ||
@@ -323,7 +314,7 @@ export async function executeAgentRun(
         break
       }
       waitingForAssistantFromObservations = true
-      nextMessage = observationContinuationMessage(objective)
+      nextMessage = objective
       await addRunEvent(ctx.db, {
         threadId: ctx.thread.id,
         runId: ctx.runId,

@@ -201,7 +201,7 @@ function evaluateRuntimeToolCoverage(input: {
       id: `runtime.capability.${capability}_action_missing`,
       criterionId: 'graph.visible_steps',
       severity: 'blocking',
-      message: `Tool Catalog Gateway 判定本轮需要 ${capability} 写入动作，但运行图还没有对应确认卡或执行结果。`,
+      message: `Tool Context Engine 判定本轮需要 ${capability} 写入动作，但运行图还没有对应确认卡或执行结果。`,
       evidence: { capability },
     }))
   }
@@ -214,7 +214,7 @@ function evaluateRuntimeToolCoverage(input: {
       id: 'runtime.tool_output_missing',
       criterionId: 'graph.visible_steps',
       severity: 'blocking',
-      message: 'Tool Catalog Gateway 已暴露业务工具，但模型没有产生工具调用、确认卡或可验证观察结果。',
+      message: 'Tool Context Engine 已暴露业务工具，但模型没有产生工具调用、确认卡或可验证观察结果。',
       evidence: { projectionStrategy: 'router_fallback_business_core' },
     }))
   }
@@ -224,7 +224,7 @@ function evaluateRuntimeToolCoverage(input: {
     !input.planSteps.some((step) => step.tool_name === 'sandbox_run_code' && step.status !== 'failed')
   ) {
     findings.push(finding({
-      id: 'runtime.capability.sandbox_observation_missing',
+      id: 'runtime.sandbox.observation_missing',
       criterionId: 'graph.visible_steps',
       severity: 'blocking',
       message: '目标契约要求可复核沙箱计算，但运行图还没有 sandbox_run_code 观察结果。',
