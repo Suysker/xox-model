@@ -74,6 +74,22 @@ function modelToolCallRequiredRead(error?: RuntimePlanError | null): ReadDraft {
   }
 
   if (error?.kind === 'provider_response_error') {
+    if (error.classification === 'unmaterialized_tool_call') {
+      return {
+        title: '模型调用了未暴露工具',
+        message: `模型选择了本轮工具目录之外的工具，系统没有执行该工具，也不会把前置回复当作最终答案。${error.toolNames?.length ? ` 工具：${error.toolNames.join(', ')}` : ''}${error.message ? ` 错误：${error.message}` : ''}`,
+        readKind: 'status',
+        status: 'failed',
+      }
+    }
+    if (error.classification === 'unregistered_tool') {
+      return {
+        title: '工具映射未注册',
+        message: `模型选择了已暴露但未接入运行图的工具，系统没有执行该工具。${error.toolNames?.length ? ` 工具：${error.toolNames.join(', ')}` : ''}${error.message ? ` 错误：${error.message}` : ''}`,
+        readKind: 'status',
+        status: 'failed',
+      }
+    }
     return {
       title: '模型响应格式不可用',
       message: `模型服务返回了无法解析的工具调用或流式片段，系统没有生成写入动作。${error.message ? ` 错误：${error.message}` : ''}`,

@@ -161,6 +161,34 @@ AgentActionRuntime owns writes.
 CompletionEvaluator owns completion judgment.
 ```
 
+Hardening rule:
+
+```text
+Provider-emitted tool calls are execution intent, not decorative stream text.
+If the provider emits a tool call that is not in the materialized catalog, the
+runtime must fail closed or repair the tool context before continuing; it must
+never drop the tool call and let the evaluator pass on assistant preface text.
+```
+
+The `Tool Context Engine` must also reserve fact-prerequisite tools before
+ordinary same-capability tools. For example, when a `draft`, `ledger`,
+`version`, or `share` action depends on current members, shareholders,
+versions, locks or investment amounts, `data_query_workspace` is a
+workflow-prerequisite observation tool. It is not just another ranked candidate
+that can be pushed out by the materialization budget.
+
+This is the SaaS version of the OpenClaw/Hermes inspect-first discipline:
+
+```text
+discover likely tools -> materialize prerequisite observations -> model calls
+real tools -> observations return ground truth -> model continues or writes
+editable confirmations
+```
+
+The router prompt can guide capability selection, but provider output validation
+is the actual safety boundary. A wrong capability selection should produce a
+recoverable/failing run, not a fake completed answer.
+
 Boundary rule:
 
 ```text
@@ -237,6 +265,13 @@ It should not call a product-visible universal `tool_call`.
 Tool results return tenant-scoped facts. They are fed back into the next model turn.
 
 For example, if the user says "第一个股东" or "成员 A", the first tool pack should favor `data_query_workspace` so the model can inspect current shareholders and members before asking the user.
+
+External assumptions such as inflation, bank loan interest, tax rate or
+opportunity cost are not automatically `draft` mutations. If the user asks to
+calculate ROI or payback under those assumptions without saving the model, the
+tool pack should expose `data_query_workspace` first and optionally
+`sandbox_run_code` for heavier computation. `draft` is only necessary when the
+assumption changes a current editable model field or the user asks to save it.
 
 ### Layer 4: Confirmation / Interruption
 

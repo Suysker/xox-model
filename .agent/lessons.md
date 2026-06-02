@@ -185,6 +185,8 @@
 - Memory Center API responses should expose the OpenClaw logical layers separately: durable memories, daily notes, recall signals and dream reports. Flattening them into one `memories` list hides governance state and makes SaaS memory look like an unreviewed log sink again.
 - Tool scaling should fuse progressive disclosure with retrieval instead of choosing one or adding parallel runtimes. Use a stable capability map as the skeleton, Hermes-style thin search documents to find candidates, and delayed materialization of real tool schemas; keep rich manifests internal and avoid prompt-visible heavy Action Cards or product-facing universal `tool_call` wrappers.
 - Goal facts and required action coverage are runtime contracts, not a hidden backend intent router. The server may sanitize structured `goalFacts` / `requiredActionCapabilities` emitted by the model-selected Tool Catalog Gateway and then verify them against domain state, but must not scan user prose with keyword lists to decide tools or completion obligations.
+- Provider-emitted tool calls are execution intent, not decorative streaming text. If a provider calls a tool outside the current materialized catalog or a catalog tool without a planner mapping, fail closed with a structured provider response error; never silently drop it and let evaluator pass on assistant preface text.
+- Progressive tool discovery must reserve workflow-prerequisite observation tools before ordinary same-capability tools. `data_query_workspace` is required ground truth for fact-dependent draft/ledger/version/share actions and must not be pushed out by the materialization budget.
 
 ## Testing
 

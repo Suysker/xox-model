@@ -221,7 +221,7 @@ const MANIFEST_OVERRIDES: Record<string, ToolManifestOverride> = {
   },
   workspace_patch_config: {
     title: '修改模型草稿',
-    searchHints: ['修改模型', '股东注资', '追加投资', '投资额', '分红比例', '调模型', '保存草稿', '成本结构', '预测输入'],
+    searchHints: ['修改模型', '股东注资', '追加投资', '投资额', '分红比例', '调模型', '保存草稿', '成本结构', '预测输入', '线下单价', '线上单价', '单价', '价格'],
     entityTags: ['workspace', 'model_config', 'shareholder', 'member', 'employee', 'cost'],
     requiredFacts: ['model_config'],
     prerequisiteTools: [ENTITY_FACT_TOOL],

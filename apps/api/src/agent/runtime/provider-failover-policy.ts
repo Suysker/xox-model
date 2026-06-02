@@ -31,7 +31,11 @@ function retryTimeoutMs(input: RuntimePlanningInput, selectedToolName?: string) 
 
 export function shouldRetryRuntimePlan(result: RuntimePlanResult | null | undefined) {
   return result?.error?.kind === 'provider_network_error' ||
-    result?.error?.kind === 'provider_response_error' ||
+    (
+      result?.error?.kind === 'provider_response_error' &&
+      result.error.classification !== 'unmaterialized_tool_call' &&
+      result.error.classification !== 'unregistered_tool'
+    ) ||
     result?.error?.kind === 'provider_timeout' ||
     isRecoverableHttpError(result?.error)
 }

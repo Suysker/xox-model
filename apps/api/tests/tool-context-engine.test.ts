@@ -52,6 +52,20 @@ describe('Progressive Tool Discovery Runtime', () => {
     expect(pack.discoveryTrace.rankedCandidates.length).toBeGreaterThan(0)
   })
 
+  it('reserves fact-prerequisite tools even when draft tools fill the pack', () => {
+    const pack = buildToolContextPack({
+      registry: AGENT_TOOL_REGISTRY,
+      selectedCapabilities: ['draft'],
+      message: '给我预测一下，如果目前的通胀率是5%，我的投资回报率是多少？我是第一个股东，我投入的钱都是银行贷款出来的，银行利率是年利率5%',
+      routerReason: '用户在做假设性参数试算，询问投资回报率预测。',
+    })
+
+    expect(pack.toolNames).toContain('data_query_workspace')
+    expect(pack.toolNames).toContain('workspace_patch_config')
+    expect(pack.toolNames.length).toBeLessThanOrEqual(6)
+    expect(pack.discoveryTrace.materializedToolNames).toEqual(pack.toolNames)
+  })
+
   it('keeps full schemas out of descriptors while preserving real provider tools', () => {
     const pack = buildToolContextPack({
       registry: AGENT_TOOL_REGISTRY,

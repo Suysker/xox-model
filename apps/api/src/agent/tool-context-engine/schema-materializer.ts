@@ -66,6 +66,8 @@ export function materializeToolSchemas(input: {
     ranked.manifest.capability !== 'account' &&
     ranked.manifest.capability !== 'clarification',
   )
+  const prerequisiteBusiness = business.filter((ranked) => ranked.reasons.includes('workflow_prerequisite'))
+  const remainingBusiness = business.filter((ranked) => !ranked.reasons.includes('workflow_prerequisite'))
   const essentialToKeep = essential.filter((ranked) => shouldKeepTool({
     ranked,
     index: 0,
@@ -73,7 +75,15 @@ export function materializeToolSchemas(input: {
   }))
   const businessLimit = Math.max(0, maxTools - essentialToKeep.length)
 
-  for (const [index, ranked] of business.entries()) {
+  for (const [index, ranked] of prerequisiteBusiness.entries()) {
+    if (seen.has(ranked.manifest.name)) continue
+    if (!shouldKeepTool({ ranked, index, hasBusinessCapability })) continue
+    if (selected.length >= businessLimit) break
+    selected.push(ranked.manifest)
+    seen.add(ranked.manifest.name)
+  }
+
+  for (const [index, ranked] of remainingBusiness.entries()) {
     if (seen.has(ranked.manifest.name)) continue
     if (!shouldKeepTool({ ranked, index, hasBusinessCapability })) continue
     if (selected.length >= businessLimit) break

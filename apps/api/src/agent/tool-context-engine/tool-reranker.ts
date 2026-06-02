@@ -19,7 +19,7 @@ const FACT_DEPENDENT_CAPABILITIES = new Set<AgentToolCapability>([
 
 const CANONICAL_TOOLS_BY_CAPABILITY: Partial<Record<AgentToolCapability, string[]>> = {
   data: ['data_query_workspace'],
-  draft: ['workspace_patch_config', 'workspace_configure_operating_model'],
+  draft: ['workspace_patch_config', 'workspace_configure_operating_model', 'workspace_rename'],
   import_export: ['workspace_export_bundle', 'workspace_import_bundle'],
   ledger: ['ledger_create_member_income', 'ledger_create_entry'],
   memory: ['memory_search', 'memory_remember'],

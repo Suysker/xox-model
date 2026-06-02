@@ -9,6 +9,7 @@ export class ProviderToolCallParseError extends Error {
     message: string,
     readonly toolNames: string[],
     readonly failedToolName?: string,
+    readonly classification?: 'unmaterialized_tool_call' | 'unregistered_tool',
   ) {
     super(message)
     this.name = 'ProviderToolCallParseError'
@@ -49,12 +50,24 @@ export function plannerStepsFromProviderToolCalls(input: {
   const steps: AgentToolCallStep[] = []
   const observedNames: string[] = []
   for (const [index, toolCall] of (input.toolCalls as ProviderToolCall[]).entries()) {
+    const rawToolName = typeof toolCall?.function?.name === 'string' && toolCall.function.name.trim()
+      ? toolCall.function.name.trim()
+      : typeof toolCall?.id === 'string' && toolCall.id.trim()
+        ? toolCall.id.trim()
+        : `tool_call_${index}`
     const repairedName = repairToolName(
       toolCall?.function?.name,
       input.allowedToolNames,
       toolCall?.id,
     )
-    if (!repairedName) continue
+    if (!repairedName) {
+      throw new ProviderToolCallParseError(
+        `Provider emitted tool call "${rawToolName}" outside the current materialized tool catalog.`,
+        [rawToolName],
+        rawToolName,
+        'unmaterialized_tool_call',
+      )
+    }
     try {
       const parsedArguments = parseToolArgumentsWithRepair(toolCall?.function?.arguments, input.options?.argumentRepair)
       if (parsedArguments.repaired) {
@@ -73,9 +86,17 @@ export function plannerStepsFromProviderToolCalls(input: {
         step.providerToolCallIndex = index
         if (typeof toolCall?.id === 'string' && toolCall.id.trim()) step.providerToolCallId = toolCall.id
         steps.push(step)
+      } else {
+        throw new ProviderToolCallParseError(
+          `Provider emitted tool call "${repairedName}" but no planner step is registered for it.`,
+          [repairedName, ...observedNames.filter((name) => name !== repairedName)],
+          repairedName,
+          'unregistered_tool',
+        )
       }
       observedNames.push(repairedName)
     } catch (error) {
+      if (error instanceof ProviderToolCallParseError) throw error
       const toolNames = [
         repairedName,
         ...observedNames.filter((name) => name !== repairedName),

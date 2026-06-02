@@ -248,6 +248,20 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
       expect((error as ProviderToolCallParseError).failedToolName).toBe('workspace_configure_operating_model')
       expect((error as ProviderToolCallParseError).toolNames[0]).toBe('workspace_configure_operating_model')
     }
+
+    expect(() =>
+      plannerStepsFromProviderToolCalls({
+        allowedToolNames: ['workspace_patch_config'],
+        toolCalls: [{
+          id: 'call_0_data_query_workspace',
+          type: 'function',
+          function: {
+            name: 'data_query_workspace',
+            arguments: '{"scope":"workspace_summary"}',
+          },
+        }],
+      }),
+    ).toThrow(ProviderToolCallParseError)
   })
 
   it('extracts only complete balanced JSON and rejects unbounded streamed pollution', () => {
@@ -335,6 +349,16 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
     expect(operatingRetry.tools.map((item) => item.function.name)).toEqual(['workspace_configure_operating_model'])
     expect(operatingRetry.maxTokens).toBeGreaterThanOrEqual(48_000)
     expect(operatingRetry.requestTimeoutMs).toBeGreaterThanOrEqual(360_000)
+
+    expect(shouldRetryRuntimePlan({
+      source: 'openai_compatible_tool_calls',
+      steps: [],
+      error: {
+        kind: 'provider_response_error',
+        classification: 'unmaterialized_tool_call',
+        toolNames: ['data_query_workspace'],
+      },
+    })).toBe(false)
   })
 
   it('preserves provider-authored preface text on non-stream tool-call responses', async () => {
@@ -372,6 +396,48 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
         memberName: '成员 A',
         onlineUnits: 10,
       }))
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('fails closed when provider emits a tool outside the materialized catalog', async () => {
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      id: 'chatcmpl_unmaterialized_tool',
+      object: 'chat.completion',
+      choices: [{
+        index: 0,
+        finish_reason: 'tool_calls',
+        message: {
+          role: 'assistant',
+          content: '我先查询当前工作区数据。',
+          tool_calls: [{
+            id: 'call_data_query_workspace',
+            type: 'function',
+            function: {
+              name: 'data_query_workspace',
+              arguments: JSON.stringify({ scope: 'workspace_summary' }),
+            },
+          }],
+        },
+      }],
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })) as typeof fetch
+
+    try {
+      const result = await new OpenAICompatibleChatAdapter().plan(runtimeInput('deepseek', 'deepseek-v4-pro', [
+        tool('workspace_patch_config'),
+      ]))
+      expect(result?.steps).toHaveLength(0)
+      expect(result?.assistantText).toBeUndefined()
+      expect(result?.error).toMatchObject({
+        kind: 'provider_response_error',
+        classification: 'unmaterialized_tool_call',
+        toolNames: ['data_query_workspace'],
+      })
     } finally {
       globalThis.fetch = originalFetch
     }

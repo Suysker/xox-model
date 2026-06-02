@@ -267,8 +267,10 @@ function fakeToolResponse(name: string, args: Record<string, unknown> = {}) {
   return fakeToolResponses([{ name, args }])
 }
 
+type FakeProviderPayload = Record<string, unknown> | unknown[] | string | number | boolean | null
+
 type FakeProviderScriptStep =
-  | unknown
+  | FakeProviderPayload
   | ((body: any, request: IncomingMessage, index: number) => unknown | Promise<unknown>)
 
 function resolveFakeProviderScriptStep(
