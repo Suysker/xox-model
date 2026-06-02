@@ -15,9 +15,9 @@ ADR 0016 correctly defined the SaaS boundary for code execution:
 - sandbox output is an observation for the model, not a business write;
 - durable writes still go through Agent actions, editable confirmation cards, domain services and audit.
 
-The missing piece is that the current implementation still uses a deterministic contract backend. That backend proves manifest construction and data minimization, but it does not execute model-authored code. It can return `completed` even when the code would have failed at runtime.
+The missing piece is that the current implementation still uses a deterministic fake backend inside the runtime path. That code proves manifest construction and data minimization, but it does not execute model-authored code. It can return `completed` even when the code would have failed at runtime.
 
-That is no longer acceptable for product validation. For the product capability users expect, `sandbox_run_code` must actually execute code in an isolated runtime. A fake backend may remain as a contract-test fixture, but it must not be accepted as calculation evidence in real runs.
+That is no longer acceptable for product validation. For the product capability users expect, `sandbox_run_code` must actually execute code in an isolated runtime. A fake implementation should be deleted from the production runtime. Tests that only verify DTO shape may use fixtures or broker mocks, but those fixtures must not be registered as sandbox backends and must not produce sandbox calculation evidence.
 
 The upgrade must not turn `xox-model` into a local coding agent. This is still a multi-tenant SaaS product. The correct target is:
 
@@ -109,13 +109,14 @@ Direct implication for `xox-model`:
 
 ## Decision
 
-Replace the contract-only sandbox path with a **Real Manifest-Scoped Sandbox Runtime** behind a `SandboxBroker`.
+Replace the fake sandbox path with a **Real Manifest-Scoped Sandbox Runtime** behind a `SandboxBroker`.
 
 The existing `sandbox_run_code` provider tool remains the model-facing tool. The model still selects it through normal provider-native tool calls. What changes is the runner-side execution authority:
 
-- `ContractOnlySandboxBackend` may exist only for contract tests.
+- Runtime backend registry may contain only real execution backends.
+- Tests may mock the broker or use fixtures outside the backend registry.
 - Real runs must use an execution backend that runs code and returns real status.
-- Evaluators must reject simulated sandbox results when a goal requires sandbox computation.
+- Evaluators must require executed sandbox results when a goal requires sandbox computation.
 - Sandbox results remain observations; they do not write business state.
 
 ```mermaid
@@ -130,7 +131,6 @@ flowchart TD
   Policy --> Bundle["DataBundleBuilder<br/>tenant-scoped minimized input"]
   Bundle --> Registry["SandboxBackendRegistry"]
 
-  Registry --> ContractOnly["ContractOnlyBackend<br/>tests only"]
   Registry --> LocalPython["LocalPythonDevBackend<br/>dev smoke"]
   Registry --> Docker["DockerIsolatedBackend<br/>preferred self-hosted"]
   Registry --> Hosted["HostedSandboxBackend<br/>OpenAI/E2B/Daytona/Modal/etc."]
@@ -138,14 +138,11 @@ flowchart TD
   LocalPython --> Result["SandboxExecutionResult"]
   Docker --> Result
   Hosted --> Result
-  ContractOnly --> Simulated["SimulatedResult<br/>not evidence"]
 
   Result --> Parser["ResultParser<br/>stdout/stderr/result.json/artifacts"]
   Parser --> Observation["Tool Observation<br/>executionMode=executed"]
-  Simulated --> Observation2["Tool Observation<br/>executionMode=simulated"]
 
   Observation --> Evidence["EvidenceLedger"]
-  Observation2 --> Evidence
   Evidence --> Model2["Model continuation"]
   Model2 --> Final["Assistant final answer"]
   Final --> ResponseEval["ResponseEvaluator"]
@@ -173,8 +170,6 @@ Automation level affects only `agent_action` execution after a stored confirmati
 `SandboxExecutionResult` must record whether code actually ran:
 
 ```ts
-type SandboxExecutionMode = 'executed' | 'simulated';
-
 type SandboxExecutionStatus =
   | 'completed'
   | 'failed'
@@ -184,7 +179,7 @@ type SandboxExecutionStatus =
 
 interface SandboxExecutionResult {
   status: SandboxExecutionStatus;
-  executionMode: SandboxExecutionMode;
+  executionMode: 'executed';
   backendId: string;
   sessionId: string;
   exitCode: number | null;
@@ -214,7 +209,7 @@ exitCode == 0
 structuredOutput is parseable and relevant to the final answer
 ```
 
-`executionMode=simulated` is useful for contract tests and UI traces, but it is not calculation evidence.
+There is no `simulated` execution mode in production runtime contracts. Manifest-only tests should mock the broker response or use test-local fixtures that cannot be appended to the evidence ledger as `authority=sandbox`.
 
 ### Output protocol
 
@@ -249,7 +244,6 @@ Keep the public tool name and existing manifest contract. Move execution respons
 | Broker | `apps/api/src/agent/sandbox/sandbox-broker.ts` | Create run record, enforce policy, call bundle builder, select backend, execute, parse result. |
 | Backend registry | `apps/api/src/agent/sandbox/backend-registry.ts` | OpenClaw-style backend registration/resolution. |
 | Backend contract | `apps/api/src/agent/sandbox/backend.ts` | `SandboxBackend`, `SandboxSessionRef`, `SandboxExecutionResult`. |
-| Contract backend | `apps/api/src/agent/sandbox/backends/contract-only-backend.ts` | Contract tests only; returns `executionMode=simulated`. |
 | Local dev backend | `apps/api/src/agent/sandbox/backends/local-python-backend.ts` | Real local Python execution for development smoke, with scrubbed env and temp workspace. |
 | Docker backend | `apps/api/src/agent/sandbox/backends/docker-backend.ts` | Real isolated container execution. Preferred self-hosted production path. |
 | Hosted backend adapter | `apps/api/src/agent/sandbox/backends/hosted-backend.ts` | Optional OpenAI Agents JS / E2B / Daytona / Modal / Vercel adapter. |
@@ -257,6 +251,7 @@ Keep the public tool name and existing manifest contract. Move execution respons
 | Data bundle builder | `apps/api/src/agent/sandbox/data-bundle-builder.ts` | Tenant-scoped minimized inputs using existing domain/read services. |
 | Result parser | `apps/api/src/agent/sandbox/result-parser.ts` | Parse stdout/stderr/result.json/artifacts, redact and validate. |
 | Artifact store | `apps/api/src/agent/sandbox/artifact-store.ts` | Temporary artifact metadata, expiry and download handles. |
+| Test fixtures | `apps/api/tests/helpers/sandbox-fixtures.ts` | Manifest/DTO fixtures only; not importable by production runtime and not registered as a backend. |
 
 Existing `sandbox-file-adapters.ts` remains the file safety and typed parsing boundary.
 
@@ -283,22 +278,11 @@ Forbidden dependencies:
 - backends must not read provider settings, session cookies, memory stores or production DB handles;
 - sandbox code must not call xox internal REST APIs;
 - sandbox output must not create action requests directly;
-- evaluator must not treat simulated output as completed sandbox evidence.
+- evaluator must require a real backend execution result for sandbox computation evidence.
 
 ## Backend Strategy
 
-### 1. ContractOnlyBackend
-
-Purpose: tests that verify manifest shape, DTOs, projection and transcript.
-
-Rules:
-
-- returns `executionMode=simulated`;
-- never claims calculation authority;
-- cannot pass `requiresSandboxComputation`;
-- must be disabled for real-provider smoke unless the smoke is explicitly contract-only.
-
-### 2. LocalPythonDevBackend
+### 1. LocalPythonDevBackend
 
 Purpose: local developer smoke and early real execution tests.
 
@@ -315,7 +299,7 @@ Rules:
 
 This backend is not a production SaaS isolation boundary. It is a real execution backend for local validation.
 
-### 3. DockerIsolatedBackend
+### 2. DockerIsolatedBackend
 
 Purpose: preferred self-hosted production backend.
 
@@ -330,7 +314,7 @@ Rules:
 - output copied out through broker only;
 - container removed or recycled after strict cleanup.
 
-### 4. HostedSandboxBackend
+### 3. HostedSandboxBackend
 
 Purpose: optional provider-managed isolation.
 
@@ -425,7 +409,7 @@ Do not import:
 
 ## Implementation Plan
 
-### Phase 1: Contract correction
+### Phase 1: Remove fake runtime authority
 
 Edit paths:
 
@@ -438,10 +422,11 @@ Edit paths:
 
 Expected result:
 
-- fake backend becomes `ContractOnlySandboxBackend`;
-- simulated results have `executionMode=simulated`;
-- simulated results do not satisfy sandbox-required goals;
-- tests can still verify manifest construction without pretending code ran.
+- `FakeDeterministicSandboxBackend` is removed from production runtime code;
+- backend registry contains no fake or contract-only backend;
+- `SandboxExecutionResult` represents actual execution only;
+- tests that verify manifest construction use test-local fixtures or broker mocks;
+- manifest-only fixtures cannot satisfy sandbox-required goals.
 
 Validation:
 
@@ -459,11 +444,10 @@ Expected result:
 
 - one `SandboxBroker` owns policy, bundle, backend selection, execution and parsing;
 - backends are registered and selected by env/config;
-- old direct instantiation of fake backend is removed.
+- unsupported or missing real backend fails closed with a visible sandbox failure event.
 
 Validation:
 
-- contract backend tests pass;
 - unsupported backend fails closed with a visible sandbox failure event.
 
 ### Phase 3: Local real Python backend
@@ -534,7 +518,8 @@ Validation:
 - `sandbox_run_code` truly executes model-authored code in the selected real backend.
 - A syntax error or runtime error produces `status=failed` and cannot pass the evaluator.
 - A timeout produces `status=timeout` and cannot pass the evaluator.
-- A contract-only/simulated result cannot satisfy `requiresSandboxComputation`.
+- No fake or contract-only backend is registered in production runtime.
+- Manifest-only test fixtures cannot satisfy `requiresSandboxComputation`.
 - A derived finance question can complete through:
   `data_query_workspace -> sandbox_run_code(executed) -> final assistant answer -> response_evaluated(pass)`.
 - Sandbox code cannot read API process secrets, provider keys, DB URLs, cookies or memory values.
@@ -547,8 +532,9 @@ Validation:
 
 - ADR 0016 remains the manifest and capability contract.
 - This ADR supersedes the idea that a deterministic fake backend is an acceptable implementation phase for real calculation features.
-- `FakeDeterministicSandboxBackend` should be renamed or replaced. The word `fake` may remain only in tests, never as a production runtime or evidence authority.
-- Existing tests that only need manifest verification should assert `executionMode=simulated`.
+- `FakeDeterministicSandboxBackend` should be deleted from production runtime code, not renamed into another backend.
+- The word `fake` may remain only in test helper names for scripted providers or DTO fixtures, never as a sandbox backend or evidence authority.
+- Existing tests that only need manifest verification should use broker mocks or fixtures outside the backend registry.
 - Tests that assert calculation correctness must use a real backend or explicitly mock an executed result at the broker boundary.
 
 ## Open Questions
@@ -566,4 +552,3 @@ Validation:
 - No internal API access from sandbox.
 - No provider-specific sandbox DTOs in shared contracts.
 - No second agent loop owned by sandbox.
-
