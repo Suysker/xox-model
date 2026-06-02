@@ -4,6 +4,8 @@ Status: Implemented
 
 Date: 2026-05-19
 
+Superseded runtime detail: ADR 0024 (`OpenClaw-First Provider Runtime Capability Layer`) is the current implementation target for provider-owned thinking, replay and stream capability hooks. This ADR remains the baseline provider compatibility decision.
+
 ## Context
 
 xox-model 的 Agent OS 已经具备 Tool Catalog Gateway、provider-native tool calls、Action Graph、可编辑确认卡、Goal Run Engine、Completion Evaluator、SSE run trace、租户级 provider settings 和真实 DeepSeek smoke。但是当前 OpenAI-compatible runtime 仍然把很多 provider 差异压在 `openai-compatible-chat-adapter.ts` 内：

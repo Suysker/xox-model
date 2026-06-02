@@ -68,7 +68,7 @@ export async function probeOpenAICompatibleProvider(input: {
     maxTokens: 80,
     requestTimeoutMs: input.timeoutMs ?? Math.min(input.settings.agentProviderRequestTimeoutMs, 20_000),
   }
-  const shaped = shapeOpenAICompatibleChatRequest(runtimeInput, { disableThinking: true })
+  const shaped = shapeOpenAICompatibleChatRequest(runtimeInput, { thinkingLevel: 'off' })
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(new Error('provider probe timed out')), runtimeInput.requestTimeoutMs)
   timeout.unref?.()

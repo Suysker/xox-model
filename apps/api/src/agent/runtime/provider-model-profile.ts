@@ -11,10 +11,6 @@ export type ProviderModelProfile = ProviderModelRef & {
   supportsParallelToolCalls: boolean
   toolChoicePolicy: ProviderToolChoicePolicy
   streamArgumentRepair: 'off' | 'bounded-balanced-json'
-  thinking?: {
-    mode: 'none' | 'binary' | 'reasoning-effort' | 'provider-extra-body'
-    disabledPayload?: Record<string, unknown>
-  }
   schemaProfile?: 'openai-strict' | 'gemini' | 'deepseek' | 'generic-json-schema'
   replayPolicy?: 'openai-compatible' | 'deepseek-v4-thinking' | 'moonshot-thinking' | 'generic'
   contextWindow?: number
@@ -49,14 +45,6 @@ function deepSeekProfile(ref: ProviderModelRef): ProviderModelProfile {
     toolChoicePolicy: isReasoner ? 'omit' : 'auto',
     contextWindow: isV4 ? 1_000_000 : 131_072,
     maxOutputTokens: isV4 ? 384_000 : isReasoner ? 65_536 : 8_192,
-    ...(isV4
-      ? {
-          thinking: {
-            mode: 'provider-extra-body' as const,
-            disabledPayload: { thinking: { type: 'disabled' } },
-          },
-        }
-      : {}),
   }
 }
 
@@ -65,10 +53,6 @@ function qwenProfile(ref: ProviderModelRef): ProviderModelProfile {
     ...genericProfile(ref),
     schemaProfile: 'generic-json-schema',
     contextWindow: modelIncludes(ref, 'coder') ? 262_144 : 1_000_000,
-    thinking: {
-      mode: 'provider-extra-body',
-      disabledPayload: { enable_thinking: false },
-    },
   }
 }
 
@@ -77,10 +61,6 @@ function moonshotProfile(ref: ProviderModelRef): ProviderModelProfile {
     ...genericProfile(ref),
     replayPolicy: 'moonshot-thinking',
     contextWindow: 262_144,
-    thinking: {
-      mode: 'binary',
-      disabledPayload: { thinking: { type: 'disabled' } },
-    },
   }
 }
 

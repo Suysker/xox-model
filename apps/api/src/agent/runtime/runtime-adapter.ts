@@ -37,8 +37,16 @@ export type RuntimePlanResult = {
   source: RuntimePlannerSource
   steps: AgentToolCallStep[]
   assistantText?: string
+  providerAssistantMessage?: Extract<RuntimeChatMessage, { role: 'assistant' }>
+  providerArtifact?: RuntimeProviderArtifact
   toolInventorySnapshot?: AgentToolInventorySnapshot
   error?: RuntimePlanError
+}
+
+export type RuntimeProviderArtifact = {
+  family: string
+  thinkingLevel?: string
+  reasoningText?: string
 }
 
 export type RuntimeStreamEvent =
@@ -107,7 +115,7 @@ export type RuntimePlanningInput = {
   messages?: RuntimeChatMessage[]
   systemPrompt?: string
   stream?: boolean
-  disableThinking?: boolean
+  thinkingLevel?: string
   maxTokens?: number
   requestTimeoutMs?: number
   abortSignal?: AbortSignal

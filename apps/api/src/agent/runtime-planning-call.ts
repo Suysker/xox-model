@@ -9,6 +9,7 @@ import {
   shouldRetryRuntimePlan,
 } from './runtime/provider-failover-policy.js'
 import type { RuntimeChatMessage, RuntimePlanningInput, RuntimePlanResult } from './runtime/runtime-adapter.js'
+import type { Settings } from '../core/settings.js'
 import {
   HIGH_VOLUME_STRUCTURED_MAX_TOKENS,
   HIGH_VOLUME_STRUCTURED_TIMEOUT_MS,
@@ -25,6 +26,7 @@ import {
   threadConversationLogFromContext,
 } from './runtime-conversation-log.js'
 import type { RuntimeToolCatalogProjection } from './tool-gateway.js'
+import { providerToolObservationReplayMessages } from './runtime/provider-transcript-replay.js'
 
 function plannerTokenBudget(message: string) {
   const structuredLineCount = message.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).length
@@ -73,46 +75,8 @@ function runtimeRequestTimeoutMs(input: {
   return plannerRequestTimeoutMs(input)
 }
 
-function safeJson(value: unknown) {
-  try {
-    return JSON.stringify(value)
-  } catch {
-    return JSON.stringify(String(value))
-  }
-}
-
-function observationCallId(observation: AgentToolObservation, index: number) {
-  const base = observation.toolCallId || `call_observation_${index}_${observation.toolName}`
-  return `${base}_planning_observation_${index}`
-}
-
-function priorObservationMessages(observations: AgentToolObservation[] | undefined): RuntimeChatMessage[] {
-  const usable = (observations ?? []).slice(-12)
-  if (usable.length === 0) return []
-  const toolCalls = usable.map((observation, index) => ({
-    id: observationCallId(observation, index),
-    type: 'function' as const,
-    function: {
-      name: observation.toolName,
-      arguments: safeJson(observation.toolArguments),
-    },
-  }))
-  return [
-    {
-      role: 'assistant',
-      content: null,
-      tool_calls: toolCalls,
-    },
-    ...usable.map((observation, index) => ({
-      role: 'tool' as const,
-      tool_call_id: observationCallId(observation, index),
-      name: observation.toolName,
-      content: redactSecretLikeContent(observation.modelContent).slice(0, 12000),
-    })),
-  ]
-}
-
 function plannerRuntimeMessages(input: {
+  settings: Settings
   context: unknown
   message: string
   priorObservations?: AgentToolObservation[] | undefined
@@ -125,7 +89,12 @@ function plannerRuntimeMessages(input: {
       content: `上下文：${JSON.stringify(contextWithoutThreadConversationLog(input.context))}\n用户指令：${input.message}`,
     },
   ]
-  messages.push(...priorObservationMessages(input.priorObservations))
+  messages.push(...providerToolObservationReplayMessages({
+    settings: input.settings,
+    observations: input.priorObservations ?? [],
+    suffix: 'planning_observation',
+    maxObservations: 12,
+  }))
   return messages
 }
 
@@ -176,6 +145,7 @@ export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePl
     context,
     tools: toolCatalog.tools,
     messages: plannerRuntimeMessages({
+      settings: ctx.settings,
       context,
       message: redactSecretLikeContent(ctx.message),
       priorObservations: ctx.priorObservations,

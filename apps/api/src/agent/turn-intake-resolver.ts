@@ -177,7 +177,7 @@ export async function resolveTurnIntake(input: {
     },
     tools: [TURN_LANE_RESOLUTION_TOOL],
     stream: false,
-    disableThinking: true,
+    thinkingLevel: 'off',
     maxTokens: 250,
     requestTimeoutMs: input.settings.agentProviderRequestTimeoutMs,
     ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),

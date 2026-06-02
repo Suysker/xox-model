@@ -4,6 +4,11 @@ import type { RuntimePlanningInput } from './runtime-adapter.js'
 import { resolveProviderModelProfile, type ProviderModelProfile } from './provider-model-profile.js'
 import { sanitizeOpenAICompatibleRequestBody } from './provider-payload-sanitizer.js'
 import { normalizeProviderToolSchemas } from './provider-tool-schema.js'
+import {
+  resolveProviderRuntimeCapability,
+  resolveRuntimeThinkingLevel,
+} from './provider-capability-registry.js'
+import { replayPolicyPreservedMessageKeys } from './provider-capability.js'
 
 export type ProviderRequestShape = {
   profile: ProviderModelProfile
@@ -12,7 +17,7 @@ export type ProviderRequestShape = {
 
 export type ProviderRequestShapeOptions = {
   omitToolChoice?: boolean
-  disableThinking?: boolean
+  thinkingLevel?: string
 }
 
 function shouldSendToolChoice(profile: ProviderModelProfile, toolCount: number, omitToolChoice?: boolean) {
@@ -37,14 +42,19 @@ function normalizedTools(input: RuntimePlanningInput, profile: ProviderModelProf
   return normalizeProviderToolSchemas(input.tools, profile)
 }
 
-function providerExtraParams(profile: ProviderModelProfile, options: ProviderRequestShapeOptions) {
-  if (options.disableThinking && profile.thinking?.disabledPayload) return profile.thinking.disabledPayload
-  return {}
-}
-
 function requestMaxTokens(input: RuntimePlanningInput, profile: ProviderModelProfile) {
   const requested = input.maxTokens ?? 1600
   return profile.maxOutputTokens ? Math.min(requested, profile.maxOutputTokens) : requested
+}
+
+function applyRequestPatch(body: Record<string, unknown>, patch: { body?: Record<string, unknown>; removeBodyKeys?: string[] }) {
+  for (const key of patch.removeBodyKeys ?? []) {
+    delete body[key]
+  }
+  for (const [key, value] of Object.entries(patch.body ?? {})) {
+    if (value === undefined) continue
+    body[key] = value
+  }
 }
 
 export function shapeOpenAICompatibleChatRequest(
@@ -52,6 +62,11 @@ export function shapeOpenAICompatibleChatRequest(
   options: ProviderRequestShapeOptions = {},
 ): ProviderRequestShape {
   const profile = profileFromInput(input)
+  const capability = resolveProviderRuntimeCapability(profile)
+  const thinkingLevel = resolveRuntimeThinkingLevel({
+    capability,
+    requested: options.thinkingLevel ?? input.thinkingLevel,
+  })
   const tools = normalizedTools(input, profile)
   const body: Record<string, unknown> = {
     model: profile.requestModel,
@@ -62,17 +77,19 @@ export function shapeOpenAICompatibleChatRequest(
     temperature: 0,
     max_tokens: requestMaxTokens(input, profile),
     stream: input.stream ?? true,
-    ...providerExtraParams(profile, options),
   }
+  applyRequestPatch(body, capability.buildRequestPatch({ profile, thinkingLevel }))
   if (tools.length > 0) body.tools = tools
   if (shouldSendToolChoice(profile, tools.length, options.omitToolChoice)) {
     body.tool_choice = toolChoiceForProfile(profile)
   }
   if (profile.supportsParallelToolCalls) body.parallel_tool_calls = true
+  const replayPolicy = capability.buildReplayPolicy({ profile, thinkingLevel })
   return {
     profile,
     body: sanitizeOpenAICompatibleRequestBody(body, profile, {
       ...(options.omitToolChoice !== undefined ? { omitToolChoice: options.omitToolChoice } : {}),
+      preservedMessageKeys: replayPolicyPreservedMessageKeys(replayPolicy),
     }),
   }
 }

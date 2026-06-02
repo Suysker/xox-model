@@ -5,18 +5,24 @@ import type { ProviderModelProfile } from './provider-model-profile.js'
 
 export type ProviderPayloadSanitizerOptions = {
   omitToolChoice?: boolean
+  preservedMessageKeys?: readonly string[]
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }
 
-function sanitizeMessage(message: unknown) {
+function sanitizeMessage(message: unknown, options: ProviderPayloadSanitizerOptions) {
   if (!isRecord(message)) return message
   const role = message.role
   const sanitized: Record<string, unknown> = {}
   if (typeof role === 'string') sanitized.role = role
   if ('content' in message) sanitized.content = message.content
+  if (role === 'assistant') {
+    for (const key of options.preservedMessageKeys ?? []) {
+      if (message[key] !== undefined) sanitized[key] = message[key]
+    }
+  }
   if (Array.isArray(message.tool_calls)) {
     sanitized.tool_calls = message.tool_calls.map((toolCall) => {
       if (!isRecord(toolCall)) return toolCall
@@ -59,7 +65,7 @@ export function sanitizeOpenAICompatibleRequestBody(
   }
 
   if (Array.isArray(sanitized.messages)) {
-    sanitized.messages = sanitized.messages.map(sanitizeMessage)
+    sanitized.messages = sanitized.messages.map((message) => sanitizeMessage(message, options))
   }
 
   if (!profile.supportsTools || !Array.isArray(sanitized.tools) || sanitized.tools.length === 0) {

@@ -12,6 +12,7 @@ import { buildThreadConversationLog } from './context-pack.js'
 import { runtimeMessagesFromThreadConversationLog } from './runtime-conversation-log.js'
 import { planWithRuntimeAdapter } from './runtime/adapter-router.js'
 import type { RuntimeChatMessage } from './runtime/runtime-adapter.js'
+import { providerToolObservationReplayMessages } from './runtime/provider-transcript-replay.js'
 
 export type AgentToolObservation = {
   title: string
@@ -155,50 +156,21 @@ export type ToolObservationContinuationContext = {
   abortSignal?: AbortSignal
 }
 
-function safeJson(value: unknown) {
-  try {
-    return JSON.stringify(value)
-  } catch {
-    return JSON.stringify(String(value))
-  }
-}
-
-function observationCallId(observation: AgentToolObservation, index: number) {
-  return observation.toolCallId || `call_observation_${index}_${observation.toolName}`
-}
-
 function observationMessages(input: {
+  settings: Settings
   userMessage: string
   observations: AgentToolObservation[]
   threadConversationLog?: ReturnType<typeof buildThreadConversationLog>
 }): RuntimeChatMessage[] {
-  const toolCalls = input.observations.map((observation, index) => ({
-    id: observationCallId(observation, index),
-    type: 'function' as const,
-    function: {
-      name: observation.toolName,
-      arguments: safeJson(observation.toolArguments),
-    },
-  }))
   return [
     { role: 'system', content: toolObservationFinalizerSystemPrompt() },
     ...runtimeMessagesFromThreadConversationLog(input.threadConversationLog),
     { role: 'user', content: redactSecretLikeContent(input.userMessage) },
-    {
-      role: 'assistant',
-      content: null,
-      tool_calls: toolCalls,
-    },
-    ...input.observations.map((observation, index) => ({
-      role: 'tool' as const,
-      tool_call_id: observationCallId(observation, index),
-      name: observation.toolName,
-      content: redactSecretLikeContent(observation.modelContent).slice(0, 12000),
-    })),
-    {
-      role: 'user',
-      content: '请基于上面的工具结果，直接回答我最初的问题。不要复述工具 JSON 或内部执行过程。',
-    },
+    ...providerToolObservationReplayMessages({
+      settings: input.settings,
+      observations: input.observations,
+      suffix: 'finalizer_observation',
+    }),
   ]
 }
 
@@ -271,6 +243,7 @@ export async function continueModelAfterToolObservations(
     context,
     tools: [],
     messages: observationMessages({
+      settings: ctx.settings,
       userMessage: redactSecretLikeContent(ctx.message),
       observations,
       threadConversationLog,
@@ -278,7 +251,6 @@ export async function continueModelAfterToolObservations(
     systemPrompt: toolObservationFinalizerSystemPrompt(),
     maxTokens: observations.length > 2 ? 900 : 500,
     stream: true,
-    disableThinking: true,
     requestTimeoutMs: ctx.settings.agentProviderRequestTimeoutMs,
     ...(ctx.abortSignal ? { abortSignal: ctx.abortSignal } : {}),
     onStreamEvent: (event) => addRuntimeStreamRunEvent({ ...ctx, phase: 'final_answer' }, event),

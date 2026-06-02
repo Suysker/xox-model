@@ -8,6 +8,10 @@ import {
 import type { ProviderModelProfile } from './provider-model-profile.js'
 import { ToolCallStreamAssembler, type StreamingToolCall } from './tool-call-stream-assembler.js'
 import { validateProviderToolCallsForExecution } from './tool-call-validator.js'
+import {
+  resolveProviderRuntimeCapability,
+  resolveRuntimeThinkingLevel,
+} from './provider-capability-registry.js'
 
 const SOURCE = 'openai_compatible_tool_calls' as const
 const STREAM_DELTA_LIMIT = 240
@@ -78,12 +82,72 @@ function argumentRepairPolicy(profile: ProviderModelProfile) {
   }
 }
 
+function providerRuntimeContext(input: RuntimePlanningInput, profile: ProviderModelProfile) {
+  const capability = resolveProviderRuntimeCapability(profile)
+  const thinkingLevel = resolveRuntimeThinkingLevel({
+    capability,
+    requested: input.thinkingLevel,
+  })
+  return { capability, thinkingLevel }
+}
+
+function reasoningTextFromObject(value: Record<string, unknown> | null | undefined, keys: readonly string[]) {
+  if (!value) return ''
+  return keys
+    .map((key) => value[key])
+    .filter((item): item is string => typeof item === 'string' && item.length > 0)
+    .join('')
+}
+
+function providerArtifact(input: RuntimePlanningInput, profile: ProviderModelProfile, reasoningText: string) {
+  const { capability, thinkingLevel } = providerRuntimeContext(input, profile)
+  return {
+    family: capability.family,
+    thinkingLevel,
+    ...(reasoningText ? { reasoningText } : {}),
+  }
+}
+
+function providerAssistantMessage(input: RuntimePlanningInput, profile: ProviderModelProfile, message: any) {
+  if (!message || typeof message !== 'object') return undefined
+  const { capability, thinkingLevel } = providerRuntimeContext(input, profile)
+  const replayPolicy = capability.buildReplayPolicy({ profile, thinkingLevel })
+  const assistant: Record<string, unknown> = {
+    role: 'assistant',
+    content: message.content ?? null,
+  }
+  if (Array.isArray(message.tool_calls)) assistant.tool_calls = message.tool_calls
+  for (const key of replayPolicy.preservedAssistantMessageKeys) {
+    if (message[key] !== undefined) assistant[key] = message[key]
+  }
+  for (const item of replayPolicy.assistantMessageBackfill) {
+    if (assistant[item.key] === undefined) assistant[item.key] = item.value
+  }
+  return assistant as RuntimePlanResult['providerAssistantMessage']
+}
+
+function withProviderState(
+  base: Omit<RuntimePlanResult, 'providerAssistantMessage' | 'providerArtifact'>,
+  assistantMessage: RuntimePlanResult['providerAssistantMessage'] | undefined,
+  artifact: NonNullable<RuntimePlanResult['providerArtifact']>,
+): RuntimePlanResult {
+  return {
+    ...base,
+    ...(assistantMessage ? { providerAssistantMessage: assistantMessage } : {}),
+    providerArtifact: artifact,
+  }
+}
+
 function jsonPlanResult(
   body: any,
   input: RuntimePlanningInput,
   profile: ProviderModelProfile,
 ): RuntimePlanResult {
   const message = body?.choices?.[0]?.message
+  const { capability } = providerRuntimeContext(input, profile)
+  const reasoningText = reasoningTextFromObject(message, capability.reasoningDeltaKeys)
+  const assistantMessage = providerAssistantMessage(input, profile, message)
+  const artifact = providerArtifact(input, profile, reasoningText)
   const toolSteps = validateProviderToolCallsForExecution({
     toolCalls: message?.tool_calls,
     allowedToolNames: allowedToolNames(input),
@@ -103,12 +167,12 @@ function jsonPlanResult(
   const assistantText = textContentFromMessage(message)
   if (toolSteps.length > 0) {
     return assistantText
-      ? { source: SOURCE, steps: toolSteps, assistantText }
-      : { source: SOURCE, steps: toolSteps }
+      ? withProviderState({ source: SOURCE, steps: toolSteps, assistantText }, assistantMessage, artifact)
+      : withProviderState({ source: SOURCE, steps: toolSteps }, assistantMessage, artifact)
   }
   return assistantText
-    ? { source: SOURCE, steps: [], assistantText }
-    : { source: SOURCE, steps: [] }
+    ? withProviderState({ source: SOURCE, steps: [], assistantText }, assistantMessage, artifact)
+    : withProviderState({ source: SOURCE, steps: [] }, assistantMessage, artifact)
 }
 
 function sseDataFromRecord(record: string) {
@@ -158,6 +222,8 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
     const decoder = new TextDecoder()
     let buffer = ''
     let content = ''
+    let reasoningContent = ''
+    const { capability } = providerRuntimeContext(input, profile)
     const toolAssembler = new ToolCallStreamAssembler()
     const toolTraceState = new Map<number, { argumentLength: number; flushedAt: number; emittedName: boolean }>()
     let contentTraceLength = 0
@@ -226,6 +292,7 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
           content += delta.content
           await emitContentTrace()
         }
+        reasoningContent += reasoningTextFromObject(delta, capability.reasoningDeltaKeys)
 
         if (!Array.isArray(delta.tool_calls)) continue
         for (const toolDelta of delta.tool_calls) {
@@ -270,6 +337,13 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
     })
 
     const normalizedToolCalls = toolAssembler.toProviderToolCalls()
+    const assistantMessage = providerAssistantMessage(input, profile, {
+      role: 'assistant',
+      content: content.trim() || null,
+      tool_calls: normalizedToolCalls,
+      ...(reasoningContent ? Object.fromEntries(capability.reasoningDeltaKeys.slice(0, 1).map((key) => [key, reasoningContent])) : {}),
+    })
+    const artifact = providerArtifact(input, profile, reasoningContent)
     let toolSteps: AgentToolCallStep[]
     try {
       toolSteps = validateProviderToolCallsForExecution({
@@ -298,11 +372,11 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
         [...new Set(toolNames)],
       )
     }
-    if (toolSteps.length > 0) return { source: SOURCE, steps: toolSteps }
+    if (toolSteps.length > 0) return withProviderState({ source: SOURCE, steps: toolSteps }, assistantMessage, artifact)
     const assistantText = content.trim()
     return assistantText
-      ? { source: SOURCE, steps: [], assistantText }
-      : { source: SOURCE, steps: [] }
+      ? withProviderState({ source: SOURCE, steps: [], assistantText }, assistantMessage, artifact)
+      : withProviderState({ source: SOURCE, steps: [] }, assistantMessage, artifact)
   }
 
   async plan(input: RuntimePlanningInput): Promise<RuntimePlanResult | null> {
@@ -334,7 +408,7 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
       const endpoint = `${input.settings.openaiCompatibleBaseUrl.replace(/\/$/, '')}/chat/completions`
       const shape = (omitToolChoice = false) => shapeOpenAICompatibleChatRequest(input, {
         omitToolChoice,
-        ...(input.disableThinking !== undefined ? { disableThinking: input.disableThinking } : {}),
+        ...(input.thinkingLevel !== undefined ? { thinkingLevel: input.thinkingLevel } : {}),
       })
       const init = (omitToolChoice = false): RequestInit => {
         const requestShape = shape(omitToolChoice)

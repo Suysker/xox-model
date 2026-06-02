@@ -1,6 +1,6 @@
 # ADR 0024: OpenClaw-First Provider Runtime Capability Layer
 
-Status: Proposed
+Status: Accepted / Implemented
 
 Date: 2026-06-02
 
@@ -383,8 +383,8 @@ ADR 0023 converges the harness to one OpenClaw-style loop. This ADR keeps provid
 ### Phase 2: Request Shaping Upgrade
 
 - Replace `disableThinking` plumbing with `thinkingLevel`.
-- Keep a temporary adapter that maps legacy `disableThinking: true` to `thinkingLevel: 'off'` only in probe or explicitly low-cost paths.
-- Remove blanket `disableThinking: true` from normal direct answer and observation continuation once provider replay supports artifacts.
+- Use `thinkingLevel: 'off'` only in explicitly low-cost paths such as provider probe, direct answer and turn-lane resolution.
+- Remove blanket `disableThinking: true` from normal planning and observation continuation.
 
 ### Phase 3: Runtime Artifacts And Stream Normalization
 
@@ -450,6 +450,59 @@ Port or adapt small OpenClaw-style helpers with attribution:
   - fail closed with a provider replay validation error.
 - `AgentRunEngine` still owns the single loop and no provider capability can decide completion or next action.
 - Any substantial OpenClaw-derived code carries MIT attribution in the copied module and tests.
+
+## Implementation Record
+
+Implemented on 2026-06-02.
+
+Modules added:
+
+- `apps/api/src/agent/runtime/provider-capability.ts`
+- `apps/api/src/agent/runtime/provider-capability-registry.ts`
+- `apps/api/src/agent/runtime/provider-transcript-replay.ts`
+- `apps/api/src/agent/runtime/provider-families/*`
+
+Modules changed:
+
+- `apps/api/src/agent/runtime/provider-request-shaper.ts`
+- `apps/api/src/agent/runtime/provider-payload-sanitizer.ts`
+- `apps/api/src/agent/runtime/openai-compatible-chat-adapter.ts`
+- `apps/api/src/agent/runtime/runtime-adapter.ts`
+- `apps/api/src/agent/runtime-planning-call.ts`
+- `apps/api/src/agent/tool-observation-continuation.ts`
+- `apps/api/src/agent/direct-answer-runtime.ts`
+- `apps/api/src/agent/turn-intake-resolver.ts`
+- `apps/api/src/agent/runtime/provider-probe.ts`
+
+Implemented behavior:
+
+- Provider family modules own provider-private request and replay fields such as DeepSeek `thinking` / `reasoning_content`, Qwen `enable_thinking`, Moonshot thinking payload, and ZAI thinking payload.
+- Normal planning and observation continuation no longer use blanket `disableThinking: true`; short direct-answer / lane-resolution / probe paths request `thinkingLevel: 'off'` through the same provider-owned contract.
+- Observation replay now uses provider-native assistant `tool_calls` plus matching `tool` messages through `provider-transcript-replay.ts`; it no longer appends a synthetic user prompt to force continuation.
+- OpenAI-compatible streaming captures provider reasoning deltas as provider artifacts and keeps them out of visible assistant text.
+- Request sanitation preserves only provider-approved assistant message keys from replay policy instead of using one central provider-key table.
+
+Validation:
+
+- `npm.cmd run test:api -- provider-runtime` passed: 12/12.
+- `npm.cmd run build:api` passed.
+- `npm.cmd run test:api` passed: 162/162.
+- `npm.cmd run test:web` passed: 75/75.
+- `npm.cmd run build:web` passed.
+
+Provider-family coverage in tests:
+
+- DeepSeek V4 default thinking and replay backfill.
+- Qwen thinking payload mapping.
+- Moonshot/Kimi replay family.
+- Anthropic native replay family.
+- Gemini replay family.
+- Generic OpenAI-compatible replay without reasoning artifacts.
+
+OpenClaw reuse note:
+
+- This implementation ports OpenClaw's provider-hook architecture and vocabulary, but does not copy OpenClaw source modules into `xox-model`.
+- The capability contract remains xox-model-native and SaaS-scoped.
 
 ## Rejected Alternatives
 

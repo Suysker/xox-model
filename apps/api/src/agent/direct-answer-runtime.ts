@@ -95,7 +95,7 @@ export async function executeDirectAnswerRun(
       tools: [],
       messages: directAnswerMessages({ message: ctx.message, ambientContext }),
       maxTokens: 500,
-      disableThinking: true,
+      thinkingLevel: 'off',
       requestTimeoutMs: ctx.settings.agentProviderRequestTimeoutMs,
       ...(ctx.abortSignal ? { abortSignal: ctx.abortSignal } : {}),
       onStreamEvent: (event) => addRuntimeStreamRunEvent({ ...ctx, phase: 'final_answer' }, event),

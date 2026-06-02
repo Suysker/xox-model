@@ -6,7 +6,9 @@ import { classifyProviderHttpError } from '../src/agent/runtime/provider-error-c
 import { retryRuntimeInput, shouldRetryRuntimePlan } from '../src/agent/runtime/provider-failover-policy.js'
 import { resolveProviderModelProfile } from '../src/agent/runtime/provider-model-profile.js'
 import { resolveProviderModelRef } from '../src/agent/runtime/provider-model-ref.js'
+import { resolveProviderRuntimeCapability, resolveRuntimeThinkingLevel } from '../src/agent/runtime/provider-capability-registry.js'
 import { shapeOpenAICompatibleChatRequest } from '../src/agent/runtime/provider-request-shaper.js'
+import { providerToolObservationReplayMessages } from '../src/agent/runtime/provider-transcript-replay.js'
 import { normalizeProviderToolSchemas } from '../src/agent/runtime/provider-tool-schema.js'
 import { extractBalancedJson } from '../src/agent/runtime/balanced-json.js'
 import { OpenAICompatibleChatAdapter } from '../src/agent/runtime/openai-compatible-chat-adapter.js'
@@ -118,17 +120,128 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
     const vllmRequired = shapeOpenAICompatibleChatRequest(runtimeInput('vllm', 'qwen-tool-required')).body
     expect(vllmRequired.tool_choice).toBe('required')
 
+    const deepSeekDefault = shapeOpenAICompatibleChatRequest(
+      runtimeInput('deepseek', 'deepseek-v4-pro'),
+    ).body
+    expect(deepSeekDefault).toMatchObject({
+      thinking: { type: 'enabled' },
+      reasoning_effort: 'high',
+    })
+
     const deepSeekProbe = shapeOpenAICompatibleChatRequest(
       runtimeInput('deepseek', 'deepseek-v4-pro'),
-      { disableThinking: true },
+      { thinkingLevel: 'off' },
     ).body
     expect(deepSeekProbe).toMatchObject({ thinking: { type: 'disabled' } })
+    expect(deepSeekProbe.reasoning_effort).toBeUndefined()
+
+    const qwenDefault = shapeOpenAICompatibleChatRequest(
+      runtimeInput('qwen', 'qwen3.5-plus'),
+    ).body
+    expect(qwenDefault).toMatchObject({ enable_thinking: true })
 
     const qwenProbe = shapeOpenAICompatibleChatRequest(
       runtimeInput('qwen', 'qwen3.5-plus'),
-      { disableThinking: true },
+      { thinkingLevel: 'off' },
     ).body
     expect(qwenProbe).toMatchObject({ enable_thinking: false })
+  })
+
+  it('uses provider replay policy for observation continuation instead of synthetic prompt shims', () => {
+    const replay = providerToolObservationReplayMessages({
+      settings: settings('deepseek', 'deepseek-v4-pro'),
+      observations: [{
+        toolName: 'data_query_workspace',
+        toolCallId: 'call_data_query_workspace',
+        toolArguments: { scope: 'workspace_summary' },
+        modelContent: JSON.stringify({ paybackMonthLabel: '4月' }),
+      }],
+    })
+
+    const assistantTurn = replay[0] as any
+    expect(assistantTurn.role).toBe('assistant')
+    expect(assistantTurn.reasoning_content).toBe('')
+    expect(replay[1]).toMatchObject({
+      role: 'tool',
+      tool_call_id: 'call_data_query_workspace',
+      name: 'data_query_workspace',
+    })
+
+    const shaped = shapeOpenAICompatibleChatRequest({
+      ...runtimeInput('deepseek', 'deepseek-v4-pro', []),
+      messages: [
+        { role: 'system', content: 'test' },
+        ...replay,
+      ],
+    }).body
+    expect((shaped.messages as any[])[1]?.reasoning_content).toBe('')
+
+    const genericReplay = providerToolObservationReplayMessages({
+      settings: settings('doubao', 'doubao-pro'),
+      observations: [{
+        toolName: 'data_query_workspace',
+        toolCallId: 'call_data_query_workspace',
+        toolArguments: { scope: 'workspace_summary' },
+        modelContent: JSON.stringify({ paybackMonthLabel: '4月' }),
+      }],
+    })
+    expect((genericReplay[0] as any).reasoning_content).toBeUndefined()
+  })
+
+  it('resolves provider runtime capabilities across major model families', () => {
+    const cases = [
+      {
+        provider: 'deepseek',
+        model: 'deepseek-v4-pro',
+        family: 'deepseek',
+        replayMode: 'deepseek-openai-compatible-thinking',
+        defaultThinking: 'high',
+      },
+      {
+        provider: 'moonshot',
+        model: 'kimi-k2',
+        family: 'moonshot',
+        replayMode: 'moonshot-thinking',
+        defaultThinking: 'low',
+      },
+      {
+        provider: 'anthropic',
+        model: 'claude-sonnet-4.5',
+        family: 'anthropic',
+        replayMode: 'anthropic-native',
+        defaultThinking: 'medium',
+      },
+      {
+        provider: 'gemini',
+        model: 'gemini-3-pro',
+        family: 'google-gemini',
+        replayMode: 'google-gemini',
+        defaultThinking: 'medium',
+      },
+      {
+        provider: 'qwen',
+        model: 'qwen3.5-plus',
+        family: 'qwen',
+        replayMode: 'openai-compatible',
+        defaultThinking: 'high',
+      },
+      {
+        provider: 'unknown',
+        model: 'unknown-model',
+        family: 'generic',
+        replayMode: 'generic',
+        defaultThinking: 'off',
+      },
+    ]
+
+    for (const item of cases) {
+      const profile = resolveProviderModelProfile({ provider: item.provider, model: item.model })
+      const capability = resolveProviderRuntimeCapability(profile)
+      const thinkingLevel = resolveRuntimeThinkingLevel({ capability })
+      expect(capability.family).toBe(item.family)
+      expect(thinkingLevel).toBe(item.defaultThinking)
+      expect(capability.buildReplayPolicy({ profile, thinkingLevel }).mode).toBe(item.replayMode)
+    }
   })
 
   it('normalizes provider tool schemas without changing the business tool registry', () => {
@@ -410,6 +523,51 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
         memberName: '成员 A',
         onlineUnits: 10,
       }))
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('captures provider reasoning deltas during streamed tool calls without exposing them as user text', async () => {
+    const originalFetch = globalThis.fetch
+    const encoder = new TextEncoder()
+    const event = {
+      choices: [{
+        delta: {
+          reasoning_content: '先确认需要调用记账工具。',
+          tool_calls: [{
+            index: 0,
+            id: 'call_ledger_create_member_income',
+            type: 'function',
+            function: {
+              name: 'ledger_create_member_income',
+              arguments: JSON.stringify({ monthLabel: '5月', memberName: '成员 A', onlineUnits: 10 }),
+            },
+          }],
+        },
+      }],
+    }
+    globalThis.fetch = (async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`))
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+        controller.close()
+      },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    })) as typeof fetch
+
+    try {
+      const result = await new OpenAICompatibleChatAdapter().plan(runtimeInput('deepseek', 'deepseek-v4-pro'))
+      expect(result?.steps).toHaveLength(1)
+      expect(result?.assistantText).toBeUndefined()
+      expect(result?.providerArtifact).toMatchObject({
+        family: 'deepseek',
+        thinkingLevel: 'high',
+        reasoningText: '先确认需要调用记账工具。',
+      })
+      expect((result?.providerAssistantMessage as any)?.reasoning_content).toBe('先确认需要调用记账工具。')
     } finally {
       globalThis.fetch = originalFetch
     }
