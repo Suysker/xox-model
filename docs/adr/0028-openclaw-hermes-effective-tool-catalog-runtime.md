@@ -1,6 +1,6 @@
 # ADR 0028: OpenClaw/Hermes Effective Tool Catalog Runtime
 
-Status: Proposed
+Status: Accepted
 
 Date: 2026-06-04
 
@@ -589,7 +589,7 @@ npm.cmd run smoke:agent
 
 ## Migration Notes
 
-This ADR is intentionally an upgrade plan, not an immediate code change.
+This ADR started as an upgrade plan and now owns the runtime contract for effective-catalog-first tool assembly.
 
 The safest migration sequence is:
 
@@ -598,6 +598,29 @@ The safest migration sequence is:
 3. activate threshold-based deferral;
 4. add catalog-miss materialization repair;
 5. add real-provider smoke cases for the known failed prompts.
+
+## Implementation Notes
+
+Implemented on 2026-06-04:
+
+- `ToolSurfacePlan v2` is now part of `packages/contracts`.
+- `ToolContextEngine` builds the run-scoped effective catalog first, reserves the Agent-goal kernel tools, and then materializes the provider-visible surface.
+- Capability router output is treated as ranking/budget hints; `requiredActionCapabilities` are no longer cropped by router-selected capabilities.
+- Kernel tools for Agent goals are `data_query_workspace`, `sandbox_run_code`, `ask_user_clarification`, and `account_forbidden`.
+- Registered deferred tool calls are classified as `tool_call_registered_but_deferred`, then materialized and replanned without executing outside the visible surface.
+- Materialized replans receive a fresh inventory snapshot that includes the newly visible tools, so `ToolCallSupervisor` still enforces the same authority boundary.
+- The tool catalog run event now records visible, kernel, materializable, deferred, replay-allowed, auto-added, budget, and surface-plan details.
+
+Validation evidence:
+
+- `npm.cmd run test --workspace @xox/api -- tests/tool-context-engine.test.ts tests/provider-runtime.test.ts tests/api.test.ts --testNamePattern "tool|materializes a registered deferred"` passed.
+- `npm.cmd run test:api` passed with 175/175 tests.
+- `npm.cmd run build --workspace @xox/api` passed.
+- `npm.cmd run test:web` passed with 75/75 tests.
+- `npm.cmd run build:web` passed.
+- `npm.cmd run test` passed with web 75/75 and api 175/175.
+- `npm.cmd run build` passed.
+- `npm.cmd run smoke:agent` passed against DeepSeek `deepseek-v4-pro`, including real provider tool calls, memory injection, editable confirmations, ledger writes, version/share/import/export actions, and a 50-member complex operating model.
 
 Each step must remove the old parallel path when the new path owns the behavior. Compatibility shims are allowed only during a single migration PR and must be deleted before the milestone is accepted.
 

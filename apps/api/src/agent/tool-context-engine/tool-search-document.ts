@@ -14,18 +14,9 @@ export function toolSearchDocumentFromManifest(manifest: ToolManifest): ToolSear
   return {
     name: manifest.name,
     capability: manifest.capability,
-    text: [
-      manifest.name,
-      manifest.title,
-      manifest.summary,
-      ...manifest.searchHints,
-      ...manifest.entityTags,
-      ...manifest.parameterNames,
-      ...manifest.requiredFacts,
-      ...manifest.resolvesFacts,
-    ].join(' '),
+    text: manifest.searchDocument.text,
     searchHints: manifest.searchHints,
-    parameterNames: manifest.parameterNames,
+    parameterNames: manifest.searchDocument.parameterNames,
     entityTags: manifest.entityTags,
   }
 }

@@ -320,6 +320,43 @@ export type AgentToolInventorySnapshot = {
   createdAt: string
 }
 
+export type AgentToolSurfaceEmptyStatus =
+  | 'has_callable_tools'
+  | 'direct_answer_only'
+  | 'needs_clarification'
+  | 'needs_tool_search'
+  | 'fail_closed'
+
+export type AgentToolSurfaceBudget = {
+  providerContextTokens: number | null
+  visibleSchemaTokenEstimate: number
+  deferredSchemaTokenEstimate: number
+  toolSearchActivated: boolean
+}
+
+export type AgentToolSurfaceCapabilityHints = {
+  selectedCapabilities: string[]
+  requiredActionCapabilities: string[]
+  confidence: number
+  reason: string
+}
+
+export type AgentToolSurfacePlan = {
+  schemaVersion: 'xox.tool_surface.v2'
+  turnLane: 'agent_goal'
+  effectiveCatalog: string[]
+  kernelToolNames: string[]
+  visibleToolNames: string[]
+  materializableToolNames: string[]
+  deferredToolNames: string[]
+  replayAllowedToolNames: string[]
+  autoAddedControlNames: string[]
+  capabilityHints: AgentToolSurfaceCapabilityHints
+  budget: AgentToolSurfaceBudget
+  emptySurfaceStatus: AgentToolSurfaceEmptyStatus
+  discoveryTraceId: string
+}
+
 export type AgentToolRuntimeEvent = {
   kind:
     | 'inventory_ready'

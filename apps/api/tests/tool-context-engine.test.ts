@@ -94,20 +94,52 @@ describe('Progressive Tool Discovery Runtime', () => {
     expect(projection.discoveryTrace?.strategy).toBe('progressive_tool_discovery')
   })
 
-  it('keeps router-empty surfaces restricted instead of widening to business tools', () => {
+  it('keeps kernel observation and compute tools when capability hints are empty', () => {
     const projection = buildRuntimeToolCatalogProjection({
       selectedCapabilities: [],
       routerReason: 'router-empty-restricted-surface',
-      message: '普通问候',
+      message: '给我预测一下，如果目前的通胀率是5%，我的投资回报率是多少？我是第一个股东，我投入的钱都是银行贷款出来的，银行利率是年利率5%',
     })
 
     expect(projection.strategy).toBe('progressive_tool_discovery')
     expect(projection.selectedCapabilities).toEqual([])
-    expect(projection.visibleToolNames).toEqual(expect.arrayContaining(['account_forbidden', 'ask_user_clarification']))
-    expect(projection.visibleToolNames).not.toContain('data_query_workspace')
+    expect(projection.visibleToolNames).toEqual(expect.arrayContaining([
+      'account_forbidden',
+      'ask_user_clarification',
+      'data_query_workspace',
+      'sandbox_run_code',
+    ]))
+    expect(projection.kernelToolNames).toEqual(expect.arrayContaining([
+      'account_forbidden',
+      'ask_user_clarification',
+      'data_query_workspace',
+      'sandbox_run_code',
+    ]))
     expect(projection.visibleToolNames).not.toContain('workspace_patch_config')
     expect(projection.visibleToolNames).not.toContain('ledger_create_member_income')
+    expect(projection.materializableToolNames).toContain('workspace_patch_config')
+    expect(projection.surfacePlan?.schemaVersion).toBe('xox.tool_surface.v2')
     expect(projection.inventorySnapshot.source).toBe('progressive_tool_discovery')
     expect(projection.inventorySnapshot.freshness).toBe('fresh')
+  })
+
+  it('materializes high-confidence retrieved action tools when capability hints are empty', () => {
+    const projection = buildRuntimeToolCatalogProjection({
+      selectedCapabilities: [],
+      routerReason: 'router-empty-restricted-surface',
+      message: '新增股东 C，投资 10000，占分红 10%',
+    })
+
+    expect(projection.strategy).toBe('progressive_tool_discovery')
+    expect(projection.selectedCapabilities).toEqual([])
+    expect(projection.visibleToolNames).toEqual(expect.arrayContaining([
+      'data_query_workspace',
+      'sandbox_run_code',
+      'ask_user_clarification',
+      'account_forbidden',
+      'shareholder_add',
+    ]))
+    expect(projection.visibleToolNames.length).toBeLessThanOrEqual(6)
+    expect(projection.materializableToolNames).not.toContain('shareholder_add')
   })
 })

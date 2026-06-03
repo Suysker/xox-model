@@ -1846,8 +1846,18 @@ describe('xox TypeScript API', () => {
     })
     expect(restrictedProjection.strategy).toBe('progressive_tool_discovery')
     expect(restrictedProjection.selectedCapabilities).toEqual([])
-    expect(restrictedProjection.toolNames).toEqual(expect.arrayContaining(['account_forbidden', 'ask_user_clarification']))
-    expect(restrictedProjection.toolNames).not.toContain('data_query_workspace')
+    expect(restrictedProjection.toolNames).toEqual(expect.arrayContaining([
+      'account_forbidden',
+      'ask_user_clarification',
+      'data_query_workspace',
+      'sandbox_run_code',
+    ]))
+    expect(restrictedProjection.kernelToolNames).toEqual(expect.arrayContaining([
+      'account_forbidden',
+      'ask_user_clarification',
+      'data_query_workspace',
+      'sandbox_run_code',
+    ]))
     expect(restrictedProjection.toolNames).not.toContain('workspace_patch_config')
     expect(restrictedProjection.toolNames).not.toContain('ledger_create_member_income')
     expect(restrictedProjection.emptySurfaceStatus).toBe('has_callable_tools')
@@ -1897,6 +1907,54 @@ describe('xox TypeScript API', () => {
       expect(event.data.selectedCapabilities).toEqual(['ledger'])
       expect(event.data.toolNames).toContain('ledger_create_member_income')
       expect(event.data.toolNames).not.toContain('workspace_publish_release')
+      await closeHarness(harness)
+    }, { autoSelectCapabilities: false })
+  })
+
+  it('materializes a registered deferred tool and replans instead of executing outside the visible surface', async () => {
+    let planningCalls = 0
+    await withFakeOpenAICompatibleProvider((body) => {
+      if (isCapabilityRouterRequest(body)) {
+        return fakeCapabilitySelectionResponse(['data'])
+      }
+
+      planningCalls += 1
+      const toolNames = body.tools.map((tool: any) => tool.function.name)
+      if (planningCalls === 1) {
+        expect(toolNames).toContain('data_query_workspace')
+        expect(toolNames).toContain('sandbox_run_code')
+        expect(toolNames).not.toContain('workspace_patch_config')
+        return fakeToolResponse('workspace_patch_config', {
+          patches: [{ path: 'operating.offlineUnitPrice', value: 99, label: '线下单价' }],
+        })
+      }
+
+      expect(body.stream).toBe(false)
+      expect(toolNames).toContain('workspace_patch_config')
+      return fakeToolResponse('workspace_patch_config', {
+        patches: [{ path: 'operating.offlineUnitPrice', value: 99, label: '线下单价' }],
+      })
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-deferred-tool-materialize', {
+        llmProvider: 'openai-compatible',
+        openaiCompatibleProvider: 'test-compatible',
+        openaiCompatibleBaseUrl: baseUrl,
+        openaiCompatibleApiKey: 'test-key',
+      })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-deferred-tool-materialize@example.com')
+
+      const planned = await client.post('/api/v1/agent/messages', {
+        message: '把线下单价改成 99 并保存',
+      })
+
+      expect(planned.statusCode).toBe(200)
+      expect(planningCalls).toBe(2)
+      expect(planned.json.actionRequests[0].kind).toBe('workspace.update_draft')
+      expect(planned.json.runEvents.some((item: any) => item.type === 'tool_catalog_materializing')).toBe(true)
+      const catalogEvent = planned.json.runEvents.find((item: any) => item.type === 'tool_catalog_ready')
+      expect(catalogEvent.data.visibleToolNames).not.toContain('workspace_patch_config')
+      expect(catalogEvent.data.materializableToolNames).toContain('workspace_patch_config')
       await closeHarness(harness)
     }, { autoSelectCapabilities: false })
   })

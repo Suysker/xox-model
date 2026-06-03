@@ -19,7 +19,7 @@ import {
 import { addRunEvent } from './run-events.js'
 import { plannerSystemPrompt } from './prompt-registry.js'
 import type { AgentToolObservation } from './tool-observation-continuation.js'
-import { provideRuntimeToolCatalog } from './tool-gateway.js'
+import { materializedToolInventorySnapshot, provideRuntimeToolCatalog } from './tool-gateway.js'
 import {
   contextWithoutThreadConversationLog,
   runtimeMessagesFromThreadConversationLog,
@@ -113,6 +113,48 @@ function attachToolInventory(result: RuntimePlanResult | null, toolCatalog: Runt
   return result ? { ...result, toolInventorySnapshot: toolCatalog.inventorySnapshot } : result
 }
 
+function attachMaterializedToolInventory(
+  result: RuntimePlanResult | null,
+  toolCatalog: RuntimeToolCatalogProjection,
+  tools: RuntimePlanningInput['tools'],
+): RuntimePlanResult | null {
+  if (!result) return result
+  return {
+    ...result,
+    toolInventorySnapshot: materializedToolInventorySnapshot(
+      toolCatalog,
+      tools.map((tool) => tool.function.name),
+    ),
+  }
+}
+
+function deferredToolNamesFromBoundary(result: RuntimePlanResult | null | undefined) {
+  if (result?.error?.kind !== 'provider_response_error') return []
+  if (result.error.toolCallBoundary?.code !== 'tool_call_registered_but_deferred') return []
+  return result.error.toolCallBoundary.toolNames
+}
+
+function runtimeInputWithMaterializedTools(
+  input: RuntimePlanningInput,
+  toolCatalog: RuntimeToolCatalogProjection,
+  toolNames: readonly string[],
+): RuntimePlanningInput | null {
+  const existing = new Set(input.tools.map((tool) => tool.function.name))
+  const requested = new Set(toolNames)
+  const deferredTools = toolCatalog.deferredCatalog
+    .filter((manifest) => requested.has(manifest.name) && !existing.has(manifest.name))
+    .map((manifest) => manifest.providerSchema)
+  if (deferredTools.length === 0) return null
+  const materializedNames = new Set(deferredTools.map((tool) => tool.function.name))
+  return {
+    ...input,
+    stream: false,
+    tools: [...input.tools, ...deferredTools],
+    materializableToolNames: (input.materializableToolNames ?? []).filter((name) => !materializedNames.has(name)),
+    requestTimeoutMs: Math.max(input.requestTimeoutMs ?? input.settings.agentProviderRequestTimeoutMs, 240_000),
+  }
+}
+
 export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePlanResult | null> {
   const context = await buildAgentContext({
     db: ctx.db,
@@ -144,6 +186,7 @@ export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePl
     message: redactSecretLikeContent(ctx.message),
     context,
     tools: toolCatalog.tools,
+    materializableToolNames: toolCatalog.materializableToolNames,
     messages: plannerRuntimeMessages({
       settings: ctx.settings,
       context,
@@ -182,6 +225,32 @@ export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePl
   }
 
   const first = await planWithRuntimeAdapter(runtimeInput)
+  const deferredToolNames = deferredToolNamesFromBoundary(first)
+  if (deferredToolNames.length > 0 && !ctx.abortSignal?.aborted) {
+    const materializedInput = runtimeInputWithMaterializedTools(runtimeInput, toolCatalog, deferredToolNames)
+    if (materializedInput) {
+      await addRunEvent(ctx.db, {
+        threadId: ctx.threadId,
+        runId: ctx.runId,
+        type: 'tool_catalog_materializing',
+        title: '工具目录扩展',
+        message: '模型选择了已注册但尚未物化的工具，正在扩展本轮工具目录并重新规划。',
+        status: 'running',
+        data: {
+          toolNames: deferredToolNames,
+          previousVisibleToolNames: toolCatalog.visibleToolNames,
+          nextVisibleToolNames: materializedInput.tools.map((tool) => tool.function.name),
+        },
+      })
+      const materialized = attachMaterializedToolInventory(
+        await planWithRuntimeAdapter(materializedInput),
+        toolCatalog,
+        materializedInput.tools,
+      )
+      await addNonStreamPlanningPreface(ctx, materialized)
+      return materialized
+    }
+  }
   if (shouldRetryRuntimePlan(first) && !ctx.abortSignal?.aborted) {
     const retryInput = retryRuntimeInput(runtimeInput, first)
     await addRunEvent(ctx.db, {

@@ -10,11 +10,18 @@ import type {
 export type ToolManifest = {
   name: string
   capability: AgentToolCapability
+  kind: 'kernel' | 'read' | 'action' | 'sandbox' | 'memory' | 'navigation' | 'account'
   title: string
   summary: string
   searchHints: string[]
   entityTags: string[]
   parameterNames: string[]
+  deferrable: boolean
+  schemaTokenEstimate: number
+  searchDocument: {
+    text: string
+    parameterNames: string[]
+  }
   riskLevel: AgentToolRiskLevel
   confirmationMode: AgentToolConfirmationMode
   navigationTarget: AgentToolNavigationTarget
@@ -35,6 +42,12 @@ type ToolManifestOverride = Partial<Pick<ToolManifest,
 >>
 
 const ENTITY_FACT_TOOL = 'data_query_workspace'
+const KERNEL_TOOL_NAMES = new Set([
+  'data_query_workspace',
+  'sandbox_run_code',
+  'ask_user_clarification',
+  'account_forbidden',
+])
 
 const MANIFEST_OVERRIDES: Record<string, ToolManifestOverride> = {
   account_forbidden: {
@@ -277,6 +290,20 @@ function defaultTitle(name: string) {
   return name.split('_').filter(Boolean).join(' ')
 }
 
+function schemaTokenEstimate(tool: ChatTool) {
+  return Math.ceil(JSON.stringify(tool).length / 4)
+}
+
+function manifestKind(entry: AgentToolRegistryEntry): ToolManifest['kind'] {
+  if (KERNEL_TOOL_NAMES.has(entry.name)) return 'kernel'
+  if (entry.capability === 'account') return 'account'
+  if (entry.capability === 'sandbox') return 'sandbox'
+  if (entry.capability === 'memory') return 'memory'
+  if (entry.capability === 'navigation') return 'navigation'
+  if (entry.riskLevel === 'read' && entry.confirmationMode === 'never') return 'read'
+  return 'action'
+}
+
 function unique(values: Array<string | undefined>) {
   return [...new Set(values.filter((value): value is string => Boolean(value?.trim())).map((value) => value.trim()))]
 }
@@ -287,19 +314,41 @@ export function buildToolManifests(entries: AgentToolRegistryEntry[]): ToolManif
     const params = parameterNames(entry.tool)
     const title = override.title ?? defaultTitle(entry.name)
     const summary = override.summary ?? entry.tool.function.description
+    const searchHints = unique([title, entry.name, ...(override.searchHints ?? []), ...params])
+    const entityTags = unique(override.entityTags ?? [])
+    const requiredFacts = unique(override.requiredFacts ?? [])
+    const resolvesFacts = unique(override.resolvesFacts ?? [])
+    const kind = manifestKind(entry)
+    const searchDocumentText = [
+      entry.name,
+      title,
+      summary,
+      ...searchHints,
+      ...entityTags,
+      ...params,
+      ...requiredFacts,
+      ...resolvesFacts,
+    ].join(' ')
     return {
       name: entry.name,
       capability: entry.capability,
+      kind,
       title,
       summary,
-      searchHints: unique([title, entry.name, ...(override.searchHints ?? []), ...params]),
-      entityTags: unique(override.entityTags ?? []),
+      searchHints,
+      entityTags,
       parameterNames: params,
+      deferrable: kind !== 'kernel',
+      schemaTokenEstimate: schemaTokenEstimate(entry.tool),
+      searchDocument: {
+        text: searchDocumentText,
+        parameterNames: params,
+      },
       riskLevel: entry.riskLevel,
       confirmationMode: entry.confirmationMode,
       navigationTarget: entry.navigationTarget,
-      requiredFacts: unique(override.requiredFacts ?? []),
-      resolvesFacts: unique(override.resolvesFacts ?? []),
+      requiredFacts,
+      resolvesFacts,
       prerequisiteTools: unique(override.prerequisiteTools ?? []),
       providerSchema: entry.tool,
     }

@@ -56,6 +56,7 @@ export function parseToolArguments(raw: unknown, policy?: ToolArgumentRepairPoli
 export function plannerStepsFromProviderToolCalls(input: {
   toolCalls: unknown
   allowedToolNames: readonly string[]
+  materializableToolNames?: readonly string[]
   options?: ProviderToolCallParseOptions
 }): AgentToolCallStep[] {
   if (!Array.isArray(input.toolCalls)) return []
@@ -73,6 +74,20 @@ export function plannerStepsFromProviderToolCalls(input: {
       toolCall?.id,
     )
     if (!repairedName) {
+      const materializableName = repairToolName(
+        toolCall?.function?.name,
+        input.materializableToolNames ?? [],
+        toolCall?.id,
+      )
+      if (materializableName) {
+        throw new ProviderToolCallParseError(
+          `Provider emitted deferred tool call "${materializableName}" before the tool schema was materialized.`,
+          [materializableName],
+          materializableName,
+          'tool_call_registered_but_deferred',
+          input.allowedToolNames,
+        )
+      }
       throw new ProviderToolCallParseError(
         `Provider emitted tool call "${rawToolName}" outside the current effective tool inventory.`,
         [rawToolName],

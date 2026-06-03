@@ -74,6 +74,14 @@ function modelToolCallRequiredRead(error?: RuntimePlanError | null): ReadDraft {
   }
 
   if (error?.kind === 'provider_response_error') {
+    if (error.toolCallBoundary?.code === 'tool_call_registered_but_deferred') {
+      return {
+        title: '工具目录正在扩展',
+        message: `模型选择了当前已注册但尚未物化的工具，系统会先扩展本轮工具目录再重新规划，不会直接执行未展示工具。${error.toolCallBoundary.toolNames.length ? ` 工具：${error.toolCallBoundary.toolNames.join(', ')}` : ''}${error.message ? ` 错误：${error.message}` : ''}`,
+        readKind: 'status',
+        status: 'info',
+      }
+    }
     if (error.toolCallBoundary?.code === 'tool_call_not_in_effective_inventory') {
       return {
         title: '工具调用被运行边界拒绝',

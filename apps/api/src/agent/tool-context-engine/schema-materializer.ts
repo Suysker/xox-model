@@ -1,6 +1,7 @@
 import type { ChatTool } from '../tool-catalog.js'
 import type { ToolManifest } from './tool-manifest.js'
 import type { RankedToolManifest } from './tool-reranker.js'
+import { isKernelToolName } from './tool-reranker.js'
 
 export type ToolDescriptor = {
   name: string
@@ -20,6 +21,7 @@ export type MaterializedToolContext = {
 }
 
 const DEFAULT_MAX_MATERIALIZED_TOOLS = 8
+const ROUTER_EMPTY_RETRIEVAL_DIRECT_THRESHOLD = 25
 
 function descriptorFromManifest(manifest: ToolManifest): ToolDescriptor {
   return {
@@ -37,75 +39,64 @@ function descriptorFromManifest(manifest: ToolManifest): ToolDescriptor {
 function shouldKeepTool(input: {
   ranked: RankedToolManifest
   index: number
-  hasBusinessCapability: boolean
+  selectedCapabilities: Set<string>
 }) {
-  const { ranked, index, hasBusinessCapability } = input
-  const capability = ranked.manifest.capability
-  if (capability === 'account' || capability === 'clarification') return hasBusinessCapability || ranked.score > 0.5
+  const { ranked, index, selectedCapabilities } = input
+  if (isKernelToolName(ranked.manifest.name)) return true
   if (ranked.reasons.includes('workflow_prerequisite')) return true
+  if (ranked.reasons.includes('required_action_capability')) return true
+  if (ranked.reasons.some((reason) => reason.startsWith('required_capability:'))) return true
+  if (
+    selectedCapabilities.size === 0 &&
+    ranked.reasons.includes('retrieval') &&
+    ranked.score >= ROUTER_EMPTY_RETRIEVAL_DIRECT_THRESHOLD
+  ) {
+    return true
+  }
+  if (!selectedCapabilities.has(ranked.manifest.capability)) return false
   if (ranked.score > 0.75) return true
   return index < 3 && ranked.score > 0
 }
 
 export function materializeToolSchemas(input: {
   ranked: RankedToolManifest[]
+  selectedCapabilities?: readonly string[]
   maxTools?: number
 }): MaterializedToolContext {
   const maxTools = input.maxTools ?? DEFAULT_MAX_MATERIALIZED_TOOLS
-  const hasBusinessCapability = input.ranked.some((ranked) =>
-    ranked.manifest.capability !== 'account' &&
-    ranked.manifest.capability !== 'clarification',
-  )
+  const selectedCapabilities = new Set(input.selectedCapabilities ?? [])
   const selected: ToolManifest[] = []
   const seen = new Set<string>()
-  const essential = input.ranked.filter((ranked) =>
-    ranked.manifest.capability === 'account' ||
-    ranked.manifest.capability === 'clarification',
-  )
-  const business = input.ranked.filter((ranked) =>
-    ranked.manifest.capability !== 'account' &&
-    ranked.manifest.capability !== 'clarification',
-  )
-  const prerequisiteBusiness = business.filter((ranked) => ranked.reasons.includes('workflow_prerequisite'))
-  const remainingBusiness = business.filter((ranked) => !ranked.reasons.includes('workflow_prerequisite'))
-  const essentialToKeep = hasBusinessCapability
-    ? essential.filter((ranked) => shouldKeepTool({
-      ranked,
-      index: 0,
-      hasBusinessCapability,
-    }))
-    : essential
-  const businessLimit = Math.max(0, maxTools - essentialToKeep.length)
+  const kernel = input.ranked.filter((ranked) => isKernelToolName(ranked.manifest.name))
+  const nonKernel = input.ranked.filter((ranked) => !isKernelToolName(ranked.manifest.name))
+  const prerequisiteTools = nonKernel.filter((ranked) => ranked.reasons.includes('workflow_prerequisite'))
+  const remainingTools = nonKernel.filter((ranked) => !ranked.reasons.includes('workflow_prerequisite'))
 
-  for (const [index, ranked] of prerequisiteBusiness.entries()) {
+  for (const ranked of kernel) {
     if (seen.has(ranked.manifest.name)) continue
-    if (!shouldKeepTool({ ranked, index, hasBusinessCapability })) continue
-    if (selected.length >= businessLimit) break
     selected.push(ranked.manifest)
     seen.add(ranked.manifest.name)
   }
 
-  for (const [index, ranked] of remainingBusiness.entries()) {
+  const nonKernelLimit = Math.max(0, maxTools - selected.length)
+  let nonKernelCount = 0
+
+  for (const [index, ranked] of prerequisiteTools.entries()) {
     if (seen.has(ranked.manifest.name)) continue
-    if (!shouldKeepTool({ ranked, index, hasBusinessCapability })) continue
-    if (selected.length >= businessLimit) break
+    if (!shouldKeepTool({ ranked, index, selectedCapabilities })) continue
+    if (nonKernelCount >= nonKernelLimit) break
     selected.push(ranked.manifest)
     seen.add(ranked.manifest.name)
+    nonKernelCount += 1
   }
 
-  for (const ranked of essentialToKeep) {
+  for (const [index, ranked] of remainingTools.entries()) {
     if (seen.has(ranked.manifest.name)) continue
-    if (selected.length >= maxTools) break
+    if (!shouldKeepTool({ ranked, index, selectedCapabilities })) continue
+    if (nonKernelCount >= nonKernelLimit) break
     selected.push(ranked.manifest)
     seen.add(ranked.manifest.name)
-  }
-
-  if (selected.length === 0) {
-    for (const ranked of essential) {
-      if (seen.has(ranked.manifest.name)) continue
-      selected.push(ranked.manifest)
-      seen.add(ranked.manifest.name)
-    }
+    nonKernelCount += 1
   }
 
   return {

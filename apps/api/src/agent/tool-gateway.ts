@@ -49,10 +49,14 @@ export type RuntimeToolCatalogProjection = {
   effectiveCatalog: ToolContextPack['effectiveCatalog']
   visibleTools: ToolContextPack['visibleTools']
   visibleToolNames: ToolContextPack['visibleToolNames']
+  kernelToolNames: ToolContextPack['kernelToolNames']
+  materializableToolNames: ToolContextPack['materializableToolNames']
   deferredCatalog: ToolContextPack['deferredCatalog']
   replayAllowedToolNames: ToolContextPack['replayAllowedToolNames']
   autoAddedControlNames: ToolContextPack['autoAddedControlNames']
   emptySurfaceStatus: ToolContextPack['emptySurfaceStatus'] | null
+  budget: ToolContextPack['budget'] | null
+  surfacePlan: ToolContextPack['surfacePlan'] | null
   toolDescriptors: ToolContextPack['toolDescriptors']
   discoveryTrace: ToolContextPack['discoveryTrace'] | null
   routerReason?: string
@@ -201,6 +205,42 @@ function toolMetadata(entry: (typeof AGENT_TOOL_REGISTRY)[number]): AgentToolMet
   }
 }
 
+function toolMetadataFromManifest(manifest: ToolContextPack['effectiveCatalog'][number]): AgentToolMetadata {
+  return {
+    name: manifest.name,
+    capability: manifest.capability,
+    riskLevel: manifest.riskLevel,
+    confirmationMode: manifest.confirmationMode,
+    navigationTarget: manifest.navigationTarget,
+  }
+}
+
+export function materializedToolInventorySnapshot(
+  projection: RuntimeToolCatalogProjection,
+  toolNames: readonly string[],
+) {
+  const metadataByName = new Map<string, AgentToolMetadata>()
+  for (const metadata of projection.toolCapabilities) metadataByName.set(metadata.name, metadata)
+  for (const manifest of projection.effectiveCatalog) {
+    if (!metadataByName.has(manifest.name)) metadataByName.set(manifest.name, toolMetadataFromManifest(manifest))
+  }
+  const toolCapabilities = toolNames
+    .map((name) => metadataByName.get(name))
+    .filter((metadata): metadata is AgentToolMetadata => Boolean(metadata))
+
+  return buildEffectiveToolInventorySnapshot({
+    userId: projection.inventorySnapshot.userId,
+    workspaceId: projection.inventorySnapshot.workspaceId,
+    automationLevel: projection.inventorySnapshot.automationLevel,
+    provider: projection.inventorySnapshot.provider,
+    model: projection.inventorySnapshot.model,
+    strategy: projection.strategy,
+    toolCapabilities,
+    selectedCapabilities: projection.selectedCapabilities,
+    ...(projection.routerReason ? { routerReason: projection.routerReason } : {}),
+  })
+}
+
 export function buildRuntimeToolCatalogProjection(input?: {
   selectedCapabilities?: AgentToolCapability[] | null
   requiredActionCapabilities?: AgentToolCapability[] | null
@@ -215,7 +255,6 @@ export function buildRuntimeToolCatalogProjection(input?: {
 }): RuntimeToolCatalogProjection {
   const selectedCapabilities = safeCapabilities(input?.selectedCapabilities)
   const requiredActionCapabilities = safeCapabilities(input?.requiredActionCapabilities)
-    .filter((capability) => selectedCapabilities.length === 0 || selectedCapabilities.includes(capability))
   const goalFacts = sanitizeAgentGoalFacts(input?.goalFacts)
   const hasModelSelection = input?.selectedCapabilities !== undefined && input.selectedCapabilities !== null
   const requestedStrategy: ToolCatalogProjectionStrategy = input?.strategy ?? (hasModelSelection ? 'model_selected_capabilities' : 'full_registry')
@@ -261,10 +300,14 @@ export function buildRuntimeToolCatalogProjection(input?: {
     effectiveCatalog: toolContext?.effectiveCatalog ?? [],
     visibleTools: toolContext?.visibleTools ?? entries.map((entry) => entry.tool),
     visibleToolNames: toolContext?.visibleToolNames ?? entries.map((entry) => entry.name),
+    kernelToolNames: toolContext?.kernelToolNames ?? [],
+    materializableToolNames: toolContext?.materializableToolNames ?? [],
     deferredCatalog: toolContext?.deferredCatalog ?? [],
     replayAllowedToolNames: toolContext?.replayAllowedToolNames ?? entries.map((entry) => entry.name),
     autoAddedControlNames: toolContext?.autoAddedControlNames ?? [],
     emptySurfaceStatus: toolContext?.emptySurfaceStatus ?? null,
+    budget: toolContext?.budget ?? null,
+    surfacePlan: toolContext?.surfacePlan ?? null,
     toolDescriptors: toolContext?.toolDescriptors ?? [],
     discoveryTrace: toolContext?.discoveryTrace ?? null,
     ...(input?.routerReason ? { routerReason: redactSecretLikeContent(input.routerReason).slice(0, 300) } : {}),
@@ -355,10 +398,14 @@ export async function provideRuntimeToolCatalog(ctx: ToolGatewayContext) {
       goalFacts: projection.goalFacts,
       inventorySnapshot: projection.inventorySnapshot,
       visibleToolNames: projection.visibleToolNames,
+      kernelToolNames: projection.kernelToolNames,
+      materializableToolNames: projection.materializableToolNames,
       deferredToolNames: projection.deferredCatalog.map((manifest) => manifest.name),
       replayAllowedToolNames: projection.replayAllowedToolNames,
       autoAddedControlNames: projection.autoAddedControlNames,
       emptySurfaceStatus: projection.emptySurfaceStatus,
+      budget: projection.budget,
+      surfacePlan: projection.surfacePlan,
       toolDescriptors: projection.toolDescriptors,
       discoveryTrace: projection.discoveryTrace,
       routerReason: projection.routerReason ?? null,

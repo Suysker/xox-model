@@ -151,6 +151,7 @@ function jsonPlanResult(
   const toolSteps = validateProviderToolCallsForExecution({
     toolCalls: message?.tool_calls,
     allowedToolNames: allowedToolNames(input),
+    materializableToolNames: input.materializableToolNames ?? [],
     options: {
       argumentRepair: argumentRepairPolicy(profile),
       onArgumentRepaired: (event) => {
@@ -349,6 +350,7 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
       toolSteps = validateProviderToolCallsForExecution({
         toolCalls: normalizedToolCalls,
         allowedToolNames: allowedToolNames(input),
+        materializableToolNames: input.materializableToolNames ?? [],
         options: {
           argumentRepair: argumentRepairPolicy(profile),
           onArgumentRepaired: (event) => {

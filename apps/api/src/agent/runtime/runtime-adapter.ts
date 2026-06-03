@@ -14,6 +14,7 @@ export type RuntimeProviderErrorClassification =
   | 'http'
 
 export type ToolCallBoundaryViolationCode =
+  | 'tool_call_registered_but_deferred'
   | 'tool_call_not_in_effective_inventory'
   | 'tool_call_without_registered_handler'
 
@@ -112,6 +113,7 @@ export type RuntimePlanningInput = {
   message: string
   context: unknown
   tools: ChatTool[]
+  materializableToolNames?: string[]
   messages?: RuntimeChatMessage[]
   systemPrompt?: string
   stream?: boolean

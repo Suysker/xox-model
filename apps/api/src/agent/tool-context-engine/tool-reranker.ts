@@ -17,6 +17,15 @@ const FACT_DEPENDENT_CAPABILITIES = new Set<AgentToolCapability>([
   'version',
 ])
 
+export const KERNEL_TOOL_NAMES = [
+  'data_query_workspace',
+  'sandbox_run_code',
+  'ask_user_clarification',
+  'account_forbidden',
+] as const
+
+const KERNEL_TOOL_NAME_SET = new Set<string>(KERNEL_TOOL_NAMES)
+
 const CANONICAL_TOOLS_BY_CAPABILITY: Partial<Record<AgentToolCapability, string[]>> = {
   data: ['data_query_workspace'],
   draft: ['workspace_patch_config', 'workspace_configure_operating_model', 'workspace_rename'],
@@ -41,14 +50,6 @@ function selectedCapabilitySet(selectedCapabilities: AgentToolCapability[]) {
   return new Set<AgentToolCapability>(uniqueCapabilities(selectedCapabilities))
 }
 
-function isAllowedByCapability(manifest: ToolManifest, selectedCapabilities: AgentToolCapability[]) {
-  if (manifest.capability === 'account' || manifest.capability === 'clarification') return true
-  const selected = selectedCapabilitySet(selectedCapabilities)
-  if (selected.size === 0) return false
-  if (selected.has(manifest.capability)) return true
-  return manifest.name === 'data_query_workspace' && [...selected].some((capability) => FACT_DEPENDENT_CAPABILITIES.has(capability))
-}
-
 function workflowPrerequisiteNames(manifests: ToolManifest[], selectedCapabilities: AgentToolCapability[]) {
   const selected = selectedCapabilitySet(selectedCapabilities)
   const prerequisites = new Set<string>()
@@ -62,6 +63,10 @@ function workflowPrerequisiteNames(manifests: ToolManifest[], selectedCapabiliti
   return prerequisites
 }
 
+export function isKernelToolName(name: string) {
+  return KERNEL_TOOL_NAME_SET.has(name)
+}
+
 export function rankToolManifests(input: {
   manifests: ToolManifest[]
   selectedCapabilities: AgentToolCapability[]
@@ -69,7 +74,7 @@ export function rankToolManifests(input: {
   message?: string
   routerReason?: string
 }): RankedToolManifest[] {
-  const allowed = input.manifests.filter((manifest) => isAllowedByCapability(manifest, input.selectedCapabilities))
+  const catalog = input.manifests
   const requiredCanonicalTools = new Set(canonicalToolNamesForCapabilities(input.requiredActionCapabilities ?? []))
   const searchQuery = [
     input.message ?? '',
@@ -77,15 +82,19 @@ export function rankToolManifests(input: {
     ...input.selectedCapabilities,
     ...(input.requiredActionCapabilities ?? []),
   ].join(' ')
-  const index = createToolSearchIndex(toolSearchDocumentsFromManifests(allowed))
+  const index = createToolSearchIndex(toolSearchDocumentsFromManifests(catalog))
   const searchHits = new Map(searchToolIndex(index, searchQuery).map((hit) => [hit.name, hit]))
   const prerequisites = workflowPrerequisiteNames(input.manifests, input.selectedCapabilities)
 
-  const ranked = allowed.map((manifest) => {
+  const ranked = catalog.map((manifest) => {
     const hit = searchHits.get(manifest.name)
     const reasons: string[] = []
     let score = hit?.score ?? 0
 
+    if (isKernelToolName(manifest.name)) {
+      score += 200
+      reasons.push('kernel_reserved')
+    }
     if (hit) {
       reasons.push('retrieval')
     }
@@ -100,6 +109,10 @@ export function rankToolManifests(input: {
     if (requiredCanonicalTools.has(manifest.name)) {
       score += 120
       reasons.push('required_action_capability')
+    }
+    if (input.requiredActionCapabilities?.includes(manifest.capability)) {
+      score += 12
+      reasons.push(`required_capability:${manifest.capability}`)
     }
     if (prerequisites.has(manifest.name)) {
       score += 5
@@ -116,6 +129,10 @@ export function rankToolManifests(input: {
     if (manifest.riskLevel === 'read') {
       score += 0.25
       reasons.push('read_first')
+    }
+    if (selectedCapabilitySet(input.selectedCapabilities).size === 0 && !isKernelToolName(manifest.name)) {
+      score -= 25
+      reasons.push('router_hint_empty_not_authority')
     }
 
     return {

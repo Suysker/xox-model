@@ -384,6 +384,30 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
         effectiveToolNames: ['workspace_patch_config'],
       })
     }
+
+    try {
+      plannerStepsFromProviderToolCalls({
+        allowedToolNames: ['data_query_workspace'],
+        materializableToolNames: ['workspace_patch_config'],
+        toolCalls: [{
+          id: 'call_0_workspace_patch_config',
+          type: 'function',
+          function: {
+            name: 'workspace_patch_config',
+            arguments: '{"patches":[]}',
+          },
+        }],
+      })
+      throw new Error('Expected deferred registered tool call to request materialization')
+    } catch (error) {
+      expect(error).toBeInstanceOf(ProviderToolCallParseError)
+      expect((error as ProviderToolCallParseError).boundaryViolation()).toMatchObject({
+        code: 'tool_call_registered_but_deferred',
+        toolName: 'workspace_patch_config',
+        toolNames: ['workspace_patch_config'],
+        effectiveToolNames: ['data_query_workspace'],
+      })
+    }
   })
 
   it('extracts only complete balanced JSON and rejects unbounded streamed pollution', () => {

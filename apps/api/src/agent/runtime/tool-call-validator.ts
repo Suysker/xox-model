@@ -7,11 +7,13 @@ import {
 export function validateProviderToolCallsForExecution(input: {
   toolCalls: unknown
   allowedToolNames: readonly string[]
+  materializableToolNames?: readonly string[]
   options?: ProviderToolCallParseOptions
 }): AgentToolCallStep[] {
   const base = {
     toolCalls: input.toolCalls,
     allowedToolNames: input.allowedToolNames,
+    materializableToolNames: input.materializableToolNames ?? [],
   }
   return plannerStepsFromProviderToolCalls(input.options ? { ...base, options: input.options } : base)
 }
