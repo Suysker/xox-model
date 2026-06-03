@@ -195,6 +195,7 @@
 - Tool discovery degraded modes must never broaden authority. Learn from OpenClaw Tool Search: a degraded mode may change the model-facing control shape, but it must reuse the same effective policy-filtered catalog; router-empty states should use a restricted surface, ask clarification, or use direct answer/read inspection rather than exposing a business-core tool set.
 - Loop readiness is not completion. Graph/policy/domain checks should be named and treated as readiness checks, while completion is reserved for a final model-authored assistant answer that passes response evaluation against evidence.
 - Sandbox evidence needs manifest-consumption proof. Real execution plus output shape is not enough; the sandbox result must prove it consumed the server-owned manifest bundle through a runtime handshake such as manifestId/bundleId/contentHash/nonce, otherwise it cannot satisfy `requiresSandboxComputation`.
+- Tool scaling must be effective-catalog-first. Build the tenant/workspace/policy-filtered executable catalog before compaction, reserve kernel observation/compute tools for Agent-goal turns, and treat capability routers as ranking/budget hints only; prompt-visible concrete tool names must match the current surface, and registered-but-deferred tool calls should materialize/replan rather than execute outside inventory.
 
 ## Testing
 
