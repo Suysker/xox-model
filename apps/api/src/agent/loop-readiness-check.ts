@@ -107,16 +107,14 @@ function evaluatePlannedOperatingModelAction(action: Row<'agent_action_requests'
 function runtimeToolSignals(runEvents: Row<'agent_run_events'>[]) {
   const selectedCapabilities = new Set<AgentToolCapability>()
   const requiredActionCapabilities = new Set<AgentToolCapability>()
-  let fallbackBusinessCore = false
   for (const event of runEvents) {
     if (event.event_type !== 'tool_catalog_ready') continue
     const data = parseJson<Record<string, unknown>>(event.data_json, {})
-    if (data.projectionStrategy === 'router_fallback_business_core') fallbackBusinessCore = true
     const selected = safeRuntimeCapabilities(data.selectedCapabilities)
     for (const capability of selected) selectedCapabilities.add(capability)
     for (const capability of safeRuntimeCapabilities(data.requiredActionCapabilities)) requiredActionCapabilities.add(capability)
   }
-  return { selectedCapabilities, requiredActionCapabilities, fallbackBusinessCore }
+  return { selectedCapabilities, requiredActionCapabilities }
 }
 
 function safeRuntimeCapabilities(value: unknown): AgentToolCapability[] {
@@ -203,19 +201,6 @@ function evaluateRuntimeToolCoverage(input: {
       severity: 'blocking',
       message: `Tool Context Engine 判定本轮需要 ${capability} 写入动作，但运行图还没有对应确认卡或执行结果。`,
       evidence: { capability },
-    }))
-  }
-
-  const hasVisibleToolOutput =
-    input.actions.length > 0 ||
-    input.planSteps.some((step) => step.tool_name && step.tool_name !== 'ask_user_clarification' && step.status !== 'failed')
-  if (signals.fallbackBusinessCore && !hasVisibleToolOutput) {
-    findings.push(finding({
-      id: 'runtime.tool_output_missing',
-      criterionId: 'graph.visible_steps',
-      severity: 'blocking',
-      message: 'Tool Context Engine 已暴露业务工具，但模型没有产生工具调用、确认卡或可验证观察结果。',
-      evidence: { projectionStrategy: 'router_fallback_business_core' },
     }))
   }
 

@@ -141,7 +141,7 @@ export async function executeDirectAnswerRun(
       channel: 'lifecycle',
       type: 'direct_answer_provider_failed',
       title: '直接回答模型调用未完成',
-      message: '模型没有返回可用的 assistant 文本，direct_answer 不使用本地语义 fallback。',
+      message: '模型没有返回可用的 assistant 文本，direct_answer 不使用本地语义替代路径。',
       status: 'failed',
       data: {
         lane: input.resolution.lane,

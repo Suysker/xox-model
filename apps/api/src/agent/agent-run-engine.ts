@@ -2,7 +2,7 @@ import type { AgentGoalStatus, AgentNavigationEvent, AgentPlannerSource } from '
 import type { Row } from '../db/schema.js'
 import type { PlannerContext } from './planning-context.js'
 import { createGoalContract, serializeEvaluation, updateGoalStatus } from './goal-contract.js'
-import { evaluateAgentGoal } from './completion-evaluator.js'
+import { evaluateAgentGoal } from './loop-readiness-check.js'
 import { buildEvidenceLedger } from './evidence-ledger.js'
 import {
   consolidateAgentMemoryCandidates,
@@ -33,14 +33,14 @@ export type AgentRunResult = {
   goalStatus: AgentGoalStatus | null
 }
 
-function evaluationSummary(evaluation: ReturnType<typeof serializeEvaluation>) {
-  if (evaluation.status === 'pass') return 'Completion Evaluator 已确认当前目标满足验收条件。'
-  if (evaluation.status === 'needs_confirmation') return 'Completion Evaluator 已暂停后续规划，等待用户处理确认卡。'
-  if (evaluation.status === 'needs_clarification') return 'Completion Evaluator 已暂停后续规划，等待用户补充信息。'
-  if (evaluation.status === 'continue') return 'Completion Evaluator 发现仍有未满足项，已准备下一轮修复规划。'
-  if (evaluation.status === 'blocked') return `Completion Evaluator 已阻断目标：${evaluation.blocker ?? '存在策略阻断。'}`
-  if (evaluation.status === 'failed') return `Completion Evaluator 判定目标失败：${evaluation.blocker ?? '存在失败步骤。'}`
-  return 'Completion Evaluator 需要补充信息。'
+function loopReadinessSummary(evaluation: ReturnType<typeof serializeEvaluation>) {
+  if (evaluation.status === 'pass') return 'Loop Readiness Check 已确认运行图可进入最终回答证据检查。'
+  if (evaluation.status === 'needs_confirmation') return 'Loop Readiness Check 已暂停后续规划，等待用户处理确认卡。'
+  if (evaluation.status === 'needs_clarification') return 'Loop Readiness Check 已暂停后续规划，等待用户补充信息。'
+  if (evaluation.status === 'continue') return 'Loop Readiness Check 发现仍有未满足项，已准备下一轮修复规划。'
+  if (evaluation.status === 'blocked') return `Loop Readiness Check 已阻断目标：${evaluation.blocker ?? '存在策略阻断。'}`
+  if (evaluation.status === 'failed') return `Loop Readiness Check 判定运行图失败：${evaluation.blocker ?? '存在失败步骤。'}`
+  return 'Loop Readiness Check 需要补充信息。'
 }
 
 type FinalAnswerDecision =
@@ -83,7 +83,7 @@ export async function executeAgentRun(
     runId: ctx.runId,
     type: 'goal_contract_created',
     title: '目标契约已建立',
-    message: 'AgentRunEngine 已建立目标契约，后续会用 Completion Evaluator 判定是否完成。',
+    message: 'AgentRunEngine 已建立目标契约，后续由 Loop Readiness Check 判断运行图是否可进入最终回答检查。',
     status: 'info',
     data: { goalId: goal.id, maxIterations: JSON.parse(goal.contract_json).maxIterations },
   })
@@ -196,7 +196,7 @@ export async function executeAgentRun(
       runId: ctx.runId,
       type: 'goal_iteration_started',
       title: `目标循环 ${iteration}`,
-      message: iteration === 1 ? '开始第一轮模型规划。' : '根据 evaluator findings 开始下一轮修复规划。',
+      message: iteration === 1 ? '开始第一轮模型规划。' : '根据 readiness findings 开始下一轮修复规划。',
       status: 'running',
       data: { goalId: goal.id, iteration },
     })
@@ -320,8 +320,8 @@ export async function executeAgentRun(
       threadId: ctx.thread.id,
       runId: ctx.runId,
       type: 'goal_evaluated',
-      title: 'Completion Evaluator 已运行',
-      message: evaluationSummary(evaluation),
+      title: 'Loop Readiness Check 已运行',
+      message: loopReadinessSummary(evaluation),
       status:
         evaluation.status === 'pass'
           ? 'running'
@@ -350,8 +350,8 @@ export async function executeAgentRun(
         threadId: ctx.thread.id,
         runId: ctx.runId,
         candidates: [evaluatorCandidate],
-        title: 'Evaluator 发现已进入记忆候选',
-        message: 'Completion Evaluator 的未满足项已作为带证据的流程记忆候选保存。',
+        title: 'Readiness 发现已进入记忆候选',
+        message: 'Loop Readiness Check 的未满足项已作为带证据的流程记忆候选保存。',
       })
     }
     if (evaluation.status === 'pass' && actionRows.length > 0) {
@@ -506,8 +506,8 @@ export async function executeAgentRun(
         threadId: ctx.thread.id,
         runId: ctx.runId,
         type: 'goal_evaluated',
-        title: 'Completion Evaluator 已运行',
-        message: evaluationSummary(evaluation),
+        title: 'Loop Readiness Check 已运行',
+        message: loopReadinessSummary(evaluation),
         status: evaluation.status === 'failed' || evaluation.status === 'blocked' ? 'failed' : 'info',
         data: {
           goalId: goal.id,

@@ -32,7 +32,7 @@ function safeToolArguments(step: RuntimePlannerStep) {
     : {}
 }
 
-function fallbackToolName(step: RuntimePlannerStep, index: number) {
+function resolvedToolName(step: RuntimePlannerStep, index: number) {
   return step.providerToolName ?? step.intent ?? `unknown_tool_${index + 1}`
 }
 
@@ -103,7 +103,7 @@ export async function superviseRuntimeToolCalls(
   const inventoryByName = new Map((input.inventorySnapshot?.tools ?? []).map((tool) => [tool.name, tool]))
 
   for (const [index, step] of input.steps.entries()) {
-    const toolName = fallbackToolName(step, index)
+    const toolName = resolvedToolName(step, index)
     const toolArguments = safeToolArguments(step)
     const inventoryTool = inventoryByName.get(toolName)
     const toolCallId = step.providerToolCallId ?? `supervised_${index}_${toolName}`

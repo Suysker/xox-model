@@ -1,9 +1,7 @@
 import type {
   AgentAutomationLevel,
   AgentToolAuthorityClass,
-  AgentToolInventoryFreshness,
   AgentToolInventorySnapshot,
-  AgentToolInventorySource,
 } from '@xox/contracts'
 import type { Settings } from '../../core/settings.js'
 import { newId } from '../../core/security.js'
@@ -20,20 +18,12 @@ export type EffectiveToolInventoryInput = {
   settings?: Settings
   provider?: string
   model?: string
-  strategy: 'full_registry' | 'model_selected_capabilities' | 'router_fallback_business_core' | 'progressive_tool_discovery'
+  strategy: 'full_registry' | 'model_selected_capabilities' | 'progressive_tool_discovery'
   toolCapabilities: AgentToolMetadata[]
   selectedCapabilities: AgentToolCapability[]
   routerReason?: string
   snapshotId?: string
   createdAt?: string
-}
-
-function inventorySource(strategy: EffectiveToolInventoryInput['strategy']): AgentToolInventorySource {
-  return strategy === 'router_fallback_business_core' ? 'business_core_fallback' : strategy
-}
-
-function inventoryFreshness(strategy: EffectiveToolInventoryInput['strategy']): AgentToolInventoryFreshness {
-  return strategy === 'router_fallback_business_core' ? 'fallback' : 'fresh'
 }
 
 export function authorityClassForTool(tool: AgentToolMetadata): AgentToolAuthorityClass {
@@ -72,8 +62,8 @@ export function buildEffectiveToolInventorySnapshot(input: EffectiveToolInventor
     provider: profile.provider,
     model: profile.requestModel,
     automationLevel: input.automationLevel,
-    source: inventorySource(input.strategy),
-    freshness: inventoryFreshness(input.strategy),
+    source: input.strategy,
+    freshness: 'fresh',
     capabilities,
     tools: input.toolCapabilities.map((tool) => ({
       name: tool.name,

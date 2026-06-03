@@ -93,4 +93,21 @@ describe('Progressive Tool Discovery Runtime', () => {
     expect(projection.toolNames).not.toContain('workspace_publish_release')
     expect(projection.discoveryTrace?.strategy).toBe('progressive_tool_discovery')
   })
+
+  it('keeps router-empty surfaces restricted instead of widening to business tools', () => {
+    const projection = buildRuntimeToolCatalogProjection({
+      selectedCapabilities: [],
+      routerReason: 'router-empty-restricted-surface',
+      message: '普通问候',
+    })
+
+    expect(projection.strategy).toBe('progressive_tool_discovery')
+    expect(projection.selectedCapabilities).toEqual([])
+    expect(projection.visibleToolNames).toEqual(expect.arrayContaining(['account_forbidden', 'ask_user_clarification']))
+    expect(projection.visibleToolNames).not.toContain('data_query_workspace')
+    expect(projection.visibleToolNames).not.toContain('workspace_patch_config')
+    expect(projection.visibleToolNames).not.toContain('ledger_create_member_income')
+    expect(projection.inventorySnapshot.source).toBe('progressive_tool_discovery')
+    expect(projection.inventorySnapshot.freshness).toBe('fresh')
+  })
 })

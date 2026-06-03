@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { projectModel } from '@xox/domain'
 import type {
   SandboxArtifactKind,
@@ -274,8 +274,11 @@ function outputKindsForExpectedOutputs(expectedOutputs: SandboxRunCodeInput['exp
 
 function buildManifest(ctx: SandboxServiceContext, input: SandboxRunCodeInput, bundle: SandboxDataBundle, toolCallId: string): SandboxManifest {
   const allowedArtifactKinds = normalizeSandboxArtifactKinds(outputKindsForExpectedOutputs(input.expectedOutputs))
+  const manifestSeed = `${ctx.workspace.id}:${ctx.runId}:${toolCallId}:${bundle.bundleId}:${bundle.contentHash}`
   return {
     schemaVersion: 1,
+    manifestId: `manifest_${shortHash(manifestSeed)}`,
+    nonce: randomBytes(16).toString('hex'),
     identity: {
       tenantId: ctx.workspace.owner_id,
       workspaceId: ctx.workspace.id,
@@ -336,6 +339,7 @@ function displayPreview(observation: SandboxObservation) {
     files: observation.dataBundleSummary.files ?? 0,
     network: observation.manifest.network.mode,
     businessWrites: observation.manifest.capabilities.businessWrites,
+    manifestConsumed: observation.manifestConsumed,
     result: observation.result.summary,
   }, null, 2)
 }
@@ -366,6 +370,9 @@ export async function runSandboxCode(ctx: SandboxServiceContext, step: RuntimePl
     structuredOutput: execution.structuredOutput,
     manifestHash: execution.manifestHash,
     inputEvidenceIds: execution.inputEvidenceIds,
+    manifestScoped: execution.manifestScoped,
+    manifestConsumed: execution.manifestConsumed,
+    ...(execution.manifestConsumption ? { manifestConsumption: execution.manifestConsumption } : {}),
     purpose: input.purpose,
     language: input.language,
     manifest,
@@ -391,9 +398,12 @@ export async function planSandboxRunCode(ctx: PlannerContext, step: RuntimePlann
     readKind: 'tool_observation',
     modelContent: JSON.stringify({
       observationType: 'sandbox_result',
-      completed: observation.status === 'completed' && observation.executionMode === 'executed' && observation.exitCode === 0,
+      completed: observation.status === 'completed' &&
+        observation.executionMode === 'executed' &&
+        observation.exitCode === 0 &&
+        observation.manifestScoped === true &&
+        observation.manifestConsumed === true,
       businessReadonly: true,
-      manifestScoped: true,
       ...observation,
     }),
     displayPreview: preview,

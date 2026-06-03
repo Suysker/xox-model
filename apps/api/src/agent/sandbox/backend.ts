@@ -49,6 +49,9 @@ export type SandboxExecutionResult = {
   resourceUsage: SandboxObservation['resourceUsage']
   manifestHash: string
   inputEvidenceIds: string[]
+  manifestScoped: true
+  manifestConsumed: boolean
+  manifestConsumption?: SandboxObservation['manifestConsumption']
   errorMessage?: string
 }
 

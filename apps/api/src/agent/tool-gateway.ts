@@ -34,7 +34,6 @@ type ToolGatewayContext = {
 export type ToolCatalogProjectionStrategy =
   | 'full_registry'
   | 'model_selected_capabilities'
-  | 'router_fallback_business_core'
   | 'progressive_tool_discovery'
 
 export type RuntimeToolCatalogProjection = {
@@ -47,6 +46,13 @@ export type RuntimeToolCatalogProjection = {
   requiredActionCapabilities: AgentToolCapability[]
   goalFacts: AgentGoalFacts
   inventorySnapshot: ReturnType<typeof buildEffectiveToolInventorySnapshot>
+  effectiveCatalog: ToolContextPack['effectiveCatalog']
+  visibleTools: ToolContextPack['visibleTools']
+  visibleToolNames: ToolContextPack['visibleToolNames']
+  deferredCatalog: ToolContextPack['deferredCatalog']
+  replayAllowedToolNames: ToolContextPack['replayAllowedToolNames']
+  autoAddedControlNames: ToolContextPack['autoAddedControlNames']
+  emptySurfaceStatus: ToolContextPack['emptySurfaceStatus'] | null
   toolDescriptors: ToolContextPack['toolDescriptors']
   discoveryTrace: ToolContextPack['discoveryTrace'] | null
   routerReason?: string
@@ -54,7 +60,6 @@ export type RuntimeToolCatalogProjection = {
 
 const ESSENTIAL_CAPABILITIES: AgentToolCapability[] = ['account', 'clarification']
 const ROUTABLE_CAPABILITIES: AgentToolCapability[] = ['data', 'draft', 'import_export', 'ledger', 'memory', 'navigation', 'sandbox', 'share', 'version']
-const BUSINESS_CORE_CAPABILITIES: AgentToolCapability[] = ROUTABLE_CAPABILITIES.filter((capability) => capability !== 'navigation')
 const ALL_CAPABILITIES = new Set<AgentToolCapability>([...ESSENTIAL_CAPABILITIES, ...ROUTABLE_CAPABILITIES])
 
 const CAPABILITY_ROUTER_SYSTEM_PROMPT = [
@@ -253,6 +258,13 @@ export function buildRuntimeToolCatalogProjection(input?: {
     requiredActionCapabilities,
     goalFacts,
     inventorySnapshot,
+    effectiveCatalog: toolContext?.effectiveCatalog ?? [],
+    visibleTools: toolContext?.visibleTools ?? entries.map((entry) => entry.tool),
+    visibleToolNames: toolContext?.visibleToolNames ?? entries.map((entry) => entry.name),
+    deferredCatalog: toolContext?.deferredCatalog ?? [],
+    replayAllowedToolNames: toolContext?.replayAllowedToolNames ?? entries.map((entry) => entry.name),
+    autoAddedControlNames: toolContext?.autoAddedControlNames ?? [],
+    emptySurfaceStatus: toolContext?.emptySurfaceStatus ?? null,
     toolDescriptors: toolContext?.toolDescriptors ?? [],
     discoveryTrace: toolContext?.discoveryTrace ?? null,
     ...(input?.routerReason ? { routerReason: redactSecretLikeContent(input.routerReason).slice(0, 300) } : {}),
@@ -309,11 +321,10 @@ async function selectCapabilitiesWithModel(ctx: ToolGatewayContext) {
         routerReason: retry.routerReason ?? 'router-retry-selected-capabilities',
       }
     : {
-        selectedCapabilities: BUSINESS_CORE_CAPABILITIES,
+        selectedCapabilities: [],
         requiredActionCapabilities: [],
         goalFacts: first.goalFacts,
-        strategy: 'router_fallback_business_core' as const,
-        routerReason: 'router-empty-fallback-business-core',
+        routerReason: 'router-empty-restricted-surface',
       }
 }
 
@@ -343,6 +354,11 @@ export async function provideRuntimeToolCatalog(ctx: ToolGatewayContext) {
       requiredActionCapabilities: projection.requiredActionCapabilities,
       goalFacts: projection.goalFacts,
       inventorySnapshot: projection.inventorySnapshot,
+      visibleToolNames: projection.visibleToolNames,
+      deferredToolNames: projection.deferredCatalog.map((manifest) => manifest.name),
+      replayAllowedToolNames: projection.replayAllowedToolNames,
+      autoAddedControlNames: projection.autoAddedControlNames,
+      emptySurfaceStatus: projection.emptySurfaceStatus,
       toolDescriptors: projection.toolDescriptors,
       discoveryTrace: projection.discoveryTrace,
       routerReason: projection.routerReason ?? null,

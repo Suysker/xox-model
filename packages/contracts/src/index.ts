@@ -281,9 +281,8 @@ export type AgentToolInventorySource =
   | 'full_registry'
   | 'model_selected_capabilities'
   | 'progressive_tool_discovery'
-  | 'business_core_fallback'
 
-export type AgentToolInventoryFreshness = 'fresh' | 'stale' | 'fallback'
+export type AgentToolInventoryFreshness = 'fresh' | 'stale'
 
 export type AgentObservationAuthority = 'ambient' | 'domain' | 'action'
 
@@ -889,6 +888,8 @@ export type SandboxCapabilityProfile = {
 
 export type SandboxManifest = {
   schemaVersion: 1
+  manifestId: string
+  nonce: string
   identity: {
     tenantId: string
     workspaceId: string
@@ -950,9 +951,17 @@ export type SandboxObservation = {
   structuredOutput: unknown
   manifestHash: string
   inputEvidenceIds: string[]
+  manifestScoped: true
+  manifestConsumed: boolean
+  manifestConsumption?: {
+    manifestId: string
+    bundleId: string
+    contentHash: string
+    nonceMatched: boolean
+  }
   purpose: string
   language: 'python' | 'javascript'
-  manifest: Pick<SandboxManifest, 'schemaVersion' | 'identity' | 'inputBundle' | 'runtime' | 'capabilities' | 'network' | 'outputPolicy'>
+  manifest: Pick<SandboxManifest, 'schemaVersion' | 'manifestId' | 'nonce' | 'identity' | 'inputBundle' | 'runtime' | 'capabilities' | 'network' | 'outputPolicy'>
   dataBundleSummary: {
     scope: string
     rows?: number

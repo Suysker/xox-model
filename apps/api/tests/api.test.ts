@@ -1395,16 +1395,15 @@ describe('xox TypeScript API', () => {
           purpose: '结合当前预测、第一位股东投入、5%通胀和5%贷款年利率计算个人预期回报',
           language: 'python',
           code: [
-            'import json, os, pathlib',
-            'payload = json.load(open(os.environ["XOX_SANDBOX_INPUT_JSON"], encoding="utf-8"))',
+            'import xox_sandbox',
+            'payload = xox_sandbox.load()',
             'data = payload["bundle"]["structured"]',
             'first = data.get("firstShareholder")',
             'profit = data.get("totalProfit", 0)',
             'investment = (first or {}).get("investmentAmount", 0) or 0',
             'loan_interest = investment * 0.05',
             'personal_roi = None if investment == 0 else (profit - loan_interest) / investment',
-            'result = {',
-            '  "schemaVersion": "xox.sandbox.result.v1",',
+            'xox_sandbox.emit({',
             '  "summary": "已完成第一位股东个人回报测算",',
             '  "structured": {',
             '    "firstShareholder": first,',
@@ -1413,8 +1412,7 @@ describe('xox TypeScript API', () => {
             '    "loanInterest": loan_interest,',
             '    "personalRoi": personal_roi',
             '  }',
-            '}',
-            'pathlib.Path(os.environ["XOX_SANDBOX_OUTPUT_DIR"], "result.json").write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")',
+            '})',
           ].join('\n'),
           dataRequest: { scope: 'workspace_summary' },
           expectedOutputs: ['json'],
@@ -1842,14 +1840,17 @@ describe('xox TypeScript API', () => {
     expect(memoryProjection.toolNames).toContain('ask_user_clarification')
     expect(memoryProjection.toolNames).not.toContain('ledger_create_entry')
 
-    const fallbackProjection = buildRuntimeToolCatalogProjection({
-      strategy: 'router_fallback_business_core',
-      selectedCapabilities: ['data', 'draft', 'import_export', 'ledger', 'memory', 'share', 'version'],
+    const restrictedProjection = buildRuntimeToolCatalogProjection({
+      selectedCapabilities: [],
+      routerReason: 'router-empty-restricted-surface',
     })
-    expect(fallbackProjection.strategy).toBe('progressive_tool_discovery')
-    expect(fallbackProjection.toolNames).toContain('data_query_workspace')
-    expect(fallbackProjection.toolNames.length).toBeLessThanOrEqual(8)
-    expect(fallbackProjection.toolNames).not.toContain('ui_navigate')
+    expect(restrictedProjection.strategy).toBe('progressive_tool_discovery')
+    expect(restrictedProjection.selectedCapabilities).toEqual([])
+    expect(restrictedProjection.toolNames).toEqual(expect.arrayContaining(['account_forbidden', 'ask_user_clarification']))
+    expect(restrictedProjection.toolNames).not.toContain('data_query_workspace')
+    expect(restrictedProjection.toolNames).not.toContain('workspace_patch_config')
+    expect(restrictedProjection.toolNames).not.toContain('ledger_create_member_income')
+    expect(restrictedProjection.emptySurfaceStatus).toBe('has_callable_tools')
   })
 
   it('projects task-relevant tools through a model-selected capability router', async () => {
@@ -5039,7 +5040,7 @@ describe('xox TypeScript API', () => {
     })
   })
 
-  it('iterates through AgentRunEngine until the Completion Evaluator verifies the repaired operating model', async () => {
+  it('iterates through AgentRunEngine until readiness and final response checks verify the repaired operating model', async () => {
     const months = Array.from({ length: 12 }, (_, index) => ({
       monthIndex: index + 1,
       events: 4,

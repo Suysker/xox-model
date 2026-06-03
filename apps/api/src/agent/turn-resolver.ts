@@ -62,7 +62,7 @@ export function resolveAfterEvaluation(input: {
     if (!input.evaluation.nextPlannerBrief) {
       return {
         type: 'failed',
-        reason: 'Completion Evaluator 要求继续，但没有给出下一轮修复 brief。',
+        reason: 'Loop Readiness Check 要求继续，但没有给出下一轮修复 brief。',
         evidence: input.evaluation.unsatisfiedCriteria.map((finding) => finding.message),
       }
     }

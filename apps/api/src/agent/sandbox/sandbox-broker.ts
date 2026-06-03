@@ -50,6 +50,14 @@ function blockedResult(input: {
     },
     manifestHash: hashJson(input.manifest),
     inputEvidenceIds: [`bundle:${input.bundle.bundleId}`, `content:${input.bundle.contentHash}`],
+    manifestScoped: true,
+    manifestConsumed: false,
+    manifestConsumption: {
+      manifestId: input.manifest.manifestId,
+      bundleId: input.bundle.bundleId,
+      contentHash: input.bundle.contentHash,
+      nonceMatched: false,
+    },
     errorMessage: input.reason,
   }
 }

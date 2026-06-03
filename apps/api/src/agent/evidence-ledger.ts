@@ -45,6 +45,8 @@ export function isExecutedSandboxEvidenceFacts(facts: Record<string, unknown>) {
     facts.executionMode === 'executed' &&
     facts.status === 'completed' &&
     facts.exitCode === 0 &&
+    facts.manifestScoped === true &&
+    facts.manifestConsumed === true &&
     facts.structuredOutput !== null &&
     facts.structuredOutput !== undefined
 }

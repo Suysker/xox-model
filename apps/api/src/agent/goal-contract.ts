@@ -29,7 +29,7 @@ function defaultCriteria(): AgentGoalContract['acceptanceCriteria'] {
     {
       id: 'graph.visible_steps',
       label: '运行图可见',
-      description: '每轮规划、只读观察、确认卡、执行和 evaluator findings 必须写入服务端运行图。',
+      description: '每轮规划、只读观察、确认卡、执行和 readiness findings 必须写入服务端运行图。',
       kind: 'action_graph',
       required: true,
     },

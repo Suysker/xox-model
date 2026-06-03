@@ -115,7 +115,7 @@ function evaluationSummary(event: AgentRunEvent) {
   if (status === 'pass') return '检查结果：本轮目标已经满足。'
   if (status === 'needs_confirmation') return '检查结果：已准备好待确认动作，需要你先处理确认卡。'
   if (status === 'continue') return `检查结果：还缺 ${unsatisfiedCount ?? 1} 个步骤，正在继续完善。`
-  if (status === 'blocked' || status === 'failed') return `检查结果：当前目标无法继续，原因是 ${event.message.replace(/^Completion Evaluator[^：]*：?/, '').trim() || '存在失败步骤'}`
+  if (status === 'blocked' || status === 'failed') return `检查结果：当前目标无法继续，原因是 ${event.message.replace(/^Loop Readiness Check[^：]*：?/, '').trim() || '存在失败步骤'}`
   return '检查结果：需要补充信息或等待下一步。'
 }
 

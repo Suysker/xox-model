@@ -39,7 +39,7 @@ describe('Tool Runtime Maturity Layer', () => {
       workspaceId: 'workspace_1',
       automationLevel: 'high',
       settings: settings(),
-      strategy: 'router_fallback_business_core',
+      strategy: 'progressive_tool_discovery',
       selectedCapabilities: ['data', 'draft'],
       snapshotId: 'snapshot_1',
       createdAt: '2026-05-30T00:00:00.000Z',
@@ -50,13 +50,13 @@ describe('Tool Runtime Maturity Layer', () => {
         { name: 'account_forbidden', capability: 'account', riskLevel: 'read', confirmationMode: 'never', navigationTarget: null },
         { name: 'memory_remember', capability: 'memory', riskLevel: 'low', confirmationMode: 'never', navigationTarget: null },
       ],
-      routerReason: 'fallback for test',
+      routerReason: 'model-selected data and draft for test',
     })
 
     expect(snapshot).toMatchObject({
       snapshotId: 'snapshot_1',
-      source: 'business_core_fallback',
-      freshness: 'fallback',
+      source: 'progressive_tool_discovery',
+      freshness: 'fresh',
       provider: 'deepseek',
       model: 'deepseek-v4-pro',
       automationLevel: 'high',

@@ -174,7 +174,7 @@ export function memoryCandidateFromEvaluatorFinding(input: {
     injectable: false,
     sourceKind: 'evaluator_result',
     key: `agent.evaluator.finding.${input.evaluation.id}`,
-    value: compactValue(`Completion Evaluator 诊断：${firstFinding}`),
+    value: compactValue(`Loop Readiness Check 诊断：${firstFinding}`),
     confidence: 0.7,
     evidenceScore: 0.45,
     evidence: {

@@ -11,6 +11,7 @@ import {
 } from '../backend.js'
 import { parseSandboxOutput } from '../result-parser.js'
 import { runSandboxProcess } from './process-runner.js'
+import { stageSandboxIo } from './staged-sandbox-io.js'
 
 function hashJson(value: unknown) {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex')
@@ -65,23 +66,13 @@ export class DockerSandboxBackend implements SandboxBackend {
     const outputDir = join(workDir, 'output')
     const inputJsonPath = join(workDir, 'input.json')
     const mountedInputJsonPath = join(workDir, 'input', 'input.json')
-    const stagedInput = {
-      schemaVersion: 'xox.sandbox.input.v1',
+    await stageSandboxIo({
+      workDir,
+      inputJsonPath,
+      mountedInputJsonPath,
       manifest: session.manifest,
-      bundle: {
-        bundleId: input.bundle.bundleId,
-        scope: input.bundle.scope,
-        fields: input.bundle.fields,
-        rows: input.bundle.rows ?? [],
-        structured: input.bundle.structured,
-        rowCount: input.bundle.rowCount ?? null,
-        fileCount: input.bundle.fileCount ?? null,
-        fileKinds: input.bundle.fileKinds ?? [],
-        contentHash: input.bundle.contentHash,
-      },
-    }
-    await writeFile(inputJsonPath, JSON.stringify(stagedInput, null, 2), 'utf8')
-    await writeFile(mountedInputJsonPath, JSON.stringify(stagedInput, null, 2), 'utf8')
+      bundle: input.bundle,
+    })
 
     const spec = dockerSpec(session.manifest.runtime.language)
     await writeFile(join(workDir, spec.scriptName), input.input.code, 'utf8')
@@ -129,6 +120,8 @@ export class DockerSandboxBackend implements SandboxBackend {
       maxArtifactCount: session.manifest.outputPolicy.maxArtifactCount,
       maxArtifactBytes: session.manifest.outputPolicy.maxArtifactBytes,
       sessionId: session.id,
+      manifest: session.manifest,
+      bundle: input.bundle,
     })
     return {
       status: processResult.status,
@@ -149,6 +142,9 @@ export class DockerSandboxBackend implements SandboxBackend {
       },
       manifestHash: hashJson(session.manifest),
       inputEvidenceIds: [`bundle:${input.bundle.bundleId}`, `content:${input.bundle.contentHash}`],
+      manifestScoped: true,
+      manifestConsumed: parsed.manifestConsumed,
+      ...(parsed.manifestConsumption ? { manifestConsumption: parsed.manifestConsumption } : {}),
       ...(processResult.status === 'failed' ? { errorMessage: processResult.stderr.slice(0, 500) || 'docker_sandbox_failed' } : {}),
       ...(processResult.status === 'timeout' ? { errorMessage: 'docker_sandbox_timeout' } : {}),
     }

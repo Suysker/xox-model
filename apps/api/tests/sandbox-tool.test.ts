@@ -143,6 +143,8 @@ describe('manifest-scoped sandbox tool', () => {
       runId: 'run_1',
     } as any, input, bundle, 'tool_call_1') as SandboxManifest
 
+    expect(manifest.manifestId).toMatch(/^manifest_/)
+    expect(manifest.nonce).toMatch(/^[0-9a-f]{32}$/)
     expect(manifest.inputBundle.readonly).toBe(true)
     expect(manifest.network).toEqual({ mode: 'disabled', allowlist: [] })
     expect(manifest.capabilities).toMatchObject({
@@ -164,17 +166,16 @@ describe('manifest-scoped sandbox tool', () => {
       purpose: '生成校验摘要',
       language: 'python',
       code: [
-        'import json, os, pathlib',
-        'payload = json.load(open(os.environ["XOX_SANDBOX_INPUT_JSON"], encoding="utf-8"))',
-        'result = {',
-        '  "schemaVersion": "xox.sandbox.result.v1",',
+        'import os',
+        'import xox_sandbox',
+        'payload = xox_sandbox.load()',
+        'xox_sandbox.emit({',
         '  "summary": "计算完成",',
         '  "structured": {',
         '    "profit": payload["bundle"]["structured"]["totalProfit"],',
         '    "secretVisible": "XOX_SANDBOX_SECRET_FOR_TEST" in os.environ',
         '  }',
-        '}',
-        'pathlib.Path(os.environ["XOX_SANDBOX_OUTPUT_DIR"], "result.json").write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")',
+        '})',
       ].join('\n'),
       dataRequest: { scope: 'workspace_summary' },
       expectedOutputs: ['json'],
@@ -202,8 +203,22 @@ describe('manifest-scoped sandbox tool', () => {
       expect(result.executionMode).toBe('executed')
       expect(result.exitCode).toBe(0)
       expect(result.backendId).toBe('local-script')
+      expect(result.manifestScoped).toBe(true)
+      expect(result.manifestConsumed).toBe(true)
+      expect(result.manifestConsumption).toMatchObject({
+        manifestId: manifest.manifestId,
+        bundleId: bundle.bundleId,
+        contentHash: bundle.contentHash,
+        nonceMatched: true,
+      })
       expect(result.structuredOutput).toMatchObject({
         schemaVersion: 'xox.sandbox.result.v1',
+        observedInput: {
+          manifestId: manifest.manifestId,
+          bundleId: bundle.bundleId,
+          contentHash: bundle.contentHash,
+          nonce: manifest.nonce,
+        },
         structured: {
           profit: 20,
           secretVisible: false,
@@ -213,6 +228,51 @@ describe('manifest-scoped sandbox tool', () => {
     } finally {
       delete process.env.XOX_SANDBOX_SECRET_FOR_TEST
     }
+  })
+
+  it('does not mark completed code as manifest-consumed without observed input proof', async () => {
+    const input: SandboxRunCodeInput = {
+      purpose: '缺少输入消费证明',
+      language: 'python',
+      code: [
+        'import json, os, pathlib',
+        'result = {',
+        '  "schemaVersion": "xox.sandbox.result.v1",',
+        '  "summary": "完成但没有消费证明",',
+        '  "structured": {"profit": 20}',
+        '}',
+        'pathlib.Path(os.environ["XOX_SANDBOX_OUTPUT_DIR"], "result.json").write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")',
+      ].join('\n'),
+      dataRequest: { scope: 'workspace_summary' },
+      expectedOutputs: ['json'],
+    }
+    const bundle = {
+      bundleId: 'bundle_unconsumed',
+      scope: 'workspace_summary' as const,
+      fields: ['grossSales', 'totalCost'],
+      rows: [{ grossSales: 100, totalCost: 80 }],
+      structured: { grossSales: 100, totalCost: 80, totalProfit: 20 },
+      rowCount: 1,
+      redactions: 0,
+      contentHash: 'hash',
+    }
+    const manifest = sandboxInternalsForTests.buildManifest({
+      workspace: { id: 'workspace_1', owner_id: 'tenant_1' },
+      user: { id: 'user_1' },
+      threadId: 'thread_1',
+      runId: 'run_1',
+    } as any, input, bundle, 'tool_call_unconsumed') as SandboxManifest
+    const result = await new SandboxBroker().execute({ manifest, toolInput: input, bundle })
+
+    expect(result.status).toBe('completed')
+    expect(result.executionMode).toBe('executed')
+    expect(result.exitCode).toBe(0)
+    expect(result.manifestScoped).toBe(true)
+    expect(result.manifestConsumed).toBe(false)
+    expect(result.structuredOutput).toMatchObject({
+      schemaVersion: 'xox.sandbox.result.v1',
+      structured: { profit: 20 },
+    })
   })
 
   it('reports a real timeout instead of fabricating sandbox success', async () => {
@@ -245,6 +305,7 @@ describe('manifest-scoped sandbox tool', () => {
     expect(result.status).toBe('timeout')
     expect(result.executionMode).toBe('executed')
     expect(result.exitCode).toBeNull()
+    expect(result.manifestConsumed).toBe(false)
     expect(result.structuredOutput).toBeNull()
   })
 
@@ -277,6 +338,7 @@ describe('manifest-scoped sandbox tool', () => {
     expect(result.status).toBe('failed')
     expect(result.executionMode).toBe('executed')
     expect(result.exitCode).not.toBe(0)
+    expect(result.manifestConsumed).toBe(false)
     expect(result.stderr).toContain('RuntimeError')
     expect(result.structuredOutput).toBeNull()
   })
@@ -311,6 +373,7 @@ describe('manifest-scoped sandbox tool', () => {
     expect(result.status).toBe('blocked')
     expect(result.executionMode).toBe('not_executed')
     expect(result.exitCode).toBeNull()
+    expect(result.manifestConsumed).toBe(false)
     expect(result.result.structured).toMatchObject({
       reason: 'business_writes_forbidden',
     })

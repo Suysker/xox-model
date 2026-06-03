@@ -68,11 +68,13 @@ export function materializeToolSchemas(input: {
   )
   const prerequisiteBusiness = business.filter((ranked) => ranked.reasons.includes('workflow_prerequisite'))
   const remainingBusiness = business.filter((ranked) => !ranked.reasons.includes('workflow_prerequisite'))
-  const essentialToKeep = essential.filter((ranked) => shouldKeepTool({
-    ranked,
-    index: 0,
-    hasBusinessCapability,
-  }))
+  const essentialToKeep = hasBusinessCapability
+    ? essential.filter((ranked) => shouldKeepTool({
+      ranked,
+      index: 0,
+      hasBusinessCapability,
+    }))
+    : essential
   const businessLimit = Math.max(0, maxTools - essentialToKeep.length)
 
   for (const [index, ranked] of prerequisiteBusiness.entries()) {

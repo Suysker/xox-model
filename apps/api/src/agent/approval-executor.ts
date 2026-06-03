@@ -17,7 +17,7 @@ import { addRunEvent, listSerializedRunEvents } from './run-events.js'
 import { addMessage } from './thread-store.js'
 import { redactSecretLikeContent } from './memory.js'
 import { executeAgentTool } from './tool-executor.js'
-import { evaluateAgentGoal } from './completion-evaluator.js'
+import { evaluateAgentGoal } from './loop-readiness-check.js'
 import { getGoalForRun, serializeEvaluation, updateGoalStatus } from './goal-contract.js'
 import { buildEvidenceLedger } from './evidence-ledger.js'
 import { evaluateAssistantResponse, responseEvaluationSummary } from './response-evaluator.js'
@@ -256,9 +256,9 @@ export async function confirmAgentActionRequest(db: Kysely<Database>, settings: 
       threadId: action.thread_id,
       runId: action.run_id,
       type: 'goal_evaluated',
-      title: 'Completion Evaluator 已复核',
+      title: 'Loop Readiness Check 已复核',
       message: evaluation.status === 'pass'
-        ? '确认卡执行后，Completion Evaluator 已确认图状态可接受，等待最终回答证据检查。'
+        ? '确认卡执行后，Loop Readiness Check 已确认运行图可进入最终回答证据检查。'
         : `确认卡执行后仍需处理：${evaluation.unsatisfiedCriteria.map((item) => item.message).join('；') || evaluation.status}`,
       status: evaluation.status === 'pass' ? 'running' : evaluation.status === 'needs_confirmation' ? 'blocked' : evaluation.status === 'failed' || evaluation.status === 'blocked' ? 'failed' : 'info',
       data: { goalId: goal.id, iteration, evaluationStatus: evaluation.status },

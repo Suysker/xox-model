@@ -1,6 +1,6 @@
 # ADR 0027: OpenClaw-Style Hard Runtime Boundaries
 
-Status: Proposed
+Status: Accepted
 
 Date: 2026-06-03
 
@@ -10,7 +10,7 @@ Refines: ADR 0016 Manifest-Scoped Sandbox Tool, ADR 0018 AgentRunEngine v2 Singl
 
 Recent real runs exposed three serious harness gaps:
 
-1. Tool discovery fallback can still become too broad.
+1. Tool discovery degraded-mode handling can still become too broad.
 2. Intermediate evaluator wording and state can imply completion before the final assistant answer exists.
 3. Sandbox execution can produce a successful observation without proving the code consumed the server-owned manifest bundle.
 
@@ -58,11 +58,11 @@ Relevant files and docs:
 
 Useful practices:
 
-- Tool Search fallback changes only the model-facing shape:
+- Tool Search degraded modes change only the model-facing shape:
   - `tool_search_code` in code mode;
-  - `tool_search`, `tool_describe`, `tool_call` in structured fallback mode.
+  - `tool_search`, `tool_describe`, `tool_call` in structured degraded mode.
 - Both modes use the same effective catalog and execution path.
-- A fallback never broadens the tool authority surface.
+- A degraded mode never broadens the tool authority surface.
 - Tool Search control tools are auto-added only by the runner, not by the general tool factory.
 - The run plan separates:
   - visible tool names;
@@ -76,8 +76,8 @@ Useful practices:
 
 Direct implication for `xox-model`:
 
-- Remove broad business fallback.
-- Keep tool discovery fallback inside the same effective catalog.
+- Remove broad business surface recovery.
+- Keep tool discovery degraded mode inside the same effective catalog.
 - Treat graph/readiness checks as loop-state input, not completion.
 - Make sandbox evidence a verified runtime contract, not an output shape.
 
@@ -179,7 +179,7 @@ Rules:
 
 - Delete `router_fallback_business_core`.
 - Router-empty or retrieval-empty states must not expose broad business tools.
-- Fallback may change model-facing shape, but not effective catalog authority.
+- Degraded mode may change model-facing shape, but not effective catalog authority.
 - If no business tool is confidently selected:
   - direct-answer lane may answer ordinary conversation;
   - `ask_user_clarification` may ask for missing information;
@@ -196,7 +196,7 @@ OpenClaw mapping:
 | `visibleAllowedToolNames` | `visibleToolNames` |
 | `replayAllowedToolNames` | provider transcript/tool-result allowlist |
 | `autoAddedControlNames` | tool discovery controls that do not mask empty catalogs |
-| same catalog for code/tools fallback | same effective catalog for direct/deferred materialization |
+| same catalog for code/tools degraded mode | same effective catalog for direct/deferred materialization |
 
 ### Boundary 2: Loop Readiness Is Not Completion
 
@@ -369,7 +369,7 @@ Changes:
 Validation:
 
 - Router empty result exposes no draft/ledger/version/share/sandbox business tools.
-- Fallback mode keeps the same effective catalog and only changes visible control shape.
+- Degraded mode keeps the same effective catalog and only changes visible control shape.
 - Provider tool call outside visible/deferred catalog fails closed and is not silently dropped.
 - `npm.cmd run test:api -- tool-context-engine`
 
@@ -377,7 +377,7 @@ Validation:
 
 Paths:
 
-- `apps/api/src/agent/completion-evaluator.ts`
+- `apps/api/src/agent/loop-readiness-check.ts`
 - `apps/api/src/agent/response-evaluator.ts`
 - `apps/api/src/agent/agent-run-engine.ts`
 - `apps/api/src/agent/turn-resolver.ts`
@@ -397,7 +397,7 @@ Validation:
 - A run with tool observations but no final assistant text cannot complete.
 - A graph readiness pass emits `ready_for_final_answer`, not `completed`.
 - Pending confirmation and clarification keep run waiting.
-- UI transcript does not display internal "Completion Evaluator satisfied" messages.
+- UI transcript does not display internal readiness-satisfied messages.
 - `npm.cmd run test:api -- response-evaluator`
 
 ### 3. Sandbox manifest consumption proof
@@ -439,7 +439,7 @@ Scenarios:
 
 - `今天是几月几号` stays in direct answer lane with no tool catalog/evaluator.
 - `我们现在有几个人` uses read-only domain observation and final assistant answer.
-- Cross-domain request with read + ledger + shareholder update uses progressive discovery, not broad fallback.
+- Cross-domain request with read + ledger + shareholder update uses progressive discovery, not broad business surface recovery.
 - ROI + inflation + bank loan task uses domain read -> sandbox with manifest consumption -> final answer -> response evaluator.
 
 Validation:
@@ -451,7 +451,7 @@ Validation:
 ## Acceptance Criteria
 
 - No production runtime path emits or stores `router_fallback_business_core`.
-- Tool discovery fallback cannot expose more tools than the effective policy-filtered catalog.
+- Tool discovery degraded mode cannot expose more tools than the effective policy-filtered catalog.
 - Invalid provider tool calls fail closed with a structured repair observation.
 - Intermediate graph/policy/domain checks do not write `goal_status=completed`.
 - User-visible "completion" language appears only after final assistant text passes response evaluation.
@@ -488,13 +488,13 @@ OpenClaw, Hermes Agent and OpenAI Agents JS should be reused at the level that f
 
 ## Migration Notes
 
-This ADR intentionally keeps the current module names in place until implementation begins. During implementation:
+Implementation replaces the old intermediate evaluator name and broad tool-surface strategy:
 
 - Introduce new names first.
 - Move call sites.
 - Delete old strategy/status names.
 - Update tests in the same commit.
-- Do not leave compatibility shims for `router_fallback_business_core` or intermediate `Completion Evaluator` completion copy.
+- Do not leave compatibility shims for `router_fallback_business_core` or intermediate completion copy.
 
 ## Open Questions
 

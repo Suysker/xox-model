@@ -1,14 +1,16 @@
 import { createHash } from 'node:crypto'
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { extname, join } from 'node:path'
-import type { SandboxArtifactKind, SandboxObservation } from '@xox/contracts'
-import type { SandboxArtifactDescriptor } from './backend.js'
+import type { SandboxArtifactKind, SandboxManifest, SandboxObservation } from '@xox/contracts'
+import type { SandboxArtifactDescriptor, SandboxDataBundle } from './backend.js'
 import { redactSecretLikeContent } from '../memory-safety.js'
 
 type ParsedSandboxOutput = {
   result: SandboxObservation['result']
   structuredOutput: unknown
   artifacts: SandboxArtifactDescriptor[]
+  manifestConsumed: boolean
+  manifestConsumption?: NonNullable<SandboxObservation['manifestConsumption']>
 }
 
 function shortHash(value: string) {
@@ -20,6 +22,47 @@ function parseJson(value: string): unknown {
     return JSON.parse(value)
   } catch {
     return null
+  }
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
+function stringField(value: unknown, key: string) {
+  const item = record(value)?.[key]
+  return typeof item === 'string' ? item : null
+}
+
+function validateManifestConsumption(input: {
+  structuredOutput: unknown
+  manifest: SandboxManifest
+  bundle: SandboxDataBundle
+}) {
+  const observedInput = record(input.structuredOutput)?.observedInput
+  const manifestId = stringField(observedInput, 'manifestId')
+  const bundleId = stringField(observedInput, 'bundleId')
+  const contentHash = stringField(observedInput, 'contentHash')
+  const nonce = stringField(observedInput, 'nonce')
+  if (!manifestId || !bundleId || !contentHash || !nonce) {
+    return { manifestConsumed: false }
+  }
+  const nonceMatched = nonce === input.manifest.nonce
+  const manifestConsumption = {
+    manifestId,
+    bundleId,
+    contentHash,
+    nonceMatched,
+  }
+  return {
+    manifestConsumed:
+      manifestId === input.manifest.manifestId &&
+      bundleId === input.bundle.bundleId &&
+      contentHash === input.bundle.contentHash &&
+      nonceMatched,
+    manifestConsumption,
   }
 }
 
@@ -105,6 +148,8 @@ export async function parseSandboxOutput(input: {
   maxArtifactCount: number
   maxArtifactBytes: number
   sessionId: string
+  manifest: SandboxManifest
+  bundle: SandboxDataBundle
 }): Promise<ParsedSandboxOutput> {
   const resultPath = join(input.outputDir, 'result.json')
   const resultText = await readFile(resultPath, 'utf8').catch(() => null)
@@ -127,5 +172,16 @@ export async function parseSandboxOutput(input: {
     maxArtifactBytes: input.maxArtifactBytes,
     sessionId: input.sessionId,
   })
-  return { result, structuredOutput, artifacts }
+  const consumption = validateManifestConsumption({
+    structuredOutput,
+    manifest: input.manifest,
+    bundle: input.bundle,
+  })
+  return {
+    result,
+    structuredOutput,
+    artifacts,
+    manifestConsumed: consumption.manifestConsumed,
+    ...(consumption.manifestConsumption ? { manifestConsumption: consumption.manifestConsumption } : {}),
+  }
 }
