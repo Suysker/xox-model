@@ -192,6 +192,9 @@
 - Agent goal completion must be evidence-first and assistant-final. CompletionEvaluator may validate graph, policy and domain state, but a run should become `completed` only after a model-authored final assistant candidate passes ResponseEvaluator against run-scoped evidence.
 - Confirmation and clarification are human interruptions, not successful final answers. Even if the model produces helpful explanatory text after action previews or clarification observations, pending cards/questions must keep the goal in waiting state instead of letting response evaluation close it.
 - Sandbox and tool results are observations for the model, not answers for the user. Derived finance questions that require computation should collect structured domain/sandbox evidence, replay it to the model, and only then evaluate the final assistant response.
+- Tool discovery fallback must never broaden authority. Learn from OpenClaw Tool Search: fallback may change the model-facing control shape, but it must reuse the same effective policy-filtered catalog; router-empty states should fail closed, ask clarification, or use direct answer/read inspection rather than exposing a business-core tool set.
+- Loop readiness is not completion. Graph/policy/domain checks should be named and treated as readiness checks, while completion is reserved for a final model-authored assistant answer that passes response evaluation against evidence.
+- Sandbox evidence needs manifest-consumption proof. Real execution plus output shape is not enough; the sandbox result must prove it consumed the server-owned manifest bundle through a runtime handshake such as manifestId/bundleId/contentHash/nonce, otherwise it cannot satisfy `requiresSandboxComputation`.
 
 ## Testing
 
