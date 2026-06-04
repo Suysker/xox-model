@@ -277,61 +277,107 @@ flowchart TD
     K --> F
 ```
 
-Expanded architecture:
+This canonical loop is the main architecture. It is intentionally small.
+
+It answers one question only:
+
+```text
+How does one Agent run move from user input to grounded final answer?
+```
+
+Do not expand every implementation collaborator into this diagram. OpenClaw and Hermes are not simple internally, but their top-level architecture stays readable because they do not mix loop, module, policy, provider repair, sandbox proof, transcript and UI storage in one graph. Their complexity is hidden behind stage-owned modules:
+
+- Hermes keeps the top loop as model -> tool calls -> tool results -> model continuation -> final response, then places tool search, code execution, registry dispatch and message repair in focused modules.
+- OpenClaw keeps the top loop as intake -> context assembly -> model inference -> tool execution -> streaming replies -> persistence, then places provider wrappers, tool search, sandbox, compaction, transcript repair and thinking replay in focused modules.
+
+`xox-model` should follow the same diagram discipline:
+
+```text
+main loop stays minimal;
+boundary contracts stay hard;
+implementation details are split into stage-level views;
+evidence remains unified.
+```
+
+### Implementation View: Tool Surface
+
+The tool-surface view explains how the model receives the right tool context. It is not the main loop.
 
 ```mermaid
 flowchart TD
-  User["User turn"] --> Lane["TurnLaneResolver"]
+  Registry["Tool Registry"] --> Effective["Effective Catalog<br/>tenant + workspace + policy + provider + runtime"]
+  Effective --> Kernel["Kernel Reserve<br/>read + compute + clarification"]
+  Effective --> LongTail["Long-tail Tools<br/>actions + versions + share + imports"]
 
-  Lane -->|direct_answer| Direct["DirectAnswerRuntime"]
-  Direct --> DirectAnswer["Assistant final answer"]
+  LongTail --> Retrieval["Hermes-style Retrieval<br/>thin docs + ranking"]
+  Kernel --> Surface["Tool Surface Plan"]
+  Retrieval --> Surface
 
-  Lane -->|agent_goal| Engine["AgentRunEngine<br/>single authoritative loop"]
-
-  Engine --> Context["ContextEngine<br/>conversation + ambient + scoped memory + domain snapshot"]
-  Engine --> Catalog["EffectiveCatalogBuilder<br/>tenant + workspace + policy + provider + runtime"]
-  Catalog --> ToolSearch["ToolContextEngine<br/>progressive disclosure + Hermes retrieval"]
-  ToolSearch --> Surface["ToolSurfacePlan<br/>concrete visible tools + materializable descriptors"]
-
-  Context --> Provider["ProviderRuntime<br/>OpenAI-compatible / Agents SDK adapter"]
-  Surface --> Provider
-
-  Provider --> Normalizer["ProviderRuntimeNormalization<br/>stream wrappers + tool-call repair + thinking replay"]
-  Normalizer --> Turn["TurnResolver<br/>assistant / tool / lifecycle"]
-
-  Turn -->|assistant text before tools| Preface["Assistant preface<br/>not final"]
-  Turn -->|tool calls| Supervisor["ToolRuntimeSupervisor"]
-  Turn -->|assistant text only| Candidate["Assistant final candidate"]
-
-  Supervisor --> Validator["ToolCallValidator<br/>visible or materializable only"]
-  Validator -->|visible| Execute["ToolExecution"]
-  Validator -->|registered deferred| Materialize["Materialize + replan<br/>no out-of-inventory execution"]
-  Validator -->|unknown| ProviderError["Fail closed<br/>provider response error"]
-
-  Execute --> Read["Domain Read Tools"]
-  Execute --> Sandbox["Manifest-Scoped SandboxBroker"]
-  Execute --> Action["AgentActionRuntime<br/>preview -> confirmation -> execution -> audit"]
-
-  Read --> Observations["Typed Observation Ledger"]
-  Sandbox --> Bundle["Runner-owned DataBundle<br/>bundleId/hash/nonce/read proof"]
-  Bundle --> Observations
-  Action --> Observations
-
-  Observations --> Engine
-  Materialize --> Engine
-  ProviderError --> Engine
-  Candidate --> Evaluator["Response + Completion Evaluator<br/>evidence-first"]
-  Observations --> Evaluator
-
-  Evaluator -->|needs facts/calculation| Engine
-  Evaluator -->|pending human input| Interrupt["Human interruption<br/>confirmation / clarification"]
-  Evaluator -->|pass| Final["Final assistant message"]
-  Evaluator -->|fail/block| Terminal["Failed or blocked with evidence"]
-
-  Final --> Transcript["Transcript Store<br/>assistant / tool / lifecycle"]
-  Supervisor --> Transcript
-  Engine --> Trace["Technical Trace<br/>internal lifecycle only"]
+  Surface --> DirectSchemas["Direct Provider Schemas"]
+  Surface --> Descriptors["Materializable Descriptors"]
+  Surface --> Prompt["Prompt Names<br/>must match runtime surface"]
 ```
+
+Rules:
+
+- build the effective catalog first;
+- retrieval and progressive disclosure are compression, not authority;
+- kernel observation/compute tools do not disappear in Agent-goal turns;
+- registered deferred tools materialize and replan, never execute outside inventory.
+
+### Implementation View: Tool Runtime
+
+The tool-runtime view explains how selected tools become observations. It is not the main loop.
+
+```mermaid
+flowchart TD
+  Call["Provider Tool Call"] --> Normalize["Provider Runtime Normalization"]
+  Normalize --> Validate["ToolCallValidator<br/>visible or materializable"]
+
+  Validate -->|visible| Dispatch["One Tool Dispatcher"]
+  Validate -->|registered deferred| Replan["Materialize + Replan"]
+  Validate -->|unknown| Fail["Fail Closed"]
+
+  Dispatch --> Read["Domain Read Tool"]
+  Dispatch --> Compute["Sandbox Compute Tool"]
+  Dispatch --> Action["Agent Action Tool"]
+
+  Read --> ReadObs["Read Observation"]
+  Compute --> ComputeObs["Sandbox Observation"]
+  Action --> ActionObs["Confirmation / Execution Observation"]
+
+  ReadObs --> Ledger["Typed Observation Ledger"]
+  ComputeObs --> Ledger
+  ActionObs --> Ledger
+```
+
+Rules:
+
+- tool results are observations, not answers;
+- all tool calls route through one supervisor/dispatcher;
+- bridge or search calls unwrap to the underlying tool in transcript and evidence;
+- writes still create editable confirmation cards before execution.
+
+### Implementation View: Sandbox Runtime
+
+The sandbox view explains how computation evidence is produced. It is not the main loop.
+
+```mermaid
+flowchart TD
+  Request["sandbox_run_code<br/>code + bundle refs"] --> Policy["Sandbox Policy<br/>authority + quotas + risk"]
+  Policy --> Bundle["Runner-owned Data Bundle<br/>manifest + evidence refs + nonce"]
+  Bundle --> Backend["Real Execution Backend<br/>local dev / docker / hosted"]
+  Backend --> Result["Execution Result<br/>status + exitCode + stdout/stderr + result.json"]
+  Result --> Proof["Manifest Consumption Proof<br/>bundleId + hash + nonce"]
+  Proof --> Observation["Sandbox Observation<br/>valid / invalid / failed"]
+```
+
+Rules:
+
+- manifest consumption is guaranteed by runtime shape, not prompt wording;
+- fake backends cannot produce valid sandbox evidence;
+- invalid sandbox observations stay invalid;
+- sandbox cannot write business state.
 
 ## Module Division
 
