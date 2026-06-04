@@ -1,6 +1,7 @@
 import type { AgentToolObservation } from './tool-observation-continuation.js'
 
 export type AgentEvidenceAuthority = 'ambient' | 'domain_read' | 'sandbox' | 'action' | 'memory'
+export type AgentEvidenceValidity = 'valid' | 'invalid'
 
 export type AgentEvidenceSource =
   | 'ambient_context'
@@ -20,11 +21,13 @@ export type AgentEvidenceItem = {
   runId: string
   threadId: string
   authority: AgentEvidenceAuthority
+  validity: AgentEvidenceValidity
   source: AgentEvidenceSource
   toolCallId?: string | null
   observationId?: string | null
   subject?: AgentEvidenceSubject
   facts: Record<string, unknown>
+  invalidReasons?: string[]
   summary?: string
   createdAt: string
 }
@@ -47,12 +50,40 @@ export function isExecutedSandboxEvidenceFacts(facts: Record<string, unknown>) {
     facts.exitCode === 0 &&
     facts.manifestScoped === true &&
     facts.manifestConsumed === true &&
+    hasManifestConsumptionProof(facts) &&
     facts.structuredOutput !== null &&
     facts.structuredOutput !== undefined
 }
 
+function hasManifestConsumptionProof(facts: Record<string, unknown>) {
+  const proof = facts.manifestConsumption
+  if (!proof || typeof proof !== 'object' || Array.isArray(proof)) return false
+  const record = proof as Record<string, unknown>
+  return typeof record.manifestId === 'string' &&
+    record.manifestId.length > 0 &&
+    typeof record.bundleId === 'string' &&
+    record.bundleId.length > 0 &&
+    typeof record.contentHash === 'string' &&
+    record.contentHash.length > 0 &&
+    record.nonceMatched === true
+}
+
+function sandboxInvalidReasons(facts: Record<string, unknown>) {
+  const reasons: string[] = []
+  if (facts.observationType !== 'sandbox_result') reasons.push('sandbox_result_missing')
+  if (facts.executionMode !== 'executed') reasons.push('sandbox_not_executed')
+  if (facts.status !== 'completed') reasons.push('sandbox_not_completed')
+  if (facts.exitCode !== 0) reasons.push('sandbox_exit_not_zero')
+  if (facts.manifestScoped !== true) reasons.push('sandbox_not_manifest_scoped')
+  if (facts.manifestConsumed !== true) reasons.push('sandbox_manifest_not_consumed')
+  if (!hasManifestConsumptionProof(facts)) reasons.push('sandbox_manifest_consumption_proof_missing')
+  if (facts.structuredOutput === null || facts.structuredOutput === undefined) reasons.push('sandbox_structured_output_missing')
+  return reasons.length > 0 ? reasons : ['sandbox_evidence_invalid']
+}
+
 function observationAuthority(observation: AgentToolObservation): AgentEvidenceAuthority {
   const content = parseObservationContent(observation.modelContent)
+  if (observation.toolName === 'sandbox_run_code') return 'sandbox'
   if (isExecutedSandboxEvidenceFacts(content)) return 'sandbox'
   if (content.observationType === 'action_result' || content.observationType === 'action_preview') return 'action'
   if (observation.toolName === 'memory_search' || observation.toolName === 'memory_remember') return 'memory'
@@ -66,6 +97,12 @@ function observationSource(observation: AgentToolObservation, authority: AgentEv
   if (observation.toolName === 'sandbox_run_code') return 'sandbox_run_code'
   if (observation.toolName === 'data_query_workspace') return 'data_query_workspace'
   return 'data_query_workspace'
+}
+
+function evidenceValidity(observation: AgentToolObservation, authority: AgentEvidenceAuthority, facts: Record<string, unknown>) {
+  if (authority === 'sandbox') return isExecutedSandboxEvidenceFacts(facts) ? 'valid' : 'invalid'
+  if (observation.status === 'failed' || observation.status === 'cancelled') return 'invalid'
+  return 'valid'
 }
 
 function evidenceSubject(facts: Record<string, unknown>, authority: AgentEvidenceAuthority): AgentEvidenceSubject | undefined {
@@ -96,17 +133,20 @@ export function evidenceFromToolObservation(input: {
 }): AgentEvidenceItem {
   const facts = parseObservationContent(input.observation.modelContent)
   const authority = observationAuthority(input.observation)
+  const validity = evidenceValidity(input.observation, authority, facts)
   const subject = evidenceSubject(facts, authority)
   return {
     id: `${input.runId}:evidence:${input.index + 1}`,
     runId: input.runId,
     threadId: input.threadId,
     authority,
+    validity,
     source: observationSource(input.observation, authority),
     toolCallId: input.observation.toolCallId,
     observationId: input.observation.toolCallId,
     ...(subject ? { subject } : {}),
     facts,
+    ...(validity === 'invalid' && authority === 'sandbox' ? { invalidReasons: sandboxInvalidReasons(facts) } : {}),
     summary: evidenceSummary(input.observation, facts),
     createdAt: input.now ?? new Date().toISOString(),
   }
@@ -144,9 +184,11 @@ export function evidenceForModel(items: AgentEvidenceItem[]) {
   return items.map((item) => ({
     id: item.id,
     authority: item.authority,
+    validity: item.validity,
     source: item.source,
     subject: item.subject,
     summary: item.summary,
+    invalidReasons: item.invalidReasons,
     facts: item.facts,
   }))
 }

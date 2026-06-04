@@ -55,7 +55,20 @@ function isCompletedObservation(observation: AgentToolObservation) {
 }
 
 function hasCompletedSandboxEvidence(evidence: AgentEvidenceItem[]) {
-  return evidence.some((item) => item.authority === 'sandbox' && isExecutedSandboxEvidenceFacts(item.facts))
+  return evidence.some((item) =>
+    item.authority === 'sandbox' &&
+    item.validity === 'valid' &&
+    isExecutedSandboxEvidenceFacts(item.facts))
+}
+
+function sandboxEvidenceItems(evidence: AgentEvidenceItem[]) {
+  return evidence.filter((item) => item.authority === 'sandbox' || item.source === 'sandbox_run_code')
+}
+
+function invalidSandboxEvidenceItems(evidence: AgentEvidenceItem[]) {
+  return sandboxEvidenceItems(evidence).filter((item) =>
+    item.validity !== 'valid' ||
+    !isExecutedSandboxEvidenceFacts(item.facts))
 }
 
 export function evaluateAssistantResponse(input: {
@@ -122,26 +135,39 @@ export function evaluateAssistantResponse(input: {
     }
   }
 
-  if (facts.requiresSandboxComputation) {
+  const sandboxEvidence = sandboxEvidenceItems(input.evidence)
+  const requiresSandboxEvidence = facts.requiresSandboxComputation || sandboxEvidence.length > 0
+
+  if (requiresSandboxEvidence) {
     requiredEvidence.push({
       authority: 'sandbox',
       subject: 'calculation',
-      reason: '目标契约要求可复核的派生计算。',
+      reason: facts.requiresSandboxComputation
+        ? '目标契约要求可复核的派生计算。'
+        : '本轮轨迹已调用 sandbox_run_code，最终回答必须基于有效沙箱 observation。',
     })
     const completedSandbox = hasCompletedSandboxEvidence(input.evidence)
     if (!completedSandbox) {
+      const invalidSandbox = invalidSandboxEvidenceItems(input.evidence)
+      const code = invalidSandbox.length > 0
+        ? 'response.sandbox_evidence_invalid'
+        : 'response.sandbox_evidence_missing'
       findings.push({
         severity: 'fail',
-        code: 'response.sandbox_evidence_missing',
-        evidenceIds: input.evidence.filter((item) => item.authority === 'sandbox').map((item) => item.id),
-        message: '最终回答依赖派生计算，但本轮还没有完成的 sandbox_run_code evidence。',
+        code,
+        evidenceIds: (invalidSandbox.length > 0 ? invalidSandbox : sandboxEvidence).map((item) => item.id),
+        message: invalidSandbox.length > 0
+          ? '本轮 sandbox_run_code observation 缺少真实执行、结构化输出或 manifest consumption proof，不能作为计算 evidence。'
+          : '最终回答依赖派生计算，但本轮还没有完成的 sandbox_run_code evidence。',
       })
       return {
         status: 'needs_calculation',
         confidence: 0.96,
         requiredEvidence,
         findings,
-        nextPlannerBrief: '继续调用 sandbox_run_code，用当前工作区事实完成可复核计算，再生成最终回答。',
+        nextPlannerBrief: invalidSandbox.length > 0
+          ? '重新调用 sandbox_run_code，必须通过真实执行并消费当前 manifest bundle，得到结构化计算 evidence 后再生成最终回答。'
+          : '继续调用 sandbox_run_code，用当前工作区事实完成可复核计算，再生成最终回答。',
       }
     }
 

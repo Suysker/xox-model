@@ -188,7 +188,14 @@ describe('Agent response evaluator', () => {
     ]
     const evidence = buildEvidenceLedger({ threadId: 'thread_1', runId: 'run_1', observations })
 
-    expect(evidence.some((item) => item.authority === 'sandbox')).toBe(false)
+    expect(evidence).toEqual([
+      expect.objectContaining({
+        authority: 'sandbox',
+        validity: 'invalid',
+        source: 'sandbox_run_code',
+        invalidReasons: expect.arrayContaining(['sandbox_not_executed']),
+      }),
+    ])
     expect(evaluateAssistantResponse({
       goal: goal({ requiresSandboxComputation: true }),
       finalAssistantText: '沙箱已经算完。',
@@ -196,7 +203,7 @@ describe('Agent response evaluator', () => {
       evidence,
     })).toMatchObject({
       status: 'needs_calculation',
-      findings: [expect.objectContaining({ code: 'response.sandbox_evidence_missing' })],
+      findings: [expect.objectContaining({ code: 'response.sandbox_evidence_invalid' })],
     })
   })
 
@@ -223,7 +230,17 @@ describe('Agent response evaluator', () => {
     ]
     const evidence = buildEvidenceLedger({ threadId: 'thread_1', runId: 'run_1', observations })
 
-    expect(evidence.some((item) => item.authority === 'sandbox')).toBe(false)
+    expect(evidence).toEqual([
+      expect.objectContaining({
+        authority: 'sandbox',
+        validity: 'invalid',
+        source: 'sandbox_run_code',
+        invalidReasons: expect.arrayContaining([
+          'sandbox_manifest_not_consumed',
+          'sandbox_manifest_consumption_proof_missing',
+        ]),
+      }),
+    ])
     expect(evaluateAssistantResponse({
       goal: goal({ requiresSandboxComputation: true }),
       finalAssistantText: '沙箱已经算完。',
@@ -231,7 +248,47 @@ describe('Agent response evaluator', () => {
       evidence,
     })).toMatchObject({
       status: 'needs_calculation',
-      findings: [expect.objectContaining({ code: 'response.sandbox_evidence_missing' })],
+      findings: [expect.objectContaining({ code: 'response.sandbox_evidence_invalid' })],
+    })
+  })
+
+  it('derives sandbox evidence obligation from the actual tool trajectory even when goal facts are missing', () => {
+    const observations = [
+      observation({
+        title: '受控沙箱执行完成',
+        toolName: 'sandbox_run_code',
+        toolCallId: 'call_sandbox',
+        modelContent: JSON.stringify({
+          observationType: 'sandbox_result',
+          completed: true,
+          status: 'completed',
+          executionMode: 'executed',
+          exitCode: 0,
+          manifestScoped: true,
+          manifestConsumed: true,
+          structuredOutput: {
+            schemaVersion: 'xox.sandbox.result.v1',
+            structured: { answer: 1 },
+          },
+        }),
+      }),
+    ]
+    const evidence = buildEvidenceLedger({ threadId: 'thread_1', runId: 'run_1', observations })
+
+    expect(evidence[0]).toMatchObject({
+      authority: 'sandbox',
+      validity: 'invalid',
+      source: 'sandbox_run_code',
+      invalidReasons: expect.arrayContaining(['sandbox_manifest_consumption_proof_missing']),
+    })
+    expect(evaluateAssistantResponse({
+      goal: goal(),
+      finalAssistantText: '沙箱已经算完。',
+      observations,
+      evidence,
+    })).toMatchObject({
+      status: 'needs_calculation',
+      findings: [expect.objectContaining({ code: 'response.sandbox_evidence_invalid' })],
     })
   })
 })

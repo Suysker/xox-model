@@ -756,6 +756,36 @@ Real-provider smoke remains opt-in and must use user-provided tenant provider se
 - No production regex/keyword semantic router is introduced.
 - Docs and tests identify which OpenClaw/Hermes/OpenAI Agents JS patterns are reused and which are intentionally excluded for SaaS safety.
 
+## Implemented Slice: 2026-06-05
+
+This implementation pass completed the Phase 2 evidence hardening slice and added one Phase 6 regression.
+
+Edited paths:
+
+- `apps/api/src/agent/evidence-ledger.ts`
+- `apps/api/src/agent/response-evaluator.ts`
+- `apps/api/tests/response-evaluator.test.ts`
+- `apps/api/tests/api.test.ts`
+
+Changes:
+
+- `AgentEvidenceItem` now carries `validity`.
+- Any `sandbox_run_code` observation stays `authority=sandbox` / `source=sandbox_run_code`; invalid sandbox observations are no longer downgraded to `domain_read`.
+- Valid sandbox evidence now requires real execution, completed status, zero exit code, manifest scope, structured output, `manifestConsumed=true`, and a concrete `manifestConsumption` proof with `manifestId`, `bundleId`, `contentHash`, and `nonceMatched=true`.
+- `ResponseEvaluator` derives the sandbox evidence obligation from both structured goal facts and the actual run trajectory. If a run called `sandbox_run_code`, the final assistant answer cannot pass on an invalid sandbox observation even when `goalFacts.requiresSandboxComputation` was missing.
+- Invalid sandbox evidence produces `response.sandbox_evidence_invalid` and a repair brief instead of being treated as a normal read.
+
+Added regression coverage:
+
+- unit coverage for invalid sandbox validity and missing manifest proof;
+- API coverage for an invalid real sandbox execution that omits manifest consumption proof and must not complete the run even without router-provided goal facts.
+
+Not completed in this slice:
+
+- Phase 3's sandbox input contract reshape from large code arguments to smaller bundle/evidence refs;
+- broader provider-runtime repair refactors;
+- full real-provider smoke across DeepSeek/Qwen/Kimi/GLM/Doubao/Gemini/GPT/Claude-compatible paths.
+
 ## Non-Goals
 
 - Do not rebuild xox-model into OpenClaw.

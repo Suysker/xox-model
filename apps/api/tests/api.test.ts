@@ -1463,6 +1463,58 @@ describe('xox TypeScript API', () => {
     })
   })
 
+  it('keeps invalid sandbox observations from completing the run even without router goal facts', async () => {
+    let planningCalls = 0
+    await withFakeOpenAICompatibleProvider((body) => {
+      planningCalls += 1
+      if (planningCalls === 1) {
+        expectProviderTools(body, ['sandbox_run_code'])
+        return fakeToolResponse('sandbox_run_code', {
+          purpose: '计算一个需要可复核沙箱证据的派生结果',
+          language: 'python',
+          code: [
+            'import json, os, pathlib',
+            'result = {',
+            '  "schemaVersion": "xox.sandbox.result.v1",',
+            '  "summary": "完成但没有 manifest 消费证明",',
+            '  "structured": {"answer": 2}',
+            '}',
+            'pathlib.Path(os.environ["XOX_SANDBOX_OUTPUT_DIR"], "result.json").write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")',
+          ].join('\n'),
+          dataRequest: { scope: 'workspace_summary' },
+          expectedOutputs: ['json'],
+        })
+      }
+      return fakeAssistantTextResponse('结果是 2。')
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-invalid-sandbox-evidence', {
+        ...fakeProviderSettings(baseUrl),
+        agentProviderRequestTimeoutMs: 10_000,
+      })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-invalid-sandbox-evidence@example.com')
+
+      const response = await client.post('/api/v1/agent/messages', {
+        message: '请用沙箱做一次可复核计算，告诉我 1+1 的结果。',
+      })
+
+      expect(response.statusCode).toBe(200)
+      const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
+      const responseEvaluations = state.json.runEvents.filter((event: any) => event.type === 'response_evaluated')
+      expect(responseEvaluations.some((event: any) =>
+        event.data?.evaluationStatus === 'needs_calculation' &&
+        event.data?.findings?.some((finding: any) => finding.code === 'response.sandbox_evidence_invalid') &&
+        event.data?.evidence?.some((item: any) => item.authority === 'sandbox' && item.source === 'sandbox_run_code'),
+      )).toBe(true)
+      expect(state.json.goals.at(-1).status).toBe('failed')
+      expect(state.json.messages.at(-1).content).toContain('这轮没有完成所有目标')
+      await closeHarness(harness)
+    }, {
+      capabilities: ['sandbox'],
+      observationContinuationResponse: false,
+    })
+  })
+
   it('resumes a clarification turn and completes the missing cross-domain action without duplicating prior cards', async () => {
     let phase: 'initial' | 'resume' = 'initial'
     let initialPlanningCalls = 0
