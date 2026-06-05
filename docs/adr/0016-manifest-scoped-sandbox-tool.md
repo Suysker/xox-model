@@ -1,6 +1,6 @@
 # ADR 0016: Manifest-Scoped Sandbox Tool
 
-Status: Accepted, refined by ADR 0026
+Status: Accepted, refined by ADR 0026 and ADR 0030
 
 Date: 2026-05-29
 
@@ -149,7 +149,7 @@ As of 2026-06-03, the core harness boundary is implemented in the TypeScript API
 - `apps/api/src/agent/sandbox-file-adapters.ts` owns typed file kind normalization and deterministic file safety checks for common business formats.
 - Sandbox output is returned as a `tool_observation`, so the model must continue and author the final user answer or choose ordinary write tools that create editable confirmation cards.
 
-ADR 0026 removed the prior non-executing backend from production runtime. A sandbox-required calculation can pass only with `executionMode=executed`, `status=completed`, `exitCode=0` and parseable structured output.
+ADR 0026 removed the prior non-executing backend from production runtime. ADR 0030 further refines sandbox success semantics: a sandbox-required calculation must come from real execution with a model-readable observation; parseable structured output is preferred for UI and deterministic follow-up, but it is not the only valid way for the model to reason from code output.
 
 ## Scope
 

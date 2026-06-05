@@ -1,10 +1,12 @@
 # ADR 0026: Real Manifest-Scoped Sandbox Runtime
 
-Status: Proposed
+Status: Proposed, refined by ADR 0030
 
 Date: 2026-06-03
 
 Refines: ADR 0016 Manifest-Scoped Sandbox Tool, ADR 0018 AgentRunEngine v2 Single-Loop Harness, ADR 0020 Progressive Tool Discovery Runtime, ADR 0023 OpenClaw-Style Converged Single-Loop Harness, ADR 0025 OpenClaw-Style Evidence-First Response Loop
+
+Refined by: ADR 0030 OpenClaw/Hermes-Style Sandbox Observation Runtime
 
 ## Context
 
@@ -206,7 +208,8 @@ requiresSandboxComputation can pass only if:
 executionMode == executed
 status == completed
 exitCode == 0
-structuredOutput is parseable and relevant to the final answer
+the sandbox observation contains stdout, parsed output or artifacts that are available to the model
+the final assistant answer is produced after that observation and is grounded in it
 ```
 
 There is no `simulated` execution mode in production runtime contracts. `not_executed` is allowed only for honest pre-execution policy blocks and can never satisfy `requiresSandboxComputation`. Manifest-only tests should mock the broker response or use test-local fixtures that cannot be appended to the evidence ledger as `authority=sandbox`.
@@ -232,7 +235,7 @@ The preferred structured output is:
 }
 ```
 
-If `result.json` is absent, the parser may attempt to parse stdout as JSON. Otherwise stdout is treated as raw output and cannot satisfy structured calculation requirements by itself.
+If `result.json` is absent, the parser may attempt to parse stdout as JSON. Otherwise stdout is preserved as raw model-readable output. ADR 0030 separates model-readable calculation grounding from structured UI/evidence extraction; raw stdout can ground a final model answer, while structured output remains preferred for tables, artifacts and deterministic follow-up actions.
 
 ## Module Division
 
