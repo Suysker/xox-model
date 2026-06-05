@@ -4,6 +4,7 @@
 
 - On Windows PowerShell, prefer `npm.cmd` instead of `npm` because execution policies can block `npm.ps1`.
 - In this repo, pass Vite `--host/--port` flags from `apps/web` or after `--`. Forwarding them through the root workspace script without `--` makes `npm` eat the flags and Vite falls back to localhost/IPv6-only binding.
+- After the TypeScript API migration, a `5173/api/...` 404 with `server: uvicorn` means an old Python API is still occupying port 8000. Stop the lingering uvicorn/python child before starting `npm.cmd run dev:api`, otherwise Vite proxies to the obsolete backend and Agent routes appear missing.
 - After migrating the API to a Node workspace, keep root scripts as npm workspace commands (`dev:api`, `build:api`, `test:api`) and remove Python install/test paths from docs and deploy scripts in the same change.
 
 ## Deployment
