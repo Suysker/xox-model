@@ -1,4 +1,9 @@
-import type { RuntimeAdapter, RuntimePlanningInput, RuntimePlanResult } from './runtime-adapter.js'
+import type {
+  RuntimeAdapter,
+  RuntimePlanningInput,
+  RuntimePlanResult,
+  ToolCallBoundaryViolationCode,
+} from './runtime-adapter.js'
 import type { AgentToolCallStep } from '../tool-catalog.js'
 import { classifyProviderHttpError, providerRejectsToolChoice, safeProviderErrorMessage } from './provider-error-classifier.js'
 import { shapeOpenAICompatibleChatRequest } from './provider-request-shaper.js'
@@ -224,6 +229,7 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
     let buffer = ''
     let content = ''
     let reasoningContent = ''
+    let finishReason: string | undefined
     const { capability } = providerRuntimeContext(input, profile)
     const toolAssembler = new ToolCallStreamAssembler()
     const toolTraceState = new Map<number, { argumentLength: number; flushedAt: number; emittedName: boolean }>()
@@ -281,12 +287,57 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
       })
     }
 
+    const emitToolFrameDamage = async (error: ProviderToolCallParseError) => {
+      const boundary = error.boundaryViolation()
+      if (!boundary) return
+      const toolNameSet = new Set(error.toolNames)
+      for (const frame of toolAssembler.toFrames({
+        provider: input.settings.openaiCompatibleProvider,
+        model: input.settings.openaiCompatibleModel,
+        ...(finishReason ? { finishReason } : {}),
+      })) {
+        const frameToolName = frame.name ?? frame.providerCallId ?? frame.id
+        if (toolNameSet.size > 0 && !toolNameSet.has(frameToolName)) continue
+        await input.onStreamEvent?.({
+          kind: 'tool_call_damage',
+          toolCallIndex: frame.index,
+          ...(frame.name ? { toolName: frame.name } : {}),
+          boundaryCode: boundary.code,
+          message: error.message,
+          retryable:
+            boundary.code === 'tool_call_arguments_truncated' ||
+            boundary.code === 'tool_call_arguments_invalid' ||
+            boundary.code === 'tool_call_stream_interrupted',
+        })
+      }
+    }
+
+    const providerToolCallParseError = (inputError: {
+      message: string
+      boundaryCode: ToolCallBoundaryViolationCode
+      toolName?: string
+    }) => {
+      const toolNames = inputError.toolName
+        ? [inputError.toolName]
+        : toolAssembler.toolNames()
+      return new ProviderToolCallParseError(
+        inputError.message,
+        toolNames,
+        inputError.toolName ?? toolNames[0],
+        inputError.boundaryCode,
+        allowedToolNames(input),
+      )
+    }
+
     const handleRecord = async (record: string) => {
       const data = sseDataFromRecord(record)
       if (!data || data === '[DONE]') return
       const parsed = JSON.parse(data) as any
       const choices = Array.isArray(parsed?.choices) ? parsed.choices : []
       for (const choice of choices) {
+        if (typeof choice?.finish_reason === 'string' && choice.finish_reason.length > 0) {
+          finishReason = choice.finish_reason
+        }
         const delta = choice?.delta
         if (!delta || typeof delta !== 'object') continue
         if (typeof delta.content === 'string' && delta.content.length > 0) {
@@ -313,6 +364,16 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
         if (error instanceof Error && error.message.includes('timed out')) {
           throw new ProviderTimeoutError(`Provider stream timed out after ${requestTimeoutMs}ms`, toolAssembler.toolNames())
         }
+        if (toolAssembler.count() > 0) {
+          const streamError = providerToolCallParseError({
+            message: error instanceof Error
+              ? `Provider stream interrupted while assembling tool calls: ${error.message}`
+              : 'Provider stream interrupted while assembling tool calls.',
+            boundaryCode: 'tool_call_stream_interrupted',
+          })
+          await emitToolFrameDamage(streamError)
+          throw streamError
+        }
         throw error
       }
       const { done, value } = chunk
@@ -336,6 +397,21 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
       contentLength: content.length,
       toolCallCount: toolAssembler.count(),
     })
+
+    const damagedFrame = toolAssembler.toFrames({
+      provider: input.settings.openaiCompatibleProvider,
+      model: input.settings.openaiCompatibleModel,
+      ...(finishReason ? { finishReason } : {}),
+    }).find((frame) => frame.damage)
+    if (damagedFrame?.damage) {
+      const frameError = providerToolCallParseError({
+        message: damagedFrame.damage.message,
+        boundaryCode: damagedFrame.damage.kind,
+        ...(damagedFrame.name ? { toolName: damagedFrame.name } : {}),
+      })
+      await emitToolFrameDamage(frameError)
+      throw frameError
+    }
 
     const normalizedToolCalls = toolAssembler.toProviderToolCalls()
     const assistantMessage = providerAssistantMessage(input, profile, {
@@ -365,14 +441,19 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
         },
       })
     } catch (error) {
-      if (error instanceof ProviderToolCallParseError) throw error
+      if (error instanceof ProviderToolCallParseError) {
+        await emitToolFrameDamage(error)
+        throw error
+      }
       const toolNames = normalizedToolCalls
         .map((toolCall) => toolCall.function?.name)
         .filter((name): name is string => typeof name === 'string' && name.length > 0)
-      throw new ProviderToolCallParseError(
+      const wrapped = new ProviderToolCallParseError(
         error instanceof Error ? error.message : String(error),
         [...new Set(toolNames)],
       )
+      await emitToolFrameDamage(wrapped)
+      throw wrapped
     }
     if (toolSteps.length > 0) return withProviderState({ source: SOURCE, steps: toolSteps }, assistantMessage, artifact)
     const assistantText = content.trim()

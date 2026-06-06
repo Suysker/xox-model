@@ -53,6 +53,16 @@ function runtimeStreamEventPayload(event: RuntimeStreamEvent): Record<string, un
       trailingChars: event.trailingChars,
     }
   }
+  if (event.kind === 'tool_call_damage') {
+    return {
+      kind: event.kind,
+      toolCallIndex: event.toolCallIndex,
+      ...(event.toolName ? { toolName: safeProviderStreamValue(event.toolName, 120) } : {}),
+      boundaryCode: event.boundaryCode,
+      message: safeProviderStreamValue(event.message, PROVIDER_STREAM_PREVIEW_LIMIT),
+      retryable: event.retryable,
+    }
+  }
   return {
     kind: event.kind,
     contentLength: event.contentLength,
@@ -119,6 +129,20 @@ export async function addRuntimeStreamRunEvent(ctx: RuntimeTraceContext, event: 
       title: '工具调用参数已修复',
       message: `${data.toolName} 的流式参数包含 provider 污染片段，已在有界范围内提取完整 JSON。`,
       status: 'info',
+      data,
+    })
+    return
+  }
+  if (event.kind === 'tool_call_damage') {
+    const toolName = typeof data.toolName === 'string' ? data.toolName : '工具调用'
+    await addRunEvent(ctx.db, {
+      threadId: ctx.threadId,
+      runId: ctx.runId,
+      type: 'provider_tool_call_damage',
+      channel: 'tool',
+      title: '工具调用帧不可执行',
+      message: `${toolName}: ${data.message}`,
+      status: event.retryable ? 'running' : 'failed',
       data,
     })
     return

@@ -360,6 +360,10 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
       expect(error).toBeInstanceOf(ProviderToolCallParseError)
       expect((error as ProviderToolCallParseError).failedToolName).toBe('workspace_configure_operating_model')
       expect((error as ProviderToolCallParseError).toolNames[0]).toBe('workspace_configure_operating_model')
+      expect((error as ProviderToolCallParseError).boundaryViolation()).toMatchObject({
+        code: 'tool_call_arguments_truncated',
+        toolName: 'workspace_configure_operating_model',
+      })
     }
 
     try {
@@ -526,6 +530,21 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
         toolNames: ['data_query_workspace'],
       },
     })).toBe(false)
+
+    expect(shouldRetryRuntimePlan({
+      source: 'openai_compatible_tool_calls',
+      steps: [],
+      error: {
+        kind: 'provider_response_error',
+        toolCallBoundary: {
+          code: 'tool_call_arguments_truncated',
+          toolName: 'sandbox_run_code',
+          toolNames: ['sandbox_run_code'],
+          effectiveToolNames: ['sandbox_run_code', 'data_query_workspace'],
+        },
+        toolNames: ['sandbox_run_code'],
+      },
+    })).toBe(true)
   })
 
   it('preserves provider-authored preface text on non-stream tool-call responses', async () => {
@@ -613,6 +632,48 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
     }
   })
 
+  it('repairs streamed tool names from provider call ids before frame damage checks', async () => {
+    const originalFetch = globalThis.fetch
+    const encoder = new TextEncoder()
+    const event = {
+      choices: [{
+        delta: {
+          tool_calls: [{
+            index: 0,
+            id: 'call_0_ledger_create_member_income',
+            type: 'function',
+            function: {
+              arguments: JSON.stringify({ monthLabel: '5月', memberName: '成员 A', onlineUnits: 10 }),
+            },
+          }],
+        },
+      }],
+    }
+    globalThis.fetch = (async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`))
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+        controller.close()
+      },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    })) as typeof fetch
+
+    try {
+      const result = await new OpenAICompatibleChatAdapter().plan(runtimeInput('deepseek', 'deepseek-v4-pro'))
+      expect(result?.error).toBeUndefined()
+      expect(result?.steps).toHaveLength(1)
+      expect(result?.steps[0]).toEqual(expect.objectContaining({
+        intent: 'ledger.create_member_income',
+        memberName: '成员 A',
+        onlineUnits: 10,
+      }))
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
   it('reports incomplete streamed sandbox arguments as a provider tool-call parse failure', async () => {
     const originalFetch = globalThis.fetch
     const encoder = new TextEncoder()
@@ -643,15 +704,29 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
     })) as typeof fetch
 
     try {
+      const streamEvents: any[] = []
       const result = await new OpenAICompatibleChatAdapter().plan({
         ...runtimeInput('deepseek', 'deepseek-v4-pro', [tool('sandbox_run_code')]),
         stream: true,
+        onStreamEvent: (event) => {
+          streamEvents.push(event)
+        },
       })
       expect(result?.steps).toHaveLength(0)
       expect(result?.error).toMatchObject({
         kind: 'provider_response_error',
         toolNames: ['sandbox_run_code'],
+        toolCallBoundary: {
+          code: 'tool_call_arguments_truncated',
+          toolName: 'sandbox_run_code',
+        },
       })
+      expect(streamEvents).toContainEqual(expect.objectContaining({
+        kind: 'tool_call_damage',
+        toolName: 'sandbox_run_code',
+        boundaryCode: 'tool_call_arguments_truncated',
+        retryable: true,
+      }))
     } finally {
       globalThis.fetch = originalFetch
     }

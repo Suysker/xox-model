@@ -5023,7 +5023,7 @@ describe('xox TypeScript API', () => {
       expect(response.json.actionRequests).toHaveLength(0)
       expect(response.json.planSteps.some((step: any) =>
         step.status === 'failed' &&
-        String(step.title).includes('模型响应格式不可用'),
+        String(step.title).includes('工具调用未形成可执行参数'),
       )).toBe(true)
       await closeHarness(harness)
     }, {

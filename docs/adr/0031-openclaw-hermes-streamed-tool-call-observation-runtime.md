@@ -1,6 +1,6 @@
 # ADR 0031: OpenClaw/Hermes Streamed Tool-Call Observation Runtime
 
-Status: Proposed
+Status: Accepted / Implemented
 
 Date: 2026-06-07
 
@@ -735,6 +735,44 @@ Validation:
   - malformed JSON tool args;
   - missing tool observation replay repair;
   - direct-answer date/time lane.
+
+## Implementation Notes
+
+Implemented in this change:
+
+- `apps/api/src/agent/runtime/tool-call-stream-assembler.ts`
+  - Adds provider-neutral `ToolCallFrame` status and damage metadata.
+  - Uses the existing OpenClaw-inspired balanced JSON boundary to distinguish complete, truncated, malformed and aborted frames.
+- `apps/api/src/agent/runtime/tool-call-repair.ts`
+  - Classifies provider argument parse failures as `tool_call_arguments_truncated` or `tool_call_arguments_invalid`.
+  - Keeps unknown/deferred/handler-missing catalog failures separate from provider stream failures.
+- `apps/api/src/agent/runtime/openai-compatible-chat-adapter.ts`
+  - Tracks streamed `finish_reason`, emits tool-call damage trace events, and fails before execution when frames are incomplete.
+  - Preserves the single `AgentRunEngine` loop; the adapter only returns typed runtime facts.
+- `apps/api/src/agent/runtime/provider-failover-policy.ts`
+  - Retries only recoverable provider/tool-call frame failures with non-stream or single-tool requests.
+  - Does not retry effective-catalog violations or missing handlers.
+- `apps/api/src/agent/runtime-trace-events.ts`
+  - Persists damaged tool frames as tool-channel runtime events.
+- `apps/api/src/agent/runtime-plan-reader.ts`
+  - Shows a specific fail-closed status when model-selected tool calls never form executable arguments.
+- `apps/api/tests/provider-runtime.test.ts` and `apps/api/tests/api.test.ts`
+  - Cover truncated streamed tool arguments, recoverable retry classification, damage trace emission, and fail-closed malformed non-stream retries.
+
+Validation completed during implementation:
+
+- `npm.cmd run test:api -- provider-runtime`
+- `npm.cmd run test --workspace @xox/api -- api.test.ts -t "retries malformed streamed tool-call arguments"`
+- `npm.cmd run test --workspace @xox/api -- api.test.ts -t "fails closed instead of returning 500"`
+- `npm.cmd run test --workspace @xox/api -- response-evaluator.test.ts`
+- `npm.cmd run test:api`
+- `npm.cmd run test:web`
+- `npm.cmd run test`
+- `npm.cmd run build:web`
+
+Remaining validation before release:
+
+- Real-provider smoke for long streamed `sandbox_run_code` once a provider key and network path are confirmed in the runtime environment.
 
 ## Risks
 

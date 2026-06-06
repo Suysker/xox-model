@@ -1,4 +1,5 @@
 import { toolCallToPlannerStep, type AgentToolCallStep } from '../tool-catalog.js'
+import { extractBalancedJson } from './balanced-json.js'
 import { parseToolArgumentsWithRepair, type ToolArgumentRepairPolicy } from './tool-call-argument-repair.js'
 import { repairToolName } from './tool-call-name-normalizer.js'
 import type { RuntimeToolCallBoundaryViolation, ToolCallBoundaryViolationCode } from './runtime-adapter.js'
@@ -51,6 +52,14 @@ export { repairToolName }
 
 export function parseToolArguments(raw: unknown, policy?: ToolArgumentRepairPolicy) {
   return parseToolArgumentsWithRepair(raw, policy).args
+}
+
+function argumentBoundaryCode(raw: unknown): ToolCallBoundaryViolationCode {
+  if (typeof raw !== 'string' || !raw.trim()) return 'tool_call_arguments_invalid'
+  const extracted = extractBalancedJson(raw)
+  return extracted && !extracted.complete
+    ? 'tool_call_arguments_truncated'
+    : 'tool_call_arguments_invalid'
 }
 
 export function plannerStepsFromProviderToolCalls(input: {
@@ -134,6 +143,8 @@ export function plannerStepsFromProviderToolCalls(input: {
         error instanceof Error ? error.message : String(error),
         [...new Set(toolNames)],
         repairedName,
+        argumentBoundaryCode(toolCall?.function?.arguments),
+        input.allowedToolNames,
       )
     }
   }

@@ -15,6 +15,13 @@ function isRecoverableHttpError(error?: RuntimePlanError) {
   return error?.kind === 'provider_http_error' && error.classification === 'server'
 }
 
+function isRecoverableToolCallBoundary(error?: RuntimePlanError) {
+  const code = error?.toolCallBoundary?.code
+  return code === 'tool_call_arguments_truncated' ||
+    code === 'tool_call_arguments_invalid' ||
+    code === 'tool_call_stream_interrupted'
+}
+
 function retryMaxTokens(input: RuntimePlanningInput, selectedToolName?: string) {
   const baseline = input.maxTokens ?? 1600
   return isHighVolumeStructuredToolName(selectedToolName)
@@ -33,7 +40,7 @@ export function shouldRetryRuntimePlan(result: RuntimePlanResult | null | undefi
   return result?.error?.kind === 'provider_network_error' ||
     (
       result?.error?.kind === 'provider_response_error' &&
-      !result.error.toolCallBoundary
+      (!result.error.toolCallBoundary || isRecoverableToolCallBoundary(result.error))
     ) ||
     result?.error?.kind === 'provider_timeout' ||
     isRecoverableHttpError(result?.error)
@@ -66,6 +73,12 @@ export function retryRuntimeInput(
 
 export function retryRuntimeMessage(error?: RuntimePlanError) {
   if (error?.kind === 'provider_response_error') {
+    if (error.toolCallBoundary?.code === 'tool_call_arguments_truncated') {
+      return '模型服务返回的流式工具调用参数不完整，正在改用非流式请求对同一轮规划重试一次。'
+    }
+    if (error.toolCallBoundary?.code === 'tool_call_stream_interrupted') {
+      return '模型服务的工具调用流中断，正在改用非流式请求对同一轮规划重试一次。'
+    }
     return '模型服务返回的流式工具调用不可解析，正在改用非流式请求对同一轮规划重试一次。'
   }
   if (error?.kind === 'provider_timeout') {

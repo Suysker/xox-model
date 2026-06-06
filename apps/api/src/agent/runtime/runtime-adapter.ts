@@ -17,6 +17,9 @@ export type ToolCallBoundaryViolationCode =
   | 'tool_call_registered_but_deferred'
   | 'tool_call_not_in_effective_inventory'
   | 'tool_call_without_registered_handler'
+  | 'tool_call_arguments_truncated'
+  | 'tool_call_arguments_invalid'
+  | 'tool_call_stream_interrupted'
 
 export type RuntimeToolCallBoundaryViolation = {
   code: ToolCallBoundaryViolationCode
@@ -76,6 +79,14 @@ export type RuntimeStreamEvent =
       toolCallId?: string
       leadingChars: number
       trailingChars: number
+    }
+  | {
+      kind: 'tool_call_damage'
+      toolCallIndex: number
+      toolName?: string
+      boundaryCode: ToolCallBoundaryViolationCode
+      message: string
+      retryable: boolean
     }
   | {
       kind: 'stream_completed'

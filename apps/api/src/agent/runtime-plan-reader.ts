@@ -98,6 +98,18 @@ function modelToolCallRequiredRead(error?: RuntimePlanError | null): ReadDraft {
         status: 'failed',
       }
     }
+    if (
+      error.toolCallBoundary?.code === 'tool_call_arguments_truncated' ||
+      error.toolCallBoundary?.code === 'tool_call_arguments_invalid' ||
+      error.toolCallBoundary?.code === 'tool_call_stream_interrupted'
+    ) {
+      return {
+        title: '工具调用未形成可执行参数',
+        message: `模型已经选择工具，但 provider 返回的工具调用参数没有形成可执行 observation；系统不会执行不完整参数，也不会把前置文本当作最终答案。${error.toolCallBoundary.toolNames.length ? ` 工具：${error.toolCallBoundary.toolNames.join(', ')}` : ''}${error.message ? ` 错误：${error.message}` : ''}`,
+        readKind: 'status',
+        status: 'failed',
+      }
+    }
     return {
       title: '模型响应格式不可用',
       message: `模型服务返回了无法解析的工具调用或流式片段，系统没有生成写入动作。${error.message ? ` 错误：${error.message}` : ''}`,
