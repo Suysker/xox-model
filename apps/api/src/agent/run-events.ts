@@ -33,7 +33,7 @@ function inferredRunEventChannel(input: {
   type: string
   data?: Record<string, unknown> | null
 }): AgentRuntimeChannel {
-  if (input.type === 'assistant_final_message') return 'assistant'
+  if (input.type === 'assistant_final_message' || input.type === 'final_answer_candidate') return 'assistant'
   if (input.type === 'provider_stream_delta') {
     const kind = input.data?.kind
     if (kind === 'content_delta') return 'assistant'

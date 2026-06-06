@@ -11,6 +11,7 @@ export type ToolLoopGuardrailInput = {
   newObservations: AgentToolObservation[]
   planRows: Row<'agent_plan_steps'>[]
   actionRows: Row<'agent_action_requests'>[]
+  hasFinalAssistantCandidate?: boolean
 }
 
 function stableJson(value: unknown): string {
@@ -53,6 +54,7 @@ function repeatedFailure(input: ToolLoopGuardrailInput): AgentToolLoopGuardrailF
 
 function noProgress(input: ToolLoopGuardrailInput): AgentToolLoopGuardrailFinding | null {
   if (input.iteration <= 1) return null
+  if (input.hasFinalAssistantCandidate) return null
   if (input.newObservations.length > 0 || input.planRows.length > 0 || input.actionRows.length > 0) return null
   return {
     severity: 'warn',

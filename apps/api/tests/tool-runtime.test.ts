@@ -205,6 +205,25 @@ describe('Tool Runtime Maturity Layer', () => {
     ])
   })
 
+  it('does not treat a final assistant candidate after observations as no progress', () => {
+    expect(evaluateToolLoopGuardrails({
+      iteration: 2,
+      priorObservations: [{
+        title: '查询工作区数据',
+        toolName: 'data_query_workspace',
+        toolCallId: 'call_data',
+        toolArguments: { question: 'roi' },
+        displayPreview: '已读取数据。',
+        modelContent: '{"roi":1.2}',
+        status: 'completed',
+      }],
+      newObservations: [],
+      planRows: [],
+      actionRows: [],
+      hasFinalAssistantCandidate: true,
+    })).toEqual([])
+  })
+
   it('composes automation authority separately from planning effort', () => {
     expect(composeAgentWriteApprovalPolicy({
       automationLevel: 'manual',

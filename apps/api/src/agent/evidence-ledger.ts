@@ -1,3 +1,4 @@
+import type { AgentGoalFacts } from '@xox/contracts'
 import type { AgentToolObservation } from './tool-observation-continuation.js'
 
 export type AgentEvidenceAuthority = 'ambient' | 'domain_read' | 'sandbox' | 'action' | 'memory'
@@ -30,6 +31,19 @@ export type AgentEvidenceItem = {
   invalidReasons?: string[]
   summary?: string
   createdAt: string
+}
+
+export type AgentFinalAnswerClaim = {
+  kind: 'derived_calculation' | 'entity_specific'
+  subject?: AgentEvidenceSubject['type']
+  reason: string
+}
+
+export type AgentEvidenceRequirement = {
+  authority: AgentEvidenceAuthority
+  subject?: AgentEvidenceSubject['type']
+  reason: string
+  source: 'goal_facts' | 'trajectory' | 'final_answer_claim'
 }
 
 function parseObservationContent(value: string): Record<string, unknown> {
@@ -172,6 +186,58 @@ export function buildEvidenceLedger(input: {
       ...(input.now ? { now: input.now } : {}),
     }),
   )
+}
+
+export function buildEvidenceRequirements(input: {
+  facts: AgentGoalFacts
+  evidence: AgentEvidenceItem[]
+  finalAnswerClaims?: AgentFinalAnswerClaim[]
+}): AgentEvidenceRequirement[] {
+  const requirements: AgentEvidenceRequirement[] = []
+  const claims = input.finalAnswerClaims ?? []
+  const hasSandboxTrajectory = input.evidence.some((item) => item.authority === 'sandbox' || item.source === 'sandbox_run_code')
+  const calculationClaim = claims.find((claim) => claim.kind === 'derived_calculation')
+  if (input.facts.requiresSandboxComputation) {
+    requirements.push({
+      authority: 'sandbox',
+      subject: 'calculation',
+      reason: '目标契约要求可复核的派生计算。',
+      source: 'goal_facts',
+    })
+  } else if (hasSandboxTrajectory) {
+    requirements.push({
+      authority: 'sandbox',
+      subject: 'calculation',
+      reason: '本轮轨迹已调用 sandbox_run_code，最终回答必须基于有效沙箱 observation。',
+      source: 'trajectory',
+    })
+  } else if (calculationClaim) {
+    requirements.push({
+      authority: 'sandbox',
+      subject: 'calculation',
+      reason: calculationClaim.reason,
+      source: 'final_answer_claim',
+    })
+  }
+
+  const shareholderClaim = claims.find((claim) => claim.kind === 'entity_specific' && (!claim.subject || claim.subject === 'shareholder'))
+  if (input.facts.requiresOrderedEntityFacts) {
+    requirements.push({
+      authority: 'domain_read',
+      subject: 'shareholder',
+      reason: '目标契约要求有序实体事实。',
+      source: 'goal_facts',
+    })
+  } else if (shareholderClaim) {
+    requirements.push({
+      authority: 'domain_read',
+      subject: 'shareholder',
+      reason: shareholderClaim.reason,
+      source: 'final_answer_claim',
+    })
+  }
+
+  return requirements
 }
 
 function objectHasKey(value: unknown, key: string): boolean {

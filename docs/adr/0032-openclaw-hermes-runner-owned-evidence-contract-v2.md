@@ -1,6 +1,6 @@
 # ADR 0032: OpenClaw/Hermes Runner-Owned Evidence Contract v2
 
-Status: Proposed
+Status: Implemented
 
 Date: 2026-06-07
 
@@ -486,6 +486,21 @@ npm.cmd run test
 4. Adjust `AgentRunEngine` and `turn-resolver` so final candidates are explicit.
 5. Update transcript projection so lifecycle diagnostics stay technical and accepted assistant final stays in the assistant lane.
 6. Re-run the `f5eed78b` scenario with a real provider key in the user's local environment.
+
+## Implementation Notes
+
+Implemented on 2026-06-07.
+
+- `apps/api/src/agent/evidence-ledger.ts` now builds structured evidence requirements from sanitized goal facts, actual tool trajectory and typed final-answer claims.
+- `apps/api/src/agent/response-evaluator.ts` evaluates final assistant text against those requirements. Sandbox trajectory requires valid executed sandbox evidence even when initial `goalFacts` are empty, and ordered shareholder requirements require ordered shareholder evidence.
+- `apps/api/src/agent/sandbox-service.ts` keeps full model-readable sandbox observation in `modelContent` while visible `displayPreview` uses a preview object with `truncatedForDisplay`, `sha256`, `bytes` and `rawOutputRef`.
+- `apps/api/src/agent/agent-run-engine.ts`, `turn-resolver.ts` and `tool-loop-guardrails.ts` now treat assistant text after prior observations as an explicit final-answer candidate. `no_progress` does not fire for that terminal candidate path.
+- `apps/api/tests/api.test.ts`, `response-evaluator.test.ts`, `sandbox-tool.test.ts`, `tool-runtime.test.ts` and `agent-turn-resolver.test.ts` cover the `f5eed78b` class of failures.
+
+Current boundary:
+
+- Final-answer claim extraction is a typed evaluator input. It deliberately does not scan assistant prose with keyword or regex rules. A future model-scored strict-JSON claim extractor can feed this contract without changing the evaluator boundary.
+- Full sandbox output is still stored inside model-readable observation content rather than a dedicated `agent_tool_observations` table. The preview now carries enough hash/size/reference metadata to avoid treating truncated UI text as evidence.
 
 ## Open Questions
 

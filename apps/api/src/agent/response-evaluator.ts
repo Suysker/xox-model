@@ -1,8 +1,8 @@
 import type { AgentGoalFacts } from '@xox/contracts'
 import type { Row } from '../db/schema.js'
 import { parseJson } from '../db/database.js'
-import type { AgentEvidenceAuthority, AgentEvidenceItem } from './evidence-ledger.js'
-import { evidenceContainsKey, isExecutedSandboxEvidenceFacts } from './evidence-ledger.js'
+import type { AgentEvidenceAuthority, AgentEvidenceItem, AgentFinalAnswerClaim } from './evidence-ledger.js'
+import { buildEvidenceRequirements, evidenceContainsKey, isExecutedSandboxEvidenceFacts } from './evidence-ledger.js'
 import type { AgentToolObservation } from './tool-observation-continuation.js'
 import type { AgentGoalContract } from '@xox/contracts'
 import { mergeAgentGoalFacts } from './runtime-goal-facts.js'
@@ -76,6 +76,7 @@ export function evaluateAssistantResponse(input: {
   finalAssistantText: string | null
   observations: AgentToolObservation[]
   evidence: AgentEvidenceItem[]
+  finalAnswerClaims?: AgentFinalAnswerClaim[]
   runtimeFacts?: AgentGoalFacts
   pendingActionCount?: number
   awaitingClarification?: boolean
@@ -135,17 +136,22 @@ export function evaluateAssistantResponse(input: {
     }
   }
 
+  const evidenceRequirements = buildEvidenceRequirements({
+    facts,
+    evidence: input.evidence,
+    finalAnswerClaims: input.finalAnswerClaims ?? [],
+  })
+  requiredEvidence.push(...evidenceRequirements.map((requirement) => ({
+    authority: requirement.authority,
+    ...(requirement.subject ? { subject: requirement.subject } : {}),
+    reason: requirement.reason,
+  })))
   const sandboxEvidence = sandboxEvidenceItems(input.evidence)
-  const requiresSandboxEvidence = facts.requiresSandboxComputation || sandboxEvidence.length > 0
+  const requiresSandboxEvidence = evidenceRequirements.some((requirement) => requirement.authority === 'sandbox')
+  const requiresShareholderEvidence = evidenceRequirements.some((requirement) =>
+    requirement.authority === 'domain_read' && requirement.subject === 'shareholder')
 
   if (requiresSandboxEvidence) {
-    requiredEvidence.push({
-      authority: 'sandbox',
-      subject: 'calculation',
-      reason: facts.requiresSandboxComputation
-        ? '目标契约要求可复核的派生计算。'
-        : '本轮轨迹已调用 sandbox_run_code，最终回答必须基于有效沙箱 observation。',
-    })
     const completedSandbox = hasCompletedSandboxEvidence(input.evidence)
     if (!completedSandbox) {
       const invalidSandbox = invalidSandboxEvidenceItems(input.evidence)
@@ -171,27 +177,23 @@ export function evaluateAssistantResponse(input: {
       }
     }
 
-    if (facts.requiresOrderedEntityFacts &&
-      !evidenceContainsKey(input.evidence, 'firstShareholder') &&
-      !evidenceContainsKey(input.evidence, 'shareholders')) {
-      requiredEvidence.push({
-        authority: 'domain_read',
-        subject: 'shareholder',
-        reason: '涉及个人股东口径的计算需要有序股东事实。',
-      })
-      findings.push({
-        severity: 'fail',
-        code: 'response.entity_evidence_missing',
-        evidenceIds: input.evidence.map((item) => item.id),
-        message: '本轮已有计算 evidence，但缺少可复核的有序股东事实，不能把全局 ROI 当成个人 ROI。',
-      })
-      return {
-        status: 'needs_more_evidence',
-        confidence: 0.9,
-        requiredEvidence,
-        findings,
-        nextPlannerBrief: '补充包含有序股东信息的工作区事实，再基于该事实和沙箱结果生成最终回答。',
-      }
+  }
+
+  if (requiresShareholderEvidence &&
+    !evidenceContainsKey(input.evidence, 'firstShareholder') &&
+    !evidenceContainsKey(input.evidence, 'shareholders')) {
+    findings.push({
+      severity: 'fail',
+      code: 'response.entity_evidence_missing',
+      evidenceIds: input.evidence.map((item) => item.id),
+      message: '本轮缺少可复核的有序股东事实，不能把全局口径当成个人股东口径。',
+    })
+    return {
+      status: 'needs_more_evidence',
+      confidence: 0.9,
+      requiredEvidence,
+      findings,
+      nextPlannerBrief: '补充包含有序股东信息的工作区事实，再基于该事实生成最终回答。',
     }
   }
 

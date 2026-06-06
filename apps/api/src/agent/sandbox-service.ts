@@ -61,8 +61,14 @@ const DEFAULT_CAPABILITIES: SandboxCapabilityProfile = {
   accountActions: false,
 }
 
+const DISPLAY_TEXT_PREVIEW_LIMIT = 500
+
 function hashJson(value: unknown) {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex')
+}
+
+function hashText(value: string) {
+  return createHash('sha256').update(value).digest('hex')
 }
 
 function shortHash(value: string) {
@@ -326,7 +332,21 @@ function buildManifest(ctx: SandboxServiceContext, input: SandboxRunCodeInput, b
   }
 }
 
+function displayTextReference(value: string) {
+  const bytes = Buffer.byteLength(value, 'utf8')
+  const truncatedForDisplay = bytes > DISPLAY_TEXT_PREVIEW_LIMIT
+  return {
+    preview: truncatedForDisplay ? value.slice(0, DISPLAY_TEXT_PREVIEW_LIMIT) : value,
+    truncatedForDisplay,
+    truncatedForModel: false,
+    sha256: hashText(value),
+    bytes,
+  }
+}
+
 function displayPreview(observation: SandboxObservation) {
+  const outputText = displayTextReference(observation.outputText)
+  const resultSummary = displayTextReference(observation.result.summary)
   return JSON.stringify({
     status: observation.status,
     executionMode: observation.executionMode,
@@ -340,8 +360,18 @@ function displayPreview(observation: SandboxObservation) {
     network: observation.manifest.network.mode,
     businessWrites: observation.manifest.capabilities.businessWrites,
     extractionStatus: observation.extraction.extractionStatus,
-    outputText: observation.outputText.slice(0, 500),
-    result: observation.result.summary,
+    outputText,
+    result: {
+      summary: resultSummary,
+    },
+    rawOutputRef: {
+      storage: 'sandbox_observation',
+      id: observation.sandboxRunId,
+      sha256: outputText.sha256,
+      bytes: outputText.bytes,
+      truncatedForDisplay: outputText.truncatedForDisplay,
+      truncatedForModel: false,
+    },
   }, null, 2)
 }
 
@@ -426,4 +456,5 @@ export const sandboxInternalsForTests = {
   normalizeSandboxInput,
   buildSandboxDataBundle,
   buildManifest,
+  displayPreview,
 }

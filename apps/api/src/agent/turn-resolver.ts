@@ -34,6 +34,7 @@ export function resolveAfterPlanning(input: {
   planRows: RowLike[]
   observations: AgentToolObservation[]
   guardrailFindings: AgentToolLoopGuardrailFinding[]
+  hasFinalAssistantCandidate?: boolean
 }): AgentNextStep {
   const blockingGuardrail = input.guardrailFindings.find((finding) => finding.severity === 'block')
   if (blockingGuardrail) {
@@ -41,6 +42,14 @@ export function resolveAfterPlanning(input: {
       type: 'failed',
       reason: blockingGuardrail.repairBrief,
       evidence: blockingGuardrail.evidence,
+    }
+  }
+
+  if (input.hasFinalAssistantCandidate) {
+    return {
+      type: 'final_output',
+      reason: 'final_assistant_candidate_after_observations',
+      assistantText: input.pendingAssistantText,
     }
   }
 

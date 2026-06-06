@@ -229,7 +229,24 @@ export async function executeAgentRun(
       planned.actionRows.length === 0 &&
       planned.planRows.length === 0 &&
       planned.observations.length === 0
-    if (assistantOnlyNoGraph && lastEvaluation?.status === 'continue') {
+    const hasFinalAssistantCandidate = assistantOnlyNoGraph && priorObservations.length > 0
+    if (hasFinalAssistantCandidate) {
+      await addRunEvent(ctx.db, {
+        threadId: ctx.thread.id,
+        runId: ctx.runId,
+        type: 'final_answer_candidate',
+        title: '最终回答候选已生成',
+        message: '模型已基于本轮 observation 生成最终回答候选，进入 response evaluation。',
+        status: 'running',
+        channel: 'assistant',
+        data: {
+          goalId: goal.id,
+          iteration,
+          priorObservationCount: priorObservations.length,
+        },
+      })
+    }
+    if (assistantOnlyNoGraph && lastEvaluation?.status === 'continue' && !hasFinalAssistantCandidate) {
       const reason = '模型连续返回纯文本，但当前目标仍缺少必要的工具调用或确认卡。'
       await updateGoalStatus(ctx.db, goal, 'failed', { blockedReason: reason })
       await addRunEvent(ctx.db, {
@@ -255,6 +272,7 @@ export async function executeAgentRun(
       newObservations: planned.observations,
       planRows: planned.planRows,
       actionRows: planned.actionRows,
+      hasFinalAssistantCandidate,
     })
     for (const finding of guardrailFindings) {
       await addRunEvent(ctx.db, {
@@ -277,6 +295,7 @@ export async function executeAgentRun(
       planRows: planned.planRows,
       observations: planned.observations,
       guardrailFindings,
+      hasFinalAssistantCandidate,
     })
     if (planningNextStep.type === 'failed') {
       await updateGoalStatus(ctx.db, goal, 'failed', { blockedReason: planningNextStep.reason })

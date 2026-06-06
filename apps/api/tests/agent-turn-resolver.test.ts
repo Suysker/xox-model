@@ -49,6 +49,21 @@ describe('Agent turn resolver', () => {
     })).toMatchObject({ type: 'evaluate' })
   })
 
+  it('routes a final assistant candidate after consumed observations to final evidence evaluation', () => {
+    expect(resolveAfterPlanning({
+      pendingAssistantText: '根据刚才的工具结果，目前还没有回本。',
+      actionRows: [],
+      planRows: [],
+      observations: [],
+      guardrailFindings: [],
+      hasFinalAssistantCandidate: true,
+    })).toEqual({
+      type: 'final_output',
+      reason: 'final_assistant_candidate_after_observations',
+      assistantText: '根据刚才的工具结果，目前还没有回本。',
+    })
+  })
+
   it('turns blocking tool-loop findings into a failed next step', () => {
     const finding: AgentToolLoopGuardrailFinding = {
       severity: 'block',

@@ -243,6 +243,40 @@ describe('Agent response evaluator', () => {
     })
   })
 
+  it('rejects failed sandbox trajectory even when initial goal facts are empty', () => {
+    const observations = [
+      observation({
+        title: '受控沙箱执行被阻断',
+        toolName: 'sandbox_run_code',
+        toolCallId: 'call_sandbox',
+        modelContent: JSON.stringify({
+          observationType: 'sandbox_execution',
+          completed: false,
+          status: 'failed',
+          executionMode: 'executed',
+          exitCode: 1,
+          manifestScoped: true,
+          outputText: 'Traceback: boom',
+          stderr: 'Traceback: boom',
+          artifacts: [],
+          extraction: { extractionStatus: 'text_only', summary: 'Traceback: boom' },
+        }),
+        status: 'failed',
+      }),
+    ]
+    const evidence = buildEvidenceLedger({ threadId: 'thread_1', runId: 'run_1', observations })
+
+    expect(evaluateAssistantResponse({
+      goal: goal(),
+      finalAssistantText: '我已经算出了结果。',
+      observations,
+      evidence,
+    })).toMatchObject({
+      status: 'needs_calculation',
+      findings: [expect.objectContaining({ code: 'response.sandbox_evidence_invalid' })],
+    })
+  })
+
   it('accepts readable sandbox observations from the actual tool trajectory even when goal facts are missing', () => {
     const observations = [
       observation({
@@ -278,6 +312,41 @@ describe('Agent response evaluator', () => {
     })).toMatchObject({
       status: 'pass',
       findings: [expect.objectContaining({ code: 'response.evidence_accepted' })],
+    })
+  })
+
+  it('requires ordered shareholder evidence for structured final-answer entity claims', () => {
+    const observations = [
+      observation({
+        title: '受控沙箱执行完成',
+        toolName: 'sandbox_run_code',
+        toolCallId: 'call_sandbox',
+        modelContent: JSON.stringify({
+          observationType: 'sandbox_execution',
+          completed: true,
+          status: 'completed',
+          executionMode: 'executed',
+          exitCode: 0,
+          manifestScoped: true,
+          outputText: 'personal ROI: 12%',
+          stdout: 'personal ROI: 12%',
+          artifacts: [],
+          purpose: '计算个人股东回报',
+          extraction: { extractionStatus: 'text_only', summary: 'personal ROI: 12%' },
+        }),
+      }),
+    ]
+    const evidence = buildEvidenceLedger({ threadId: 'thread_1', runId: 'run_1', observations })
+
+    expect(evaluateAssistantResponse({
+      goal: goal(),
+      finalAssistantText: '第 2 位股东的个人投资回报率是 12%。',
+      observations,
+      evidence,
+      finalAnswerClaims: [{ kind: 'entity_specific', subject: 'shareholder', reason: 'final answer claims shareholder-specific ROI' }],
+    })).toMatchObject({
+      status: 'needs_more_evidence',
+      findings: [expect.objectContaining({ code: 'response.entity_evidence_missing' })],
     })
   })
 })

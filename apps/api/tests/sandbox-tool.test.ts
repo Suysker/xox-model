@@ -316,6 +316,44 @@ describe('manifest-scoped sandbox tool', () => {
     expect(result.result.summary).toContain('ROI after loan cost')
   })
 
+  it('keeps display preview separate from full sandbox output', () => {
+    const longOutput = JSON.stringify({
+      realROI_noInterest_percent: 12.3456,
+      loanAdjustedROI_percent: 8.7654,
+      notes: 'x'.repeat(900),
+    })
+    const preview = JSON.parse(sandboxInternalsForTests.displayPreview({
+      status: 'completed',
+      executionMode: 'executed',
+      backendId: 'local-script',
+      exitCode: 0,
+      purpose: '长输出预览校验',
+      dataBundleSummary: { scope: 'workspace_summary', fields: ['totalProfit'], rows: 1, redactions: 0 },
+      manifest: {
+        network: { mode: 'disabled' },
+        capabilities: { businessWrites: false },
+      },
+      extraction: { extractionStatus: 'text_only' },
+      outputText: longOutput,
+      result: { summary: longOutput },
+      sandboxRunId: 'sandbox_long_output',
+    } as any))
+
+    expect(preview.outputText).toMatchObject({
+      truncatedForDisplay: true,
+      sha256: expect.any(String),
+      bytes: Buffer.byteLength(longOutput, 'utf8'),
+    })
+    expect(preview.outputText.preview).toContain('realROI_noInterest_percent')
+    expect(preview.outputText.preview.length).toBeLessThan(longOutput.length)
+    expect(preview.rawOutputRef).toMatchObject({
+      storage: 'sandbox_observation',
+      id: 'sandbox_long_output',
+      truncatedForDisplay: true,
+      truncatedForModel: false,
+    })
+  })
+
   it('marks completed empty output as an empty extraction rather than fabricated success', async () => {
     const input: SandboxRunCodeInput = {
       purpose: '空输出校验',

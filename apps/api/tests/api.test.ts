@@ -1478,6 +1478,18 @@ describe('xox TypeScript API', () => {
         event.data?.evaluationStatus === 'pass' &&
         event.data?.evidenceCount >= 2,
       )).toBe(true)
+      const eventTypes = response.json.runEvents.map((event: any) => event.type)
+      expect(eventTypes).toContain('final_answer_candidate')
+      const finalCandidateIndex = eventTypes.indexOf('final_answer_candidate')
+      const passIndex = response.json.runEvents.findIndex((event: any) =>
+        event.type === 'response_evaluated' &&
+        event.data?.evaluationStatus === 'pass')
+      expect(finalCandidateIndex).toBeGreaterThan(-1)
+      expect(passIndex).toBeGreaterThan(finalCandidateIndex)
+      expect(response.json.runEvents.slice(finalCandidateIndex + 1, passIndex).some((event: any) =>
+        event.type === 'tool_loop_guardrail' &&
+        event.data?.finding?.pattern === 'no_progress',
+      )).toBe(false)
       const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
       expect(state.json.goals.at(-1).status).toBe('completed')
       await closeHarness(harness)
@@ -1531,16 +1543,19 @@ describe('xox TypeScript API', () => {
         event.data?.requiredGoalFacts?.requiresSandboxComputation === true,
       )).toBe(true)
       expect(state.json.runEvents.some((event: any) =>
-        event.type === 'goal_evaluated' &&
-        event.data?.evaluationStatus === 'continue' &&
-        String(event.data?.nextPlannerBrief ?? '').includes('sandbox_run_code'),
+        event.type === 'final_answer_candidate',
+      )).toBe(true)
+      expect(state.json.runEvents.some((event: any) =>
+        event.type === 'response_evaluated' &&
+        event.data?.evaluationStatus === 'needs_calculation' &&
+        event.data?.findings?.some((finding: any) => finding.code === 'response.sandbox_evidence_missing'),
       )).toBe(true)
       expect(state.json.runEvents.some((event: any) =>
         event.type === 'run_failed' &&
         event.status === 'failed',
       )).toBe(true)
       expect(state.json.goals.at(-1).status).toBe('failed')
-      expect(state.json.messages.at(-1).content).toContain('缺少必要的工具调用')
+      expect(state.json.messages.at(-1).content).toContain('sandbox_run_code')
       await closeHarness(harness)
     }, {
       capabilities: ['data', 'sandbox'],
@@ -1588,6 +1603,49 @@ describe('xox TypeScript API', () => {
       await closeHarness(harness)
     }, {
       capabilities: ['sandbox'],
+      observationContinuationResponse: false,
+    })
+  })
+
+  it('requires ordered shareholder evidence before accepting shareholder-specific sandbox answers', async () => {
+    let planningCalls = 0
+    await withFakeOpenAICompatibleProvider((body) => {
+      planningCalls += 1
+      if (planningCalls === 1) {
+        expectProviderTools(body, ['sandbox_run_code'])
+        return fakeToolResponse('sandbox_run_code', {
+          purpose: '计算第 2 位股东贷款后的个人 ROI',
+          language: 'python',
+          code: 'print("personal shareholder ROI: 12%")',
+          dataRequest: { scope: 'forecast_months' },
+          expectedOutputs: ['markdown'],
+        })
+      }
+      return fakeAssistantTextResponse('第 2 位股东贷款后的个人 ROI 是 12%。')
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-shareholder-evidence-required', {
+        ...fakeProviderSettings(baseUrl),
+        agentProviderRequestTimeoutMs: 10_000,
+      })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-shareholder-evidence-required@example.com')
+
+      const response = await client.post('/api/v1/agent/messages', {
+        message: '我是第 2 个股东，用沙箱计算贷款后的个人 ROI。',
+      })
+
+      expect(response.statusCode).toBe(200)
+      const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
+      expect(state.json.runEvents.some((event: any) =>
+        event.type === 'response_evaluated' &&
+        event.data?.evaluationStatus === 'needs_more_evidence' &&
+        event.data?.findings?.some((finding: any) => finding.code === 'response.entity_evidence_missing'),
+      )).toBe(true)
+      expect(state.json.goals.at(-1).status).toBe('failed')
+      await closeHarness(harness)
+    }, {
+      capabilities: ['sandbox'],
+      goalFacts: { requiresSandboxComputation: true, requiresOrderedEntityFacts: true },
       observationContinuationResponse: false,
     })
   })
