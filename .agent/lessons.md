@@ -201,6 +201,7 @@
 - Runner-owned evidence is the Agent harness source of truth. Evidence requirements must be derived from actual trajectory, final-answer claims and structured goal facts together; invalid sandbox results must remain invalid observations rather than downgrading to reads, and manifest consumption should be guaranteed by sandbox runtime shape instead of prompt instructions.
 - Sandbox evidence authority and validity are separate concepts. A failed or unproven `sandbox_run_code` observation must still remain `authority=sandbox` with invalid reasons, and ResponseEvaluator must derive sandbox obligations from the actual tool trajectory as well as goal facts so missing router facts cannot let weak calculation answers pass.
 - Agent harness diagrams should keep one abstraction level per graph. The canonical diagram should show only the main loop; tool surface, tool runtime, sandbox proof, provider repair, transcript and storage details belong in separate implementation views so architectural complexity stays readable and intentional.
+- Runner-owned evidence must bind requirements, observations and final answers together. A run that calls the right tools can still be wrong if `goalFacts` are empty, sandbox output is only persisted as a truncated preview, or `no_progress` diagnostics appear beside an accepted final answer; derive requirements from structured facts, trajectory and final claims, preserve model-readable observations separately from UI previews, and let only `AgentRunEngine` accept a final assistant candidate.
 
 ## Testing
 
