@@ -291,8 +291,9 @@ Edit `packages/contracts/src/index.ts`:
 - add `SandboxExecutionObservation`;
 - add `SandboxStructuredExtraction`;
 - add `SandboxAuditProvenance`;
-- deprecate `manifestConsumed` as a hard evaluator field;
-- keep backward-compatible fields only during migration and remove the hard gate after tests are updated.
+- remove `manifestConsumed` / `manifestConsumption` from the sandbox observation contract;
+- keep parsed data only under `SandboxStructuredExtraction.parsedOutput`;
+- keep audit data only under `SandboxAuditProvenance`.
 
 ### Sandbox Runtime
 
@@ -318,10 +319,14 @@ Edit `apps/api/src/agent/evidence-ledger.ts`.
 
 Changes:
 
-- split evidence validity into:
-  - `valid_for_model_reasoning`;
-  - `valid_structured`;
-  - `invalid`;
+- keep the public evidence validity simple (`valid` / `invalid`);
+- decide sandbox validity from model-readable observation usability:
+  - real execution;
+  - completed status;
+  - zero exit code;
+  - manifest-scoped runner boundary;
+  - non-empty stdout/outputText, parsed extraction, or artifacts;
+- derive structured usefulness from `extraction.extractionStatus`, not from a second evidence authority.
 - keep sandbox observations as sandbox authority even when structured extraction fails;
 - do not downgrade invalid or text-only sandbox results to domain reads;
 - store provenance facts separately from parsed facts.
@@ -424,7 +429,7 @@ Refined:
 - A sandbox script with syntax/runtime error returns stderr/traceback as a failed tool observation, and the model can retry within loop limits.
 - A sandbox script with empty output does not complete the answer; the loop asks the model to repair or fails cleanly after budget.
 - `result.json` with structured output still works and is preferred for UI/table/artifact rendering.
-- `manifestConsumed=false` or missing `observedInput` no longer fails a run by itself.
+- There is no `manifestConsumed` completion field in the runtime contract; missing `observedInput` no longer fails a run by itself.
 - Runner-owned provenance records mounted input bundle id/hash, code hash, stdout/stderr hashes and backend/session facts.
 - Sandbox output never writes durable business state; business changes still require normal action tools and confirmation cards.
 - User-facing transcript shows the real sandbox output, not a private manifest proof error.

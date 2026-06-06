@@ -119,31 +119,24 @@ describe('Agent response evaluator', () => {
         toolName: 'sandbox_run_code',
         toolCallId: 'call_sandbox',
         modelContent: JSON.stringify({
-          observationType: 'sandbox_result',
+          observationType: 'sandbox_execution',
           completed: true,
           status: 'completed',
           executionMode: 'executed',
           exitCode: 0,
           manifestScoped: true,
-          manifestConsumed: true,
-          manifestConsumption: {
-            manifestId: 'manifest_1',
-            bundleId: 'bundle_1',
-            contentHash: 'hash_1',
-            nonceMatched: true,
-          },
+          outputText: '',
+          stdout: '',
+          artifacts: [],
           purpose: '计算第一位股东投资回报',
-          structuredOutput: {
-            schemaVersion: 'xox.sandbox.result.v1',
-            observedInput: {
-              manifestId: 'manifest_1',
-              bundleId: 'bundle_1',
-              contentHash: 'hash_1',
-              nonce: 'nonce_1',
-            },
-            structured: {
-              firstShareholder: { index: 1, name: '股东 A', investmentAmount: 1000000 },
-              shareholders: [{ index: 1, name: '股东 A', investmentAmount: 1000000 }],
+          extraction: {
+            extractionStatus: 'parsed',
+            parsedOutput: {
+              schemaVersion: 'xox.sandbox.result.v1',
+              structured: {
+                firstShareholder: { index: 1, name: '股东 A', investmentAmount: 1000000 },
+                shareholders: [{ index: 1, name: '股东 A', investmentAmount: 1000000 }],
+              },
             },
           },
           result: {
@@ -160,7 +153,7 @@ describe('Agent response evaluator', () => {
     const evidence = buildEvidenceLedger({ threadId: 'thread_1', runId: 'run_1', observations })
 
     expect(evaluateAssistantResponse({
-      goal: goal({ requiresSandboxComputation: true }),
+      goal: goal({ requiresSandboxComputation: true, requiresOrderedEntityFacts: true }),
       finalAssistantText: '按沙箱计算，股东 A 的个人回报率为 12%。',
       observations,
       evidence,
@@ -177,12 +170,14 @@ describe('Agent response evaluator', () => {
         toolName: 'sandbox_run_code',
         toolCallId: 'call_sandbox',
         modelContent: JSON.stringify({
-          observationType: 'sandbox_result',
+          observationType: 'sandbox_execution',
           completed: true,
           status: 'completed',
           executionMode: 'not_executed',
           exitCode: 0,
-          structuredOutput: { structured: { answer: 1 } },
+          manifestScoped: true,
+          outputText: 'answer: 1',
+          extraction: { extractionStatus: 'text_only', summary: 'answer: 1' },
         }),
       }),
     ]
@@ -207,24 +202,23 @@ describe('Agent response evaluator', () => {
     })
   })
 
-  it('rejects executed sandbox observations that did not consume the manifest bundle', () => {
+  it('rejects completed sandbox observations with no readable output', () => {
     const observations = [
       observation({
         title: '受控沙箱执行完成',
         toolName: 'sandbox_run_code',
         toolCallId: 'call_sandbox',
         modelContent: JSON.stringify({
-          observationType: 'sandbox_result',
+          observationType: 'sandbox_execution',
           completed: false,
           status: 'completed',
           executionMode: 'executed',
           exitCode: 0,
           manifestScoped: true,
-          manifestConsumed: false,
-          structuredOutput: {
-            schemaVersion: 'xox.sandbox.result.v1',
-            structured: { answer: 1 },
-          },
+          outputText: '',
+          stdout: '',
+          artifacts: [],
+          extraction: { extractionStatus: 'empty' },
         }),
       }),
     ]
@@ -235,10 +229,7 @@ describe('Agent response evaluator', () => {
         authority: 'sandbox',
         validity: 'invalid',
         source: 'sandbox_run_code',
-        invalidReasons: expect.arrayContaining([
-          'sandbox_manifest_not_consumed',
-          'sandbox_manifest_consumption_proof_missing',
-        ]),
+        invalidReasons: expect.arrayContaining(['sandbox_output_missing']),
       }),
     ])
     expect(evaluateAssistantResponse({
@@ -252,24 +243,23 @@ describe('Agent response evaluator', () => {
     })
   })
 
-  it('derives sandbox evidence obligation from the actual tool trajectory even when goal facts are missing', () => {
+  it('accepts readable sandbox observations from the actual tool trajectory even when goal facts are missing', () => {
     const observations = [
       observation({
         title: '受控沙箱执行完成',
         toolName: 'sandbox_run_code',
         toolCallId: 'call_sandbox',
         modelContent: JSON.stringify({
-          observationType: 'sandbox_result',
+          observationType: 'sandbox_execution',
           completed: true,
           status: 'completed',
           executionMode: 'executed',
           exitCode: 0,
           manifestScoped: true,
-          manifestConsumed: true,
-          structuredOutput: {
-            schemaVersion: 'xox.sandbox.result.v1',
-            structured: { answer: 1 },
-          },
+          outputText: 'answer: 1',
+          stdout: 'answer: 1',
+          artifacts: [],
+          extraction: { extractionStatus: 'text_only', summary: 'answer: 1' },
         }),
       }),
     ]
@@ -277,9 +267,8 @@ describe('Agent response evaluator', () => {
 
     expect(evidence[0]).toMatchObject({
       authority: 'sandbox',
-      validity: 'invalid',
+      validity: 'valid',
       source: 'sandbox_run_code',
-      invalidReasons: expect.arrayContaining(['sandbox_manifest_consumption_proof_missing']),
     })
     expect(evaluateAssistantResponse({
       goal: goal(),
@@ -287,8 +276,8 @@ describe('Agent response evaluator', () => {
       observations,
       evidence,
     })).toMatchObject({
-      status: 'needs_calculation',
-      findings: [expect.objectContaining({ code: 'response.sandbox_evidence_invalid' })],
+      status: 'pass',
+      findings: [expect.objectContaining({ code: 'response.evidence_accepted' })],
     })
   })
 })

@@ -649,6 +649,7 @@ export type AgentGoalFacts = {
   expectedStartMonth?: number
   requiresForecastSummary?: boolean
   requiresSandboxComputation?: boolean
+  requiresOrderedEntityFacts?: boolean
   forbiddenActions?: Array<'publish_release' | 'share_link' | 'account_action'>
 }
 
@@ -974,28 +975,70 @@ export type SandboxManifest = {
   }
 }
 
-export type SandboxObservation = {
-  runId: string
-  sandboxRunId: string
-  status: 'completed' | 'blocked' | 'failed' | 'timeout' | 'cancelled'
+export type SandboxArtifactRef = {
+  artifactId: string
+  kind: SandboxArtifactKind
+  name: string
+  sizeBytes: number
+}
+
+export type SandboxExecutionObservation = {
+  observationType: 'sandbox_execution'
   executionMode: 'executed' | 'not_executed'
+  status: 'completed' | 'blocked' | 'failed' | 'timeout' | 'cancelled'
   backendId: string
   sessionId: string
   exitCode: number | null
   durationMs: number
   stdout: string
   stderr: string
-  structuredOutput: unknown
+  outputText: string
+  artifacts: SandboxArtifactRef[]
+}
+
+export type SandboxStructuredExtraction = {
+  extractionStatus: 'parsed' | 'text_only' | 'empty' | 'failed'
+  parsedOutput?: unknown
+  tables?: Array<{ name: string; rows: unknown[] }>
+  summary?: string
+  warnings?: string[]
+}
+
+export type SandboxAuditProvenance = {
+  manifestId: string
+  bundleId: string
+  bundleContentHash: string
+  inputBundleMounted: boolean
+  codeHash: string
+  stdoutHash?: string
+  stderrHash?: string
+  outputArtifactHashes: string[]
+  capabilityProfile: SandboxCapabilityProfile
+  resourceUsage?: {
+    stdoutBytes: number
+    stderrBytes: number
+    memoryBytesPeak?: number
+    cpuMs?: number
+  }
+}
+
+export type SandboxObservation = {
+  runId: string
+  sandboxRunId: string
+  status: SandboxExecutionObservation['status']
+  executionMode: SandboxExecutionObservation['executionMode']
+  backendId: string
+  sessionId: string
+  exitCode: number | null
+  durationMs: number
+  stdout: string
+  stderr: string
+  outputText: string
+  extraction: SandboxStructuredExtraction
+  provenance: SandboxAuditProvenance
   manifestHash: string
   inputEvidenceIds: string[]
   manifestScoped: true
-  manifestConsumed: boolean
-  manifestConsumption?: {
-    manifestId: string
-    bundleId: string
-    contentHash: string
-    nonceMatched: boolean
-  }
   purpose: string
   language: 'python' | 'javascript'
   manifest: Pick<SandboxManifest, 'schemaVersion' | 'manifestId' | 'nonce' | 'identity' | 'inputBundle' | 'runtime' | 'capabilities' | 'network' | 'outputPolicy'>
@@ -1013,12 +1056,7 @@ export type SandboxObservation = {
     charts?: Array<{ title: string; artifactId: string }>
     proposedPatches?: unknown[]
   }
-  artifacts: Array<{
-    artifactId: string
-    kind: SandboxArtifactKind
-    name: string
-    sizeBytes: number
-  }>
+  artifacts: SandboxArtifactRef[]
   resourceUsage: {
     wallTimeMs: number
     cpuMs?: number

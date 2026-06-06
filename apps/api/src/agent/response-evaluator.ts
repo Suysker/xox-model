@@ -157,7 +157,7 @@ export function evaluateAssistantResponse(input: {
         code,
         evidenceIds: (invalidSandbox.length > 0 ? invalidSandbox : sandboxEvidence).map((item) => item.id),
         message: invalidSandbox.length > 0
-          ? '本轮 sandbox_run_code observation 缺少真实执行、结构化输出或 manifest consumption proof，不能作为计算 evidence。'
+          ? '本轮 sandbox_run_code observation 未真实完成、退出异常或缺少可读输出，不能作为计算 evidence。'
           : '最终回答依赖派生计算，但本轮还没有完成的 sandbox_run_code evidence。',
       })
       return {
@@ -166,15 +166,14 @@ export function evaluateAssistantResponse(input: {
         requiredEvidence,
         findings,
         nextPlannerBrief: invalidSandbox.length > 0
-          ? '重新调用 sandbox_run_code，必须通过真实执行并消费当前 manifest bundle，得到结构化计算 evidence 后再生成最终回答。'
+          ? '继续或修复 sandbox_run_code，确保真实执行并产生可读 stdout、文本结果或 artifact，再基于 observation 生成最终回答。'
           : '继续调用 sandbox_run_code，用当前工作区事实完成可复核计算，再生成最终回答。',
       }
     }
 
-    const hasOrderedEntityFacts =
-      evidenceContainsKey(input.evidence, 'firstShareholder') ||
-      evidenceContainsKey(input.evidence, 'shareholders')
-    if (!hasOrderedEntityFacts) {
+    if (facts.requiresOrderedEntityFacts &&
+      !evidenceContainsKey(input.evidence, 'firstShareholder') &&
+      !evidenceContainsKey(input.evidence, 'shareholders')) {
       requiredEvidence.push({
         authority: 'domain_read',
         subject: 'shareholder',

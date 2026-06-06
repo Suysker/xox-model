@@ -44,40 +44,45 @@ function parseObservationContent(value: string): Record<string, unknown> {
 }
 
 export function isExecutedSandboxEvidenceFacts(facts: Record<string, unknown>) {
-  return facts.observationType === 'sandbox_result' &&
+  return isSandboxObservationFacts(facts) &&
     facts.executionMode === 'executed' &&
     facts.status === 'completed' &&
     facts.exitCode === 0 &&
     facts.manifestScoped === true &&
-    facts.manifestConsumed === true &&
-    hasManifestConsumptionProof(facts) &&
-    facts.structuredOutput !== null &&
-    facts.structuredOutput !== undefined
+    hasReadableSandboxOutput(facts)
 }
 
-function hasManifestConsumptionProof(facts: Record<string, unknown>) {
-  const proof = facts.manifestConsumption
-  if (!proof || typeof proof !== 'object' || Array.isArray(proof)) return false
-  const record = proof as Record<string, unknown>
-  return typeof record.manifestId === 'string' &&
-    record.manifestId.length > 0 &&
-    typeof record.bundleId === 'string' &&
-    record.bundleId.length > 0 &&
-    typeof record.contentHash === 'string' &&
-    record.contentHash.length > 0 &&
-    record.nonceMatched === true
+function isSandboxObservationFacts(facts: Record<string, unknown>) {
+  return facts.observationType === 'sandbox_execution'
+}
+
+function nonEmptyStringField(facts: Record<string, unknown>, key: string) {
+  const value = facts[key]
+  return typeof value === 'string' && value.trim().length > 0
+}
+
+function extractionHasParsedOutput(facts: Record<string, unknown>) {
+  const extraction = facts.extraction
+  if (!extraction || typeof extraction !== 'object' || Array.isArray(extraction)) return false
+  const record = extraction as Record<string, unknown>
+  return record.extractionStatus === 'parsed' && record.parsedOutput !== null && record.parsedOutput !== undefined
+}
+
+function hasReadableSandboxOutput(facts: Record<string, unknown>) {
+  return nonEmptyStringField(facts, 'outputText') ||
+    nonEmptyStringField(facts, 'stdout') ||
+    extractionHasParsedOutput(facts) ||
+    (Array.isArray(facts.artifacts) && facts.artifacts.length > 0)
 }
 
 function sandboxInvalidReasons(facts: Record<string, unknown>) {
   const reasons: string[] = []
-  if (facts.observationType !== 'sandbox_result') reasons.push('sandbox_result_missing')
+  if (!isSandboxObservationFacts(facts)) reasons.push('sandbox_observation_missing')
   if (facts.executionMode !== 'executed') reasons.push('sandbox_not_executed')
   if (facts.status !== 'completed') reasons.push('sandbox_not_completed')
   if (facts.exitCode !== 0) reasons.push('sandbox_exit_not_zero')
   if (facts.manifestScoped !== true) reasons.push('sandbox_not_manifest_scoped')
-  if (facts.manifestConsumed !== true) reasons.push('sandbox_manifest_not_consumed')
-  if (!hasManifestConsumptionProof(facts)) reasons.push('sandbox_manifest_consumption_proof_missing')
-  if (facts.structuredOutput === null || facts.structuredOutput === undefined) reasons.push('sandbox_structured_output_missing')
+  if (!hasReadableSandboxOutput(facts)) reasons.push('sandbox_output_missing')
   return reasons.length > 0 ? reasons : ['sandbox_evidence_invalid']
 }
 

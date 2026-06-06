@@ -38,6 +38,7 @@ export function sanitizeAgentGoalFacts(value: unknown): AgentGoalFacts {
   if (expectedStartMonth) facts.expectedStartMonth = expectedStartMonth
   if (record.requiresForecastSummary === true) facts.requiresForecastSummary = true
   if (record.requiresSandboxComputation === true) facts.requiresSandboxComputation = true
+  if (record.requiresOrderedEntityFacts === true) facts.requiresOrderedEntityFacts = true
   if (forbiddenActions.length > 0) facts.forbiddenActions = [...new Set(forbiddenActions)]
   return facts
 }
@@ -54,6 +55,7 @@ export function mergeAgentGoalFacts(...items: AgentGoalFacts[]): AgentGoalFacts 
     if (facts.expectedStartMonth) merged.expectedStartMonth = facts.expectedStartMonth
     if (facts.requiresForecastSummary) merged.requiresForecastSummary = true
     if (facts.requiresSandboxComputation) merged.requiresSandboxComputation = true
+    if (facts.requiresOrderedEntityFacts) merged.requiresOrderedEntityFacts = true
     for (const action of facts.forbiddenActions ?? []) forbiddenActions.add(action)
   }
   if (forbiddenActions.size > 0) merged.forbiddenActions = [...forbiddenActions]

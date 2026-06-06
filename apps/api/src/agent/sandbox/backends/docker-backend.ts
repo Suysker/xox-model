@@ -17,6 +17,10 @@ function hashJson(value: unknown) {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex')
 }
 
+function hashText(value: string) {
+  return createHash('sha256').update(value).digest('hex')
+}
+
 function shortHash(value: string) {
   return createHash('sha256').update(value).digest('hex').slice(0, 16)
 }
@@ -114,14 +118,13 @@ export class DockerSandboxBackend implements SandboxBackend {
     const parsed = await parseSandboxOutput({
       outputDir,
       stdout: processResult.stdout,
+      stderr: processResult.stderr,
       status: processResult.status,
       purpose: input.input.purpose,
       allowedKinds: session.manifest.outputPolicy.allowedArtifactKinds,
       maxArtifactCount: session.manifest.outputPolicy.maxArtifactCount,
       maxArtifactBytes: session.manifest.outputPolicy.maxArtifactBytes,
       sessionId: session.id,
-      manifest: session.manifest,
-      bundle: input.bundle,
     })
     return {
       status: processResult.status,
@@ -132,7 +135,8 @@ export class DockerSandboxBackend implements SandboxBackend {
       durationMs: processResult.durationMs,
       stdout: processResult.stdout,
       stderr: processResult.stderr,
-      structuredOutput: parsed.structuredOutput,
+      outputText: parsed.outputText,
+      extraction: parsed.extraction,
       artifacts: parsed.artifacts,
       result: parsed.result,
       resourceUsage: {
@@ -143,8 +147,21 @@ export class DockerSandboxBackend implements SandboxBackend {
       manifestHash: hashJson(session.manifest),
       inputEvidenceIds: [`bundle:${input.bundle.bundleId}`, `content:${input.bundle.contentHash}`],
       manifestScoped: true,
-      manifestConsumed: parsed.manifestConsumed,
-      ...(parsed.manifestConsumption ? { manifestConsumption: parsed.manifestConsumption } : {}),
+      provenance: {
+        manifestId: session.manifest.manifestId,
+        bundleId: input.bundle.bundleId,
+        bundleContentHash: input.bundle.contentHash,
+        inputBundleMounted: true,
+        codeHash: hashText(input.input.code),
+        stdoutHash: hashText(processResult.stdout),
+        stderrHash: hashText(processResult.stderr),
+        outputArtifactHashes: parsed.artifacts.map((artifact) => hashText(`${artifact.name}:${artifact.sizeBytes}:${artifact.artifactId}`)),
+        capabilityProfile: session.manifest.capabilities,
+        resourceUsage: {
+          stdoutBytes: Buffer.byteLength(processResult.stdout, 'utf8'),
+          stderrBytes: Buffer.byteLength(processResult.stderr, 'utf8'),
+        },
+      },
       ...(processResult.status === 'failed' ? { errorMessage: processResult.stderr.slice(0, 500) || 'docker_sandbox_failed' } : {}),
       ...(processResult.status === 'timeout' ? { errorMessage: 'docker_sandbox_timeout' } : {}),
     }

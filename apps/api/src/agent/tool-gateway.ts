@@ -140,6 +140,7 @@ const CAPABILITY_SELECTION_TOOL: ChatTool = {
             expectedStartMonth: { type: 'number', description: '明确要求的开始月份，1-12。' },
             requiresForecastSummary: { type: 'boolean', description: '用户明确要求输出收入、成本、利润、现金或回本等预测摘要。' },
             requiresSandboxComputation: { type: 'boolean', description: '用户明确要求跨多个事实、公式、敏感性假设、外部资金成本或临时数据转换的可复核计算，单个领域读工具不足以直接回答。' },
+            requiresOrderedEntityFacts: { type: 'boolean', description: '用户目标引用了当前工作区里按顺序定位的对象，例如第一位股东、第 N 个成员或当前首位对象，后续回答必须有可复核的有序实体事实。' },
             forbiddenActions: {
               type: 'array',
               description: '用户明确禁止的动作。',

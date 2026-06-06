@@ -33,17 +33,8 @@ def load():
         return json.load(file)
 
 def emit(result):
-    payload = load()
-    manifest = payload["manifest"]
-    bundle = payload["bundle"]
     output = dict(result or {})
     output["schemaVersion"] = "xox.sandbox.result.v1"
-    output["observedInput"] = {
-        "manifestId": manifest.get("manifestId"),
-        "bundleId": bundle.get("bundleId"),
-        "contentHash": bundle.get("contentHash"),
-        "nonce": manifest.get("nonce"),
-    }
     output_dir = Path(os.environ["XOX_SANDBOX_OUTPUT_DIR"])
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "result.json").write_text(json.dumps(output, ensure_ascii=False), encoding="utf-8")
@@ -58,16 +49,9 @@ export function load() {
 }
 
 export function emit(result) {
-  const payload = load();
   const output = {
     ...(result ?? {}),
     schemaVersion: "xox.sandbox.result.v1",
-    observedInput: {
-      manifestId: payload.manifest?.manifestId,
-      bundleId: payload.bundle?.bundleId,
-      contentHash: payload.bundle?.contentHash,
-      nonce: payload.manifest?.nonce,
-    },
   };
   mkdirSync(process.env.XOX_SANDBOX_OUTPUT_DIR, { recursive: true });
   writeFileSync(join(process.env.XOX_SANDBOX_OUTPUT_DIR, "result.json"), JSON.stringify(output, null, 2), "utf8");

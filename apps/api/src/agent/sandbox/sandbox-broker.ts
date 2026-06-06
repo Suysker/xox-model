@@ -9,6 +9,10 @@ function hashJson(value: unknown) {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex')
 }
 
+function hashText(value: string) {
+  return createHash('sha256').update(value).digest('hex')
+}
+
 function blockedResult(input: {
   manifest: SandboxManifest
   toolInput: SandboxRunCodeInput
@@ -26,10 +30,11 @@ function blockedResult(input: {
     durationMs: 1,
     stdout: '',
     stderr: '',
-    structuredOutput: {
-      schemaVersion: 'xox.sandbox.result.v1',
+    outputText: summary,
+    extraction: {
+      extractionStatus: 'parsed',
       summary,
-      structured: {
+      parsedOutput: {
         reason: input.reason,
         ...(input.details ?? {}),
       },
@@ -51,12 +56,20 @@ function blockedResult(input: {
     manifestHash: hashJson(input.manifest),
     inputEvidenceIds: [`bundle:${input.bundle.bundleId}`, `content:${input.bundle.contentHash}`],
     manifestScoped: true,
-    manifestConsumed: false,
-    manifestConsumption: {
+    provenance: {
       manifestId: input.manifest.manifestId,
       bundleId: input.bundle.bundleId,
-      contentHash: input.bundle.contentHash,
-      nonceMatched: false,
+      bundleContentHash: input.bundle.contentHash,
+      inputBundleMounted: false,
+      codeHash: hashText(input.toolInput.code),
+      stdoutHash: hashText(''),
+      stderrHash: hashText(''),
+      outputArtifactHashes: [],
+      capabilityProfile: input.manifest.capabilities,
+      resourceUsage: {
+        stdoutBytes: 0,
+        stderrBytes: 0,
+      },
     },
     errorMessage: input.reason,
   }

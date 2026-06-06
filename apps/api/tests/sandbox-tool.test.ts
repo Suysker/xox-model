@@ -204,24 +204,20 @@ describe('manifest-scoped sandbox tool', () => {
       expect(result.exitCode).toBe(0)
       expect(result.backendId).toBe('local-script')
       expect(result.manifestScoped).toBe(true)
-      expect(result.manifestConsumed).toBe(true)
-      expect(result.manifestConsumption).toMatchObject({
+      expect(result.provenance).toMatchObject({
         manifestId: manifest.manifestId,
         bundleId: bundle.bundleId,
-        contentHash: bundle.contentHash,
-        nonceMatched: true,
+        bundleContentHash: bundle.contentHash,
+        inputBundleMounted: true,
       })
-      expect(result.structuredOutput).toMatchObject({
-        schemaVersion: 'xox.sandbox.result.v1',
-        observedInput: {
-          manifestId: manifest.manifestId,
-          bundleId: bundle.bundleId,
-          contentHash: bundle.contentHash,
-          nonce: manifest.nonce,
-        },
-        structured: {
-          profit: 20,
-          secretVisible: false,
+      expect(result.extraction).toMatchObject({
+        extractionStatus: 'parsed',
+        parsedOutput: {
+          schemaVersion: 'xox.sandbox.result.v1',
+          structured: {
+            profit: 20,
+            secretVisible: false,
+          },
         },
       })
       expect(JSON.stringify(result)).not.toContain('secret-value-that-must-not-leak')
@@ -230,15 +226,15 @@ describe('manifest-scoped sandbox tool', () => {
     }
   })
 
-  it('does not mark completed code as manifest-consumed without observed input proof', async () => {
+  it('keeps structured result files usable without a private proof envelope', async () => {
     const input: SandboxRunCodeInput = {
-      purpose: '缺少输入消费证明',
+      purpose: '结构化结果文件校验',
       language: 'python',
       code: [
         'import json, os, pathlib',
         'result = {',
         '  "schemaVersion": "xox.sandbox.result.v1",',
-        '  "summary": "完成但没有消费证明",',
+        '  "summary": "完成结构化结果输出",',
         '  "structured": {"profit": 20}',
         '}',
         'pathlib.Path(os.environ["XOX_SANDBOX_OUTPUT_DIR"], "result.json").write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")',
@@ -268,11 +264,89 @@ describe('manifest-scoped sandbox tool', () => {
     expect(result.executionMode).toBe('executed')
     expect(result.exitCode).toBe(0)
     expect(result.manifestScoped).toBe(true)
-    expect(result.manifestConsumed).toBe(false)
-    expect(result.structuredOutput).toMatchObject({
-      schemaVersion: 'xox.sandbox.result.v1',
-      structured: { profit: 20 },
+    expect(result.provenance).toMatchObject({
+      manifestId: manifest.manifestId,
+      bundleId: bundle.bundleId,
+      bundleContentHash: bundle.contentHash,
+      inputBundleMounted: true,
     })
+    expect(result.extraction).toMatchObject({
+      extractionStatus: 'parsed',
+      parsedOutput: {
+        schemaVersion: 'xox.sandbox.result.v1',
+        structured: { profit: 20 },
+      },
+    })
+  })
+
+  it('returns ordinary stdout text as a model-readable sandbox observation', async () => {
+    const input: SandboxRunCodeInput = {
+      purpose: '普通文本输出校验',
+      language: 'python',
+      code: 'print("ROI after loan cost is 12.5%")',
+      dataRequest: { scope: 'workspace_summary' },
+      expectedOutputs: ['markdown'],
+    }
+    const bundle = {
+      bundleId: 'bundle_text',
+      scope: 'workspace_summary' as const,
+      fields: ['totalProfit'],
+      rows: [{ totalProfit: 100 }],
+      structured: { totalProfit: 100 },
+      rowCount: 1,
+      redactions: 0,
+      contentHash: 'hash',
+    }
+    const manifest = sandboxInternalsForTests.buildManifest({
+      workspace: { id: 'workspace_1', owner_id: 'tenant_1' },
+      user: { id: 'user_1' },
+      threadId: 'thread_1',
+      runId: 'run_1',
+    } as any, input, bundle, 'tool_call_text') as SandboxManifest
+    const result = await new SandboxBroker().execute({ manifest, toolInput: input, bundle })
+
+    expect(result.status).toBe('completed')
+    expect(result.executionMode).toBe('executed')
+    expect(result.exitCode).toBe(0)
+    expect(result.outputText).toContain('ROI after loan cost is 12.5%')
+    expect(result.extraction).toMatchObject({
+      extractionStatus: 'text_only',
+      summary: expect.stringContaining('ROI after loan cost'),
+    })
+    expect(result.result.summary).toContain('ROI after loan cost')
+  })
+
+  it('marks completed empty output as an empty extraction rather than fabricated success', async () => {
+    const input: SandboxRunCodeInput = {
+      purpose: '空输出校验',
+      language: 'python',
+      code: 'pass',
+      dataRequest: { scope: 'workspace_summary' },
+      expectedOutputs: ['markdown'],
+    }
+    const bundle = {
+      bundleId: 'bundle_empty',
+      scope: 'workspace_summary' as const,
+      fields: ['totalProfit'],
+      rows: [{ totalProfit: 100 }],
+      structured: { totalProfit: 100 },
+      rowCount: 1,
+      redactions: 0,
+      contentHash: 'hash',
+    }
+    const manifest = sandboxInternalsForTests.buildManifest({
+      workspace: { id: 'workspace_1', owner_id: 'tenant_1' },
+      user: { id: 'user_1' },
+      threadId: 'thread_1',
+      runId: 'run_1',
+    } as any, input, bundle, 'tool_call_empty') as SandboxManifest
+    const result = await new SandboxBroker().execute({ manifest, toolInput: input, bundle })
+
+    expect(result.status).toBe('completed')
+    expect(result.executionMode).toBe('executed')
+    expect(result.exitCode).toBe(0)
+    expect(result.outputText).toBe('')
+    expect(result.extraction.extractionStatus).toBe('empty')
   })
 
   it('reports a real timeout instead of fabricating sandbox success', async () => {
@@ -305,8 +379,7 @@ describe('manifest-scoped sandbox tool', () => {
     expect(result.status).toBe('timeout')
     expect(result.executionMode).toBe('executed')
     expect(result.exitCode).toBeNull()
-    expect(result.manifestConsumed).toBe(false)
-    expect(result.structuredOutput).toBeNull()
+    expect(result.extraction.extractionStatus).toBe('empty')
   })
 
   it('reports runtime errors with real exit status instead of fabricating sandbox success', async () => {
@@ -338,9 +411,9 @@ describe('manifest-scoped sandbox tool', () => {
     expect(result.status).toBe('failed')
     expect(result.executionMode).toBe('executed')
     expect(result.exitCode).not.toBe(0)
-    expect(result.manifestConsumed).toBe(false)
     expect(result.stderr).toContain('RuntimeError')
-    expect(result.structuredOutput).toBeNull()
+    expect(result.outputText).toContain('RuntimeError')
+    expect(result.extraction.extractionStatus).toBe('text_only')
   })
 
   it('blocks invalid sandbox policy before execution without producing executed evidence', async () => {
@@ -373,9 +446,9 @@ describe('manifest-scoped sandbox tool', () => {
     expect(result.status).toBe('blocked')
     expect(result.executionMode).toBe('not_executed')
     expect(result.exitCode).toBeNull()
-    expect(result.manifestConsumed).toBe(false)
     expect(result.result.structured).toMatchObject({
       reason: 'business_writes_forbidden',
     })
+    expect(result.provenance.inputBundleMounted).toBe(false)
   })
 })

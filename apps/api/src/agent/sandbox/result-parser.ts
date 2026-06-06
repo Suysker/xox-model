@@ -1,27 +1,30 @@
 import { createHash } from 'node:crypto'
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { extname, join } from 'node:path'
-import type { SandboxArtifactKind, SandboxManifest, SandboxObservation } from '@xox/contracts'
-import type { SandboxArtifactDescriptor, SandboxDataBundle } from './backend.js'
+import type { SandboxArtifactKind, SandboxObservation } from '@xox/contracts'
+import type { SandboxArtifactDescriptor } from './backend.js'
 import { redactSecretLikeContent } from '../memory-safety.js'
 
 type ParsedSandboxOutput = {
   result: SandboxObservation['result']
-  structuredOutput: unknown
+  outputText: string
+  extraction: SandboxObservation['extraction']
   artifacts: SandboxArtifactDescriptor[]
-  manifestConsumed: boolean
-  manifestConsumption?: NonNullable<SandboxObservation['manifestConsumption']>
 }
 
 function shortHash(value: string) {
   return createHash('sha256').update(value).digest('hex').slice(0, 16)
 }
 
-function parseJson(value: string): unknown {
+type JsonParseResult =
+  | { ok: true; value: unknown }
+  | { ok: false; error: string }
+
+function parseJson(value: string): JsonParseResult {
   try {
-    return JSON.parse(value)
-  } catch {
-    return null
+    return { ok: true, value: JSON.parse(value) }
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'invalid_json' }
   }
 }
 
@@ -29,41 +32,6 @@ function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null
-}
-
-function stringField(value: unknown, key: string) {
-  const item = record(value)?.[key]
-  return typeof item === 'string' ? item : null
-}
-
-function validateManifestConsumption(input: {
-  structuredOutput: unknown
-  manifest: SandboxManifest
-  bundle: SandboxDataBundle
-}) {
-  const observedInput = record(input.structuredOutput)?.observedInput
-  const manifestId = stringField(observedInput, 'manifestId')
-  const bundleId = stringField(observedInput, 'bundleId')
-  const contentHash = stringField(observedInput, 'contentHash')
-  const nonce = stringField(observedInput, 'nonce')
-  if (!manifestId || !bundleId || !contentHash || !nonce) {
-    return { manifestConsumed: false }
-  }
-  const nonceMatched = nonce === input.manifest.nonce
-  const manifestConsumption = {
-    manifestId,
-    bundleId,
-    contentHash,
-    nonceMatched,
-  }
-  return {
-    manifestConsumed:
-      manifestId === input.manifest.manifestId &&
-      bundleId === input.bundle.bundleId &&
-      contentHash === input.bundle.contentHash &&
-      nonceMatched,
-    manifestConsumption,
-  }
 }
 
 function resultFromStructuredOutput(value: unknown, fallbackSummary: string): SandboxObservation['result'] {
@@ -85,6 +53,30 @@ function resultFromStructuredOutput(value: unknown, fallbackSummary: string): Sa
     ...(tables && tables.length > 0 ? { tables } : {}),
     proposedPatches: [],
   }
+}
+
+function tablesFromStructuredOutput(value: unknown): Array<{ name: string; rows: unknown[] }> | undefined {
+  const item = record(value)
+  if (!item || !Array.isArray(item.tables)) return undefined
+  const tables = item.tables.filter((table): table is { name: string; rows: unknown[] } =>
+    Boolean(table && typeof table === 'object' && typeof (table as Record<string, unknown>).name === 'string' && Array.isArray((table as Record<string, unknown>).rows)))
+  return tables.length > 0 ? tables : undefined
+}
+
+function outputText(input: { stdout: string; stderr: string }) {
+  return [input.stdout.trim(), input.stderr.trim()]
+    .filter(Boolean)
+    .join('\n')
+}
+
+function redactStructuredSecrets(value: unknown): unknown {
+  if (typeof value === 'string') return redactSecretLikeContent(value)
+  if (Array.isArray(value)) return value.map((item) => redactStructuredSecrets(item))
+  if (!value || typeof value !== 'object') return value
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .map(([key, item]) => [key, redactStructuredSecrets(item)]),
+  )
 }
 
 function artifactKindFromName(name: string): SandboxArtifactKind | null {
@@ -142,29 +134,19 @@ export async function collectSandboxArtifacts(input: {
 export async function parseSandboxOutput(input: {
   outputDir: string
   stdout: string
+  stderr: string
   status: SandboxObservation['status']
   purpose: string
   allowedKinds: SandboxArtifactKind[]
   maxArtifactCount: number
   maxArtifactBytes: number
   sessionId: string
-  manifest: SandboxManifest
-  bundle: SandboxDataBundle
 }): Promise<ParsedSandboxOutput> {
   const resultPath = join(input.outputDir, 'result.json')
   const resultText = await readFile(resultPath, 'utf8').catch(() => null)
   const stdoutText = redactSecretLikeContent(input.stdout)
-  const structuredOutput = resultText ? parseJson(resultText) : parseJson(stdoutText)
-  const fallbackSummary = input.status === 'completed'
-    ? `${input.purpose} 已完成。`
-    : `${input.purpose} 未完成。`
-  const result = structuredOutput === null
-    ? {
-      summary: stdoutText.trim().slice(0, 500) || fallbackSummary,
-      structured: null,
-      proposedPatches: [],
-    }
-    : resultFromStructuredOutput(structuredOutput, fallbackSummary)
+  const stderrText = redactSecretLikeContent(input.stderr)
+  const modelOutputText = outputText({ stdout: stdoutText, stderr: stderrText })
   const artifacts = await collectSandboxArtifacts({
     outputDir: input.outputDir,
     allowedKinds: input.allowedKinds,
@@ -172,16 +154,37 @@ export async function parseSandboxOutput(input: {
     maxArtifactBytes: input.maxArtifactBytes,
     sessionId: input.sessionId,
   })
-  const consumption = validateManifestConsumption({
-    structuredOutput,
-    manifest: input.manifest,
-    bundle: input.bundle,
-  })
+  const rawParseSource = resultText ?? input.stdout
+  const parsed = rawParseSource.trim().length > 0 ? parseJson(rawParseSource) : { ok: false as const, error: 'empty_output' }
+  const parsedOutput = parsed.ok ? redactStructuredSecrets(parsed.value) : null
+  const artifactSummary = artifacts.length > 0 ? `生成 ${artifacts.length} 个输出文件。` : ''
+  const fallbackSummary = modelOutputText.trim().slice(0, 500) ||
+    artifactSummary ||
+    (input.status === 'completed' ? `${input.purpose} 已完成。` : `${input.purpose} 未完成。`)
+  const result = !parsed.ok
+    ? {
+      summary: fallbackSummary,
+      structured: modelOutputText.trim().length > 0 ? { outputText: modelOutputText } : null,
+      proposedPatches: [],
+    }
+    : resultFromStructuredOutput(parsedOutput, fallbackSummary)
+  const extractedTables = parsed.ok ? tablesFromStructuredOutput(parsedOutput) : undefined
+  const extraction: SandboxObservation['extraction'] = parsed.ok
+    ? {
+      extractionStatus: 'parsed',
+      parsedOutput,
+      ...(extractedTables ? { tables: extractedTables } : {}),
+      summary: result.summary,
+    }
+    : {
+      extractionStatus: modelOutputText.trim().length > 0 || artifacts.length > 0 ? 'text_only' : 'empty',
+      ...(modelOutputText.trim().length > 0 || artifactSummary ? { summary: fallbackSummary } : {}),
+      ...(rawParseSource.trim().length > 0 ? { warnings: [`structured_extraction_failed: ${parsed.error}`] } : {}),
+    }
   return {
     result,
-    structuredOutput,
+    outputText: modelOutputText,
+    extraction,
     artifacts,
-    manifestConsumed: consumption.manifestConsumed,
-    ...(consumption.manifestConsumption ? { manifestConsumption: consumption.manifestConsumption } : {}),
   }
 }

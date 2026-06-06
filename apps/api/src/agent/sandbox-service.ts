@@ -339,9 +339,20 @@ function displayPreview(observation: SandboxObservation) {
     files: observation.dataBundleSummary.files ?? 0,
     network: observation.manifest.network.mode,
     businessWrites: observation.manifest.capabilities.businessWrites,
-    manifestConsumed: observation.manifestConsumed,
+    extractionStatus: observation.extraction.extractionStatus,
+    outputText: observation.outputText.slice(0, 500),
     result: observation.result.summary,
   }, null, 2)
+}
+
+function hasModelReadableSandboxOutput(observation: SandboxObservation) {
+  return Boolean(
+    observation.outputText.trim() ||
+    observation.stdout.trim() ||
+    observation.stderr.trim() ||
+    observation.extraction.extractionStatus === 'parsed' ||
+    observation.artifacts.length > 0,
+  )
 }
 
 export async function runSandboxCode(ctx: SandboxServiceContext, step: RuntimePlannerStep): Promise<SandboxObservation> {
@@ -367,12 +378,12 @@ export async function runSandboxCode(ctx: SandboxServiceContext, step: RuntimePl
     durationMs: execution.durationMs,
     stdout: execution.stdout,
     stderr: execution.stderr,
-    structuredOutput: execution.structuredOutput,
+    outputText: execution.outputText,
+    extraction: execution.extraction,
+    provenance: execution.provenance,
     manifestHash: execution.manifestHash,
     inputEvidenceIds: execution.inputEvidenceIds,
     manifestScoped: execution.manifestScoped,
-    manifestConsumed: execution.manifestConsumed,
-    ...(execution.manifestConsumption ? { manifestConsumption: execution.manifestConsumption } : {}),
     purpose: input.purpose,
     language: input.language,
     manifest,
@@ -397,12 +408,12 @@ export async function planSandboxRunCode(ctx: PlannerContext, step: RuntimePlann
     message: preview,
     readKind: 'tool_observation',
     modelContent: JSON.stringify({
-      observationType: 'sandbox_result',
+      observationType: 'sandbox_execution',
       completed: observation.status === 'completed' &&
         observation.executionMode === 'executed' &&
         observation.exitCode === 0 &&
         observation.manifestScoped === true &&
-        observation.manifestConsumed === true,
+        hasModelReadableSandboxOutput(observation),
       businessReadonly: true,
       ...observation,
     }),

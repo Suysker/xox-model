@@ -1420,7 +1420,7 @@ describe('xox TypeScript API', () => {
       }
       if (planningCalls === 3) {
         const toolMessages = body.messages.filter((message: any) => message.role === 'tool')
-        expect(toolMessages.some((message: any) => String(message.content).includes('sandbox_result'))).toBe(true)
+        expect(toolMessages.some((message: any) => String(message.content).includes('sandbox_execution'))).toBe(true)
         expect(JSON.stringify(toolMessages)).toContain('firstShareholder')
         expect(JSON.stringify(toolMessages)).toContain('shareholders')
         return fakeAssistantTextResponse('按当前预测、5%通胀和5%贷款年利率估算，第一位股东的个人回报需要以沙箱计算结果为准；本轮最终回答由模型基于 sandbox observation 生成。')
@@ -1463,7 +1463,7 @@ describe('xox TypeScript API', () => {
     })
   })
 
-  it('keeps invalid sandbox observations from completing the run even without router goal facts', async () => {
+  it('keeps empty sandbox observations from completing the run even without router goal facts', async () => {
     let planningCalls = 0
     await withFakeOpenAICompatibleProvider((body) => {
       planningCalls += 1
@@ -1472,17 +1472,9 @@ describe('xox TypeScript API', () => {
         return fakeToolResponse('sandbox_run_code', {
           purpose: '计算一个需要可复核沙箱证据的派生结果',
           language: 'python',
-          code: [
-            'import json, os, pathlib',
-            'result = {',
-            '  "schemaVersion": "xox.sandbox.result.v1",',
-            '  "summary": "完成但没有 manifest 消费证明",',
-            '  "structured": {"answer": 2}',
-            '}',
-            'pathlib.Path(os.environ["XOX_SANDBOX_OUTPUT_DIR"], "result.json").write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")',
-          ].join('\n'),
+          code: 'pass',
           dataRequest: { scope: 'workspace_summary' },
-          expectedOutputs: ['json'],
+          expectedOutputs: ['text'],
         })
       }
       return fakeAssistantTextResponse('结果是 2。')

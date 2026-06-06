@@ -43,15 +43,15 @@ export type SandboxExecutionResult = {
   durationMs: number
   stdout: string
   stderr: string
-  structuredOutput: unknown
+  outputText: string
+  extraction: SandboxObservation['extraction']
+  provenance: SandboxObservation['provenance']
   artifacts: SandboxObservation['artifacts']
   result: SandboxObservation['result']
   resourceUsage: SandboxObservation['resourceUsage']
   manifestHash: string
   inputEvidenceIds: string[]
   manifestScoped: true
-  manifestConsumed: boolean
-  manifestConsumption?: SandboxObservation['manifestConsumption']
   errorMessage?: string
 }
 
