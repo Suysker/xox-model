@@ -110,6 +110,23 @@ Structured output is an optional enhancement.
 Runner-owned provenance is audit metadata, not a model-authored proof requirement.
 ```
 
+### 2026-06-06 Addendum: Streamed Sandbox Tool-Call Reliability
+
+Run `c9eedf22` exposed a second sandbox boundary bug:
+
+- the model first gathered domain facts through `data_query_workspace`;
+- the model then attempted `sandbox_run_code` for an inflation / loan / shareholder ROI calculation;
+- the provider streamed a long JSON argument containing code and the stream ended with an incomplete JSON object;
+- the runtime retried non-streaming, but the retry produced assistant text instead of a sandbox tool call;
+- the run still passed final response evaluation on domain-read evidence only.
+
+This violates the evidence-first loop. Once the provider trajectory contains a sandbox tool-call intent, the runner owns a sandbox evidence requirement until a valid sandbox observation exists or the run fails closed. The requirement must not depend only on model-emitted `goalFacts`.
+
+Two design rules follow:
+
+1. `sandbox_run_code` is a long-argument structured tool. Like large operating-model configuration, it should use stable non-stream planning by default so code JSON is not assembled through provider stream deltas.
+2. A failed sandbox tool-call intent that does not produce a tool observation must become a runner-owned runtime fact (`runtime_evidence_required` with `requiresSandboxComputation=true`) before final answer evaluation. If no valid sandbox observation appears, `ResponseEvaluator` must return `needs_calculation`.
+
 ## Architecture
 
 ```mermaid

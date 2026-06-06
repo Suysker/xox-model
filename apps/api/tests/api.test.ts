@@ -436,6 +436,25 @@ function fakeToolResponses(calls: Array<{ name: string; args?: Record<string, un
   }
 }
 
+function fakeMalformedToolResponse(name: string, malformedArguments: string) {
+  return {
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: null,
+        tool_calls: [{
+          id: `call_malformed_${name}`,
+          type: 'function',
+          function: {
+            name,
+            arguments: malformedArguments,
+          },
+        }],
+      },
+    }],
+  }
+}
+
 function flattenTranscriptNodes(nodes: any[]): any[] {
   return nodes.flatMap((node) => [node, ...flattenTranscriptNodes(Array.isArray(node?.children) ? node.children : [])])
 }
@@ -1389,6 +1408,7 @@ describe('xox TypeScript API', () => {
         })
       }
       if (planningCalls === 2) {
+        expect(body.stream).toBe(false)
         expect(body.messages.some((message: any) => message.role === 'tool')).toBe(true)
         expectProviderTools(body, ['sandbox_run_code'])
         return fakeToolResponse('sandbox_run_code', {
@@ -1449,6 +1469,11 @@ describe('xox TypeScript API', () => {
       expect(response.json.messages.at(-1).content).not.toContain('fake_deterministic')
       expect(response.json.runEvents.map((event: any) => event.type)).toContain('observation_continuation_requested')
       expect(response.json.runEvents.some((event: any) =>
+        event.type === 'provider_stable_long_tool_mode' &&
+        event.data?.toolName === 'sandbox_run_code' &&
+        event.data?.stream === false,
+      )).toBe(true)
+      expect(response.json.runEvents.some((event: any) =>
         event.type === 'response_evaluated' &&
         event.data?.evaluationStatus === 'pass' &&
         event.data?.evidenceCount >= 2,
@@ -1459,6 +1484,66 @@ describe('xox TypeScript API', () => {
     }, {
       capabilities: ['data', 'sandbox'],
       goalFacts: { requiresSandboxComputation: true },
+      observationContinuationResponse: false,
+    })
+  })
+
+  it('fails closed when sandbox retry returns assistant text without a tool observation', async () => {
+    let planningCalls = 0
+    await withFakeOpenAICompatibleProvider((body) => {
+      planningCalls += 1
+      if (planningCalls === 1) {
+        expectProviderTools(body, ['data_query_workspace'])
+        return fakeToolResponse('data_query_workspace', {
+          question: '当前工作区整体ROI、现金、回本情况',
+          scope: 'workspace_summary',
+          metrics: ['roi', 'cash', 'payback'],
+        })
+      }
+      if (planningCalls === 2) {
+        expect(body.stream).toBe(false)
+        expectProviderTools(body, ['sandbox_run_code'])
+        return fakeMalformedToolResponse('sandbox_run_code', '{"purpose":"结合工作区数据计算通胀和贷款后的个人 ROI","language":"python","code":"print(1)"')
+      }
+      if (planningCalls === 3) {
+        expect(body.stream).toBe(false)
+        expectProviderTools(body, ['sandbox_run_code'])
+        return fakeAssistantTextResponse('只用工作区 ROI 粗略估算，投资回报率大约为正。')
+      }
+      return fakeAssistantTextResponse('仍然只给普通回答。')
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-sandbox-missing-observation-fail-closed', {
+        ...fakeProviderSettings(baseUrl),
+        agentProviderRequestTimeoutMs: 10_000,
+      })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-sandbox-missing-observation-fail-closed@example.com')
+
+      const response = await client.post('/api/v1/agent/messages', {
+        message: '给我预测一下，如果目前的通胀率是15%，我的投资回报率是多少？我是第2个股东，我投入的钱都是银行贷款出来的，银行利率是年利率3%',
+      })
+
+      expect(response.statusCode).toBe(200)
+      const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
+      expect(state.json.runEvents.some((event: any) =>
+        event.type === 'runtime_evidence_required' &&
+        event.data?.toolNames?.includes('sandbox_run_code') &&
+        event.data?.requiredGoalFacts?.requiresSandboxComputation === true,
+      )).toBe(true)
+      expect(state.json.runEvents.some((event: any) =>
+        event.type === 'goal_evaluated' &&
+        event.data?.evaluationStatus === 'continue' &&
+        String(event.data?.nextPlannerBrief ?? '').includes('sandbox_run_code'),
+      )).toBe(true)
+      expect(state.json.runEvents.some((event: any) =>
+        event.type === 'run_failed' &&
+        event.status === 'failed',
+      )).toBe(true)
+      expect(state.json.goals.at(-1).status).toBe('failed')
+      expect(state.json.messages.at(-1).content).toContain('缺少必要的工具调用')
+      await closeHarness(harness)
+    }, {
+      capabilities: ['data', 'sandbox'],
       observationContinuationResponse: false,
     })
   })
@@ -5290,7 +5375,7 @@ describe('xox TypeScript API', () => {
       expect(entries.filter((entry: any) => entry.entryOrigin === 'manual')).toHaveLength(4)
       await closeHarness(harness)
     })
-  })
+  }, 20_000)
 
   it('expands batch planned ledger tools into multiple editable confirmation cards', async () => {
     await withFakeOpenAICompatibleProvider(() => fakeToolResponses([
@@ -5386,7 +5471,7 @@ describe('xox TypeScript API', () => {
 
       await closeHarness(harness)
     })
-  })
+  }, 20_000)
 
   it('promotes a selected snapshot to a new release through an Agent confirmation', async () => {
     await withFakeOpenAICompatibleProvider(() => fakeToolResponse('workspace_promote_version', { versionNo: 1 }), async (baseUrl) => {

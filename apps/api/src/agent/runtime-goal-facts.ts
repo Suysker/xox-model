@@ -63,9 +63,14 @@ export function mergeAgentGoalFacts(...items: AgentGoalFacts[]): AgentGoalFacts 
 }
 
 export function goalFactsFromRunEvent(row: Row<'agent_run_events'>): AgentGoalFacts {
-  if (row.event_type !== 'tool_catalog_ready') return {}
   const data = parseJson<Record<string, unknown>>(row.data_json, {})
-  return sanitizeAgentGoalFacts(data.goalFacts)
+  if (row.event_type === 'tool_catalog_ready') {
+    return sanitizeAgentGoalFacts(data.goalFacts)
+  }
+  if (row.event_type === 'runtime_evidence_required') {
+    return sanitizeAgentGoalFacts(data.requiredGoalFacts)
+  }
+  return {}
 }
 
 export async function readRuntimeGoalFacts(db: Kysely<Database>, runId: string): Promise<AgentGoalFacts> {
@@ -73,7 +78,7 @@ export async function readRuntimeGoalFacts(db: Kysely<Database>, runId: string):
     .selectFrom('agent_run_events')
     .selectAll()
     .where('run_id', '=', runId)
-    .where('event_type', '=', 'tool_catalog_ready')
+    .where('event_type', 'in', ['tool_catalog_ready', 'runtime_evidence_required'])
     .orderBy('sequence_no', 'asc')
     .execute()
   return mergeAgentGoalFacts(...events.map(goalFactsFromRunEvent))

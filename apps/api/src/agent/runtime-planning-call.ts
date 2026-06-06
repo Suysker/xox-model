@@ -13,7 +13,7 @@ import type { Settings } from '../core/settings.js'
 import {
   HIGH_VOLUME_STRUCTURED_MAX_TOKENS,
   HIGH_VOLUME_STRUCTURED_TIMEOUT_MS,
-  HIGH_VOLUME_STRUCTURED_TOOL_NAME,
+  highVolumeStructuredToolName,
   hasHighVolumeStructuredTool,
 } from './runtime/high-volume-tool-policy.js'
 import { addRunEvent } from './run-events.js'
@@ -33,11 +33,32 @@ function plannerTokenBudget(message: string) {
   return message.length >= 600 || structuredLineCount >= 8 ? 6000 : 1600
 }
 
+function hasRuntimeTool(tools: RuntimePlanningInput['tools'], toolName: string) {
+  return tools.some((tool) => tool.function.name === toolName)
+}
+
+function isSandboxObservationPlanning(input: {
+  tools: RuntimePlanningInput['tools']
+  priorObservationCount: number
+}) {
+  return input.priorObservationCount > 0 && hasRuntimeTool(input.tools, 'sandbox_run_code')
+}
+
+function stableStructuredToolName(input: {
+  tools: RuntimePlanningInput['tools']
+  priorObservationCount: number
+}) {
+  if (isSandboxObservationPlanning(input)) return 'sandbox_run_code'
+  return highVolumeStructuredToolName(input.tools)
+}
+
 function isHighVolumeStructuredPlanning(input: {
   message: string
   tools: RuntimePlanningInput['tools']
+  priorObservationCount: number
 }) {
   const structuredLineCount = input.message.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).length
+  if (isSandboxObservationPlanning(input)) return true
   return hasHighVolumeStructuredTool(input.tools) &&
     (input.message.length >= 600 || structuredLineCount >= 8)
 }
@@ -45,6 +66,7 @@ function isHighVolumeStructuredPlanning(input: {
 function runtimeMaxTokens(input: {
   message: string
   tools: RuntimePlanningInput['tools']
+  priorObservationCount: number
 }) {
   return isHighVolumeStructuredPlanning(input) ? HIGH_VOLUME_STRUCTURED_MAX_TOKENS : plannerTokenBudget(input.message)
 }
@@ -134,6 +156,53 @@ function deferredToolNamesFromBoundary(result: RuntimePlanResult | null | undefi
   return result.error.toolCallBoundary.toolNames
 }
 
+function observedToolNames(result: RuntimePlanResult | null | undefined) {
+  return new Set(
+    (result?.steps ?? [])
+      .map((step) => step.providerToolName)
+      .filter((name): name is string => typeof name === 'string' && name.length > 0),
+  )
+}
+
+function missingObservationToolNames(
+  first: RuntimePlanResult | null | undefined,
+  retry: RuntimePlanResult | null | undefined,
+) {
+  const attempted = [...new Set(first?.error?.toolNames ?? [])]
+  if (attempted.length === 0) return []
+  const observed = observedToolNames(retry)
+  return attempted.filter((name) => !observed.has(name))
+}
+
+function requiredFactsForToolEvidence(toolNames: readonly string[]) {
+  return {
+    ...(toolNames.includes('sandbox_run_code') ? { requiresSandboxComputation: true } : {}),
+  }
+}
+
+async function addToolEvidenceRequirement(
+  ctx: PlannerContext,
+  first: RuntimePlanResult | null | undefined,
+  retry: RuntimePlanResult | null | undefined,
+) {
+  const toolNames = missingObservationToolNames(first, retry)
+  if (toolNames.length === 0) return
+  const requiredGoalFacts = requiredFactsForToolEvidence(toolNames)
+  await addRunEvent(ctx.db, {
+    threadId: ctx.threadId,
+    runId: ctx.runId,
+    type: 'runtime_evidence_required',
+    title: '需要补齐工具证据',
+    message: 'Provider 已产生工具调用意图，但重试后没有形成对应工具 observation；最终回答前必须补齐对应 evidence 或失败关闭。',
+    status: 'running',
+    data: {
+      toolNames,
+      reason: 'provider_tool_call_without_observation_after_retry',
+      requiredGoalFacts,
+    },
+  })
+}
+
 function runtimeInputWithMaterializedTools(
   input: RuntimePlanningInput,
   toolCatalog: RuntimeToolCatalogProjection,
@@ -179,8 +248,9 @@ export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePl
     automationLevel: ctx.automationLevel,
   })
 
-  const maxTokens = runtimeMaxTokens({ message: ctx.message, tools: toolCatalog.tools })
-  const stableLongToolMode = isHighVolumeStructuredPlanning({ message: ctx.message, tools: toolCatalog.tools })
+  const priorObservationCount = ctx.priorObservations?.length ?? 0
+  const maxTokens = runtimeMaxTokens({ message: ctx.message, tools: toolCatalog.tools, priorObservationCount })
+  const stableLongToolMode = isHighVolumeStructuredPlanning({ message: ctx.message, tools: toolCatalog.tools, priorObservationCount })
   const runtimeInput: RuntimePlanningInput = {
     settings: ctx.settings,
     message: redactSecretLikeContent(ctx.message),
@@ -207,6 +277,7 @@ export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePl
   }
 
   if (stableLongToolMode) {
+    const stableToolName = stableStructuredToolName({ tools: toolCatalog.tools, priorObservationCount })
     await addRunEvent(ctx.db, {
       threadId: ctx.threadId,
       runId: ctx.runId,
@@ -216,7 +287,7 @@ export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePl
       status: 'running',
       data: {
         provider: ctx.settings.openaiCompatibleProvider,
-        toolName: HIGH_VOLUME_STRUCTURED_TOOL_NAME,
+        toolName: stableToolName,
         stream: false,
         maxTokens,
         requestTimeoutMs: runtimeInput.requestTimeoutMs,
@@ -269,6 +340,7 @@ export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePl
       },
     })
     const retry = attachToolInventory(await planWithRuntimeAdapter(retryInput), toolCatalog)
+    await addToolEvidenceRequirement(ctx, first, retry)
     await addNonStreamPlanningPreface(ctx, retry)
     return retry
   }

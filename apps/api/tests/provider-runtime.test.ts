@@ -496,6 +496,22 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
     expect(operatingRetry.maxTokens).toBeGreaterThanOrEqual(48_000)
     expect(operatingRetry.requestTimeoutMs).toBeGreaterThanOrEqual(360_000)
 
+    const sandboxRetry = retryRuntimeInput(runtimeInput('deepseek', 'deepseek-v4-pro', [
+      tool('sandbox_run_code'),
+      tool('data_query_workspace'),
+    ]), {
+      source: 'openai_compatible_tool_calls',
+      steps: [],
+      error: {
+        kind: 'provider_response_error',
+        toolNames: ['sandbox_run_code'],
+      },
+    })
+    expect(sandboxRetry.stream).toBe(false)
+    expect(sandboxRetry.tools.map((item) => item.function.name)).toEqual(['sandbox_run_code'])
+    expect(sandboxRetry.maxTokens).toBeGreaterThanOrEqual(48_000)
+    expect(sandboxRetry.requestTimeoutMs).toBeGreaterThanOrEqual(360_000)
+
     expect(shouldRetryRuntimePlan({
       source: 'openai_compatible_tool_calls',
       steps: [],
@@ -592,6 +608,50 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
         reasoningText: '先确认需要调用记账工具。',
       })
       expect((result?.providerAssistantMessage as any)?.reasoning_content).toBe('先确认需要调用记账工具。')
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('reports incomplete streamed sandbox arguments as a provider tool-call parse failure', async () => {
+    const originalFetch = globalThis.fetch
+    const encoder = new TextEncoder()
+    const event = {
+      choices: [{
+        delta: {
+          tool_calls: [{
+            index: 0,
+            id: 'call_sandbox_run_code',
+            type: 'function',
+            function: {
+              name: 'sandbox_run_code',
+              arguments: '{"purpose":"calculate ROI","language":"python","code":"print(',
+            },
+          }],
+        },
+      }],
+    }
+    globalThis.fetch = (async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`))
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+        controller.close()
+      },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    })) as typeof fetch
+
+    try {
+      const result = await new OpenAICompatibleChatAdapter().plan({
+        ...runtimeInput('deepseek', 'deepseek-v4-pro', [tool('sandbox_run_code')]),
+        stream: true,
+      })
+      expect(result?.steps).toHaveLength(0)
+      expect(result?.error).toMatchObject({
+        kind: 'provider_response_error',
+        toolNames: ['sandbox_run_code'],
+      })
     } finally {
       globalThis.fetch = originalFetch
     }
