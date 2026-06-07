@@ -654,6 +654,70 @@ export type AgentGoalFacts = {
   forbiddenActions?: Array<'publish_release' | 'share_link' | 'account_action'>
 }
 
+export type AgentEvidenceSubjectType =
+  | 'workspace'
+  | 'shareholder'
+  | 'member'
+  | 'employee'
+  | 'ledger_entry'
+  | 'forecast'
+  | 'calculation'
+  | 'version'
+  | 'action'
+
+export type AgentEvidenceSubjectLocator =
+  | { kind: 'explicit_name'; value: string }
+  | { kind: 'ordinal'; index: number }
+  | { kind: 'current_user' }
+  | { kind: 'current_workspace' }
+
+export type AgentTurnRequirement = {
+  directAnswerAllowed: boolean
+  needsClarification?: Array<{
+    question: string
+    missingFields: string[]
+  }>
+  requiredDomainFacts?: Array<{
+    subject: AgentEvidenceSubjectType
+    locator: AgentEvidenceSubjectLocator
+    scope: 'summary' | 'entity_summary' | 'ledger_history' | 'draft_config' | 'version_history'
+    reason: string
+  }>
+  requiredCalculations?: Array<{
+    kind: 'scenario' | 'allocation' | 'projection' | 'financial_metric'
+    inputEvidenceSubjects: string[]
+    reason: string
+  }>
+  expectedActions?: Array<{
+    capability: 'domain_read' | 'sandbox_compute' | 'action_preview' | 'action_execute'
+    reason: string
+  }>
+}
+
+export type AgentObservationEvidence = {
+  evidenceId: string
+  source: 'domain_read' | 'sandbox' | 'action_request' | 'action_execution' | 'ambient'
+  subjects: Array<{
+    type: AgentEvidenceSubjectType
+    locator?: string
+  }>
+  capabilities: Array<'read' | 'compute' | 'preview' | 'execute'>
+  modelContent: string
+  details?: unknown
+}
+
+export type AgentFinalAnswerClaim = {
+  claimId?: string
+  kind: 'domain_fact' | 'entity_specific' | 'derived_calculation' | 'action_status' | 'refusal' | 'clarification'
+  subject?: {
+    type: AgentEvidenceSubjectType
+    locator?: string
+  }
+  dependsOn?: string[]
+  text?: string
+  reason: string
+}
+
 export type AgentGoalContract = {
   goalId: string
   threadId: string

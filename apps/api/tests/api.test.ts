@@ -40,6 +40,7 @@ type FakeProviderOptions = {
   capabilities?: FakeCapability[]
   requiredActionCapabilities?: FakeCapability[]
   goalFacts?: Record<string, unknown>
+  finalAnswerClaims?: Array<Record<string, unknown>> | ((body: any, request: IncomingMessage) => unknown | Promise<unknown>)
   finalizerResponse?: (body: any, request: IncomingMessage) => unknown | Promise<unknown>
   observationContinuationResponse?: false | ((body: any, request: IncomingMessage) => unknown | Promise<unknown>)
 }
@@ -92,6 +93,13 @@ function isTurnLaneResolverRequest(body: any) {
   return toolNames.includes('turn_lane_resolve')
 }
 
+function isFinalAnswerClaimExtractorRequest(body: any) {
+  const toolNames = Array.isArray(body?.tools)
+    ? body.tools.map((tool: any) => tool?.function?.name ?? tool?.name)
+    : []
+  return toolNames.includes('final_answer_extract_claims')
+}
+
 function fakeTurnLaneResolutionResponse(lane: 'agent_goal' | 'direct_answer' = 'agent_goal') {
   return fakeOpenAIChatToolResponse('turn_lane_resolve', {
     lane,
@@ -113,6 +121,10 @@ function fakeCapabilitySelectionResponse(
     goalFacts: input.goalFacts ?? {},
     reason: 'test-selected-capabilities',
   })
+}
+
+function fakeFinalAnswerClaimExtractionResponse(claims: Array<Record<string, unknown>> = []) {
+  return fakeOpenAIChatToolResponse('final_answer_extract_claims', { claims })
 }
 
 async function buildHarness(name: string, overrides: Partial<Settings> = {}) {
@@ -169,6 +181,10 @@ async function withFakeOpenAICompatibleProvider(
         ? typeof options.turnLane === 'function'
           ? await options.turnLane(body, request)
           : fakeTurnLaneResolutionResponse(options.turnLane ?? 'agent_goal')
+      : isFinalAnswerClaimExtractorRequest(body)
+        ? typeof options.finalAnswerClaims === 'function'
+          ? await options.finalAnswerClaims(body, request)
+          : fakeFinalAnswerClaimExtractionResponse(options.finalAnswerClaims ?? [])
       : (options.autoSelectCapabilities ?? true) && isCapabilityRouterRequest(body)
         ? fakeCapabilitySelectionResponse(options.capabilities ?? DEFAULT_FAKE_CAPABILITIES, {
             ...(options.requiredActionCapabilities ? { requiredActionCapabilities: options.requiredActionCapabilities } : {}),
@@ -1652,7 +1668,10 @@ describe('xox TypeScript API', () => {
       await closeHarness(harness)
     }, {
       capabilities: ['sandbox'],
-      goalFacts: { requiresSandboxComputation: true, requiresOrderedEntityFacts: true },
+      finalAnswerClaims: [
+        { kind: 'entity_specific', subject: { type: 'shareholder', label: '第 2 位股东' }, reason: 'final answer names an ordinal shareholder' },
+        { kind: 'derived_calculation', subject: { type: 'calculation', label: 'personal ROI' }, reason: 'final answer reports a calculated ROI' },
+      ],
       observationContinuationResponse: false,
     })
   })
@@ -1729,7 +1748,10 @@ describe('xox TypeScript API', () => {
       await closeHarness(harness)
     }, {
       capabilities: ['sandbox'],
-      goalFacts: { requiresSandboxComputation: true, requiresOrderedEntityFacts: true },
+      finalAnswerClaims: [
+        { kind: 'entity_specific', subject: { type: 'shareholder', label: '第 2 位股东' }, reason: 'final answer names an ordinal shareholder' },
+        { kind: 'derived_calculation', subject: { type: 'calculation', label: 'personal ROI' }, reason: 'final answer reports a calculated ROI' },
+      ],
       observationContinuationResponse: false,
     })
   })
@@ -1812,7 +1834,10 @@ describe('xox TypeScript API', () => {
       await closeHarness(harness)
     }, {
       capabilities: ['data', 'sandbox'],
-      goalFacts: { requiresSandboxComputation: true, requiresOrderedEntityFacts: true },
+      finalAnswerClaims: [
+        { kind: 'entity_specific', subject: { type: 'shareholder', label: '第 2 位股东' }, reason: 'final answer names an ordinal shareholder' },
+        { kind: 'derived_calculation', subject: { type: 'calculation', label: 'loan-adjusted ROI' }, reason: 'final answer reports a calculated ROI' },
+      ],
       observationContinuationResponse: false,
     })
   }, 20_000)

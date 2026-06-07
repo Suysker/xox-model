@@ -1,6 +1,7 @@
 import type { AgentToolObservation } from './tool-observation-continuation.js'
 import { isExecutedSandboxEvidenceFacts } from './evidence-ledger.js'
 import type { ResponseEvaluation } from './response-evaluator.js'
+import { objectHasKey } from './structured-evidence-utils.js'
 import {
   loopObligationsFromResponseEvaluation,
   planLoopObligations,
@@ -85,13 +86,6 @@ function parseObservationContent(value: string): Record<string, unknown> {
   } catch {
     return { text: value }
   }
-}
-
-function objectHasKey(value: unknown, key: string): boolean {
-  if (!value || typeof value !== 'object') return false
-  if (Object.hasOwn(value, key)) return true
-  if (Array.isArray(value)) return value.some((item) => objectHasKey(item, key))
-  return Object.values(value as Record<string, unknown>).some((item) => objectHasKey(item, key))
 }
 
 function isActive(status: AgentLoopObligationStatus) {

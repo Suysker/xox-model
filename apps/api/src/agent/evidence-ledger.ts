@@ -1,5 +1,6 @@
 import type { AgentGoalFacts } from '@xox/contracts'
 import type { AgentToolObservation } from './tool-observation-continuation.js'
+import { objectHasKey } from './structured-evidence-utils.js'
 
 export type AgentEvidenceAuthority = 'ambient' | 'domain_read' | 'sandbox' | 'action' | 'memory'
 export type AgentEvidenceValidity = 'valid' | 'invalid'
@@ -12,7 +13,7 @@ export type AgentEvidenceSource =
   | 'memory_recall'
 
 export type AgentEvidenceSubject = {
-  type: 'workspace' | 'shareholder' | 'member' | 'ledger_entry' | 'forecast' | 'calculation'
+  type: 'workspace' | 'shareholder' | 'member' | 'ledger_entry' | 'forecast' | 'calculation' | 'action'
   id?: string | null
   label?: string | null
 }
@@ -34,8 +35,11 @@ export type AgentEvidenceItem = {
 }
 
 export type AgentFinalAnswerClaim = {
-  kind: 'derived_calculation' | 'entity_specific'
-  subject?: AgentEvidenceSubject['type']
+  claimId?: string
+  kind: 'domain_fact' | 'derived_calculation' | 'entity_specific' | 'action_status' | 'refusal' | 'clarification'
+  subject?: AgentEvidenceSubject['type'] | AgentEvidenceSubject
+  dependsOn?: string[]
+  text?: string
   reason: string
 }
 
@@ -133,10 +137,11 @@ function evidenceSubject(facts: Record<string, unknown>, authority: AgentEvidenc
   if (authority === 'sandbox') return { type: 'calculation', label: typeof facts.purpose === 'string' ? facts.purpose : 'sandbox calculation' }
   if (authority === 'action') {
     const label = typeof facts.title === 'string' ? facts.title : typeof facts.actionKind === 'string' ? facts.actionKind : undefined
-    return { type: 'workspace', ...(label ? { label } : {}) }
+    return { type: 'action', ...(label ? { label } : {}) }
   }
   const scope = typeof facts.scope === 'string' ? facts.scope : null
   if (scope === 'team_summary') return { type: 'member', label: 'team summary' }
+  if (scope === 'entity_summary' && objectHasKey(facts, 'shareholders')) return { type: 'shareholder', label: 'entity summary' }
   if (scope === 'entity_summary') return { type: 'workspace', label: 'entity summary' }
   if (scope === 'ledger_history') return { type: 'ledger_entry', label: 'ledger history' }
   return { type: 'forecast', label: scope ?? 'workspace facts' }
@@ -225,7 +230,9 @@ export function buildEvidenceRequirements(input: {
     })
   }
 
-  const shareholderClaim = claims.find((claim) => claim.kind === 'entity_specific' && (!claim.subject || claim.subject === 'shareholder'))
+  const shareholderClaim = claims.find((claim) =>
+    (claim.kind === 'entity_specific' || claim.kind === 'domain_fact') &&
+    (!claim.subject || claimSubjectType(claim) === 'shareholder'))
   if (input.facts.requiresOrderedEntityFacts) {
     requirements.push({
       authority: 'domain_read',
@@ -245,11 +252,10 @@ export function buildEvidenceRequirements(input: {
   return requirements
 }
 
-function objectHasKey(value: unknown, key: string): boolean {
-  if (!value || typeof value !== 'object') return false
-  if (Object.hasOwn(value, key)) return true
-  if (Array.isArray(value)) return value.some((item) => objectHasKey(item, key))
-  return Object.values(value as Record<string, unknown>).some((item) => objectHasKey(item, key))
+function claimSubjectType(claim: AgentFinalAnswerClaim) {
+  if (!claim.subject) return undefined
+  if (typeof claim.subject === 'string') return claim.subject
+  return claim.subject.type
 }
 
 export function evidenceContainsKey(items: AgentEvidenceItem[], key: string) {

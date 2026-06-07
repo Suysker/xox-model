@@ -23,6 +23,7 @@ import { evaluateToolLoopGuardrails } from './tool-runtime/tool-loop-guardrails.
 import { resolveAfterEvaluation, resolveAfterPlanning } from './turn-resolver.js'
 import { evaluateAssistantResponse, responseEvaluationSummary } from './response-evaluator.js'
 import { readRuntimeGoalFacts } from './runtime-goal-facts.js'
+import { extractFinalAnswerClaims } from './final-answer-claim-extractor.js'
 import {
   applyObservationToLedger,
   applyResponseEvaluationToLedger,
@@ -135,14 +136,37 @@ export async function executeAgentRun(
       observations,
     })
     const runtimeFacts = await readRuntimeGoalFacts(ctx.db, ctx.runId)
+    const pendingActionCount = actionRows.filter((action) => action.status === 'pending').length
+    const awaitingClarification = lastEvaluation?.status === 'needs_clarification'
+    const claimExtraction = assistantText?.trim() && pendingActionCount === 0 && !awaitingClarification
+      ? await extractFinalAnswerClaims({
+          db: ctx.db,
+          settings: ctx.settings,
+          workspace: ctx.workspace,
+          user: ctx.user,
+          threadId: ctx.thread.id,
+          runId: ctx.runId,
+          message: objective,
+          ...(ctx.abortSignal ? { abortSignal: ctx.abortSignal } : {}),
+        }, {
+          finalAssistantText: assistantText,
+          evidence,
+        })
+      : null
+    if (claimExtraction?.status === 'failed') {
+      const reason = `最终回答 claim 提取失败：${claimExtraction.reason}`
+      await updateGoalStatus(ctx.db, goal, 'failed', { blockedReason: reason })
+      return { status: 'failed', reason }
+    }
     const responseEvaluation = evaluateAssistantResponse({
       goal,
       finalAssistantText: assistantText,
       observations,
       evidence,
       runtimeFacts,
-      pendingActionCount: actionRows.filter((action) => action.status === 'pending').length,
-      awaitingClarification: lastEvaluation?.status === 'needs_clarification',
+      finalAnswerClaims: claimExtraction?.status === 'completed' ? claimExtraction.claims : [],
+      pendingActionCount,
+      awaitingClarification,
     })
     applyResponseEvaluationToLedger({
       ledger: obligationLedger,
@@ -177,6 +201,8 @@ export async function executeAgentRun(
         })),
         findings: responseEvaluation.findings,
         requiredEvidence: responseEvaluation.requiredEvidence,
+        finalAnswerClaims: claimExtraction?.status === 'completed' ? claimExtraction.claims : [],
+        claimExtractionStatus: claimExtraction?.status ?? null,
         obligationLedger: serializeObligationLedger(obligationLedger),
         obligationPlan,
         nextPlannerBrief: responseEvaluation.nextPlannerBrief,

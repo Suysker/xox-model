@@ -113,8 +113,17 @@ describe('Agent response evaluator', () => {
     })
   })
 
-  it('accepts final answers after sandbox evidence includes ordered shareholder facts', () => {
+  it('accepts final answers only after domain shareholder facts and sandbox calculation both exist', () => {
     const observations = [
+      observation({
+        toolCallId: 'call_entity',
+        toolArguments: { scope: 'entity_summary' },
+        modelContent: JSON.stringify({
+          scope: 'entity_summary',
+          shareholders: [{ index: 1, name: '股东 A', investmentAmount: 1000000 }],
+          firstShareholder: { index: 1, name: '股东 A', investmentAmount: 1000000 },
+        }),
+      }),
       observation({
         title: '受控沙箱执行完成',
         toolName: 'sandbox_run_code',
@@ -161,6 +170,44 @@ describe('Agent response evaluator', () => {
     })).toMatchObject({
       status: 'pass',
       findings: [expect.objectContaining({ code: 'response.evidence_accepted' })],
+    })
+  })
+
+  it('does not let sandbox-embedded shareholder fields satisfy domain shareholder evidence', () => {
+    const observations = [
+      observation({
+        title: '受控沙箱执行完成',
+        toolName: 'sandbox_run_code',
+        toolCallId: 'call_sandbox',
+        modelContent: JSON.stringify({
+          observationType: 'sandbox_execution',
+          completed: true,
+          status: 'completed',
+          executionMode: 'executed',
+          exitCode: 0,
+          manifestScoped: true,
+          stdout: 'shareholder ROI: 12%',
+          artifacts: [],
+          purpose: '计算第一位股东投资回报',
+          extraction: {
+            extractionStatus: 'parsed',
+            parsedOutput: {
+              shareholders: [{ index: 1, name: '股东 A', investmentAmount: 1000000 }],
+            },
+          },
+        }),
+      }),
+    ]
+    const evidence = buildEvidenceLedger({ threadId: 'thread_1', runId: 'run_1', observations })
+
+    expect(evaluateAssistantResponse({
+      goal: goal({ requiresSandboxComputation: true, requiresOrderedEntityFacts: true }),
+      finalAssistantText: '按沙箱计算，股东 A 的个人回报率为 12%。',
+      observations,
+      evidence,
+    })).toMatchObject({
+      status: 'needs_more_evidence',
+      findings: [expect.objectContaining({ code: 'response.entity_evidence_missing' })],
     })
   })
 

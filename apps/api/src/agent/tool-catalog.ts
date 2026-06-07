@@ -131,6 +131,14 @@ export type AgentToolCallStep = {
   plan?: unknown
   modelPlan?: unknown
   scenario?: unknown
+  claims?: Array<{
+    claimId?: string
+    kind?: string
+    subject?: unknown
+    dependsOn?: string[]
+    text?: string
+    reason?: string
+  }>
 }
 
 type JsonSchema = {
@@ -1308,6 +1316,8 @@ export function toolCallToPlannerStep(toolName: string, args: Record<string, unk
       return { intent: 'agent.ask_clarification', ...args }
     case 'account_forbidden':
       return { intent: 'account.forbidden' }
+    case 'final_answer_extract_claims':
+      return { intent: 'final_answer.extract_claims', ...args }
     default:
       return null
   }

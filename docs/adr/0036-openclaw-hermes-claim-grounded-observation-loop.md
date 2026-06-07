@@ -1,6 +1,6 @@
 # ADR 0036: OpenClaw/Hermes Claim-Grounded Observation Loop
 
-Status: Proposed
+Status: Implemented
 
 Date: 2026-06-08
 
@@ -660,3 +660,22 @@ Tradeoffs:
 - evidence metadata must be carried through persistence and transcript projection.
 
 The tradeoff is acceptable because the current failure mode is worse: a plausible but ungrounded final answer can pass the harness.
+
+## Implementation Notes
+
+Implemented in the first closed loop:
+
+- `apps/api/src/agent/final-answer-claim-extractor.ts` adds a provider-native structured claim extraction stage before final answer acceptance.
+- `apps/api/src/agent/agent-run-engine.ts` now feeds extracted final-answer claims into `evaluateAssistantResponse`.
+- `apps/api/src/agent/response-evaluator.ts` requires ordered shareholder facts to come from `domain_read` / `data_query_workspace`, not sandbox-embedded fields.
+- `apps/api/src/agent/evidence-ledger.ts` distinguishes action evidence from workspace evidence and marks entity summary reads with shareholder subjects when shareholders are present.
+- `apps/api/src/agent/structured-evidence-utils.ts` centralizes structural evidence traversal.
+- `packages/contracts/src/index.ts` now exposes formal `AgentTurnRequirement`, `AgentObservationEvidence`, and `AgentFinalAnswerClaim` contracts.
+
+The implementation intentionally does not add prose keyword routing. Claim extraction is model-owned structured output; runner code validates the returned contract and evidence closure.
+
+Remaining follow-up inside this ADR:
+
+- add a first-turn `AgentTurnRequirement` resolver that opens obligations before the first planning call;
+- progressively bind sandbox manifest input bundles to concrete domain evidence IDs;
+- continue porting provider/message repair utilities under the provider runtime boundary where needed.

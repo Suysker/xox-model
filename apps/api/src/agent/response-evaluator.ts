@@ -2,10 +2,11 @@ import type { AgentGoalFacts } from '@xox/contracts'
 import type { Row } from '../db/schema.js'
 import { parseJson } from '../db/database.js'
 import type { AgentEvidenceAuthority, AgentEvidenceItem, AgentFinalAnswerClaim } from './evidence-ledger.js'
-import { buildEvidenceRequirements, evidenceContainsKey, isExecutedSandboxEvidenceFacts } from './evidence-ledger.js'
+import { buildEvidenceRequirements, isExecutedSandboxEvidenceFacts } from './evidence-ledger.js'
 import type { AgentToolObservation } from './tool-observation-continuation.js'
 import type { AgentGoalContract } from '@xox/contracts'
 import { mergeAgentGoalFacts } from './runtime-goal-facts.js'
+import { objectHasKey } from './structured-evidence-utils.js'
 
 export type ResponseEvaluationStatus =
   | 'pass'
@@ -69,6 +70,14 @@ function invalidSandboxEvidenceItems(evidence: AgentEvidenceItem[]) {
   return sandboxEvidenceItems(evidence).filter((item) =>
     item.validity !== 'valid' ||
     !isExecutedSandboxEvidenceFacts(item.facts))
+}
+
+function hasOrderedShareholderDomainEvidence(evidence: AgentEvidenceItem[]) {
+  return evidence.some((item) =>
+    item.authority === 'domain_read' &&
+    item.validity === 'valid' &&
+    item.source === 'data_query_workspace' &&
+    (objectHasKey(item.facts, 'firstShareholder') || objectHasKey(item.facts, 'shareholders')))
 }
 
 export function evaluateAssistantResponse(input: {
@@ -180,8 +189,7 @@ export function evaluateAssistantResponse(input: {
   }
 
   if (requiresShareholderEvidence &&
-    !evidenceContainsKey(input.evidence, 'firstShareholder') &&
-    !evidenceContainsKey(input.evidence, 'shareholders')) {
+    !hasOrderedShareholderDomainEvidence(input.evidence)) {
     findings.push({
       severity: 'fail',
       code: 'response.entity_evidence_missing',
