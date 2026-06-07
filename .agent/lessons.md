@@ -206,6 +206,7 @@
 - OpenClaw gives the canonical loop shape and Hermes gives provider/tool-call/message hygiene. xox-model should absorb both under one `AgentRunEngine`: evaluator findings become typed loop obligations, every provider-emitted tool intent becomes a successful or failed observation, and no repair prompt, tool result, transcript projector, provider adapter, or helper module may independently decide finality.
 - Repairing the Agent harness at the prompt layer is the wrong layer when evidence is missing. Evaluator findings such as missing ordered shareholders must become typed runner-owned obligations that constrain the next tool/context turn; never turn them into user-visible assistant prose or a free-form `nextMessage`.
 - Response evaluator `requiredEvidence` is the acceptance evidence set, not automatically the next repair set. When converting evaluator output into runner obligations, filter by evaluator status and current findings so already-satisfied sandbox/data evidence is not re-exposed as a repair tool and the next loop stays narrow.
+- Runner-owned obligations must be durable ledger state, not a one-shot active plan. OpenClaw-style pending state and Hermes-style tool loops require obligations to survive observation continuation until explicit closure; otherwise the harness only detects missing evidence after allowing premature final-answer candidates.
 
 ## Testing
 
