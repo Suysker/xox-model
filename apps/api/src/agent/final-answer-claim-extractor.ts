@@ -23,7 +23,7 @@ type ClaimExtractionContext = {
 export type FinalAnswerClaimExtractionResult =
   | { status: 'completed'; claims: AgentFinalAnswerClaim[] }
   | { status: 'skipped'; reason: 'empty_final_answer' | 'rules_provider' }
-  | { status: 'failed'; reason: string }
+  | { status: 'unavailable'; reason: string }
 
 const CLAIM_SUBJECT_TYPES = new Set<AgentEvidenceSubject['type']>([
   'workspace',
@@ -103,9 +103,9 @@ function systemPrompt() {
   return [
     'You are the claim extraction stage of xox-model AgentRunEngine.',
     'You only convert an assistant final answer into structured evidence-relevant claims.',
-    'Always call final_answer_extract_claims.',
+    'Use final_answer_extract_claims when the provider supports tool calls for this review turn.',
     'Do not decide whether the final answer is correct.',
-    'Do not infer business facts that are not present in the final answer.',
+    'Do not infer domain facts that are not present in the final answer.',
     'A claim is evidence-relevant when it mentions workspace data, a specific shareholder/member/ledger item, a computed result, an action execution state, a refusal, or a clarification need.',
     'Entity-specific claims include ordinal or named shareholders/members, such as "the second shareholder", "shareholder B", "member 1", or equivalent expressions in any language.',
     'Derived calculation claims include ROI, payback, inflation adjustment, loan-rate adjustment, profit, cash, projections, allocations, or scenario computations.',
@@ -168,8 +168,8 @@ export async function extractFinalAnswerClaims(
     threadId: ctx.threadId,
     runId: ctx.runId,
     type: 'final_answer_claim_extraction_started',
-    title: '最终回答 claim 提取',
-    message: '正在把模型最终回答转成结构化 claim，以便和 run-scoped observation evidence 对齐。',
+    title: '最终回答 claim review',
+    message: '正在尝试把模型最终回答转成结构化 claim，以便和 run-scoped observation evidence 对齐。',
     status: 'running',
     data: {
       evidenceCount: input.evidence.length,
@@ -207,20 +207,20 @@ export async function extractFinalAnswerClaims(
 
   const extraction = claimsFromResult(result)
   if (result?.error || !result || !extraction.hasClaimStep) {
-    const reason = result?.error?.message ?? 'Provider did not return the required final_answer_extract_claims tool call.'
+    const reason = result?.error?.message ?? 'Provider did not return final_answer_extract_claims for optional claim review.'
     await addRunEvent(ctx.db, {
       threadId: ctx.threadId,
       runId: ctx.runId,
-      type: 'final_answer_claim_extraction_failed',
-      title: '最终回答 claim 提取失败',
+      type: 'final_answer_claim_extraction_unavailable',
+      title: '最终回答 claim review 不可用',
       message: reason,
-      status: 'failed',
+      status: 'info',
       data: {
         errorKind: result?.error?.kind ?? null,
         toolNames: result?.error?.toolNames ?? [],
       },
     })
-    return { status: 'failed', reason }
+    return { status: 'unavailable', reason }
   }
 
   const claims = extraction.claims

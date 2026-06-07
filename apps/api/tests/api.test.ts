@@ -1516,6 +1516,56 @@ describe('xox TypeScript API', () => {
     })
   })
 
+  it('treats unavailable final-answer claim review as a non-blocking review signal', async () => {
+    let planningCalls = 0
+    let claimReviewCalls = 0
+    await withFakeOpenAICompatibleProvider((body) => {
+      planningCalls += 1
+      expectProviderTools(body, ['data_query_workspace'])
+      return fakeToolResponse('data_query_workspace', {
+        question: '当前工作区有几个成员？',
+        scope: 'team_summary',
+        metrics: ['memberCount', 'memberNames'],
+      })
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-optional-final-claim-review', {
+        ...fakeProviderSettings(baseUrl),
+        agentProviderRequestTimeoutMs: 10_000,
+      })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-optional-final-claim-review@example.com')
+
+      const response = await client.post('/api/v1/agent/messages', {
+        message: '我们现在有几个人？',
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(planningCalls).toBe(1)
+      expect(claimReviewCalls).toBeGreaterThan(0)
+      const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
+      expect(state.json.goals.at(-1).status).toBe('completed')
+      expect(state.json.runEvents.some((event: any) =>
+        event.type === 'final_answer_claim_extraction_unavailable' &&
+        event.status === 'info',
+      )).toBe(true)
+      expect(state.json.runEvents.some((event: any) =>
+        event.type === 'response_evaluated' &&
+        event.data?.evaluationStatus === 'pass' &&
+        event.data?.claimReviewStatus === 'unavailable',
+      )).toBe(true)
+      expect(state.json.runEvents.some((event: any) => event.type === 'run_failed')).toBe(false)
+      expect(state.json.messages.at(-1).content).toContain('当前工作区共有')
+      expect(state.json.messages.at(-1).content).not.toContain('final_answer_extract_claims')
+      await closeHarness(harness)
+    }, {
+      capabilities: ['data'],
+      finalAnswerClaims: () => {
+        claimReviewCalls += 1
+        return fakeAssistantTextResponse('我无法把最终回答转成结构化 claim。')
+      },
+    })
+  })
+
   it('fails closed when sandbox retry returns assistant text without a tool observation', async () => {
     let planningCalls = 0
     await withFakeOpenAICompatibleProvider((body) => {

@@ -153,18 +153,14 @@ export async function executeAgentRun(
           evidence,
         })
       : null
-    if (claimExtraction?.status === 'failed') {
-      const reason = `最终回答 claim 提取失败：${claimExtraction.reason}`
-      await updateGoalStatus(ctx.db, goal, 'failed', { blockedReason: reason })
-      return { status: 'failed', reason }
-    }
+    const finalAnswerClaims = claimExtraction?.status === 'completed' ? claimExtraction.claims : []
     const responseEvaluation = evaluateAssistantResponse({
       goal,
       finalAssistantText: assistantText,
       observations,
       evidence,
       runtimeFacts,
-      finalAnswerClaims: claimExtraction?.status === 'completed' ? claimExtraction.claims : [],
+      finalAnswerClaims,
       pendingActionCount,
       awaitingClarification,
     })
@@ -201,8 +197,9 @@ export async function executeAgentRun(
         })),
         findings: responseEvaluation.findings,
         requiredEvidence: responseEvaluation.requiredEvidence,
-        finalAnswerClaims: claimExtraction?.status === 'completed' ? claimExtraction.claims : [],
-        claimExtractionStatus: claimExtraction?.status ?? null,
+        finalAnswerClaims,
+        claimReviewStatus: claimExtraction?.status ?? null,
+        claimReviewReason: claimExtraction?.status === 'unavailable' ? claimExtraction.reason : null,
         obligationLedger: serializeObligationLedger(obligationLedger),
         obligationPlan,
         nextPlannerBrief: responseEvaluation.nextPlannerBrief,

@@ -1,8 +1,10 @@
 # ADR 0037: OpenClaw/Hermes Single-Loop Final Review Upgrade
 
-Status: Proposed
+Status: Implemented
 
 Date: 2026-06-08
+
+Implemented: 2026-06-08
 
 Refines: ADR 0016 Manifest-Scoped Sandbox Tool, ADR 0018 AgentRunEngine v2 Single-Loop Harness, ADR 0020 Progressive Tool Discovery Runtime, ADR 0021 Turn Lane Resolution and Direct Answer Runtime, ADR 0033 OpenClaw/Hermes Canonical Loop And Runtime Hygiene Convergence, ADR 0034 OpenClaw/Hermes Runner-Owned Obligation Runtime, ADR 0035 OpenClaw/Hermes Obligation Ledger State Machine, ADR 0036 OpenClaw/Hermes Claim-Grounded Observation Loop
 
@@ -647,3 +649,12 @@ runner-owned review,
 domain-owned formulas,
 canonical assistant final answer.
 ```
+
+## Implementation Notes
+
+The first implemented slice removes the hidden forced final-answer claim tool as a completion gate:
+
+- `AgentRunEngine` still owns finality through `evaluateAssistantResponse`.
+- `final_answer_extract_claims` is now an optional claim-review signal. If the provider returns text, no tool call, or otherwise cannot produce structured claims, the run records `final_answer_claim_extraction_unavailable` as an informational event.
+- Existing evidence and obligation ledgers still decide whether the final answer is grounded enough to pass, continue, wait, or fail closed.
+- API coverage now includes a provider that returns ordinary assistant text during claim review; the run completes from observation-backed evidence instead of failing on the missing hidden tool call.
