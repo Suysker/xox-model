@@ -383,11 +383,12 @@ export type AgentToolLoopGuardrailFinding = {
 export type AgentToolExecutionObservation = {
   toolCallId: string
   toolName: string
-  status: 'completed' | 'failed' | 'cancelled'
+  status: 'completed' | 'failed' | 'cancelled' | 'not_executed' | 'invalid'
   authorityClass: AgentToolAuthorityClass
   arguments: Record<string, unknown>
   resultPreview?: string
   errorMessage?: string
+  synthetic?: boolean
 }
 
 export type AgentAgUiEventType =

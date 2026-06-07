@@ -174,6 +174,21 @@ function missingObservationToolNames(
   return attempted.filter((name) => !observed.has(name))
 }
 
+function missingObservationBoundaryResult(
+  first: RuntimePlanResult | null | undefined,
+  retry: RuntimePlanResult | null | undefined,
+): RuntimePlanResult | null {
+  if (first?.error?.kind !== 'provider_response_error') return null
+  if (missingObservationToolNames(first, retry).length === 0) return null
+  return {
+    source: first.source,
+    steps: [],
+    error: first.error,
+    ...(first.providerArtifact ? { providerArtifact: first.providerArtifact } : {}),
+    ...(first.providerAssistantMessage ? { providerAssistantMessage: first.providerAssistantMessage } : {}),
+  }
+}
+
 function requiredFactsForToolEvidence(toolNames: readonly string[]) {
   return {
     ...(toolNames.includes('sandbox_run_code') ? { requiresSandboxComputation: true } : {}),
@@ -341,6 +356,10 @@ export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePl
     })
     const retry = attachToolInventory(await planWithRuntimeAdapter(retryInput), toolCatalog)
     await addToolEvidenceRequirement(ctx, first, retry)
+    const boundaryResult = missingObservationBoundaryResult(first, retry)
+    if (boundaryResult) {
+      return attachToolInventory(boundaryResult, toolCatalog)
+    }
     await addNonStreamPlanningPreface(ctx, retry)
     return retry
   }

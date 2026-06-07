@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Row } from '../src/db/schema.js'
 import { buildEvidenceLedger } from '../src/agent/evidence-ledger.js'
+import { obligationsFromResponseEvaluation } from '../src/agent/evidence-obligations.js'
 import { evaluateAssistantResponse } from '../src/agent/response-evaluator.js'
 import type { AgentToolObservation } from '../src/agent/tool-observation-continuation.js'
 
@@ -348,5 +349,45 @@ describe('Agent response evaluator', () => {
       status: 'needs_more_evidence',
       findings: [expect.objectContaining({ code: 'response.entity_evidence_missing' })],
     })
+  })
+
+  it('turns evaluator findings into typed runner obligations', () => {
+    const observations = [
+      observation({
+        title: '受控沙箱执行被阻断',
+        toolName: 'sandbox_run_code',
+        toolCallId: 'call_sandbox',
+        modelContent: JSON.stringify({
+          observationType: 'provider_tool_call_boundary',
+          completed: false,
+          status: 'not_executed',
+          executionMode: 'not_executed',
+          toolName: 'sandbox_run_code',
+          manifestScoped: false,
+        }),
+        status: 'not_executed',
+        synthetic: true,
+      }),
+    ]
+    const evidence = buildEvidenceLedger({ threadId: 'thread_1', runId: 'run_1', observations })
+    const evaluation = evaluateAssistantResponse({
+      goal: goal({ requiresSandboxComputation: true, requiresOrderedEntityFacts: true }),
+      finalAssistantText: '第 1 位股东贷款后的 ROI 是 12%。',
+      observations,
+      evidence,
+    })
+
+    expect(obligationsFromResponseEvaluation(evaluation)).toEqual([
+      expect.objectContaining({
+        kind: 'sandbox_calculation',
+        toolNames: ['sandbox_run_code'],
+        findingCodes: expect.arrayContaining(['response.sandbox_evidence_invalid']),
+      }),
+      expect.objectContaining({
+        kind: 'domain_fact',
+        subject: 'shareholder',
+        toolNames: ['data_query_workspace'],
+      }),
+    ])
   })
 })

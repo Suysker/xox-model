@@ -11,6 +11,7 @@ import { shapeOpenAICompatibleChatRequest } from '../src/agent/runtime/provider-
 import { providerToolObservationReplayMessages } from '../src/agent/runtime/provider-transcript-replay.js'
 import { normalizeProviderToolSchemas } from '../src/agent/runtime/provider-tool-schema.js'
 import { extractBalancedJson } from '../src/agent/runtime/balanced-json.js'
+import { readDraftsFromRuntimeResult } from '../src/agent/runtime-plan-reader.js'
 import { OpenAICompatibleChatAdapter } from '../src/agent/runtime/openai-compatible-chat-adapter.js'
 import {
   parseToolArguments,
@@ -730,6 +731,40 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
     } finally {
       globalThis.fetch = originalFetch
     }
+  })
+
+  it('materializes provider tool-call boundary failures as model-readable observations', () => {
+    const reads = readDraftsFromRuntimeResult({
+      source: 'openai_compatible_tool_calls',
+      steps: [],
+      error: {
+        kind: 'provider_response_error',
+        message: 'Unexpected end of JSON input',
+        toolNames: ['sandbox_run_code'],
+        toolCallBoundary: {
+          code: 'tool_call_arguments_truncated',
+          toolName: 'sandbox_run_code',
+          toolNames: ['sandbox_run_code'],
+          effectiveToolNames: ['sandbox_run_code', 'data_query_workspace'],
+        },
+      },
+    })
+
+    expect(reads).toHaveLength(1)
+    expect(reads[0]).toMatchObject({
+      readKind: 'tool_observation',
+      toolName: 'sandbox_run_code',
+      observationStatus: 'not_executed',
+      syntheticObservation: true,
+      status: 'failed',
+    })
+    expect(JSON.parse(reads[0]?.modelContent ?? '{}')).toMatchObject({
+      observationType: 'provider_tool_call_boundary',
+      status: 'not_executed',
+      executionMode: 'not_executed',
+      toolName: 'sandbox_run_code',
+      boundaryCode: 'tool_call_arguments_truncated',
+    })
   })
 
   it('fails closed when provider emits a tool outside the effective inventory', async () => {

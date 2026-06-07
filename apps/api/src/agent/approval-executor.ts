@@ -22,6 +22,7 @@ import { getGoalForRun, serializeEvaluation, updateGoalStatus } from './goal-con
 import { buildEvidenceLedger } from './evidence-ledger.js'
 import { evaluateAssistantResponse, responseEvaluationSummary } from './response-evaluator.js'
 import { readRuntimeGoalFacts } from './runtime-goal-facts.js'
+import { obligationsFromResponseEvaluation } from './evidence-obligations.js'
 import {
   consolidateAgentMemoryCandidates,
   consolidateExecutedActionMemory,
@@ -314,6 +315,7 @@ export async function confirmAgentActionRequest(db: Kysely<Database>, settings: 
         runtimeFacts: await readRuntimeGoalFacts(db, action.run_id),
         pendingActionCount: Number(pendingActionCount?.count ?? 0),
       })
+      const obligations = obligationsFromResponseEvaluation(responseEvaluation)
       await addRunEvent(db, {
         threadId: action.thread_id,
         runId: action.run_id,
@@ -328,6 +330,7 @@ export async function confirmAgentActionRequest(db: Kysely<Database>, settings: 
           evidenceCount: evidence.length,
           findings: responseEvaluation.findings,
           requiredEvidence: responseEvaluation.requiredEvidence,
+          obligations,
         },
       })
       if (responseEvaluation.status === 'pass') {

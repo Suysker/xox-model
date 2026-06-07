@@ -120,7 +120,12 @@ function observationSource(observation: AgentToolObservation, authority: AgentEv
 
 function evidenceValidity(observation: AgentToolObservation, authority: AgentEvidenceAuthority, facts: Record<string, unknown>) {
   if (authority === 'sandbox') return isExecutedSandboxEvidenceFacts(facts) ? 'valid' : 'invalid'
-  if (observation.status === 'failed' || observation.status === 'cancelled') return 'invalid'
+  if (
+    observation.status === 'failed' ||
+    observation.status === 'cancelled' ||
+    observation.status === 'not_executed' ||
+    observation.status === 'invalid'
+  ) return 'invalid'
   return 'valid'
 }
 

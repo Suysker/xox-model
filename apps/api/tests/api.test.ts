@@ -1542,13 +1542,18 @@ describe('xox TypeScript API', () => {
         event.data?.toolNames?.includes('sandbox_run_code') &&
         event.data?.requiredGoalFacts?.requiresSandboxComputation === true,
       )).toBe(true)
-      expect(state.json.runEvents.some((event: any) =>
-        event.type === 'final_answer_candidate',
+      expect(state.json.planSteps.some((step: any) =>
+        step.toolName === 'sandbox_run_code' &&
+        step.status === 'failed' &&
+        String(step.description).includes('未形成可执行 observation'),
       )).toBe(true)
       expect(state.json.runEvents.some((event: any) =>
         event.type === 'response_evaluated' &&
         event.data?.evaluationStatus === 'needs_calculation' &&
-        event.data?.findings?.some((finding: any) => finding.code === 'response.sandbox_evidence_missing'),
+        event.data?.findings?.some((finding: any) => finding.code === 'response.sandbox_evidence_invalid') &&
+        event.data?.obligations?.some((obligation: any) =>
+          obligation.kind === 'sandbox_calculation' &&
+          obligation.toolNames?.includes('sandbox_run_code')),
       )).toBe(true)
       expect(state.json.runEvents.some((event: any) =>
         event.type === 'run_failed' &&

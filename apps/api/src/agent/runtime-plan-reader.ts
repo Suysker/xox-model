@@ -9,6 +9,59 @@ export function configuredRuntimePlannerSource(settings: Settings): Extract<Agen
   return settings.llmProvider === 'openai' ? 'openai_agents' : 'openai_compatible_tool_calls'
 }
 
+function unique(values: string[]) {
+  return [...new Set(values.filter((value) => value.trim().length > 0))]
+}
+
+function providerToolCallBoundaryObservationReads(error?: RuntimePlanError | null): ReadDraft[] | null {
+  if (error?.kind !== 'provider_response_error') return null
+  const boundary = error.toolCallBoundary
+  const toolNames = unique(boundary?.toolNames ?? error.toolNames ?? [])
+  if (toolNames.length === 0) return null
+
+  return toolNames.map((toolName, index) => {
+    const boundaryCode = boundary?.code ?? 'provider_response_error'
+    const displayPreview = `Provider 返回了 ${toolName} 工具调用意图，但参数未形成可执行 observation。`
+    const modelContent = JSON.stringify({
+      observationType: 'provider_tool_call_boundary',
+      completed: false,
+      status: 'not_executed',
+      executionMode: 'not_executed',
+      synthetic: true,
+      toolName,
+      toolNames,
+      boundaryCode,
+      effectiveToolNames: boundary?.effectiveToolNames ?? [],
+      providerErrorKind: error.kind,
+      errorMessage: error.message ?? null,
+      manifestScoped: false,
+      exitCode: null,
+      outputText: '',
+      stdout: '',
+      stderr: '',
+      artifacts: [],
+      purpose: `Provider boundary prevented ${toolName} execution.`,
+    })
+    return {
+      title: '工具调用未形成可执行参数',
+      message: displayPreview,
+      readKind: 'tool_observation',
+      toolName,
+      toolCallId: `provider_boundary_${index + 1}_${toolName}`,
+      toolArguments: {
+        boundaryCode,
+        toolName,
+        toolNames,
+      },
+      displayPreview,
+      modelContent,
+      observationStatus: 'not_executed',
+      syntheticObservation: true,
+      status: 'failed',
+    } satisfies ReadDraft
+  })
+}
+
 function modelToolCallRequiredRead(error?: RuntimePlanError | null): ReadDraft {
   if (error?.kind === 'missing_api_key') {
     return {
@@ -137,7 +190,20 @@ function providerAssistantTextRead(text: string): ReadDraft {
 }
 
 export function readDraftFromRuntimeResult(result?: RuntimePlanResult | null): ReadDraft {
-  return result?.assistantText
-    ? providerAssistantTextRead(result.assistantText)
-    : modelToolCallRequiredRead(result?.error)
+  return readDraftsFromRuntimeResult(result)[0] ?? modelToolCallRequiredRead(result?.error)
+}
+
+export function readDraftsFromRuntimeResult(result?: RuntimePlanResult | null): ReadDraft[] {
+  if (result?.assistantText) {
+    return [providerAssistantTextRead(result.assistantText)]
+  }
+
+  const boundaryObservations = providerToolCallBoundaryObservationReads(result?.error)
+  if (boundaryObservations) return boundaryObservations
+
+  return [modelToolCallRequiredRead(result?.error)]
+}
+
+export function runtimeResultHasToolCallBoundaryObservations(result?: RuntimePlanResult | null) {
+  return Boolean(providerToolCallBoundaryObservationReads(result?.error)?.length)
 }

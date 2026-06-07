@@ -11,6 +11,8 @@ export type ReadDraft = {
   toolArguments?: Record<string, unknown>
   modelContent?: string
   displayPreview?: string
+  observationStatus?: 'completed' | 'failed' | 'cancelled' | 'not_executed' | 'invalid'
+  syntheticObservation?: boolean
   navigation?: AgentNavigationEvent | null
   status?: AgentPlanStepStatus
 }

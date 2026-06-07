@@ -23,6 +23,7 @@ import { evaluateToolLoopGuardrails } from './tool-runtime/tool-loop-guardrails.
 import { resolveAfterEvaluation, resolveAfterPlanning } from './turn-resolver.js'
 import { evaluateAssistantResponse, responseEvaluationSummary } from './response-evaluator.js'
 import { readRuntimeGoalFacts } from './runtime-goal-facts.js'
+import { obligationsFromResponseEvaluation, obligationRepairMessage } from './evidence-obligations.js'
 
 export type AgentRunResult = {
   plannerSource: AgentPlannerSource
@@ -133,6 +134,7 @@ export async function executeAgentRun(
       pendingActionCount: actionRows.filter((action) => action.status === 'pending').length,
       awaitingClarification: lastEvaluation?.status === 'needs_clarification',
     })
+    const obligations = obligationsFromResponseEvaluation(responseEvaluation)
     await addRunEvent(ctx.db, {
       threadId: ctx.thread.id,
       runId: ctx.runId,
@@ -160,6 +162,7 @@ export async function executeAgentRun(
         })),
         findings: responseEvaluation.findings,
         requiredEvidence: responseEvaluation.requiredEvidence,
+        obligations,
         nextPlannerBrief: responseEvaluation.nextPlannerBrief,
       },
     })
@@ -178,11 +181,11 @@ export async function executeAgentRun(
     ) {
       return {
         status: 'continue',
-        nextMessage: [
-          responseEvaluation.nextPlannerBrief ?? '继续补齐最终回答所需的 evidence。',
-          '上一轮 evidence 会随本次规划一起提供；不要把工具 observation 当成最终回答。',
-          `当前目标：${objective}`,
-        ].join('\n\n'),
+        nextMessage: obligationRepairMessage({
+          objective,
+          obligations,
+          fallbackBrief: responseEvaluation.nextPlannerBrief,
+        }),
       }
     }
     const reason = responseEvaluation.findings.find((finding) => finding.severity === 'fail')?.message ?? '最终回答证据检查失败。'

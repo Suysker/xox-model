@@ -6,7 +6,7 @@ import {
   type PlannedItem,
 } from './action-draft-builder.js'
 import type { RuntimePlanResult } from './runtime/runtime-adapter.js'
-import { configuredRuntimePlannerSource, readDraftFromRuntimeResult } from './runtime-plan-reader.js'
+import { configuredRuntimePlannerSource, readDraftsFromRuntimeResult } from './runtime-plan-reader.js'
 import { extractWorkspaceBundleArtifact } from './workspace-bundle-artifact.js'
 import { superviseRuntimeToolCalls } from './tool-runtime/tool-call-supervisor.js'
 
@@ -139,7 +139,7 @@ export async function runPlanningSession(
     if (!result || result.steps.length === 0) {
       if (!requiredSource) return null
       source = source ?? result?.source ?? requiredSource
-      items.push(readDraftFromRuntimeResult(result))
+      items.push(...readDraftsFromRuntimeResult(result))
       continue
     }
 
@@ -158,7 +158,7 @@ export async function runPlanningSession(
     if (partItems.length > 0) {
       items.push(...partItems)
     } else if (requiredSource) {
-      items.push(readDraftFromRuntimeResult(result))
+      items.push(...readDraftsFromRuntimeResult(result))
     }
   }
 

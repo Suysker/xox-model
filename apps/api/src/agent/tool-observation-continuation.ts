@@ -21,7 +21,8 @@ export type AgentToolObservation = {
   toolArguments: Record<string, unknown>
   displayPreview: string
   modelContent: string
-  status: 'completed' | 'failed' | 'cancelled'
+  status: 'completed' | 'failed' | 'cancelled' | 'not_executed' | 'invalid'
+  synthetic?: boolean
 }
 
 export type ToolObservationContinuationResult =

@@ -45,6 +45,8 @@ function observationFromRead(item: PlannedItem, sequence: number): AgentToolObse
   if (!('readKind' in item) || item.readKind !== 'tool_observation') return null
   const toolName = toolNameForRead(item, sequence)
   const displayPreview = item.displayPreview ?? item.message
+  const status = item.observationStatus ??
+    (item.status === 'failed' ? 'failed' : item.status === 'cancelled' ? 'cancelled' : 'completed')
   return {
     title: item.title,
     toolName,
@@ -52,7 +54,8 @@ function observationFromRead(item: PlannedItem, sequence: number): AgentToolObse
     toolArguments: item.toolArguments ?? {},
     displayPreview,
     modelContent: item.modelContent ?? displayPreview,
-    status: item.status === 'failed' ? 'failed' : item.status === 'cancelled' ? 'cancelled' : 'completed',
+    status,
+    ...(item.syntheticObservation ? { synthetic: true } : {}),
   }
 }
 
