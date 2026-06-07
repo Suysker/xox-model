@@ -5,6 +5,7 @@ import type { CurrentUser } from '../modules/auth.js'
 import type { ParsedWorkspaceBundleArtifact } from './workspace-bundle-artifact.js'
 import type { AgentAutomationLevel } from './tool-policy.js'
 import type { AgentToolObservation } from './tool-observation-continuation.js'
+import type { AgentLoopObligationPlan } from './loop-obligations.js'
 
 export type PlannerContext = {
   db: Kysely<Database>
@@ -16,6 +17,7 @@ export type PlannerContext = {
   message: string
   planningTurn?: 'user_objective' | 'evaluator_repair'
   priorObservations?: AgentToolObservation[]
+  loopObligationPlan?: AgentLoopObligationPlan
   automationLevel: AgentAutomationLevel
   abortSignal?: AbortSignal
   providedWorkspaceBundle?: ParsedWorkspaceBundleArtifact

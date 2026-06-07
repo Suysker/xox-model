@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Row } from '../src/db/schema.js'
 import { buildEvidenceLedger } from '../src/agent/evidence-ledger.js'
-import { obligationsFromResponseEvaluation } from '../src/agent/evidence-obligations.js'
+import { loopObligationsFromResponseEvaluation, planLoopObligations } from '../src/agent/loop-obligations.js'
 import { evaluateAssistantResponse } from '../src/agent/response-evaluator.js'
 import type { AgentToolObservation } from '../src/agent/tool-observation-continuation.js'
 
@@ -377,7 +377,8 @@ describe('Agent response evaluator', () => {
       evidence,
     })
 
-    expect(obligationsFromResponseEvaluation(evaluation)).toEqual([
+    const obligations = loopObligationsFromResponseEvaluation(evaluation)
+    expect(obligations).toEqual([
       expect.objectContaining({
         kind: 'sandbox_calculation',
         toolNames: ['sandbox_run_code'],
@@ -389,5 +390,13 @@ describe('Agent response evaluator', () => {
         toolNames: ['data_query_workspace'],
       }),
     ])
+    expect(planLoopObligations({ objective: 'test objective', obligations })).toMatchObject({
+      requiredToolNames: expect.arrayContaining(['sandbox_run_code', 'data_query_workspace']),
+      selectedCapabilities: expect.arrayContaining(['sandbox', 'data']),
+      goalFacts: {
+        requiresSandboxComputation: true,
+        requiresOrderedEntityFacts: true,
+      },
+    })
   })
 })

@@ -120,6 +120,14 @@ function plannerRuntimeMessages(input: {
   return messages
 }
 
+function contextWithLoopObligationPlan(context: unknown, ctx: PlannerContext) {
+  if (!ctx.loopObligationPlan) return context
+  return {
+    ...(context && typeof context === 'object' && !Array.isArray(context) ? context as Record<string, unknown> : { context }),
+    runnerObligationPlan: ctx.loopObligationPlan.modelContext,
+  }
+}
+
 async function addNonStreamPlanningPreface(ctx: PlannerContext, result: RuntimePlanResult | null) {
   if (!result || result.steps.length === 0) return
   const text = result?.assistantText?.trim()
@@ -240,7 +248,7 @@ function runtimeInputWithMaterializedTools(
 }
 
 export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePlanResult | null> {
-  const context = await buildAgentContext({
+  const baseContext = await buildAgentContext({
     db: ctx.db,
     workspace: ctx.workspace,
     user: ctx.user,
@@ -249,6 +257,7 @@ export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePl
     message: ctx.message,
     ...(ctx.providedWorkspaceBundle ? { providedWorkspaceBundle: ctx.providedWorkspaceBundle } : {}),
   })
+  const context = contextWithLoopObligationPlan(baseContext, ctx)
 
   const toolCatalog = await provideRuntimeToolCatalog({
     db: ctx.db,
@@ -261,6 +270,7 @@ export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePl
     userId: ctx.user.id,
     workspaceId: ctx.workspace.id,
     automationLevel: ctx.automationLevel,
+    ...(ctx.loopObligationPlan ? { loopObligationPlan: ctx.loopObligationPlan } : {}),
   })
 
   const priorObservationCount = ctx.priorObservations?.length ?? 0

@@ -1,5 +1,11 @@
 import type { AgentToolExecutionObservation, AgentToolInventorySnapshot, AgentToolRuntimeEvent } from '@xox/contracts'
 
+function runStatusForToolObservation(status: AgentToolExecutionObservation['status']) {
+  if (status === 'completed') return 'completed'
+  if (status === 'cancelled') return 'cancelled'
+  return 'failed'
+}
+
 export function inventoryReadyEvent(input: {
   runId: string
   inventory: AgentToolInventorySnapshot
@@ -44,9 +50,10 @@ export function toolCallCompletedEvent(input: {
     runId: input.runId,
     toolName: input.observation.toolName,
     toolCallId: input.observation.toolCallId,
-    status: input.observation.status === 'completed' ? 'completed' : input.observation.status,
+    status: runStatusForToolObservation(input.observation.status),
     summary: input.observation.resultPreview ?? `工具调用${input.observation.status === 'completed' ? '完成' : '失败'}：${input.observation.toolName}`,
     payload: {
+      observationStatus: input.observation.status,
       authorityClass: input.observation.authorityClass,
       errorMessage: input.observation.errorMessage ?? null,
     },

@@ -17,6 +17,7 @@ import {
   type AgentToolMetadata,
   type ChatTool,
 } from './tool-catalog.js'
+import type { AgentLoopObligationPlan } from './loop-obligations.js'
 
 type ToolGatewayContext = {
   db: Kysely<Database>
@@ -29,6 +30,7 @@ type ToolGatewayContext = {
   userId?: string
   workspaceId?: string
   automationLevel?: 'manual' | 'low' | 'medium' | 'high'
+  loopObligationPlan?: AgentLoopObligationPlan
 }
 
 export type ToolCatalogProjectionStrategy =
@@ -245,6 +247,7 @@ export function materializedToolInventorySnapshot(
 export function buildRuntimeToolCatalogProjection(input?: {
   selectedCapabilities?: AgentToolCapability[] | null
   requiredActionCapabilities?: AgentToolCapability[] | null
+  requiredToolNames?: string[] | null
   goalFacts?: AgentGoalFacts | null
   strategy?: ToolCatalogProjectionStrategy
   routerReason?: string
@@ -256,6 +259,9 @@ export function buildRuntimeToolCatalogProjection(input?: {
 }): RuntimeToolCatalogProjection {
   const selectedCapabilities = safeCapabilities(input?.selectedCapabilities)
   const requiredActionCapabilities = safeCapabilities(input?.requiredActionCapabilities)
+  const requiredToolNames = [...new Set((input?.requiredToolNames ?? []).filter((name): name is string =>
+    typeof name === 'string' && name.trim().length > 0,
+  ))]
   const goalFacts = sanitizeAgentGoalFacts(input?.goalFacts)
   const hasModelSelection = input?.selectedCapabilities !== undefined && input.selectedCapabilities !== null
   const requestedStrategy: ToolCatalogProjectionStrategy = input?.strategy ?? (hasModelSelection ? 'model_selected_capabilities' : 'full_registry')
@@ -270,10 +276,15 @@ export function buildRuntimeToolCatalogProjection(input?: {
         ...(input?.automationLevel !== undefined ? { automationLevel: input.automationLevel } : {}),
       })
   const byName = new Map(AGENT_TOOL_REGISTRY.map((entry) => [entry.name, entry]))
-  const entries = toolContext
-    ? toolContext.toolNames.map((name) => byName.get(name)).filter((entry): entry is (typeof AGENT_TOOL_REGISTRY)[number] => Boolean(entry))
-    : AGENT_TOOL_REGISTRY
+  const baseEntries = requiredToolNames.length > 0
+    ? requiredToolNames.map((name) => byName.get(name)).filter((entry): entry is (typeof AGENT_TOOL_REGISTRY)[number] => Boolean(entry))
+    : toolContext
+      ? toolContext.toolNames.map((name) => byName.get(name)).filter((entry): entry is (typeof AGENT_TOOL_REGISTRY)[number] => Boolean(entry))
+      : AGENT_TOOL_REGISTRY
+  const entries = baseEntries
   const strategy: ToolCatalogProjectionStrategy = toolContext ? 'progressive_tool_discovery' : requestedStrategy
+  const visibleToolNames = entries.map((entry) => entry.name)
+  const visibleToolNameSet = new Set(visibleToolNames)
 
   const toolCapabilities = entries.map(toolMetadata)
   const settings = input?.settings
@@ -292,19 +303,19 @@ export function buildRuntimeToolCatalogProjection(input?: {
     strategy,
     tools: entries.map((entry) => entry.tool),
     toolCount: entries.length,
-    toolNames: entries.map((entry) => entry.name),
+    toolNames: visibleToolNames,
     toolCapabilities,
     selectedCapabilities,
     requiredActionCapabilities,
     goalFacts,
     inventorySnapshot,
     effectiveCatalog: toolContext?.effectiveCatalog ?? [],
-    visibleTools: toolContext?.visibleTools ?? entries.map((entry) => entry.tool),
-    visibleToolNames: toolContext?.visibleToolNames ?? entries.map((entry) => entry.name),
-    kernelToolNames: toolContext?.kernelToolNames ?? [],
-    materializableToolNames: toolContext?.materializableToolNames ?? [],
-    deferredCatalog: toolContext?.deferredCatalog ?? [],
-    replayAllowedToolNames: toolContext?.replayAllowedToolNames ?? entries.map((entry) => entry.name),
+    visibleTools: entries.map((entry) => entry.tool),
+    visibleToolNames,
+    kernelToolNames: (toolContext?.kernelToolNames ?? []).filter((name) => visibleToolNameSet.has(name)),
+    materializableToolNames: (toolContext?.materializableToolNames ?? []).filter((name) => !visibleToolNameSet.has(name)),
+    deferredCatalog: (toolContext?.deferredCatalog ?? []).filter((manifest) => !visibleToolNameSet.has(manifest.name)),
+    replayAllowedToolNames: visibleToolNames,
     autoAddedControlNames: toolContext?.autoAddedControlNames ?? [],
     emptySurfaceStatus: toolContext?.emptySurfaceStatus ?? null,
     budget: toolContext?.budget ?? null,
@@ -373,7 +384,15 @@ async function selectCapabilitiesWithModel(ctx: ToolGatewayContext) {
 }
 
 export async function provideRuntimeToolCatalog(ctx: ToolGatewayContext) {
-  const selection = await selectCapabilitiesWithModel(ctx)
+  const selection = ctx.loopObligationPlan
+    ? {
+        selectedCapabilities: ctx.loopObligationPlan.selectedCapabilities,
+        requiredActionCapabilities: ctx.loopObligationPlan.requiredActionCapabilities,
+        requiredToolNames: ctx.loopObligationPlan.requiredToolNames,
+        goalFacts: ctx.loopObligationPlan.goalFacts,
+        routerReason: 'runner-obligation-plan',
+      }
+    : await selectCapabilitiesWithModel(ctx)
   const projection = buildRuntimeToolCatalogProjection({
     ...selection,
     ...(ctx.settings ? { settings: ctx.settings } : {}),
@@ -396,6 +415,7 @@ export async function provideRuntimeToolCatalog(ctx: ToolGatewayContext) {
       toolCapabilities: projection.toolCapabilities,
       selectedCapabilities: projection.selectedCapabilities,
       requiredActionCapabilities: projection.requiredActionCapabilities,
+      requiredToolNames: ctx.loopObligationPlan?.requiredToolNames ?? [],
       goalFacts: projection.goalFacts,
       inventorySnapshot: projection.inventorySnapshot,
       visibleToolNames: projection.visibleToolNames,

@@ -23,7 +23,13 @@ import { evaluateToolLoopGuardrails } from './tool-runtime/tool-loop-guardrails.
 import { resolveAfterEvaluation, resolveAfterPlanning } from './turn-resolver.js'
 import { evaluateAssistantResponse, responseEvaluationSummary } from './response-evaluator.js'
 import { readRuntimeGoalFacts } from './runtime-goal-facts.js'
-import { obligationsFromResponseEvaluation, obligationRepairMessage } from './evidence-obligations.js'
+import {
+  fallbackLoopObligationPlan,
+  loopObligationsFromResponseEvaluation,
+  planLoopObligations,
+  userSafeObligationFailureSummary,
+  type AgentLoopObligationPlan,
+} from './loop-obligations.js'
 
 export type AgentRunResult = {
   plannerSource: AgentPlannerSource
@@ -47,7 +53,7 @@ function loopReadinessSummary(evaluation: ReturnType<typeof serializeEvaluation>
 type FinalAnswerDecision =
   | { status: 'pass'; assistantText: string }
   | { status: 'interrupt'; assistantText: string | null }
-  | { status: 'continue'; nextMessage: string }
+  | { status: 'continue'; obligationPlan: AgentLoopObligationPlan }
   | { status: 'failed'; reason: string }
 
 function shouldContinueObservationInMainLoop(observations: AgentToolObservation[]) {
@@ -111,6 +117,7 @@ export async function executeAgentRun(
   const assistantParts: string[] = []
   const observations: AgentToolObservation[] = []
   let nextMessage = objective
+  let activeObligationPlan: AgentLoopObligationPlan | null = null
   let pendingAssistantText: string | null = null
   let lastEvaluation: ReturnType<typeof serializeEvaluation> | null = null
   const maxIterations = Math.max(1, Math.min(8, Number(JSON.parse(goal.contract_json).maxIterations ?? 5)))
@@ -134,7 +141,8 @@ export async function executeAgentRun(
       pendingActionCount: actionRows.filter((action) => action.status === 'pending').length,
       awaitingClarification: lastEvaluation?.status === 'needs_clarification',
     })
-    const obligations = obligationsFromResponseEvaluation(responseEvaluation)
+    const obligations = loopObligationsFromResponseEvaluation(responseEvaluation)
+    const obligationPlan = planLoopObligations({ objective, obligations })
     await addRunEvent(ctx.db, {
       threadId: ctx.thread.id,
       runId: ctx.runId,
@@ -163,6 +171,7 @@ export async function executeAgentRun(
         findings: responseEvaluation.findings,
         requiredEvidence: responseEvaluation.requiredEvidence,
         obligations,
+        obligationPlan,
         nextPlannerBrief: responseEvaluation.nextPlannerBrief,
       },
     })
@@ -181,10 +190,9 @@ export async function executeAgentRun(
     ) {
       return {
         status: 'continue',
-        nextMessage: obligationRepairMessage({
+        obligationPlan: obligationPlan ?? fallbackLoopObligationPlan({
           objective,
-          obligations,
-          fallbackBrief: responseEvaluation.nextPlannerBrief,
+          instruction: responseEvaluation.nextPlannerBrief ?? 'Continue the same objective through the runner loop.',
         }),
       }
     }
@@ -218,6 +226,7 @@ export async function executeAgentRun(
       message: nextMessage,
       planningTurn: iteration === 1 && !resumeContext ? 'user_objective' : 'evaluator_repair',
       priorObservations: iteration === 1 ? [] : observations,
+      ...(activeObligationPlan ? { loopObligationPlan: activeObligationPlan } : {}),
     })
     if (!(await options.beforeStateWrite())) return null
     const priorObservations = observations.slice()
@@ -320,11 +329,13 @@ export async function executeAgentRun(
         break
       }
       if (iteration >= maxIterations) {
-        await updateGoalStatus(ctx.db, goal, 'failed', { blockedReason: finalDecision.nextMessage })
-        if (assistantParts.length === 0) assistantParts.push(`这轮没有完成所有目标：${finalDecision.nextMessage}`)
+        const safeSummary = userSafeObligationFailureSummary(finalDecision.obligationPlan)
+        await updateGoalStatus(ctx.db, goal, 'failed', { blockedReason: safeSummary })
+        if (assistantParts.length === 0) assistantParts.push(safeSummary)
         break
       }
-      nextMessage = finalDecision.nextMessage
+      activeObligationPlan = finalDecision.obligationPlan
+      nextMessage = objective
       continue
     }
 
@@ -423,11 +434,13 @@ export async function executeAgentRun(
           break
         }
         if (iteration >= maxIterations) {
-          await updateGoalStatus(ctx.db, goal, 'failed', { blockedReason: finalDecision.nextMessage })
-          if (assistantParts.length === 0) assistantParts.push(`这轮没有完成所有目标：${finalDecision.nextMessage}`)
+          const safeSummary = userSafeObligationFailureSummary(finalDecision.obligationPlan)
+          await updateGoalStatus(ctx.db, goal, 'failed', { blockedReason: safeSummary })
+          if (assistantParts.length === 0) assistantParts.push(safeSummary)
           break
         }
-        nextMessage = finalDecision.nextMessage
+        activeObligationPlan = finalDecision.obligationPlan
+        nextMessage = objective
         continue
       } else if (pendingAssistantText && observations.length === 0) {
         assistantParts.push(pendingAssistantText)
@@ -455,6 +468,7 @@ export async function executeAgentRun(
         break
       }
       nextMessage = objective
+      activeObligationPlan = null
       await addRunEvent(ctx.db, {
         threadId: ctx.thread.id,
         runId: ctx.runId,
@@ -473,6 +487,7 @@ export async function executeAgentRun(
     }
     if (evaluationNextStep.type === 'run_again') {
       nextMessage = evaluationNextStep.nextMessage
+      activeObligationPlan = null
       continue
     }
     break
@@ -510,9 +525,9 @@ export async function executeAgentRun(
       } else {
         const reason = finalDecision.status === 'failed'
           ? finalDecision.reason
-          : finalDecision.nextMessage
+          : userSafeObligationFailureSummary(finalDecision.obligationPlan)
         await updateGoalStatus(ctx.db, goal, 'failed', { blockedReason: reason })
-        assistantParts.push(`这轮没有完成所有目标：${reason}`)
+        assistantParts.push(reason)
       }
     } else if (continuation.status === 'failed') {
       planRows.push(continuation.planStep)

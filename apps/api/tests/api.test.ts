@@ -1560,7 +1560,8 @@ describe('xox TypeScript API', () => {
         event.status === 'failed',
       )).toBe(true)
       expect(state.json.goals.at(-1).status).toBe('failed')
-      expect(state.json.messages.at(-1).content).toContain('sandbox_run_code')
+      expect(state.json.messages.at(-1).content).toContain('这轮没有完成所有目标')
+      expect(state.json.messages.at(-1).content).not.toContain('sandbox_run_code')
       await closeHarness(harness)
     }, {
       capabilities: ['data', 'sandbox'],
@@ -1647,6 +1648,83 @@ describe('xox TypeScript API', () => {
         event.data?.findings?.some((finding: any) => finding.code === 'response.entity_evidence_missing'),
       )).toBe(true)
       expect(state.json.goals.at(-1).status).toBe('failed')
+      await closeHarness(harness)
+    }, {
+      capabilities: ['sandbox'],
+      goalFacts: { requiresSandboxComputation: true, requiresOrderedEntityFacts: true },
+      observationContinuationResponse: false,
+    })
+  })
+
+  it('repairs shareholder-specific sandbox answers by constraining the next loop to ordered entity facts', async () => {
+    let planningCalls = 0
+    await withFakeOpenAICompatibleProvider((body) => {
+      planningCalls += 1
+      if (planningCalls === 1) {
+        expectProviderTools(body, ['sandbox_run_code'])
+        return fakeToolResponse('sandbox_run_code', {
+          purpose: '计算第 2 位股东贷款后的个人 ROI',
+          language: 'python',
+          code: 'print("personal shareholder ROI: 12%")',
+          dataRequest: { scope: 'forecast_months' },
+          expectedOutputs: ['markdown'],
+        })
+      }
+      if (planningCalls === 2) {
+        expect(body.messages.some((message: any) => message.role === 'tool')).toBe(true)
+        return fakeAssistantTextResponse('第 2 位股东贷款后的个人 ROI 是 12%。')
+      }
+      if (planningCalls === 3) {
+        const toolNames = (body.tools ?? []).map((tool: any) => tool?.function?.name ?? tool?.name)
+        expect(toolNames).toEqual(['data_query_workspace'])
+        expect(JSON.stringify(body)).toContain('runnerObligationPlan')
+        expect(JSON.stringify(body)).toContain('entity_summary')
+        return fakeToolResponse('data_query_workspace', {
+          question: '读取有序股东事实',
+          scope: 'entity_summary',
+          metrics: ['shareholderNames', 'shareholderInvestments'],
+        })
+      }
+      if (planningCalls === 4) {
+        const toolMessages = body.messages.filter((message: any) => message.role === 'tool')
+        expect(JSON.stringify(toolMessages)).toContain('sandbox_execution')
+        expect(JSON.stringify(toolMessages)).toContain('shareholders')
+        return fakeAssistantTextResponse('第 2 位股东是股东 B。结合沙箱计算结果，贷款后的个人 ROI 是 12%。')
+      }
+      throw new Error(`Unexpected planning call ${planningCalls}`)
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-shareholder-evidence-obligation-repair', {
+        ...fakeProviderSettings(baseUrl),
+        agentProviderRequestTimeoutMs: 10_000,
+      })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-shareholder-evidence-obligation-repair@example.com')
+
+      const response = await client.post('/api/v1/agent/messages', {
+        message: '我是第 2 个股东，用沙箱计算贷款后的个人 ROI。',
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(planningCalls).toBe(4)
+      expect(response.json.planSteps.map((step: any) => step.toolName).filter(Boolean)).toEqual([
+        'sandbox_run_code',
+        'data_query_workspace',
+      ])
+      expect(response.json.messages.at(-1).content).toContain('股东 B')
+      expect(response.json.messages.at(-1).content).not.toContain('Runner evidence obligations')
+      expect(response.json.messages.at(-1).content).not.toContain('runnerObligationPlan')
+      const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
+      expect(state.json.runEvents.some((event: any) =>
+        event.type === 'response_evaluated' &&
+        event.data?.evaluationStatus === 'needs_more_evidence' &&
+        event.data?.obligationPlan?.requiredToolNames?.includes('data_query_workspace'),
+      )).toBe(true)
+      expect(state.json.runEvents.some((event: any) =>
+        event.type === 'tool_catalog_ready' &&
+        event.data?.routerReason === 'runner-obligation-plan' &&
+        JSON.stringify(event.data?.toolNames) === JSON.stringify(['data_query_workspace']),
+      )).toBe(true)
+      expect(state.json.goals.at(-1).status).toBe('completed')
       await closeHarness(harness)
     }, {
       capabilities: ['sandbox'],

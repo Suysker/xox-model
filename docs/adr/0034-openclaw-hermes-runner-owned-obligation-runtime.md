@@ -1,6 +1,6 @@
 # ADR 0034: OpenClaw/Hermes Runner-Owned Obligation Runtime
 
-Status: Proposed
+Status: Implemented
 
 Date: 2026-06-07
 
@@ -639,3 +639,20 @@ Required observations are collected as tool results.
 Only a model-authored final answer can complete the run.
 ```
 
+## Implementation Notes
+
+Implemented on 2026-06-07:
+
+- replaced prose `evidence-obligations` repair prompts with typed `AgentLoopObligation` / `AgentLoopObligationPlan`;
+- made `AgentRunEngine` carry obligation plans as runner state instead of `nextMessage` text;
+- added a runner-owned tool-surface override in `Tool Catalog Gateway`;
+- when a loop obligation specifies `requiredToolNames`, the next repair turn exposes only those tools;
+- attached compact obligation context to the provider context pack, not to user-visible assistant text;
+- converted exhausted obligation repair into user-safe failure summaries;
+- added API coverage for the `c07be2f5` class: sandbox answer missing ordered shareholder evidence, constrained entity-summary repair, final model-authored answer, and no internal obligation leak.
+
+Still intentionally left as maturity phases from this ADR:
+
+- broader provider intent persistence beyond existing provider-response boundary handling;
+- deeper sandbox evidence separation beyond current executed/validity checks;
+- dedicated `ToolReplayHygiene` and `ProviderToolIntent` modules if later provider traces show another replay-shape issue.
