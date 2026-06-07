@@ -1,6 +1,6 @@
 # ADR 0035: OpenClaw/Hermes Obligation Ledger State Machine
 
-Status: Proposed
+Status: Implemented
 
 Date: 2026-06-07
 
@@ -268,7 +268,6 @@ type AgentLoopObligation = {
 type AgentLoopObligationLedger = {
   schemaVersion: 'xox.loop_obligation_ledger.v1';
   runId: string;
-  iteration: number;
   obligations: AgentLoopObligation[];
 };
 ```
@@ -290,13 +289,14 @@ type AgentLoopObligationLedger = {
 
 Owns durable in-memory run ledger operations:
 
-- `initializeLedger(goalFacts, runtimeFacts)`
-- `applyResponseEvaluation(ledger, responseEvaluation)`
-- `applyObservation(ledger, observation)`
-- `openObligations(ledger)`
+- `initializeObligationLedger({ runId })`
+- `applyResponseEvaluationToLedger({ ledger, evaluation, iteration })`
+- `applyObservationToLedger({ ledger, observation, iteration })`
+- `activeLedgerObligations(ledger)`
 - `canAttemptFinalAnswer(ledger)`
-- `toObligationPlan(ledger)`
-- `userSafeOpenObligationSummary(ledger)`
+- `ledgerToObligationPlan({ ledger, objective })`
+- `userSafeLedgerFailureSummary({ ledger, objective })`
+- `serializeObligationLedger(ledger)`
 
 This module replaces one-shot `activeObligationPlan` semantics. It may reuse the existing `loop-obligations.ts` types initially, but the source of truth must be the ledger.
 
@@ -419,6 +419,8 @@ Validation:
 - An `entity_summary` observation with shareholders closes ordered-shareholder facts.
 - Assistant-only text is not final while any non-final obligation is open.
 
+Implementation status: completed in `apps/api/src/agent/loop-obligation-ledger.ts` and `apps/api/tests/loop-obligation-ledger.test.ts`.
+
 ### Milestone 2: AgentRunEngine Integration
 
 Paths:
@@ -434,6 +436,8 @@ Validation:
 - `hasFinalAssistantCandidate` requires ledger final readiness.
 - Iteration exhaustion reports open obligation summaries.
 
+Implementation status: completed in `apps/api/src/agent/agent-run-engine.ts`.
+
 ### Milestone 3: Tool Catalog Hard Requirements
 
 Paths:
@@ -448,6 +452,8 @@ Validation:
 - Required `data_query_workspace` for entity facts cannot be pushed out by budget.
 - Router-empty/degraded mode does not broaden authority.
 
+Implementation status: already covered by the existing Tool Catalog Gateway / Context Engine contract. This ADR now feeds the gateway from the durable ledger projection instead of the former one-shot active plan.
+
 ### Milestone 4: Provider Tool Intent Observations
 
 Paths:
@@ -461,6 +467,8 @@ Validation:
 - Invalid tool arguments become failed observations.
 - Registered-but-deferred tool calls materialize or create blocked observations.
 - Provider tool intent never disappears from the run trace.
+
+Implementation status: retained through existing provider/runtime hygiene tests. This ADR does not add a second provider runtime; it keeps provider intent normalization below `AgentRunEngine`.
 
 ### Milestone 5: Scenario Regression
 
@@ -481,6 +489,8 @@ Validation:
   - sandbox succeeds but entity evidence is never produced;
   - run fails closed;
   - no assistant message claims final ROI.
+
+Implementation status: completed in `apps/api/tests/api.test.ts`, including the partial-repair case where sandbox closes while ordered-shareholder facts remain open.
 
 ## Acceptance Criteria
 

@@ -24,12 +24,15 @@ import { resolveAfterEvaluation, resolveAfterPlanning } from './turn-resolver.js
 import { evaluateAssistantResponse, responseEvaluationSummary } from './response-evaluator.js'
 import { readRuntimeGoalFacts } from './runtime-goal-facts.js'
 import {
-  fallbackLoopObligationPlan,
-  loopObligationsFromResponseEvaluation,
-  planLoopObligations,
-  userSafeObligationFailureSummary,
-  type AgentLoopObligationPlan,
-} from './loop-obligations.js'
+  applyObservationToLedger,
+  applyResponseEvaluationToLedger,
+  canAttemptFinalAnswer,
+  hasOpenNonFinalAnswerObligations,
+  initializeObligationLedger,
+  ledgerToObligationPlan,
+  serializeObligationLedger,
+  userSafeLedgerFailureSummary,
+} from './loop-obligation-ledger.js'
 
 export type AgentRunResult = {
   plannerSource: AgentPlannerSource
@@ -53,7 +56,7 @@ function loopReadinessSummary(evaluation: ReturnType<typeof serializeEvaluation>
 type FinalAnswerDecision =
   | { status: 'pass'; assistantText: string }
   | { status: 'interrupt'; assistantText: string | null }
-  | { status: 'continue'; obligationPlan: AgentLoopObligationPlan }
+  | { status: 'continue' }
   | { status: 'failed'; reason: string }
 
 function shouldContinueObservationInMainLoop(observations: AgentToolObservation[]) {
@@ -117,10 +120,10 @@ export async function executeAgentRun(
   const assistantParts: string[] = []
   const observations: AgentToolObservation[] = []
   let nextMessage = objective
-  let activeObligationPlan: AgentLoopObligationPlan | null = null
   let pendingAssistantText: string | null = null
   let lastEvaluation: ReturnType<typeof serializeEvaluation> | null = null
   const maxIterations = Math.max(1, Math.min(8, Number(JSON.parse(goal.contract_json).maxIterations ?? 5)))
+  const obligationLedger = initializeObligationLedger({ runId: ctx.runId })
 
   const evaluateFinalAssistant = async (
     assistantText: string | null,
@@ -141,8 +144,12 @@ export async function executeAgentRun(
       pendingActionCount: actionRows.filter((action) => action.status === 'pending').length,
       awaitingClarification: lastEvaluation?.status === 'needs_clarification',
     })
-    const obligations = loopObligationsFromResponseEvaluation(responseEvaluation)
-    const obligationPlan = planLoopObligations({ objective, obligations })
+    applyResponseEvaluationToLedger({
+      ledger: obligationLedger,
+      evaluation: responseEvaluation,
+      iteration,
+    })
+    const obligationPlan = ledgerToObligationPlan({ ledger: obligationLedger, objective })
     await addRunEvent(ctx.db, {
       threadId: ctx.thread.id,
       runId: ctx.runId,
@@ -170,7 +177,7 @@ export async function executeAgentRun(
         })),
         findings: responseEvaluation.findings,
         requiredEvidence: responseEvaluation.requiredEvidence,
-        obligations,
+        obligationLedger: serializeObligationLedger(obligationLedger),
         obligationPlan,
         nextPlannerBrief: responseEvaluation.nextPlannerBrief,
       },
@@ -188,13 +195,7 @@ export async function executeAgentRun(
       responseEvaluation.status === 'needs_more_evidence' ||
       responseEvaluation.status === 'needs_final_answer'
     ) {
-      return {
-        status: 'continue',
-        obligationPlan: obligationPlan ?? fallbackLoopObligationPlan({
-          objective,
-          instruction: responseEvaluation.nextPlannerBrief ?? 'Continue the same objective through the runner loop.',
-        }),
-      }
+      return { status: 'continue' }
     }
     const reason = responseEvaluation.findings.find((finding) => finding.severity === 'fail')?.message ?? '最终回答证据检查失败。'
     await updateGoalStatus(ctx.db, goal, 'failed', { blockedReason: reason })
@@ -221,12 +222,13 @@ export async function executeAgentRun(
       data: { provider: ctx.settings.llmProvider, iteration },
     })
 
+    const loopObligationPlan = ledgerToObligationPlan({ ledger: obligationLedger, objective })
     const planned = await planResponse({
       ...planningCtx,
       message: nextMessage,
       planningTurn: iteration === 1 && !resumeContext ? 'user_objective' : 'evaluator_repair',
       priorObservations: iteration === 1 ? [] : observations,
-      ...(activeObligationPlan ? { loopObligationPlan: activeObligationPlan } : {}),
+      ...(loopObligationPlan ? { loopObligationPlan } : {}),
     })
     if (!(await options.beforeStateWrite())) return null
     const priorObservations = observations.slice()
@@ -235,12 +237,55 @@ export async function executeAgentRun(
     actionRows.push(...planned.actionRows)
     planRows.push(...planned.planRows)
     observations.push(...planned.observations)
+    for (const observation of planned.observations) {
+      applyObservationToLedger({ ledger: obligationLedger, observation, iteration })
+    }
     pendingAssistantText = planned.assistantText?.trim() || null
     const assistantOnlyNoGraph =
       Boolean(pendingAssistantText) &&
       planned.actionRows.length === 0 &&
       planned.planRows.length === 0 &&
       planned.observations.length === 0
+    const blockedByOpenObligations =
+      assistantOnlyNoGraph &&
+      priorObservations.length > 0 &&
+      !canAttemptFinalAnswer(obligationLedger)
+    if (blockedByOpenObligations) {
+      if (iteration >= maxIterations) {
+        const safeSummary = userSafeLedgerFailureSummary({ ledger: obligationLedger, objective })
+        await updateGoalStatus(ctx.db, goal, 'failed', { blockedReason: safeSummary })
+        await addRunEvent(ctx.db, {
+          threadId: ctx.thread.id,
+          runId: ctx.runId,
+          type: 'obligation_final_candidate_blocked',
+          title: '最终回答候选被阻断',
+          message: safeSummary,
+          status: 'failed',
+          data: {
+            goalId: goal.id,
+            iteration,
+            obligationLedger: serializeObligationLedger(obligationLedger),
+          },
+        })
+        if (assistantParts.length === 0) assistantParts.push(safeSummary)
+        break
+      }
+      await addRunEvent(ctx.db, {
+        threadId: ctx.thread.id,
+        runId: ctx.runId,
+        type: 'obligation_final_candidate_deferred',
+        title: '最终回答候选已延后',
+        message: '仍有 runner-owned obligation 未关闭，本轮纯文本不会作为最终回答，下一轮继续取得必要 observation。',
+        status: 'running',
+        data: {
+          goalId: goal.id,
+          iteration,
+          obligationLedger: serializeObligationLedger(obligationLedger),
+        },
+      })
+      nextMessage = objective
+      continue
+    }
     const hasFinalAssistantCandidate = assistantOnlyNoGraph && priorObservations.length > 0
     if (hasFinalAssistantCandidate) {
       await addRunEvent(ctx.db, {
@@ -329,12 +374,11 @@ export async function executeAgentRun(
         break
       }
       if (iteration >= maxIterations) {
-        const safeSummary = userSafeObligationFailureSummary(finalDecision.obligationPlan)
+        const safeSummary = userSafeLedgerFailureSummary({ ledger: obligationLedger, objective })
         await updateGoalStatus(ctx.db, goal, 'failed', { blockedReason: safeSummary })
         if (assistantParts.length === 0) assistantParts.push(safeSummary)
         break
       }
-      activeObligationPlan = finalDecision.obligationPlan
       nextMessage = objective
       continue
     }
@@ -434,12 +478,11 @@ export async function executeAgentRun(
           break
         }
         if (iteration >= maxIterations) {
-          const safeSummary = userSafeObligationFailureSummary(finalDecision.obligationPlan)
+          const safeSummary = userSafeLedgerFailureSummary({ ledger: obligationLedger, objective })
           await updateGoalStatus(ctx.db, goal, 'failed', { blockedReason: safeSummary })
           if (assistantParts.length === 0) assistantParts.push(safeSummary)
           break
         }
-        activeObligationPlan = finalDecision.obligationPlan
         nextMessage = objective
         continue
       } else if (pendingAssistantText && observations.length === 0) {
@@ -468,7 +511,6 @@ export async function executeAgentRun(
         break
       }
       nextMessage = objective
-      activeObligationPlan = null
       await addRunEvent(ctx.db, {
         threadId: ctx.thread.id,
         runId: ctx.runId,
@@ -487,13 +529,29 @@ export async function executeAgentRun(
     }
     if (evaluationNextStep.type === 'run_again') {
       nextMessage = evaluationNextStep.nextMessage
-      activeObligationPlan = null
       continue
     }
     break
   }
 
-  if (lastEvaluation?.status === 'continue') {
+  if (assistantParts.length === 0 && hasOpenNonFinalAnswerObligations(obligationLedger)) {
+    const blockedReason = userSafeLedgerFailureSummary({ ledger: obligationLedger, objective })
+    await updateGoalStatus(ctx.db, goal, 'failed', { blockedReason })
+    await addRunEvent(ctx.db, {
+      threadId: ctx.thread.id,
+      runId: ctx.runId,
+      type: 'obligation_iteration_exhausted',
+      title: 'Obligation Ledger 未关闭',
+      message: blockedReason,
+      status: 'failed',
+      data: {
+        goalId: goal.id,
+        maxIterations,
+        obligationLedger: serializeObligationLedger(obligationLedger),
+      },
+    })
+    assistantParts.push(blockedReason)
+  } else if (lastEvaluation?.status === 'continue') {
     const blockedReason = lastEvaluation.nextPlannerBrief ?? '目标修复循环已耗尽，但仍有未满足项。'
     await updateGoalStatus(ctx.db, goal, 'failed', { blockedReason })
     await addRunEvent(ctx.db, {
@@ -525,7 +583,7 @@ export async function executeAgentRun(
       } else {
         const reason = finalDecision.status === 'failed'
           ? finalDecision.reason
-          : userSafeObligationFailureSummary(finalDecision.obligationPlan)
+          : userSafeLedgerFailureSummary({ ledger: obligationLedger, objective })
         await updateGoalStatus(ctx.db, goal, 'failed', { blockedReason: reason })
         assistantParts.push(reason)
       }

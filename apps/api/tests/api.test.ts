@@ -1551,8 +1551,9 @@ describe('xox TypeScript API', () => {
         event.type === 'response_evaluated' &&
         event.data?.evaluationStatus === 'needs_calculation' &&
         event.data?.findings?.some((finding: any) => finding.code === 'response.sandbox_evidence_invalid') &&
-        event.data?.obligations?.some((obligation: any) =>
+        event.data?.obligationLedger?.obligations?.some((obligation: any) =>
           obligation.kind === 'sandbox_calculation' &&
+          (obligation.status === 'open' || obligation.status === 'invalid') &&
           obligation.toolNames?.includes('sandbox_run_code')),
       )).toBe(true)
       expect(state.json.runEvents.some((event: any) =>
@@ -1732,6 +1733,89 @@ describe('xox TypeScript API', () => {
       observationContinuationResponse: false,
     })
   })
+
+  it('keeps shareholder fact obligations open after a sandbox repair closes only the calculation', async () => {
+    let planningCalls = 0
+    await withFakeOpenAICompatibleProvider((body) => {
+      planningCalls += 1
+      if (planningCalls === 1) {
+        expectProviderTools(body, ['data_query_workspace'])
+        return fakeToolResponse('data_query_workspace', {
+          question: '当前工作区整体ROI、现金、回本情况',
+          scope: 'workspace_summary',
+          metrics: ['roi', 'cash', 'payback'],
+        })
+      }
+      if (planningCalls === 2) {
+        expect(body.messages.some((message: any) => message.role === 'tool')).toBe(true)
+        return fakeAssistantTextResponse('只根据工作区总 ROI 粗略估算，第 2 位股东贷款后的投资回报率大约为正。')
+      }
+      if (planningCalls === 3) {
+        const toolNames = (body.tools ?? []).map((tool: any) => tool?.function?.name ?? tool?.name)
+        expect(toolNames.slice().sort()).toEqual(['data_query_workspace', 'sandbox_run_code'])
+        expect(JSON.stringify(body)).toContain('runnerObligationPlan')
+        return fakeToolResponse('sandbox_run_code', {
+          purpose: '计算第 2 位股东贷款后的个人 ROI',
+          language: 'python',
+          code: 'print("loan adjusted ROI: 12%")',
+          dataRequest: { scope: 'workspace_summary' },
+          expectedOutputs: ['markdown'],
+        })
+      }
+      if (planningCalls === 4) {
+        const toolNames = (body.tools ?? []).map((tool: any) => tool?.function?.name ?? tool?.name)
+        expect(toolNames).toEqual(['data_query_workspace'])
+        expect(JSON.stringify(body)).toContain('entity_summary')
+        return fakeToolResponse('data_query_workspace', {
+          question: '读取有序股东事实',
+          scope: 'entity_summary',
+          metrics: ['shareholderNames', 'shareholderInvestments'],
+        })
+      }
+      if (planningCalls === 5) {
+        const toolMessages = body.messages.filter((message: any) => message.role === 'tool')
+        expect(JSON.stringify(toolMessages)).toContain('sandbox_execution')
+        expect(JSON.stringify(toolMessages)).toContain('shareholders')
+        return fakeAssistantTextResponse('第 2 位股东是股东 B。结合沙箱计算结果，贷款后的个人 ROI 是 12%。')
+      }
+      throw new Error(`Unexpected planning call ${planningCalls}`)
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-obligation-ledger-keeps-partial-repair-open', {
+        ...fakeProviderSettings(baseUrl),
+        agentProviderRequestTimeoutMs: 10_000,
+      })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-obligation-ledger-keeps-partial-repair-open@example.com')
+
+      const response = await client.post('/api/v1/agent/messages', {
+        message: '给我预测一下，如果目前的通胀率是15%，我的投资回报率是多少？我是第2个股东，我投入的钱都是银行贷款出来的，银行利率是年利率3%',
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(planningCalls).toBe(5)
+      const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
+      expect(state.json.runEvents.some((event: any) =>
+        event.type === 'response_evaluated' &&
+        event.data?.evaluationStatus === 'needs_calculation' &&
+        event.data?.obligationLedger?.obligations?.some((obligation: any) =>
+          obligation.kind === 'sandbox_calculation' && obligation.status === 'open') &&
+        event.data?.obligationLedger?.obligations?.some((obligation: any) =>
+          obligation.kind === 'domain_fact' && obligation.status === 'open'),
+      )).toBe(true)
+      expect(state.json.runEvents.some((event: any) =>
+        event.type === 'tool_catalog_ready' &&
+        event.data?.routerReason === 'runner-obligation-plan' &&
+        JSON.stringify(event.data?.toolNames) === JSON.stringify(['data_query_workspace']),
+      )).toBe(true)
+      expect(state.json.goals.at(-1).status).toBe('completed')
+      expect(state.json.messages.at(-1).content).toContain('股东 B')
+      await closeHarness(harness)
+    }, {
+      capabilities: ['data', 'sandbox'],
+      goalFacts: { requiresSandboxComputation: true, requiresOrderedEntityFacts: true },
+      observationContinuationResponse: false,
+    })
+  }, 20_000)
 
   it('resumes a clarification turn and completes the missing cross-domain action without duplicating prior cards', async () => {
     let phase: 'initial' | 'resume' = 'initial'
