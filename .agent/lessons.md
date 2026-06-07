@@ -204,6 +204,7 @@
 - Runner-owned evidence must bind requirements, observations and final answers together. A run that calls the right tools can still be wrong if `goalFacts` are empty, sandbox output is only persisted as a truncated preview, or `no_progress` diagnostics appear beside an accepted final answer; derive requirements from structured facts, trajectory and final claims, preserve model-readable observations separately from UI previews, and let only `AgentRunEngine` accept a final assistant candidate.
 - Final assistant candidates are terminal answer attempts, not tool-loop no-progress. Once a model reply appears after prior observations with no new tools/actions, route it directly to ResponseEvaluator; do not let lifecycle guardrails or display-preview text decide completion before evidence checks run.
 - OpenClaw gives the canonical loop shape and Hermes gives provider/tool-call/message hygiene. xox-model should absorb both under one `AgentRunEngine`: evaluator findings become typed loop obligations, every provider-emitted tool intent becomes a successful or failed observation, and no repair prompt, tool result, transcript projector, provider adapter, or helper module may independently decide finality.
+- Repairing the Agent harness at the prompt layer is the wrong layer when evidence is missing. Evaluator findings such as missing ordered shareholders must become typed runner-owned obligations that constrain the next tool/context turn; never turn them into user-visible assistant prose or a free-form `nextMessage`.
 
 ## Testing
 
