@@ -1,5 +1,6 @@
 import type { AgentEvaluationResult, AgentToolLoopGuardrailFinding } from '@xox/contracts'
 import type { AgentToolObservation } from './tool-observation-continuation.js'
+import { isRepairableToolObservation } from './tool-observation-outcome.js'
 
 type RowLike = {
   id: string
@@ -110,6 +111,14 @@ export function resolveAfterEvaluation(input: {
   }
 
   if (input.evaluation.status === 'failed') {
+    const newObservations = input.newObservationCount > 0 ? input.observations.slice(-input.newObservationCount) : []
+    if (newObservations.some(isRepairableToolObservation)) {
+      return {
+        type: 'continue_with_observations',
+        reason: 'failed_evaluation_contains_repairable_tool_observation',
+        observations: newObservations,
+      }
+    }
     return {
       type: 'failed',
       reason: input.evaluation.blocker ?? '目标执行失败。',

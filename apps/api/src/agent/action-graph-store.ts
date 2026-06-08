@@ -16,6 +16,7 @@ import {
   createAgentActionRuntimeRequest,
   settleAgentActionRuntimeRequest,
 } from './agent-action-runtime.js'
+import { classifyToolObservation } from './tool-observation-outcome.js'
 
 type ActionGraphContext = {
   db: Kysely<Database>
@@ -47,7 +48,7 @@ function observationFromRead(item: PlannedItem, sequence: number): AgentToolObse
   const displayPreview = item.displayPreview ?? item.message
   const status = item.observationStatus ??
     (item.status === 'failed' ? 'failed' : item.status === 'cancelled' ? 'cancelled' : 'completed')
-  return {
+  const observation = {
     title: item.title,
     toolName,
     toolCallId: item.toolCallId ?? `call_observation_${sequence}_${toolName}`,
@@ -56,6 +57,10 @@ function observationFromRead(item: PlannedItem, sequence: number): AgentToolObse
     modelContent: item.modelContent ?? displayPreview,
     status,
     ...(item.syntheticObservation ? { synthetic: true } : {}),
+  }
+  return {
+    ...observation,
+    outcome: item.observationOutcome ?? classifyToolObservation(observation),
   }
 }
 

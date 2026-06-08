@@ -151,6 +151,7 @@ export async function runPlanningSession(
     const supervisorInput: Parameters<typeof superviseRuntimeToolCalls>[1] = {
       steps: result.steps,
       handlers: input.handlers,
+      emitRunEvents: true,
       ...(result.toolInventorySnapshot ? { inventorySnapshot: result.toolInventorySnapshot } : {}),
     }
     const supervised = await superviseRuntimeToolCalls(planningCtx, supervisorInput)

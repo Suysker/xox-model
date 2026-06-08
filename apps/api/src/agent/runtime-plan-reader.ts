@@ -3,6 +3,7 @@ import type { Settings } from '../core/settings.js'
 import { redactSecretLikeContent } from './memory.js'
 import type { ReadDraft } from './action-draft-builder.js'
 import type { RuntimePlanError, RuntimePlanResult } from './runtime/runtime-adapter.js'
+import { classifyToolObservation } from './tool-observation-outcome.js'
 
 export function configuredRuntimePlannerSource(settings: Settings): Extract<AgentPlannerSource, 'openai_agents' | 'openai_compatible_tool_calls'> | null {
   if (settings.llmProvider === 'rules') return null
@@ -42,6 +43,12 @@ function providerToolCallBoundaryObservationReads(error?: RuntimePlanError | nul
       artifacts: [],
       purpose: `Provider boundary prevented ${toolName} execution.`,
     })
+    const observationOutcome = classifyToolObservation({
+      toolName,
+      status: 'not_executed',
+      modelContent,
+      synthetic: true,
+    })
     return {
       title: '工具调用未形成可执行参数',
       message: displayPreview,
@@ -56,6 +63,7 @@ function providerToolCallBoundaryObservationReads(error?: RuntimePlanError | nul
       displayPreview,
       modelContent,
       observationStatus: 'not_executed',
+      observationOutcome,
       syntheticObservation: true,
       status: 'failed',
     } satisfies ReadDraft

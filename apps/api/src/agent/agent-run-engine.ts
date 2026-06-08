@@ -18,6 +18,7 @@ import { planResponse } from './planner.js'
 import { addRunEvent } from './run-events.js'
 import { addMessage } from './thread-store.js'
 import { continueModelAfterToolObservations, type AgentToolObservation } from './tool-observation-continuation.js'
+import { isRepairableToolObservation } from './tool-observation-outcome.js'
 import { buildClarificationResumeContext } from './clarification-resume.js'
 import { evaluateToolLoopGuardrails } from './tool-runtime/tool-loop-guardrails.js'
 import { resolveAfterEvaluation, resolveAfterPlanning } from './turn-resolver.js'
@@ -63,7 +64,12 @@ type FinalAnswerDecision =
 function shouldContinueObservationInMainLoop(observations: AgentToolObservation[]) {
   return observations.some((observation) =>
     observation.toolName === 'data_query_workspace' ||
-    observation.toolName === 'sandbox_run_code')
+    observation.toolName === 'sandbox_run_code' ||
+    isRepairableToolObservation(observation))
+}
+
+function hasRepairableToolObservations(observations: AgentToolObservation[]) {
+  return observations.some(isRepairableToolObservation)
 }
 
 export async function executeAgentRun(
@@ -594,7 +600,28 @@ export async function executeAgentRun(
     if (assistantParts.length === 0) {
       assistantParts.push(`这轮没有完成所有目标：${blockedReason}`)
     }
-  } else if (assistantParts.length === 0 && observations.length > 0) {
+  } else if (assistantParts.length === 0 && hasRepairableToolObservations(observations)) {
+    const blockedReason = userSafeLedgerFailureSummary({ ledger: obligationLedger, objective })
+    await updateGoalStatus(ctx.db, goal, 'failed', { blockedReason })
+    await addRunEvent(ctx.db, {
+      threadId: ctx.thread.id,
+      runId: ctx.runId,
+      type: 'repairable_observation_unresolved',
+      title: '工具反馈未完成修复',
+      message: blockedReason,
+      status: 'failed',
+      data: {
+        goalId: goal.id,
+        maxIterations,
+        repairableToolNames: observations.filter(isRepairableToolObservation).map((observation) => observation.toolName),
+      },
+    })
+    assistantParts.push(blockedReason)
+  } else if (
+    assistantParts.length === 0 &&
+    observations.length > 0 &&
+    !hasRepairableToolObservations(observations)
+  ) {
     const continuation = await continueModelAfterToolObservations(planningCtx, observations)
     if (!(await options.beforeStateWrite())) return null
     if (continuation.status === 'answered') {

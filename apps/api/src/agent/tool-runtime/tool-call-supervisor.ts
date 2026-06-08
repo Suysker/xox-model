@@ -11,6 +11,7 @@ import {
 } from '../action-draft-builder.js'
 import { redactSecretLikeContent } from '../memory.js'
 import { addRunEvent } from '../run-events.js'
+import { classifyToolObservation } from '../tool-observation-outcome.js'
 import { toolCallCompletedEvent, toolCallStartedEvent } from './tool-execution-events.js'
 
 // Inspired by OpenAI Agents JS tool execution and OpenClaw's tool loop events,
@@ -58,6 +59,8 @@ function failedRead(input: {
       toolCallId: input.toolCallId ?? null,
       message: input.message,
     }),
+    observationStatus: 'failed',
+    observationOutcome: 'failed_terminal',
   }
 }
 
@@ -143,6 +146,7 @@ export async function superviseRuntimeToolCalls(
         toolName,
         toolCallId,
         status: 'failed',
+        outcome: item.observationOutcome ?? 'failed_terminal',
         authorityClass: 'manual_only',
         arguments: toolArguments,
         errorMessage: item.message,
@@ -173,10 +177,24 @@ export async function superviseRuntimeToolCalls(
     }
     items.push(...producedItems)
     const hasFailure = producedItems.some((item) => !isActionDraft(item) && item.status === 'failed')
+    const firstRead = producedItems.find((item) => !isActionDraft(item))
+    const observationStatus = hasFailure ? 'failed' : 'completed'
+    const outcomeInput = !firstRead || isActionDraft(firstRead)
+      ? null
+      : {
+          toolName,
+          status: firstRead.observationStatus ?? observationStatus,
+          ...(firstRead.modelContent ? { modelContent: firstRead.modelContent } : {}),
+          ...(firstRead.syntheticObservation !== undefined ? { synthetic: firstRead.syntheticObservation } : {}),
+        }
+    const outcome = !firstRead || isActionDraft(firstRead)
+      ? 'completed_valid'
+      : firstRead.observationOutcome ?? classifyToolObservation(outcomeInput!)
     const observation: AgentToolExecutionObservation = {
       toolName,
       toolCallId,
-      status: hasFailure ? 'failed' : 'completed',
+      status: observationStatus,
+      outcome,
       authorityClass: inventoryTool?.authorityClass ?? 'read',
       arguments: toolArguments,
       resultPreview: resultPreview(producedItems),

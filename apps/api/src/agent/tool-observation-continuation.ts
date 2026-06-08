@@ -13,6 +13,7 @@ import { runtimeMessagesFromThreadConversationLog } from './runtime-conversation
 import { planWithRuntimeAdapter } from './runtime/adapter-router.js'
 import type { RuntimeChatMessage } from './runtime/runtime-adapter.js'
 import { providerToolObservationReplayMessages } from './runtime/provider-transcript-replay.js'
+import type { AgentToolObservationOutcome } from '@xox/contracts'
 
 export type AgentToolObservation = {
   title: string
@@ -22,6 +23,7 @@ export type AgentToolObservation = {
   displayPreview: string
   modelContent: string
   status: 'completed' | 'failed' | 'cancelled' | 'not_executed' | 'invalid'
+  outcome?: AgentToolObservationOutcome
   synthetic?: boolean
 }
 
@@ -107,6 +109,7 @@ export function actionExecutionObservation(input: {
       result: conciseResult(input.result),
     }),
     status: input.action.status === 'executed' ? 'completed' : input.action.status === 'failed' ? 'failed' : 'cancelled',
+    outcome: input.action.status === 'executed' ? 'completed_valid' : input.action.status === 'failed' ? 'failed_terminal' : 'pending_human',
   }
 }
 
@@ -143,6 +146,7 @@ export function actionPreviewObservation(input: {
       changeSet: details,
     }),
     status: 'completed',
+    outcome: 'pending_human',
   }
 }
 

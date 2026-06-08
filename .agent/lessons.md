@@ -209,6 +209,8 @@
 - Response evaluator `requiredEvidence` is the acceptance evidence set, not automatically the next repair set. When converting evaluator output into runner obligations, filter by evaluator status and current findings so already-satisfied sandbox/data evidence is not re-exposed as a repair tool and the next loop stays narrow.
 - Runner-owned obligations must be durable ledger state, not a one-shot active plan. OpenClaw-style pending state and Hermes-style tool loops require obligations to survive observation continuation until explicit closure; otherwise the harness only detects missing evidence after allowing premature final-answer candidates.
 - When converting evaluator findings into runner obligations, model the result as a state machine with explicit open/satisfied/invalid transitions. A matching observation may close one obligation without closing its siblings; partial repair must keep the remaining obligations projected into the next tool catalog until they are explicitly satisfied or the run fails closed.
+- Failed tool plan steps are not automatically failed goals. Classify tool observations from typed runtime facts first; sandbox syntax/runtime errors, provider argument boundaries and empty-but-fixable outputs should re-enter the AgentRunEngine loop as repairable observations, while policy/auth/tenant failures remain terminal.
+- Do not rely only on provider `tool_call_id` to correlate repair attempts. Some providers or tests can reuse ids across retries; plan-step local execution facts such as sandbox status, exit code, boundary code and structured display data must take precedence when closing or superseding repairable observations.
 
 ## Testing
 

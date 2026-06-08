@@ -47,6 +47,7 @@ function failedActionObservation(input: {
     toolArguments: {},
     displayPreview,
     modelContent: JSON.stringify({
+      observationType: 'action_result',
       displayPreview,
       actionRequestId: input.action.id,
       actionKind: input.action.kind,
@@ -56,6 +57,7 @@ function failedActionObservation(input: {
       error: input.error ?? null,
     }),
     status: 'failed',
+    outcome: input.error ? 'failed_terminal' : 'policy_blocked',
   }
 }
 

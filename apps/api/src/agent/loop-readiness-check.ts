@@ -1,4 +1,4 @@
-import type { AgentEvaluationFinding, AgentEvaluationResult, AgentGoalContract, AgentGoalFacts } from '@xox/contracts'
+import type { AgentEvaluationFinding, AgentEvaluationResult, AgentGoalContract, AgentGoalFacts, AgentToolObservationOutcome } from '@xox/contracts'
 import type { AgentToolCapability } from './tool-catalog.js'
 import type { Kysely } from 'kysely'
 import type { Database, Row } from '../db/schema.js'
@@ -6,6 +6,7 @@ import { parseJson } from '../db/database.js'
 import { collectAgentObservation } from './observation-collector.js'
 import { addEvaluationResult, updateGoalStatus } from './goal-contract.js'
 import { goalFactsFromRunEvent, mergeAgentGoalFacts } from './runtime-goal-facts.js'
+import { classifyToolObservation, isRepairableProviderBoundaryCode, type ToolObservationStatus } from './tool-observation-outcome.js'
 
 function finding(input: {
   id: string
@@ -78,6 +79,104 @@ function goalFactsFromRow(goal: Row<'agent_goals'>): AgentGoalFacts {
 
 function runtimeGoalFacts(runEvents: Row<'agent_run_events'>[]) {
   return mergeAgentGoalFacts(...runEvents.map(goalFactsFromRunEvent))
+}
+
+const TOOL_OBSERVATION_OUTCOMES = new Set<AgentToolObservationOutcome>([
+  'completed_valid',
+  'completed_invalid',
+  'failed_repairable',
+  'failed_terminal',
+  'pending_human',
+  'policy_blocked',
+])
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' ? value as Record<string, unknown> : null
+}
+
+function stringValue(value: unknown) {
+  return typeof value === 'string' ? value : null
+}
+
+function outcomeValue(value: unknown): AgentToolObservationOutcome | null {
+  return typeof value === 'string' && TOOL_OBSERVATION_OUTCOMES.has(value as AgentToolObservationOutcome)
+    ? value as AgentToolObservationOutcome
+    : null
+}
+
+function toolObservationOutcomesByCallId(runEvents: Row<'agent_run_events'>[]) {
+  const outcomes = new Map<string, AgentToolObservationOutcome>()
+  for (const event of runEvents) {
+    const data = parseJson<Record<string, unknown>>(event.data_json, {})
+    const runtimeEvent = recordValue(data.runtimeEvent)
+    const payload = recordValue(runtimeEvent?.payload)
+    const toolCallId = stringValue(runtimeEvent?.toolCallId)
+    const outcome = outcomeValue(payload?.outcome)
+    if (toolCallId && outcome) outcomes.set(toolCallId, outcome)
+  }
+  return outcomes
+}
+
+function planStepBoundaryOutcome(step: Row<'agent_plan_steps'>): AgentToolObservationOutcome | null {
+  const args = parseJson<Record<string, unknown>>(step.tool_arguments_json, {})
+  const boundaryCode = stringValue(args.boundaryCode)
+  if (!boundaryCode) return null
+  return isRepairableProviderBoundaryCode(boundaryCode) ? 'failed_repairable' : 'failed_terminal'
+}
+
+function planStepSandboxOutcome(step: Row<'agent_plan_steps'>): AgentToolObservationOutcome | null {
+  if (step.tool_name !== 'sandbox_run_code') return null
+  const facts = parseJson<Record<string, unknown>>(step.description, {})
+  const sandboxStatus = stringValue(facts.status)
+  const observationStatus: ToolObservationStatus =
+    step.status === 'executed'
+      ? 'completed'
+      : sandboxStatus === 'blocked'
+        ? 'not_executed'
+        : step.status === 'cancelled'
+          ? 'cancelled'
+          : 'failed'
+  return classifyToolObservation({
+    toolName: 'sandbox_run_code',
+    status: observationStatus,
+    modelContent: JSON.stringify({
+      observationType: 'sandbox_execution',
+      manifestScoped: true,
+      ...facts,
+    }),
+  })
+}
+
+function planStepObservationOutcome(
+  step: Row<'agent_plan_steps'>,
+  outcomesByCallId: Map<string, AgentToolObservationOutcome>,
+): AgentToolObservationOutcome | null {
+  const boundaryOutcome = planStepBoundaryOutcome(step)
+  if (boundaryOutcome) return boundaryOutcome
+  const sandboxOutcome = planStepSandboxOutcome(step)
+  if (sandboxOutcome) return sandboxOutcome
+  if (step.tool_call_id) {
+    const eventOutcome = outcomesByCallId.get(step.tool_call_id)
+    if (eventOutcome) return eventOutcome
+  }
+  return null
+}
+
+function isRepairableOutcome(outcome: AgentToolObservationOutcome | null) {
+  return outcome === 'failed_repairable' || outcome === 'completed_invalid'
+}
+
+function repairableObservationIsOpen(
+  step: Row<'agent_plan_steps'>,
+  planSteps: Row<'agent_plan_steps'>[],
+  outcomesByCallId: Map<string, AgentToolObservationOutcome>,
+) {
+  const outcome = planStepObservationOutcome(step, outcomesByCallId)
+  if (!isRepairableOutcome(outcome)) return false
+  return !planSteps.some((candidate) =>
+    candidate.sequence_no > step.sequence_no &&
+    candidate.tool_name === step.tool_name &&
+    planStepObservationOutcome(candidate, outcomesByCallId) === 'completed_valid')
 }
 
 function isOperatingModelConfigAction(action: Row<'agent_action_requests'>) {
@@ -461,6 +560,13 @@ export async function evaluateAgentGoal(input: {
   const pendingActions = actions.filter((action) => action.status === 'pending')
   const failedActions = actions.filter((action) => action.status === 'failed')
   const failedSteps = planSteps.filter((step) => step.status === 'failed')
+  const toolObservationOutcomes = toolObservationOutcomesByCallId(runEvents)
+  const repairableObservationSteps = planSteps.filter((step) =>
+    repairableObservationIsOpen(step, planSteps, toolObservationOutcomes))
+  const repairableFailedSteps = failedSteps.filter((step) =>
+    repairableObservationIsOpen(step, planSteps, toolObservationOutcomes))
+  const terminalFailedSteps = failedSteps.filter((step) =>
+    !isRepairableOutcome(planStepObservationOutcome(step, toolObservationOutcomes)))
   const emptyModelReadSteps = planSteps.filter((step) => step.title === '模型没有返回内容')
   const clarificationSteps = planSteps.filter((step) => step.title === '需要补充信息')
 
@@ -493,13 +599,27 @@ export async function evaluateAgentGoal(input: {
     satisfied.add('graph.write_actions_have_cards')
   }
 
-  if (failedActions.length > 0 || failedSteps.length > 0) {
+  if (failedActions.length > 0 || terminalFailedSteps.length > 0) {
     unsatisfied.push(finding({
       id: 'graph.failed_steps',
       criterionId: 'graph.visible_steps',
       severity: 'blocking',
       message: '运行图中存在失败步骤或失败确认卡，需要先修复再继续。',
-      evidence: { failedActionCount: failedActions.length, failedStepCount: failedSteps.length },
+      evidence: { failedActionCount: failedActions.length, failedStepCount: terminalFailedSteps.length },
+    }))
+  }
+
+  if (repairableObservationSteps.length > 0) {
+    unsatisfied.push(finding({
+      id: 'graph.repairable_tool_observations',
+      criterionId: 'graph.visible_steps',
+      severity: 'blocking',
+      message: '存在可由模型修复的工具观察结果，需要把 stderr、边界码或无效输出回放给模型继续处理。',
+      evidence: {
+        repairableStepCount: repairableObservationSteps.length,
+        failedRepairableStepCount: repairableFailedSteps.length,
+        toolNames: [...new Set(repairableObservationSteps.map((step) => step.tool_name).filter(Boolean))],
+      },
     }))
   }
 
@@ -562,7 +682,7 @@ export async function evaluateAgentGoal(input: {
     status = 'blocked'
     blocker = policyFindings.map((item) => item.message).join('；')
     confidence = 0.99
-  } else if (failedActions.length > 0 || failedSteps.length > 0) {
+  } else if (failedActions.length > 0 || terminalFailedSteps.length > 0) {
     status = 'failed'
     blocker = '运行图存在失败动作。'
     confidence = 0.95

@@ -292,6 +292,14 @@ export type AgentToolAuthorityClass =
   | 'confirmation_write'
   | 'manual_only'
 
+export type AgentToolObservationOutcome =
+  | 'completed_valid'
+  | 'completed_invalid'
+  | 'failed_repairable'
+  | 'failed_terminal'
+  | 'pending_human'
+  | 'policy_blocked'
+
 export type AgentToolNavigationTarget = 'dashboard' | 'inputs' | 'bookkeeping' | 'variance' | 'workspace' | null
 
 export type AgentToolInventoryItem = {
@@ -384,6 +392,7 @@ export type AgentToolExecutionObservation = {
   toolCallId: string
   toolName: string
   status: 'completed' | 'failed' | 'cancelled' | 'not_executed' | 'invalid'
+  outcome?: AgentToolObservationOutcome
   authorityClass: AgentToolAuthorityClass
   arguments: Record<string, unknown>
   resultPreview?: string

@@ -1,4 +1,4 @@
-import type { AgentNavigationEvent, AgentPlanStepStatus } from '@xox/contracts'
+import type { AgentNavigationEvent, AgentPlanStepStatus, AgentToolObservationOutcome } from '@xox/contracts'
 import type { AgentActionDraft } from './approval-executor.js'
 import type { RuntimePlanResult } from './runtime/runtime-adapter.js'
 
@@ -12,6 +12,7 @@ export type ReadDraft = {
   modelContent?: string
   displayPreview?: string
   observationStatus?: 'completed' | 'failed' | 'cancelled' | 'not_executed' | 'invalid'
+  observationOutcome?: AgentToolObservationOutcome
   syntheticObservation?: boolean
   navigation?: AgentNavigationEvent | null
   status?: AgentPlanStepStatus

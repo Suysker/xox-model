@@ -1516,6 +1516,110 @@ describe('xox TypeScript API', () => {
     })
   })
 
+  it('replays repairable sandbox failures into the main loop before accepting the final answer', async () => {
+    let planningCalls = 0
+    await withFakeOpenAICompatibleProvider((body) => {
+      planningCalls += 1
+      if (planningCalls === 1) {
+        expectProviderTools(body, ['data_query_workspace'])
+        return fakeToolResponse('data_query_workspace', {
+          question: '当前工作区整体ROI、现金、回本情况',
+          scope: 'workspace_summary',
+          metrics: ['roi', 'cash', 'payback'],
+        })
+      }
+      if (planningCalls === 2) {
+        expectProviderTools(body, ['sandbox_run_code'])
+        return fakeToolResponse('sandbox_run_code', {
+          purpose: '先计算第一位股东贷款利息后的个人回报',
+          language: 'python',
+          code: [
+            'import xox_sandbox',
+            'payload = xox_sandbox.load()',
+            'data = payload["bundle"]["structured"]',
+            'print("starting")',
+            'broken = ',
+          ].join('\n'),
+          dataRequest: { scope: 'workspace_summary' },
+          expectedOutputs: ['json'],
+        })
+      }
+      if (planningCalls === 3) {
+        expectProviderTools(body, ['sandbox_run_code'])
+        const toolMessages = body.messages.filter((message: any) => message.role === 'tool')
+        expect(JSON.stringify(toolMessages)).toContain('sandbox_execution')
+        expect(JSON.stringify(toolMessages)).toContain('SyntaxError')
+        return fakeToolResponse('sandbox_run_code', {
+          purpose: '修正脚本并重新计算第一位股东贷款利息后的个人回报',
+          language: 'python',
+          code: [
+            'import xox_sandbox',
+            'payload = xox_sandbox.load()',
+            'data = payload["bundle"]["structured"]',
+            'first = data.get("firstShareholder") or {}',
+            'investment = first.get("investmentAmount", 0) or 0',
+            'profit = data.get("totalProfit", 0) or 0',
+            'interest = investment * 0.05',
+            'personal_roi = None if investment == 0 else (profit - interest) / investment',
+            'xox_sandbox.emit({',
+            '  "summary": "修复后完成第一位股东个人回报测算",',
+            '  "structured": {',
+            '    "firstShareholder": first,',
+            '    "totalProfit": profit,',
+            '    "loanInterest": interest,',
+            '    "personalRoi": personal_roi',
+            '  }',
+            '})',
+          ].join('\n'),
+          dataRequest: { scope: 'workspace_summary' },
+          expectedOutputs: ['json'],
+        })
+      }
+      if (planningCalls === 4) {
+        const toolMessages = body.messages.filter((message: any) => message.role === 'tool')
+        expect(JSON.stringify(toolMessages)).toContain('修复后完成第一位股东个人回报测算')
+        return fakeAssistantTextResponse('已基于修复后的沙箱结果完成测算：第一位股东的贷款利息已计入个人回报，最终结论以第二次 sandbox observation 为准。')
+      }
+      throw new Error(`Unexpected planning call ${planningCalls}`)
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-sandbox-repairable-observation-loop', {
+        ...fakeProviderSettings(baseUrl),
+        agentProviderRequestTimeoutMs: 10_000,
+      })
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-sandbox-repairable-observation-loop@example.com')
+
+      const response = await client.post('/api/v1/agent/messages', {
+        message: '给我预测一下，如果目前的通胀率是5%，我的投资回报率是多少？我是第一个股东，我投入的钱都是银行贷款出来的，银行利率是年利率5%',
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(planningCalls).toBe(4)
+      const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
+      const sandboxSteps = state.json.planSteps.filter((step: any) => step.toolName === 'sandbox_run_code')
+      expect(sandboxSteps.map((step: any) => step.status)).toEqual(['failed', 'executed'])
+      expect(state.json.evaluations.some((evaluation: any) =>
+        evaluation.status === 'continue' &&
+        evaluation.unsatisfiedCriteria.some((finding: any) => finding.id === 'graph.repairable_tool_observations'),
+      )).toBe(true)
+      expect(state.json.runEvents.some((event: any) =>
+        event.type === 'tool_call_failed' &&
+        event.data?.runtimeEvent?.payload?.outcome === 'failed_repairable',
+      )).toBe(true)
+      expect(state.json.runEvents.some((event: any) =>
+        event.type === 'tool_call_completed' &&
+        event.data?.runtimeEvent?.payload?.outcome === 'completed_valid',
+      )).toBe(true)
+      expect(state.json.goals.at(-1).status).toBe('completed')
+      expect(state.json.messages.at(-1).content).toContain('修复后的沙箱结果')
+      await closeHarness(harness)
+    }, {
+      capabilities: ['data', 'sandbox'],
+      goalFacts: { requiresSandboxComputation: true },
+      observationContinuationResponse: false,
+    })
+  })
+
   it('treats unavailable final-answer claim review as a non-blocking review signal', async () => {
     let planningCalls = 0
     let claimReviewCalls = 0

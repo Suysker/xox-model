@@ -131,6 +131,7 @@
   - `planner` 为 `openai_agents`、`openai_compatible_tool_calls`、`rules` 或运行中时的 `null`
   - 一条消息可拆成多个 `planSteps`，写入步骤会关联一个 server-owned action request；eligible action 可能按本轮 `automationLevel` 自动执行，也可能停在待确认动作卡
   - 只有模型返回 provider-native tool call 才会生成业务 action request；模型只返回 assistant 文本时按普通回复持久化，不用本地规则猜测业务动作。`rules` 只作为本地/CI no-op 生命周期路径，不生成业务 action request。
+  - 工具 observation 现在带有 `outcome` 语义：`completed_valid / completed_invalid / failed_repairable / failed_terminal / pending_human / policy_blocked`。可修复失败会回到同一个 AgentRunEngine 主循环；终态失败、策略阻断和待人工确认仍会中断或失败。
   - 缺少必要业务信息时，模型应调用 `ask_user_clarification`，返回只读澄清消息和 `info` 计划步骤，不生成确认卡
   - 读取和试算类请求不会生成写入动作
   - 新增或删除团队成员由模型调用 `team_member_add / team_member_delete` 后生成 `workspace.update_draft` action request；用户可以在 pending 状态编辑载荷，执行前仍会校验当前用户 / 工作区、显式导航、风险等级和草稿至少保留 1 个成员

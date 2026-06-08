@@ -19,6 +19,7 @@ import type { ReadDraft, RuntimePlannerStep } from './action-draft-builder.js'
 import type { PlannerContext } from './planning-context.js'
 import { SandboxBroker } from './sandbox/sandbox-broker.js'
 import type { SandboxDataBundle } from './sandbox/backend.js'
+import { classifyToolObservation, type ToolObservationStatus } from './tool-observation-outcome.js'
 
 type SandboxExpectedOutput = NonNullable<SandboxRunCodeInput['expectedOutputs']>[number]
 
@@ -385,6 +386,13 @@ function hasModelReadableSandboxOutput(observation: SandboxObservation) {
   )
 }
 
+function sandboxObservationStatus(observation: SandboxObservation): ToolObservationStatus {
+  if (observation.status === 'completed') return 'completed'
+  if (observation.status === 'cancelled') return 'cancelled'
+  if (observation.status === 'blocked') return 'not_executed'
+  return 'failed'
+}
+
 export async function runSandboxCode(ctx: SandboxServiceContext, step: RuntimePlannerStep): Promise<SandboxObservation> {
   const input = normalizeSandboxInput(step)
   const toolCallId = step.providerToolCallId ?? `sandbox_${shortHash(`${ctx.runId}:${input.purpose}`)}`
@@ -433,21 +441,32 @@ export async function runSandboxCode(ctx: SandboxServiceContext, step: RuntimePl
 export async function planSandboxRunCode(ctx: PlannerContext, step: RuntimePlannerStep): Promise<ReadDraft> {
   const observation = await runSandboxCode(ctx, step)
   const preview = displayPreview(observation)
+  const modelContent = JSON.stringify({
+    observationType: 'sandbox_execution',
+    completed: observation.status === 'completed' &&
+      observation.executionMode === 'executed' &&
+      observation.exitCode === 0 &&
+      observation.manifestScoped === true &&
+      hasModelReadableSandboxOutput(observation),
+    businessReadonly: true,
+    ...observation,
+  })
+  const observationStatus = sandboxObservationStatus(observation)
   return {
     title: observation.status === 'completed' ? '受控沙箱执行完成' : '受控沙箱执行被阻断',
     message: preview,
     readKind: 'tool_observation',
-    modelContent: JSON.stringify({
-      observationType: 'sandbox_execution',
-      completed: observation.status === 'completed' &&
-        observation.executionMode === 'executed' &&
-        observation.exitCode === 0 &&
-        observation.manifestScoped === true &&
-        hasModelReadableSandboxOutput(observation),
-      businessReadonly: true,
-      ...observation,
-    }),
+    toolName: 'sandbox_run_code',
+    toolCallId: step.providerToolCallId ?? observation.manifest.identity.toolCallId,
+    toolArguments: step.providerToolArguments ?? {},
+    modelContent,
     displayPreview: preview,
+    observationStatus,
+    observationOutcome: classifyToolObservation({
+      toolName: 'sandbox_run_code',
+      status: observationStatus,
+      modelContent,
+    }),
     status: observation.status === 'completed' ? 'executed' : 'failed',
   }
 }

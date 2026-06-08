@@ -1,6 +1,6 @@
 # ADR 0038: OpenClaw/Hermes Repairable Tool Observation Loop
 
-Status: Proposed
+Status: Implemented
 
 Date: 2026-06-08
 
@@ -528,6 +528,22 @@ Prefer reusing mature reference shapes:
 - OpenAI Agents JS runner boundaries should guide naming: guardrails, approvals, sandbox, tracing, and interruptions stay runner-side.
 
 Do not import their local-agent control planes. `xox-model` remains a SaaS product with strict tenant isolation and domain-authorized writes.
+
+Implemented in this repo as:
+
+- `packages/contracts/src/index.ts`: `AgentToolObservationOutcome`.
+- `apps/api/src/agent/tool-observation-outcome.ts`: the shared outcome classifier.
+- `apps/api/src/agent/tool-runtime/tool-call-supervisor.ts`: per-tool runtime events now carry outcome metadata.
+- `apps/api/src/agent/loop-readiness-check.ts`: repairable/invalid observations continue the main loop; terminal failures still fail closed.
+- `apps/api/src/agent/agent-run-engine.ts`: repairable observations bypass the `tools: []` finalizer and fail closed if unresolved after loop budget.
+- `apps/api/src/agent/turn-resolver.ts`: failed evaluations with fresh repairable observations continue through the same loop.
+- `apps/api/src/agent/sandbox-service.ts`: real sandbox exits are classified from execution facts.
+- `apps/api/tests/api.test.ts`: regression for `data_query_workspace -> sandbox syntax error -> repaired sandbox -> final answer`.
+- `apps/api/tests/tool-observation-outcome.test.ts`: classification boundary tests.
+
+Validation evidence:
+
+- `npm.cmd run test:api` passed on 2026-06-08 with 14 files / 203 tests.
 
 ## Expected Result
 

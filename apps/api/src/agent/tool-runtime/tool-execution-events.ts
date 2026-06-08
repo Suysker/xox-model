@@ -54,6 +54,7 @@ export function toolCallCompletedEvent(input: {
     summary: input.observation.resultPreview ?? `工具调用${input.observation.status === 'completed' ? '完成' : '失败'}：${input.observation.toolName}`,
     payload: {
       observationStatus: input.observation.status,
+      outcome: input.observation.outcome ?? null,
       authorityClass: input.observation.authorityClass,
       errorMessage: input.observation.errorMessage ?? null,
     },

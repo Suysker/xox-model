@@ -7,6 +7,7 @@ import type { AgentToolObservation } from './tool-observation-continuation.js'
 import type { AgentGoalContract } from '@xox/contracts'
 import { mergeAgentGoalFacts } from './runtime-goal-facts.js'
 import { objectHasKey } from './structured-evidence-utils.js'
+import { classifyToolObservation } from './tool-observation-outcome.js'
 
 export type ResponseEvaluationStatus =
   | 'pass'
@@ -52,7 +53,7 @@ function goalFactsFromRow(goal: Row<'agent_goals'>): AgentGoalFacts {
 }
 
 function isCompletedObservation(observation: AgentToolObservation) {
-  return observation.status === 'completed'
+  return observation.status === 'completed' && classifyToolObservation(observation) === 'completed_valid'
 }
 
 function hasCompletedSandboxEvidence(evidence: AgentEvidenceItem[]) {
