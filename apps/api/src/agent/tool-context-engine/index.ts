@@ -42,7 +42,7 @@ function materializationBudget(input: {
 }) {
   const count = uniqueCapabilities(input.selectedCapabilities).length
   const requiredWriteCount = uniqueCapabilities(input.requiredActionCapabilities ?? []).length
-  const base = count >= 6 ? 8 : count >= 3 ? 7 : 6
+  const base = count === 0 ? 8 : count >= 6 ? 8 : count >= 3 ? 7 : 6
   return Math.min(12, base + requiredWriteCount * 3)
 }
 
@@ -86,7 +86,7 @@ export function buildToolContextPack(input: {
   const kernelToolNames = KERNEL_TOOL_NAMES.filter((name) => visibleToolNameSet.has(name))
   const autoAddedControlNames = visibleToolNames.filter((name) => {
     const manifest = materialized.manifests.find((item) => item.name === name)
-    return manifest?.capability === 'account' || manifest?.capability === 'clarification'
+    return manifest?.capability === 'account' || manifest?.capability === 'clarification' || manifest?.capability === 'tooling'
   })
   const emptySurfaceStatus: ToolContextPack['emptySurfaceStatus'] =
     materialized.manifests.length > 0

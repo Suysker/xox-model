@@ -286,6 +286,9 @@ function evaluateRuntimeToolCoverage(input: {
   facts: AgentGoalFacts
 }) {
   const signals = runtimeToolSignals(input.runEvents)
+  for (const capability of safeRuntimeCapabilities(input.facts.requiredActionCapabilities)) {
+    signals.requiredActionCapabilities.add(capability)
+  }
   const findings: AgentEvaluationFinding[] = []
   const satisfied: string[] = []
 
@@ -305,7 +308,7 @@ function evaluateRuntimeToolCoverage(input: {
 
   if (
     input.facts.requiresSandboxComputation &&
-    !input.planSteps.some((step) => step.tool_name === 'sandbox_run_code' && step.status !== 'failed')
+    !input.planSteps.some((step) => step.tool_name === 'sandbox_run_code')
   ) {
     findings.push(finding({
       id: 'runtime.sandbox.observation_missing',

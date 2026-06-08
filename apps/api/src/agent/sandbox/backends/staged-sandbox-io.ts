@@ -32,6 +32,15 @@ def load():
     with open(os.environ["XOX_SANDBOX_INPUT_JSON"], "r", encoding="utf-8") as file:
         return json.load(file)
 
+def load_bundle():
+    return load()["bundle"]
+
+def load_structured():
+    return load_bundle()["structured"]
+
+def load_rows():
+    return load_bundle()["rows"]
+
 def emit(result):
     output = dict(result or {})
     output["schemaVersion"] = "xox.sandbox.result.v1"
@@ -46,6 +55,18 @@ import { join } from "node:path";
 
 export function load() {
   return JSON.parse(readFileSync(process.env.XOX_SANDBOX_INPUT_JSON, "utf8"));
+}
+
+export function loadBundle() {
+  return load().bundle;
+}
+
+export function loadStructured() {
+  return loadBundle().structured;
+}
+
+export function loadRows() {
+  return loadBundle().rows;
 }
 
 export function emit(result) {

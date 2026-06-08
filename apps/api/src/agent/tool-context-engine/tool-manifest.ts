@@ -43,6 +43,7 @@ type ToolManifestOverride = Partial<Pick<ToolManifest,
 
 const ENTITY_FACT_TOOL = 'data_query_workspace'
 const KERNEL_TOOL_NAMES = new Set([
+  'tool_discover',
   'data_query_workspace',
   'sandbox_run_code',
   'ask_user_clarification',
@@ -59,6 +60,12 @@ const MANIFEST_OVERRIDES: Record<string, ToolManifestOverride> = {
     title: '询问缺失信息',
     searchHints: ['补充信息', '确认缺失字段', '无法唯一确定', '需要确认'],
     entityTags: ['clarification'],
+  },
+  tool_discover: {
+    title: '查找可用工具',
+    summary: '在当前授权工具目录中查找下一步需要的工具，并返回短描述供下一轮物化真实 schema。',
+    searchHints: ['tool search', 'tool discover', 'find tools', 'materialize tools', '工具搜索', '查找工具', '物化工具'],
+    entityTags: ['tooling'],
   },
   cost_item_add: {
     title: '新增成本项',

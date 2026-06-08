@@ -364,9 +364,9 @@ planner.ts
       -> run-events.ts
 ```
 
-模块职责：`tool-gateway.ts` 负责把 registry 投影成 runtime 可用工具目录、记录 `tool_catalog_ready` run event，并暴露投影策略和工具 metadata 给技术日志。当前主策略是 `model_selected_capabilities`：先用一个 provider-native router tool 让模型选择 `ledger / draft / version / share / data / import_export / navigation` 等能力域，再按 registry metadata 投影工具。`account / clarification` 始终作为安全协议工具保留；`navigation` 只在用户明确要求打开页面或面板时由 router 选择。业务工具和数据工具会自己返回导航事件，不需要把 `ui_navigate` 常驻暴露给所有任务。Gateway 可以维护 capability-level tool expansion，例如 `data` 能力额外暴露只读线上系数试算工具，避免 what-if 问题被错误投影掉；这种 expansion 只依赖 capability 图，不读取用户文本。如果真实 provider 连续两次没有返回 capability tool call 或返回空能力域，Gateway 退到 `router_fallback_business_core`，暴露除纯导航外的业务核心能力并在技术日志中记录该策略；这不是语义关键词路由，而是 router 失效时的可观测降级。该模块不能使用后端关键词/正则做语义选择。
+模块职责：`tool-gateway.ts` 负责把 registry 投影成 runtime 可用工具目录、记录 `tool_catalog_ready` run event，并暴露投影策略和工具 metadata 给技术日志。ADR 0039 后，当前主策略已收敛为 `progressive_tool_discovery`：Tool Gateway 先从 tenant/workspace/policy 过滤后的 effective catalog、本地 Hermes-style tool search、kernel tools、runner obligations 和模型结构化 `goalFacts.requiredActionCapabilities` 组装小工具面；provider-backed capability router 只允许作为可选 hint，不在热路径上强制调用。`requiredActionCapabilities` 来自 turn-lane 结构化 contract，不来自后端关键词/正则扫描；它必须进入 Tool Context Engine，否则 evaluator 知道缺少写动作而下一轮工具面仍可能投影错工具。`account / clarification / tool_discover` 等协议工具按 runner 策略保留，业务工具和数据工具自己返回导航事件，不需要把 `ui_navigate` 常驻暴露给所有任务。该模块不能使用后端关键词/正则做语义选择。
 
-复用计划：`runtime-planning-call.ts` 向 gateway 传入已脱敏用户消息、Context Pack 和 provider settings；gateway 内部只调用 runtime adapter 做 capability selection，然后把投影后的 `tools` 交回主 planning call。runtime adapter 仍只接收 provider-neutral tool schema，不读取 registry metadata、不写 run event、不执行领域服务。
+复用计划：`runtime-planning-call.ts` 向 gateway 传入已脱敏用户消息、Context Pack、provider settings、run-scoped `goalFacts` 和当前 obligation plan；gateway 只负责本地工具面投影和 `tool_catalog_ready` trace，然后把投影后的 `tools` 交回主 planning call。runtime adapter 仍只接收 provider-neutral tool schema，不读取 registry metadata、不写 run event、不执行领域服务。
 
 ### `apps/api/src/agent/kernel`
 

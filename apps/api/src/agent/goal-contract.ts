@@ -4,6 +4,7 @@ import type {
   AgentEvaluationResult,
   AgentEvaluationStatus,
   AgentGoalContract,
+  AgentGoalFacts,
   AgentGoalRecord,
   AgentGoalStatus,
 } from '@xox/contracts'
@@ -13,6 +14,7 @@ import { jsonString, parseJson } from '../db/database.js'
 import { newId } from '../core/security.js'
 import { utcNow } from '../core/time.js'
 import type { CurrentUser } from '../modules/auth.js'
+import { sanitizeAgentGoalFacts } from './runtime-goal-facts.js'
 
 const DEFAULT_GOAL_PAGES: AgentGoalContract['scope']['pages'] = ['model', 'ledger', 'variance', 'versions', 'share']
 const DEFAULT_CAPABILITIES = ['data', 'draft', 'import_export', 'ledger', 'memory', 'share', 'version']
@@ -72,6 +74,7 @@ export function buildInitialGoalContract(input: {
   user: CurrentUser
   objective: string
   automationLevel: AgentAutomationLevel
+  goalFacts?: AgentGoalFacts | null
 }): AgentGoalContract {
   return {
     goalId: input.goalId,
@@ -86,7 +89,7 @@ export function buildInitialGoalContract(input: {
       allowedCapabilities: DEFAULT_CAPABILITIES,
     },
     acceptanceCriteria: defaultCriteria(),
-    facts: {},
+    facts: sanitizeAgentGoalFacts(input.goalFacts),
     forbiddenActions: [
       {
         id: 'account.manual_only',
@@ -197,6 +200,7 @@ export async function createGoalContract(input: {
   runId: string
   objective: string
   automationLevel: AgentAutomationLevel
+  goalFacts?: AgentGoalFacts | null
 }) {
   const goalId = newId()
   const now = utcNow()

@@ -8,6 +8,7 @@ import { redactSecretLikeContent } from './memory.js'
 import { turnLaneSystemPrompt } from './prompt-registry.js'
 import { planWithRuntimeAdapter } from './runtime/adapter-router.js'
 import type { ChatTool, AgentToolCallStep } from './tool-catalog.js'
+import { sanitizeAgentGoalFacts } from './runtime-goal-facts.js'
 
 const TURN_LANE_RESOLUTION_TOOL: ChatTool = {
   type: 'function',
@@ -54,6 +55,35 @@ const TURN_LANE_RESOLUTION_TOOL: ChatTool = {
         reason: {
           type: 'string',
           description: 'Short non-sensitive rationale.',
+        },
+        goalFacts: {
+          type: 'object',
+          additionalProperties: false,
+          description: 'Optional hard business facts extracted from the current objective for runner-side verification. Only include facts stated by the user or unambiguously implied by a pending clarification.',
+          properties: {
+            workspaceName: { type: 'string' },
+            expectedMemberCount: { type: 'number' },
+            expectedShareholderCount: { type: 'number' },
+            expectedHorizonMonths: { type: 'number' },
+            expectedStartMonth: { type: 'number' },
+            requiresForecastSummary: { type: 'boolean' },
+            requiresSandboxComputation: { type: 'boolean' },
+            requiresOrderedEntityFacts: { type: 'boolean' },
+            requiredActionCapabilities: {
+              type: 'array',
+              items: {
+                type: 'string',
+                enum: ['draft', 'import_export', 'ledger', 'share', 'version'],
+              },
+            },
+            forbiddenActions: {
+              type: 'array',
+              items: {
+                type: 'string',
+                enum: ['publish_release', 'share_link', 'account_action'],
+              },
+            },
+          },
         },
       },
     },
@@ -105,6 +135,7 @@ function resolutionFromStep(step: AgentToolCallStep | undefined): AgentTurnLaneR
     reasonCode: isReasonCode(step.reasonCode) ? step.reasonCode : 'uncertain',
     confidence: safeConfidence(step.confidence),
     missingContext: safeStringArray(step.missingContext),
+    goalFacts: sanitizeAgentGoalFacts(step.goalFacts),
     ...(typeof step.reason === 'string' ? { reason: redactSecretLikeContent(step.reason).slice(0, 300) } : {}),
   }
 }

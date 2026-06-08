@@ -11,6 +11,7 @@ export type AgentToolCapability =
   | 'navigation'
   | 'sandbox'
   | 'share'
+  | 'tooling'
   | 'version'
 
 export type AgentToolCallStep = {
@@ -118,11 +119,13 @@ export type AgentToolCallStep = {
   requiresTools?: boolean
   reasonCode?: AgentTurnLaneReasonCode
   missingContext?: string[]
+  goalFacts?: unknown
   scope?: 'workspace_summary' | 'period_summary' | 'member_summary' | 'team_summary' | 'entity_summary' | 'top_months' | 'variance_detail' | 'ledger_history'
   metrics?: string[]
   order?: 'asc' | 'desc'
   limit?: number
   maxResults?: number
+  toolNames?: string[]
   includeDailyNotes?: boolean
   includeDurable?: boolean
   patches?: Array<{ path: string; value: unknown; label?: string }>
@@ -342,6 +345,29 @@ const operatingModelPlan = objectSchema({
 })
 
 export const AGENT_TOOL_CATALOG: ChatTool[] = [
+  {
+    type: 'function',
+    function: {
+      name: 'tool_discover',
+      description:
+        'Search the current scoped tool inventory when the visible tools are not enough. Returns short descriptors only; the next AgentRunEngine turn may materialize the real tool schemas. Use this instead of guessing hidden tool names.',
+      parameters: objectSchema({
+        query: {
+          type: 'string',
+          description: 'A concise natural-language description of the capability or operation needed next.',
+        },
+        toolNames: {
+          type: 'array',
+          description: 'Optional exact tool names if the model already knows which deferred tools it wants materialized.',
+          items: { type: 'string' },
+        },
+        maxResults: {
+          type: 'number',
+          description: 'Maximum descriptors to return. The server enforces a small upper bound.',
+        },
+      }, ['query']),
+    },
+  },
   {
     type: 'function',
     function: {
@@ -834,20 +860,20 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
     function: {
       name: 'sandbox_run_code',
       description:
-        '在 manifest-scoped 受控沙箱中运行一段只读代码，用于复杂计算、临时数据清洗、文件校验/转换、公式实验或短期 artifact 生成。沙箱只接收当前工作区的最小化数据包，不允许业务写入、内部 API、生产 DB、provider key、用户 session、记忆写入或网络访问。结果只是 observation；如需保存/导入/记账/改模型，必须继续调用普通业务工具生成确认卡。',
+        '在 manifest-scoped 受控沙箱中运行一段只读代码，用于复杂计算、临时数据清洗、文件校验/转换、公式实验或短期 artifact 生成。需要把当前工作区预测/账本/实体事实与外部假设或公式结合时，优先用 dataRequest 让沙箱挂载最小数据包，不要为了同一份计算数据先额外读取普通工作区摘要。沙箱不允许业务写入、内部 API、生产 DB、provider key、用户 session、记忆写入或网络访问。结果只是 observation；如需保存/导入/记账/改模型，必须继续调用普通业务工具生成确认卡。',
       parameters: objectSchema({
         purpose: { type: 'string', description: '本次沙箱任务目的，用一句中文说明，例如“对当前 12 个月预测做敏感性分析”。' },
         language: { type: 'string', enum: ['python', 'javascript'], description: '代码语言。默认优先 python；轻量 JSON/文本转换可用 javascript。' },
         code: {
           type: 'string',
           description:
-            '要在受控沙箱里运行的代码。不要尝试访问网络、内部 API、生产数据库、任意文件系统路径或安装包；输入数据在当前目录 input.json / input/input.json，也可读环境变量 XOX_SANDBOX_INPUT_JSON；结构化输出优先写 output/result.json 或 XOX_SANDBOX_OUTPUT_DIR/result.json。',
+            '要在受控沙箱里运行的代码。不要尝试访问网络、内部 API、生产数据库、任意文件系统路径或安装包。Python 优先 `import xox_sandbox; data = xox_sandbox.load_structured(); rows = xox_sandbox.load_rows(); xox_sandbox.emit({...})`；JavaScript 优先从 `./xox_sandbox.mjs` 导入 `loadStructured/loadRows/emit`。不要直接猜 input.json 顶层结构；只有需要 manifest 证据时才读取 `xox_sandbox.load()` envelope。结构化输出优先用 helper emit，或写 XOX_SANDBOX_OUTPUT_DIR/result.json。',
         },
         dataRequest: objectSchema({
           scope: {
             type: 'string',
             enum: ['workspace_summary', 'forecast_months', 'ledger_entries', 'entity_summary', 'uploaded_file', 'custom_bundle'],
-            description: '需要挂载到沙箱的最小化数据范围。',
+            description: '`workspace_summary` 和 `forecast_months` 都会挂载工作区摘要、月份 rows、总收入/总成本/总利润/ROI/回本字段，以及有序股东 shareholders/firstShareholder；需要成员/员工明细才使用 entity_summary。',
           },
           fields: { type: 'array', items: { type: 'string' }, description: '需要的字段白名单；不确定时可省略，由服务端按 scope 提供最小摘要。' },
           monthLabels: { type: 'array', items: { type: 'string' }, description: '需要的月份标签，例如 ["3月","4月"]。' },
@@ -1005,6 +1031,12 @@ const TOOL_METADATA: Record<string, Omit<AgentToolMetadata, 'name'>> = {
   },
   data_query_workspace: {
     capability: 'data',
+    riskLevel: 'read',
+    confirmationMode: 'never',
+    navigationTarget: null,
+  },
+  tool_discover: {
+    capability: 'tooling',
     riskLevel: 'read',
     confirmationMode: 'never',
     navigationTarget: null,
@@ -1236,6 +1268,8 @@ export function toolCallToPlannerStep(toolName: string, args: Record<string, unk
       return { intent: 'turn_lane.resolve', ...args }
     case 'tool_catalog_select_capabilities':
       return { intent: 'tool_catalog.select_capabilities', ...args }
+    case 'tool_discover':
+      return { intent: 'tool.discover', ...args }
     case 'ledger_create_member_income':
       return { intent: 'ledger.create_member_income', ...args }
     case 'ledger_create_entry':

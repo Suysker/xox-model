@@ -43,6 +43,7 @@ import {
 import { rememberAgentMemory, redactSecretLikeContent } from './memory.js'
 import { runMemoryGetTool, runMemorySearchTool } from './memory/memory-tools.js'
 import { planSandboxRunCode } from './sandbox-service.js'
+import { runToolDiscovery } from './tool-discovery-tool.js'
 import type { ReadDraft, RuntimePlannerStep } from './action-draft-builder.js'
 
 function numericAlias(...values: unknown[]) {
@@ -168,4 +169,5 @@ export const runtimeIntentHandlers: ActionDraftBuilderHandlers<PlannerContext> =
   'memory.remember': rememberFromToolCall,
   'data.query_workspace': answerWorkspaceDataQuestion,
   'sandbox.run_code': planSandboxRunCode,
+  'tool.discover': runToolDiscovery,
 }

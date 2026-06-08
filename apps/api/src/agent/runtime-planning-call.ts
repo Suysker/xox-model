@@ -270,7 +270,9 @@ export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePl
     userId: ctx.user.id,
     workspaceId: ctx.workspace.id,
     automationLevel: ctx.automationLevel,
+    ...(ctx.goalFacts ? { goalFacts: ctx.goalFacts } : {}),
     ...(ctx.loopObligationPlan ? { loopObligationPlan: ctx.loopObligationPlan } : {}),
+    ...(ctx.priorObservations ? { priorObservations: ctx.priorObservations } : {}),
   })
 
   const priorObservationCount = ctx.priorObservations?.length ?? 0

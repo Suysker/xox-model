@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { createProductDefaultModel, projectModel } from '@xox/domain'
 import type { SandboxManifest, SandboxRunCodeInput } from '@xox/contracts'
 import { buildRuntimeToolCatalogProjection } from '../src/agent/tool-gateway.js'
 import { AGENT_TOOL_CATALOG, toolCallToPlannerStep } from '../src/agent/tool-catalog.js'
@@ -161,6 +162,47 @@ describe('manifest-scoped sandbox tool', () => {
     expect(manifest.outputPolicy.allowedArtifactKinds).toEqual(expect.arrayContaining(['xlsx', 'pdf', 'docx', 'png']))
   })
 
+  it('keeps forecast month bundles self-describing for direct sandbox calculations', () => {
+    const config = createProductDefaultModel()
+    const projection = projectModel(config)
+    const baseScenario = projection.scenarios.find((scenario) => scenario.key === 'base') ?? projection.scenarios[0] ?? null
+
+    const structured = sandboxInternalsForTests.buildProjectionStructuredBundle({
+      scope: 'forecast_months',
+      workspaceName: 'Sandbox Forecast',
+      config,
+      baseScenario,
+      monthLabels: new Set<string>(),
+      rowLimit: 500,
+    }) as any
+
+    expect(structured.scope).toBe('forecast_months')
+    expect(structured.workspaceName).toBe('Sandbox Forecast')
+    expect(structured.months.length).toBe(baseScenario?.months.length)
+    expect(structured.rows).toBe(structured.months)
+    expect(structured.months[0]).toMatchObject({
+      plannedRevenue: structured.months[0].grossSales,
+      plannedCost: structured.months[0].totalCost,
+      plannedProfit: structured.months[0].monthlyProfit,
+      cash: structured.months[0].cumulativeCash,
+    })
+    expect(structured.grossSales).toBeCloseTo(baseScenario?.grossSales ?? 0)
+    expect(structured.totalCost).toBeCloseTo(baseScenario?.totalCost ?? 0)
+    expect(structured.totalProfit).toBeCloseTo(baseScenario?.totalProfit ?? 0)
+    expect(structured.netCashAfterInvestment).toBeCloseTo(baseScenario?.netCashAfterInvestment ?? 0)
+    expect(structured.roi).toBeCloseTo(baseScenario?.roi ?? 0)
+    expect(structured.paybackMonthLabel).toBe(baseScenario?.paybackMonthLabel ?? null)
+    expect(structured.shareholders).toHaveLength(config.shareholders.length)
+    const firstShareholder = config.shareholders[0]
+    expect(firstShareholder).toBeDefined()
+    expect(structured.firstShareholder).toMatchObject({
+      index: 1,
+      name: firstShareholder!.name,
+      investmentAmount: firstShareholder!.investmentAmount,
+      dividendRate: firstShareholder!.dividendRate,
+    })
+  })
+
   it('runs code through the real local sandbox backend and parses structured output', async () => {
     const input: SandboxRunCodeInput = {
       purpose: '生成校验摘要',
@@ -168,11 +210,13 @@ describe('manifest-scoped sandbox tool', () => {
       code: [
         'import os',
         'import xox_sandbox',
-        'payload = xox_sandbox.load()',
+        'payload = xox_sandbox.load_structured()',
+        'rows = xox_sandbox.load_rows()',
         'xox_sandbox.emit({',
         '  "summary": "计算完成",',
         '  "structured": {',
-        '    "profit": payload["bundle"]["structured"]["totalProfit"],',
+        '    "profit": payload["totalProfit"],',
+        '    "rowCount": len(rows),',
         '    "secretVisible": "XOX_SANDBOX_SECRET_FOR_TEST" in os.environ',
         '  }',
         '})',
@@ -216,6 +260,7 @@ describe('manifest-scoped sandbox tool', () => {
           schemaVersion: 'xox.sandbox.result.v1',
           structured: {
             profit: 20,
+            rowCount: 1,
             secretVisible: false,
           },
         },

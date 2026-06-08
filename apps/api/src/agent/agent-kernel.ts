@@ -33,5 +33,8 @@ export async function executeAgentKernelRun(
       beforeStateWrite: options.beforeStateWrite,
     })
   }
-  return executeAgentRun(ctx, options)
+  return executeAgentRun({
+    ...ctx,
+    ...(resolution.goalFacts ? { initialGoalFacts: resolution.goalFacts } : {}),
+  }, options)
 }

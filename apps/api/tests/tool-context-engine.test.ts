@@ -94,10 +94,10 @@ describe('Progressive Tool Discovery Runtime', () => {
     expect(projection.discoveryTrace?.strategy).toBe('progressive_tool_discovery')
   })
 
-  it('keeps kernel observation and compute tools when capability hints are empty', () => {
+  it('uses local retrieval for a small fast-first pack when capability hints are empty', () => {
     const projection = buildRuntimeToolCatalogProjection({
       selectedCapabilities: [],
-      routerReason: 'router-empty-restricted-surface',
+      routerReason: 'local-progressive-discovery',
       message: '给我预测一下，如果目前的通胀率是5%，我的投资回报率是多少？我是第一个股东，我投入的钱都是银行贷款出来的，银行利率是年利率5%',
     })
 
@@ -115,15 +115,17 @@ describe('Progressive Tool Discovery Runtime', () => {
       'data_query_workspace',
       'sandbox_run_code',
     ]))
-    expect(projection.visibleToolNames).not.toContain('workspace_patch_config')
-    expect(projection.visibleToolNames).not.toContain('ledger_create_member_income')
-    expect(projection.materializableToolNames).toContain('workspace_patch_config')
+    expect(projection.visibleToolNames).toContain('workspace_patch_config')
+    expect(projection.visibleToolNames).toContain('tool_discover')
+    expect(projection.visibleToolNames.length).toBeLessThanOrEqual(8)
+    expect(projection.visibleToolNames).not.toContain('share_create')
+    expect(projection.visibleToolNames).not.toContain('workspace_publish_release')
     expect(projection.surfacePlan?.schemaVersion).toBe('xox.tool_surface.v2')
     expect(projection.inventorySnapshot.source).toBe('progressive_tool_discovery')
     expect(projection.inventorySnapshot.freshness).toBe('fresh')
   })
 
-  it('materializes high-confidence retrieved action tools when capability hints are empty', () => {
+  it('keeps high-confidence retrieved actions in a narrow pack when capability hints are empty', () => {
     const projection = buildRuntimeToolCatalogProjection({
       selectedCapabilities: [],
       routerReason: 'router-empty-restricted-surface',
@@ -137,9 +139,31 @@ describe('Progressive Tool Discovery Runtime', () => {
       'sandbox_run_code',
       'ask_user_clarification',
       'account_forbidden',
-      'shareholder_add',
+      'tool_discover',
     ]))
-    expect(projection.visibleToolNames.length).toBeLessThanOrEqual(6)
+    expect(projection.visibleToolNames).toContain('shareholder_add')
+    expect(projection.visibleToolNames.length).toBeLessThanOrEqual(8)
+    expect(projection.visibleToolNames).not.toContain('share_create')
+    expect(projection.visibleToolNames).not.toContain('workspace_publish_release')
+  })
+
+  it('materializes model-discovered tools as an additive narrow surface', () => {
+    const projection = buildRuntimeToolCatalogProjection({
+      selectedCapabilities: [],
+      routerReason: 'local-progressive-discovery',
+      message: '继续完成刚才发现的股东写入工具',
+      requiredToolNames: ['shareholder_add', 'workspace_patch_config'],
+    })
+
+    expect(projection.visibleToolNames).toEqual(expect.arrayContaining([
+      'tool_discover',
+      'data_query_workspace',
+      'sandbox_run_code',
+      'shareholder_add',
+      'workspace_patch_config',
+    ]))
+    expect(projection.visibleToolNames).not.toContain('workspace_publish_release')
     expect(projection.materializableToolNames).not.toContain('shareholder_add')
+    expect(projection.materializableToolNames).not.toContain('workspace_patch_config')
   })
 })

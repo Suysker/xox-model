@@ -22,7 +22,7 @@ type ClaimExtractionContext = {
 
 export type FinalAnswerClaimExtractionResult =
   | { status: 'completed'; claims: AgentFinalAnswerClaim[] }
-  | { status: 'skipped'; reason: 'empty_final_answer' | 'rules_provider' }
+  | { status: 'skipped'; reason: 'empty_final_answer' | 'rules_provider' | 'deterministic_evidence_satisfied' }
   | { status: 'unavailable'; reason: string }
 
 const CLAIM_SUBJECT_TYPES = new Set<AgentEvidenceSubject['type']>([

@@ -17,6 +17,10 @@ import {
   resolveProviderRuntimeCapability,
   resolveRuntimeThinkingLevel,
 } from './provider-capability-registry.js'
+import {
+  detectProviderPlainTextToolCallArtifact,
+  recoverProviderPlainTextToolCalls,
+} from './provider-plain-text-tool-calls.js'
 
 const SOURCE = 'openai_compatible_tool_calls' as const
 const STREAM_DELTA_LIMIT = 240
@@ -143,6 +147,73 @@ function withProviderState(
   }
 }
 
+function validatePromotedPlainTextToolCalls(input: {
+  text: string
+  runtimeInput: RuntimePlanningInput
+  profile: ProviderModelProfile
+  artifact: NonNullable<RuntimePlanResult['providerArtifact']>
+  message?: Record<string, unknown> | null
+}) {
+  const allowed = allowedToolNames(input.runtimeInput)
+  const artifact = detectProviderPlainTextToolCallArtifact(input.text)
+  if (allowed.length === 0) {
+    if (!artifact) return null
+    const failedToolName = artifact.toolNames[0]
+    throw new ProviderToolCallParseError(
+      failedToolName
+        ? `Provider emitted plain-text tool call "${failedToolName}" after the tool inventory was closed.`
+        : 'Provider emitted a plain-text tool call artifact after the tool inventory was closed.',
+      artifact.toolNames,
+      failedToolName,
+      failedToolName ? 'tool_call_not_in_effective_inventory' : 'tool_call_arguments_invalid',
+      allowed,
+    )
+  }
+  const recovered = recoverProviderPlainTextToolCalls({
+    text: input.text,
+    allowedToolNames: allowed,
+  })
+  if (!recovered) {
+    if (!artifact) return null
+    const failedToolName = artifact.toolNames[0]
+    throw new ProviderToolCallParseError(
+      failedToolName
+        ? `Provider emitted plain-text tool call "${failedToolName}" outside the current structured tool inventory.`
+        : 'Provider emitted a plain-text tool call artifact that could not be converted into structured tool_calls.',
+      artifact.toolNames,
+      failedToolName,
+      failedToolName ? 'tool_call_not_in_effective_inventory' : 'tool_call_arguments_invalid',
+      allowed,
+    )
+  }
+  const toolSteps = validateProviderToolCallsForExecution({
+    toolCalls: recovered.toolCalls,
+    allowedToolNames: allowed,
+    materializableToolNames: input.runtimeInput.materializableToolNames ?? [],
+    options: {
+      argumentRepair: argumentRepairPolicy(input.profile),
+      onArgumentRepaired: (event) => {
+        void input.runtimeInput.onStreamEvent?.({
+          kind: 'tool_call_repaired',
+          toolName: event.toolName,
+          ...(event.toolCallId ? { toolCallId: event.toolCallId } : {}),
+          leadingChars: event.leadingChars,
+          trailingChars: event.trailingChars,
+        })
+      },
+    },
+  })
+  const providerMessage = providerAssistantMessage(input.runtimeInput, input.profile, {
+    ...(input.message ?? {}),
+    role: 'assistant',
+    content: recovered.visibleText || null,
+    tool_calls: recovered.toolCalls,
+  })
+  return recovered.visibleText
+    ? withProviderState({ source: SOURCE, steps: toolSteps, assistantText: recovered.visibleText }, providerMessage, input.artifact)
+    : withProviderState({ source: SOURCE, steps: toolSteps }, providerMessage, input.artifact)
+}
+
 function jsonPlanResult(
   body: any,
   input: RuntimePlanningInput,
@@ -176,6 +247,16 @@ function jsonPlanResult(
       ? withProviderState({ source: SOURCE, steps: toolSteps, assistantText }, assistantMessage, artifact)
       : withProviderState({ source: SOURCE, steps: toolSteps }, assistantMessage, artifact)
   }
+  const promoted = assistantText
+    ? validatePromotedPlainTextToolCalls({
+      text: assistantText,
+      runtimeInput: input,
+      profile,
+      artifact,
+      message,
+    })
+    : null
+  if (promoted) return promoted
   return assistantText
     ? withProviderState({ source: SOURCE, steps: [], assistantText }, assistantMessage, artifact)
     : withProviderState({ source: SOURCE, steps: [] }, assistantMessage, artifact)
@@ -457,6 +538,19 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
     }
     if (toolSteps.length > 0) return withProviderState({ source: SOURCE, steps: toolSteps }, assistantMessage, artifact)
     const assistantText = content.trim()
+    const promoted = assistantText
+      ? validatePromotedPlainTextToolCalls({
+        text: assistantText,
+        runtimeInput: input,
+        profile,
+        artifact,
+        message: {
+          role: 'assistant',
+          ...(reasoningContent ? Object.fromEntries(capability.reasoningDeltaKeys.slice(0, 1).map((key) => [key, reasoningContent])) : {}),
+        },
+      })
+      : null
+    if (promoted) return promoted
     return assistantText
       ? withProviderState({ source: SOURCE, steps: [], assistantText }, assistantMessage, artifact)
       : withProviderState({ source: SOURCE, steps: [] }, assistantMessage, artifact)

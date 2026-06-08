@@ -245,6 +245,7 @@ export type AgentTurnLaneResolution = {
   reasonCode: AgentTurnLaneReasonCode
   confidence: number
   missingContext: string[]
+  goalFacts?: AgentGoalFacts
   reason?: string
 }
 
@@ -660,6 +661,7 @@ export type AgentGoalFacts = {
   requiresForecastSummary?: boolean
   requiresSandboxComputation?: boolean
   requiresOrderedEntityFacts?: boolean
+  requiredActionCapabilities?: Array<'draft' | 'import_export' | 'ledger' | 'share' | 'version'>
   forbiddenActions?: Array<'publish_release' | 'share_link' | 'account_action'>
 }
 

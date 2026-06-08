@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { projectModel } from '@xox/domain'
+import { projectModel, type ModelConfig, type ScenarioResult } from '@xox/domain'
 import type {
   SandboxArtifactKind,
   SandboxCapabilityProfile,
@@ -135,6 +135,74 @@ async function currentProjection(ctx: SandboxServiceContext) {
   return { config, projection: projectModel(config) }
 }
 
+function sandboxMonthRows(baseScenario: ScenarioResult | null, monthLabels: Set<string>, rowLimit: number) {
+  return (baseScenario?.months ?? [])
+    .filter((month) => monthLabels.size === 0 || monthLabels.has(month.label))
+    .slice(0, rowLimit)
+    .map((month) => ({
+      monthIndex: month.monthIndex,
+      monthLabel: month.label,
+      grossSales: month.grossSales,
+      plannedRevenue: month.grossSales,
+      totalCost: month.totalCost,
+      plannedCost: month.totalCost,
+      monthlyProfit: month.monthlyProfit,
+      plannedProfit: month.monthlyProfit,
+      cumulativeCash: month.cumulativeCash,
+      cash: month.cumulativeCash,
+    }))
+}
+
+function sandboxShareholderRows(config: ModelConfig) {
+  return config.shareholders.map((shareholder, index) => ({
+    index: index + 1,
+    id: shareholder.id,
+    name: shareholder.name,
+    investmentAmount: shareholder.investmentAmount,
+    dividendRate: shareholder.dividendRate,
+  }))
+}
+
+function buildProjectionStructuredBundle(args: {
+  scope: SandboxDataScope
+  workspaceName: string
+  config: ModelConfig
+  baseScenario: ScenarioResult | null
+  monthLabels?: Set<string>
+  rowLimit?: number
+}) {
+  const monthLabels = args.monthLabels ?? new Set<string>()
+  const rowLimit = args.rowLimit ?? 500
+  const months = sandboxMonthRows(args.baseScenario, monthLabels, rowLimit)
+  const shareholders = sandboxShareholderRows(args.config)
+  const grossSales = months.reduce((sum, month) => sum + month.grossSales, 0)
+  const totalCost = months.reduce((sum, month) => sum + month.totalCost, 0)
+  const totalProfit = grossSales - totalCost
+  const totalInvestment = shareholders.reduce((sum, shareholder) => sum + shareholder.investmentAmount, 0)
+  const fullProjection = monthLabels.size === 0
+  const endingCash = months.at(-1)?.cumulativeCash ?? 0
+  const netCashAfterInvestment = fullProjection
+    ? args.baseScenario?.netCashAfterInvestment ?? endingCash
+    : endingCash
+  return {
+    scope: args.scope,
+    workspaceName: args.workspaceName,
+    monthCount: months.length,
+    grossSales,
+    totalCost,
+    totalProfit,
+    totalInvestment: args.baseScenario?.totalInvestment ?? totalInvestment,
+    netCashAfterInvestment,
+    roi: fullProjection && args.baseScenario ? args.baseScenario.roi : totalInvestment > 0 ? netCashAfterInvestment / totalInvestment : 0,
+    endingCash,
+    paybackMonthLabel: fullProjection ? args.baseScenario?.paybackMonthLabel ?? null : null,
+    months,
+    rows: months,
+    shareholders,
+    firstShareholder: shareholders[0] ?? null,
+  }
+}
+
 async function buildSandboxDataBundle(ctx: SandboxServiceContext, input: SandboxRunCodeInput): Promise<SandboxDataBundle> {
   const { config, projection } = await currentProjection(ctx)
   const baseScenario = projection.scenarios.find((scenario) => scenario.key === 'base') ?? projection.scenarios[0] ?? null
@@ -149,18 +217,15 @@ async function buildSandboxDataBundle(ctx: SandboxServiceContext, input: Sandbox
   let fileKinds: SandboxFileKind[] | undefined
 
   if (scope === 'forecast_months') {
-    rows = (baseScenario?.months ?? [])
-      .filter((month) => monthLabels.size === 0 || monthLabels.has(month.label))
-      .slice(0, rowLimit)
-      .map((month) => ({
-        monthIndex: month.monthIndex,
-        monthLabel: month.label,
-        grossSales: month.grossSales,
-        totalCost: month.totalCost,
-        monthlyProfit: month.monthlyProfit,
-        cumulativeCash: month.cumulativeCash,
-      }))
-    structured = { scope, rows }
+    structured = buildProjectionStructuredBundle({
+      scope,
+      workspaceName: ctx.workspace.name,
+      config,
+      baseScenario,
+      monthLabels,
+      rowLimit,
+    })
+    rows = (structured as { rows: unknown[] }).rows
   } else if (scope === 'entity_summary') {
     structured = {
       teamMembers: config.teamMembers.map((member, index) => ({
@@ -212,37 +277,14 @@ async function buildSandboxDataBundle(ctx: SandboxServiceContext, input: Sandbox
       note: '文件内容由 File Adapter Registry 解析后进入 manifest-scoped 沙箱。',
     }
   } else {
-    const months = (baseScenario?.months ?? []).map((month) => ({
-      monthIndex: month.monthIndex,
-      monthLabel: month.label,
-      grossSales: month.grossSales,
-      totalCost: month.totalCost,
-      monthlyProfit: month.monthlyProfit,
-      cumulativeCash: month.cumulativeCash,
-    }))
-    const shareholders = config.shareholders.map((shareholder, index) => ({
-      index: index + 1,
-      id: shareholder.id,
-      name: shareholder.name,
-      investmentAmount: shareholder.investmentAmount,
-      dividendRate: shareholder.dividendRate,
-    }))
-    const totalRevenue = months.reduce((sum, month) => sum + month.grossSales, 0)
-    const totalCost = months.reduce((sum, month) => sum + month.totalCost, 0)
-    const totalProfit = totalRevenue - totalCost
-    structured = {
+    structured = buildProjectionStructuredBundle({
       scope,
       workspaceName: ctx.workspace.name,
-      monthCount: months.length,
-      grossSales: totalRevenue,
-      totalCost,
-      totalProfit,
-      endingCash: months.at(-1)?.cumulativeCash ?? 0,
-      paybackMonthLabel: baseScenario?.paybackMonthLabel ?? null,
-      months,
-      shareholders,
-      firstShareholder: shareholders[0] ?? null,
-    }
+      config,
+      baseScenario,
+      monthLabels: new Set(),
+      rowLimit,
+    })
     rows = [structured]
   }
 
@@ -257,7 +299,7 @@ async function buildSandboxDataBundle(ctx: SandboxServiceContext, input: Sandbox
   return {
     bundleId: `bundle_${shortHash(`${ctx.runId}:${scope}:${JSON.stringify(bundle)}`)}`,
     scope,
-    fields: fields.length > 0 ? fields : Object.keys((rows?.[0] ?? structured ?? {}) as Record<string, unknown>).slice(0, 20),
+    fields: fields.length > 0 ? fields : Object.keys((structured ?? rows?.[0] ?? {}) as Record<string, unknown>).slice(0, 20),
     structured,
     ...(rows ? { rows, rowCount: rows.length } : {}),
     ...(fileCount !== undefined ? { fileCount } : {}),
@@ -473,6 +515,7 @@ export async function planSandboxRunCode(ctx: PlannerContext, step: RuntimePlann
 
 export const sandboxInternalsForTests = {
   normalizeSandboxInput,
+  buildProjectionStructuredBundle,
   buildSandboxDataBundle,
   buildManifest,
   displayPreview,

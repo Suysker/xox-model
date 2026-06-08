@@ -8,6 +8,7 @@ import type { AgentGoalContract } from '@xox/contracts'
 import { mergeAgentGoalFacts } from './runtime-goal-facts.js'
 import { objectHasKey } from './structured-evidence-utils.js'
 import { classifyToolObservation } from './tool-observation-outcome.js'
+import { detectProviderPlainTextToolCallArtifact } from './runtime/provider-plain-text-tool-calls.js'
 
 export type ResponseEvaluationStatus =
   | 'pass'
@@ -143,6 +144,23 @@ export function evaluateAssistantResponse(input: {
       requiredEvidence,
       findings,
       nextPlannerBrief: '基于已经取得的 observation 生成最终回答；不要把工具返回原文当成最终回答。',
+    }
+  }
+
+  const providerToolCallArtifact = detectProviderPlainTextToolCallArtifact(finalText)
+  if (providerToolCallArtifact) {
+    findings.push({
+      severity: 'fail',
+      code: 'response.provider_tool_call_text_not_final',
+      evidenceIds: input.evidence.map((item) => item.id),
+      message: `Provider 返回了 ${providerToolCallArtifact.format} 工具调用协议文本，不能作为面向用户的最终回答。`,
+    })
+    return {
+      status: 'needs_final_answer',
+      confidence: 0.99,
+      requiredEvidence,
+      findings,
+      nextPlannerBrief: '上一轮 provider 把工具调用协议片段放进 assistant content。不要把它当最终回答；如果还需要工具，必须通过结构化 tool_calls 继续，否则基于已取得 observation 输出自然语言最终回答。',
     }
   }
 

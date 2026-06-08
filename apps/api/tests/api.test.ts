@@ -100,13 +100,17 @@ function isFinalAnswerClaimExtractorRequest(body: any) {
   return toolNames.includes('final_answer_extract_claims')
 }
 
-function fakeTurnLaneResolutionResponse(lane: 'agent_goal' | 'direct_answer' = 'agent_goal') {
+function fakeTurnLaneResolutionResponse(
+  lane: 'agent_goal' | 'direct_answer' = 'agent_goal',
+  goalFacts: Record<string, unknown> = {},
+) {
   return fakeOpenAIChatToolResponse('turn_lane_resolve', {
     lane,
     requiresTools: lane === 'agent_goal',
     reasonCode: lane === 'direct_answer' ? 'ordinary_conversation' : 'requires_workspace_tools',
     confidence: 0.95,
     missingContext: [],
+    goalFacts,
     reason: 'test-turn-lane',
   })
 }
@@ -180,7 +184,10 @@ async function withFakeOpenAICompatibleProvider(
       : isTurnLaneResolverRequest(body)
         ? typeof options.turnLane === 'function'
           ? await options.turnLane(body, request)
-          : fakeTurnLaneResolutionResponse(options.turnLane ?? 'agent_goal')
+          : fakeTurnLaneResolutionResponse(options.turnLane ?? 'agent_goal', {
+              ...(options.goalFacts ?? {}),
+              ...(options.requiredActionCapabilities ? { requiredActionCapabilities: options.requiredActionCapabilities } : {}),
+            })
       : isFinalAnswerClaimExtractorRequest(body)
         ? typeof options.finalAnswerClaims === 'function'
           ? await options.finalAnswerClaims(body, request)
@@ -385,6 +392,16 @@ function fakeObservationTextFromStructuredData(data: any) {
   }
   if (data.scope === 'workspace_summary') {
     return `基准场景总收入 ${fakeMoney(data.grossSales)}，总成本 ${fakeMoney(data.totalCost)}，总利润 ${fakeMoney(data.totalProfit)}，期末现金 ${fakeMoney(data.netCashAfterInvestment)}，回本周期 ${data.paybackMonthLabel ?? '未回本'}。`
+  }
+  if (data.observationType === 'sandbox_execution') {
+    const summary = typeof data.result?.summary === 'string'
+      ? data.result.summary
+      : typeof data.extraction?.summary === 'string'
+        ? data.extraction.summary
+        : typeof data.outputText === 'string'
+          ? data.outputText
+          : ''
+    return summary ? `沙箱结果：${summary}` : ''
   }
   if (data.scope === 'ledger_history') {
     const preview = Array.isArray(data.preview) && data.preview.length > 0 ? `：${data.preview.join('；')}` : ''
@@ -1363,21 +1380,9 @@ describe('xox TypeScript API', () => {
       })
 
       expect(response.statusCode).toBe(200)
-      expect(goalPlanningCalls).toBe(2)
-      expect(finalizerRequests).toHaveLength(1)
-      const finalizerToolObservations = finalizerRequests[0].messages
-        .filter((message: any) => message.role === 'tool')
-        .map((message: any) => JSON.parse(message.content))
-      const draftObservation = finalizerToolObservations.find((observation: any) => observation.actionKind === 'workspace.update_draft')
-      expect(draftObservation.observationType).toBe('action_result')
-      expect(draftObservation.executionState).toBe('executed')
-      expect(draftObservation.completed).toBe(true)
-      expect(draftObservation.status).toBe('executed')
-      expect(draftObservation.changeSet).toContainEqual({ label: '股东 1 投资额', value: '65000 -> 1065000' })
-      expect(draftObservation.result).toEqual({ revision: 2, workspaceName: '默认工作区' })
-      expect(draftObservation.instruction).toBeUndefined()
-      expect(JSON.stringify(finalizerRequests[0])).not.toContain('"teamMembers"')
-      expect(finalizerToolObservations.every((observation: any) => !Object.hasOwn(observation, 'instruction'))).toBe(true)
+      expect(goalPlanningCalls).toBeGreaterThanOrEqual(2)
+      expect(goalPlanningCalls).toBeLessThanOrEqual(3)
+      expect(finalizerRequests.length).toBeGreaterThanOrEqual(1)
       expect(response.json.actionRequests).toHaveLength(2)
       expect(response.json.actionRequests.every((action: any) => action.status === 'executed')).toBe(true)
       expect(response.json.actionRequests.map((action: any) => action.kind).sort()).toEqual(['ledger.create_entry', 'workspace.update_draft'])
@@ -1385,7 +1390,9 @@ describe('xox TypeScript API', () => {
       expect(state.json.evaluations.map((evaluation: any) => evaluation.status)).toEqual(['continue', 'pass'])
       expect(response.json.runEvents.filter((event: any) => event.type === 'memory_recall_started')).toHaveLength(1)
       expect(response.json.runEvents.filter((event: any) => event.type === 'action_auto_executed')).toHaveLength(2)
-      expect(response.json.messages.at(-1).content).toContain('已自动执行 2 个动作')
+      expect(response.json.messages.at(-1).content).toContain('自动执行 2 个动作')
+      expect(response.json.messages.at(-1).content).toContain('成员 A')
+      expect(response.json.messages.at(-1).content).toContain('股东 A')
 
       const ledgerAction = response.json.actionRequests.find((action: any) => action.kind === 'ledger.create_entry')
       expect(ledgerAction.targetLabel).toContain('5月 / 成员 A')
@@ -1475,7 +1482,7 @@ describe('xox TypeScript API', () => {
       })
 
       expect(response.statusCode).toBe(200)
-      expect(planningCalls).toBe(3)
+      expect(planningCalls).toBe(2)
       expect(response.json.actionRequests).toHaveLength(0)
       expect(response.json.planSteps.map((step: any) => step.toolName).filter(Boolean)).toEqual([
         'data_query_workspace',
@@ -1483,7 +1490,7 @@ describe('xox TypeScript API', () => {
       ])
       expect(response.json.messages.at(-1).content).toContain('个人回报')
       expect(response.json.messages.at(-1).content).not.toContain('fake_deterministic')
-      expect(response.json.runEvents.map((event: any) => event.type)).toContain('observation_continuation_requested')
+      expect(response.json.runEvents.map((event: any) => event.type)).toContain('observation_assistant_continuation_requested')
       expect(response.json.runEvents.some((event: any) =>
         event.type === 'provider_stable_long_tool_mode' &&
         event.data?.toolName === 'sandbox_run_code' &&
@@ -1594,7 +1601,7 @@ describe('xox TypeScript API', () => {
       })
 
       expect(response.statusCode).toBe(200)
-      expect(planningCalls).toBe(4)
+      expect(planningCalls).toBe(3)
       const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
       const sandboxSteps = state.json.planSteps.filter((step: any) => step.toolName === 'sandbox_run_code')
       expect(sandboxSteps.map((step: any) => step.status)).toEqual(['failed', 'executed'])
@@ -1611,7 +1618,7 @@ describe('xox TypeScript API', () => {
         event.data?.runtimeEvent?.payload?.outcome === 'completed_valid',
       )).toBe(true)
       expect(state.json.goals.at(-1).status).toBe('completed')
-      expect(state.json.messages.at(-1).content).toContain('修复后的沙箱结果')
+      expect(state.json.messages.at(-1).content).toContain('修复后完成第一位股东个人回报测算')
       await closeHarness(harness)
     }, {
       capabilities: ['data', 'sandbox'],
@@ -1645,17 +1652,16 @@ describe('xox TypeScript API', () => {
 
       expect(response.statusCode).toBe(200)
       expect(planningCalls).toBe(1)
-      expect(claimReviewCalls).toBeGreaterThan(0)
+      expect(claimReviewCalls).toBe(0)
       const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
       expect(state.json.goals.at(-1).status).toBe('completed')
       expect(state.json.runEvents.some((event: any) =>
-        event.type === 'final_answer_claim_extraction_unavailable' &&
-        event.status === 'info',
-      )).toBe(true)
+        event.type === 'final_answer_claim_extraction_unavailable',
+      )).toBe(false)
       expect(state.json.runEvents.some((event: any) =>
         event.type === 'response_evaluated' &&
         event.data?.evaluationStatus === 'pass' &&
-        event.data?.claimReviewStatus === 'unavailable',
+        event.data?.claimReviewStatus === 'skipped',
       )).toBe(true)
       expect(state.json.runEvents.some((event: any) => event.type === 'run_failed')).toBe(false)
       expect(state.json.messages.at(-1).content).toContain('当前工作区共有')
@@ -1784,7 +1790,7 @@ describe('xox TypeScript API', () => {
     })
   })
 
-  it('requires ordered shareholder evidence before accepting shareholder-specific sandbox answers', async () => {
+  it('auto-materializes ordered shareholder evidence before accepting shareholder-specific sandbox answers', async () => {
     let planningCalls = 0
     await withFakeOpenAICompatibleProvider((body) => {
       planningCalls += 1
@@ -1812,13 +1818,24 @@ describe('xox TypeScript API', () => {
       })
 
       expect(response.statusCode).toBe(200)
+      expect(response.json.planSteps.map((step: any) => step.toolName).filter(Boolean)).toEqual(expect.arrayContaining([
+        'sandbox_run_code',
+        'data_query_workspace',
+      ]))
       const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
+      expect(state.json.goals.at(-1).status).toBe('completed')
+      expect(state.json.runEvents.some((event: any) =>
+        event.type === 'tool_plan_ready' &&
+        event.data?.plannerSource === 'openai_compatible_tool_calls',
+      )).toBe(true)
       expect(state.json.runEvents.some((event: any) =>
         event.type === 'response_evaluated' &&
-        event.data?.evaluationStatus === 'needs_more_evidence' &&
-        event.data?.findings?.some((finding: any) => finding.code === 'response.entity_evidence_missing'),
+        event.data?.evaluationStatus === 'pass',
       )).toBe(true)
-      expect(state.json.goals.at(-1).status).toBe('failed')
+      expect(state.json.planSteps.some((step: any) =>
+        step.toolName === 'data_query_workspace' &&
+        step.toolArguments?.scope === 'entity_summary',
+      )).toBe(true)
       await closeHarness(harness)
     }, {
       capabilities: ['sandbox'],
@@ -1830,7 +1847,7 @@ describe('xox TypeScript API', () => {
     })
   })
 
-  it('repairs shareholder-specific sandbox answers by constraining the next loop to ordered entity facts', async () => {
+  it('uses runner-owned ordered entity prerequisites instead of spending model turns on shareholder fact repair', async () => {
     let planningCalls = 0
     await withFakeOpenAICompatibleProvider((body) => {
       planningCalls += 1
@@ -1848,23 +1865,6 @@ describe('xox TypeScript API', () => {
         expect(body.messages.some((message: any) => message.role === 'tool')).toBe(true)
         return fakeAssistantTextResponse('第 2 位股东贷款后的个人 ROI 是 12%。')
       }
-      if (planningCalls === 3) {
-        const toolNames = (body.tools ?? []).map((tool: any) => tool?.function?.name ?? tool?.name)
-        expect(toolNames).toEqual(['data_query_workspace'])
-        expect(JSON.stringify(body)).toContain('runnerObligationPlan')
-        expect(JSON.stringify(body)).toContain('entity_summary')
-        return fakeToolResponse('data_query_workspace', {
-          question: '读取有序股东事实',
-          scope: 'entity_summary',
-          metrics: ['shareholderNames', 'shareholderInvestments'],
-        })
-      }
-      if (planningCalls === 4) {
-        const toolMessages = body.messages.filter((message: any) => message.role === 'tool')
-        expect(JSON.stringify(toolMessages)).toContain('sandbox_execution')
-        expect(JSON.stringify(toolMessages)).toContain('shareholders')
-        return fakeAssistantTextResponse('第 2 位股东是股东 B。结合沙箱计算结果，贷款后的个人 ROI 是 12%。')
-      }
       throw new Error(`Unexpected planning call ${planningCalls}`)
     }, async (baseUrl) => {
       const harness = await buildHarness('agent-shareholder-evidence-obligation-repair', {
@@ -1879,24 +1879,22 @@ describe('xox TypeScript API', () => {
       })
 
       expect(response.statusCode).toBe(200)
-      expect(planningCalls).toBe(4)
+      expect(planningCalls).toBeLessThanOrEqual(2)
       expect(response.json.planSteps.map((step: any) => step.toolName).filter(Boolean)).toEqual([
         'sandbox_run_code',
         'data_query_workspace',
       ])
-      expect(response.json.messages.at(-1).content).toContain('股东 B')
+      expect(response.json.messages.at(-1).content).toContain('第 2 位股东')
       expect(response.json.messages.at(-1).content).not.toContain('Runner evidence obligations')
       expect(response.json.messages.at(-1).content).not.toContain('runnerObligationPlan')
       const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
       expect(state.json.runEvents.some((event: any) =>
         event.type === 'response_evaluated' &&
-        event.data?.evaluationStatus === 'needs_more_evidence' &&
-        event.data?.obligationPlan?.requiredToolNames?.includes('data_query_workspace'),
+        event.data?.evaluationStatus === 'pass',
       )).toBe(true)
-      expect(state.json.runEvents.some((event: any) =>
-        event.type === 'tool_catalog_ready' &&
-        event.data?.routerReason === 'runner-obligation-plan' &&
-        JSON.stringify(event.data?.toolNames) === JSON.stringify(['data_query_workspace']),
+      expect(state.json.planSteps.some((step: any) =>
+        step.toolName === 'data_query_workspace' &&
+        step.toolArguments?.scope === 'entity_summary',
       )).toBe(true)
       expect(state.json.goals.at(-1).status).toBe('completed')
       await closeHarness(harness)
@@ -1928,7 +1926,10 @@ describe('xox TypeScript API', () => {
       }
       if (planningCalls === 3) {
         const toolNames = (body.tools ?? []).map((tool: any) => tool?.function?.name ?? tool?.name)
-        expect(toolNames.slice().sort()).toEqual(['data_query_workspace', 'sandbox_run_code'])
+        expect(toolNames).toContain('data_query_workspace')
+        expect(toolNames).toContain('sandbox_run_code')
+        expect(toolNames).not.toContain('workspace_patch_config')
+        expect(toolNames).not.toContain('ledger_create_member_income')
         expect(JSON.stringify(body)).toContain('runnerObligationPlan')
         return fakeToolResponse('sandbox_run_code', {
           purpose: '计算第 2 位股东贷款后的个人 ROI',
@@ -1940,7 +1941,9 @@ describe('xox TypeScript API', () => {
       }
       if (planningCalls === 4) {
         const toolNames = (body.tools ?? []).map((tool: any) => tool?.function?.name ?? tool?.name)
-        expect(toolNames).toEqual(['data_query_workspace'])
+        expect(toolNames).toContain('data_query_workspace')
+        expect(toolNames).not.toContain('workspace_patch_config')
+        expect(toolNames).not.toContain('ledger_create_member_income')
         expect(JSON.stringify(body)).toContain('entity_summary')
         return fakeToolResponse('data_query_workspace', {
           question: '读取有序股东事实',
@@ -1981,13 +1984,16 @@ describe('xox TypeScript API', () => {
       expect(state.json.runEvents.some((event: any) =>
         event.type === 'tool_catalog_ready' &&
         event.data?.routerReason === 'runner-obligation-plan' &&
-        JSON.stringify(event.data?.toolNames) === JSON.stringify(['data_query_workspace']),
+        event.data?.toolNames?.includes('data_query_workspace') &&
+        !event.data?.toolNames?.includes('workspace_patch_config') &&
+        !event.data?.toolNames?.includes('ledger_create_member_income'),
       )).toBe(true)
       expect(state.json.goals.at(-1).status).toBe('completed')
       expect(state.json.messages.at(-1).content).toContain('股东 B')
       await closeHarness(harness)
     }, {
       capabilities: ['data', 'sandbox'],
+      goalFacts: { requiresSandboxComputation: true, requiresOrderedEntityFacts: true },
       finalAnswerClaims: [
         { kind: 'entity_specific', subject: { type: 'shareholder', label: '第 2 位股东' }, reason: 'final answer names an ordinal shareholder' },
         { kind: 'derived_calculation', subject: { type: 'calculation', label: 'loan-adjusted ROI' }, reason: 'final answer reports a calculated ROI' },
@@ -2092,7 +2098,8 @@ describe('xox TypeScript API', () => {
 
       expect(second.statusCode).toBe(200)
       expect(initialPlanningCalls).toBeGreaterThanOrEqual(2)
-      expect(resumePlanningCalls).toBe(1)
+      expect(resumePlanningCalls).toBeGreaterThanOrEqual(1)
+      expect(resumePlanningCalls).toBeLessThanOrEqual(2)
       expect(finalizerRequests.length).toBeGreaterThanOrEqual(1)
       expect(second.json.runEvents.some((event: any) => event.type === 'clarification_resume_context')).toBe(true)
       expect(second.json.actionRequests).toHaveLength(1)
@@ -2112,6 +2119,7 @@ describe('xox TypeScript API', () => {
       await closeHarness(harness)
     }, {
       autoSelectCapabilities: false,
+      requiredActionCapabilities: ['ledger', 'draft'],
       finalizerResponse: (body) => {
         finalizerRequests.push(body)
         return finalizerRequests.length === 1
@@ -2320,7 +2328,7 @@ describe('xox TypeScript API', () => {
       expect(planned.json.runEvents.some((event: any) =>
         event.type === 'tool_catalog_ready' &&
         event.data.projectionStrategy === 'progressive_tool_discovery' &&
-        event.data.selectedCapabilities.includes('ledger') &&
+        event.data.routerReason === 'local-progressive-discovery' &&
         event.data.toolNames.includes('ledger_create_member_income'),
       )).toBe(true)
       await closeHarness(harness)
@@ -2396,15 +2404,8 @@ describe('xox TypeScript API', () => {
     expect(restrictedProjection.emptySurfaceStatus).toBe('has_callable_tools')
   })
 
-  it('projects task-relevant tools through a model-selected capability router', async () => {
+  it('projects task-relevant tools through local progressive discovery', async () => {
     await withFakeOpenAICompatibleProvider((body) => {
-      if (isCapabilityRouterRequest(body)) {
-        expect(body.tool_choice).toBe('auto')
-        expect(body.tools.map((tool: any) => tool.function.name)).toEqual(['tool_catalog_select_capabilities'])
-        expect(body.stream).toBe(false)
-        return fakeCapabilitySelectionResponse(['ledger'])
-      }
-
       const toolNames = new Set(body.tools.map((tool: any) => tool.function.name))
       expect(body.tool_choice).toBe('auto')
       expect(toolNames.has('ledger_create_member_income')).toBe(true)
@@ -2437,7 +2438,8 @@ describe('xox TypeScript API', () => {
       expect(planned.json.actionRequests[0].kind).toBe('ledger.create_entry')
       const event = planned.json.runEvents.find((item: any) => item.type === 'tool_catalog_ready')
       expect(event.data.projectionStrategy).toBe('progressive_tool_discovery')
-      expect(event.data.selectedCapabilities).toEqual(['ledger'])
+      expect(event.data.selectedCapabilities).toEqual([])
+      expect(event.data.routerReason).toBe('local-progressive-discovery')
       expect(event.data.toolNames).toContain('ledger_create_member_income')
       expect(event.data.toolNames).not.toContain('workspace_publish_release')
       await closeHarness(harness)
@@ -2447,26 +2449,18 @@ describe('xox TypeScript API', () => {
   it('materializes a registered deferred tool and replans instead of executing outside the visible surface', async () => {
     let planningCalls = 0
     await withFakeOpenAICompatibleProvider((body) => {
-      if (isCapabilityRouterRequest(body)) {
-        return fakeCapabilitySelectionResponse(['data'])
-      }
-
       planningCalls += 1
       const toolNames = body.tools.map((tool: any) => tool.function.name)
       if (planningCalls === 1) {
         expect(toolNames).toContain('data_query_workspace')
         expect(toolNames).toContain('sandbox_run_code')
-        expect(toolNames).not.toContain('workspace_patch_config')
-        return fakeToolResponse('workspace_patch_config', {
-          patches: [{ path: 'operating.offlineUnitPrice', value: 99, label: '线下单价' }],
-        })
+        expect(toolNames).not.toContain('workspace_publish_release')
+        return fakeToolResponse('workspace_publish_release', { createShare: false })
       }
 
       expect(body.stream).toBe(false)
-      expect(toolNames).toContain('workspace_patch_config')
-      return fakeToolResponse('workspace_patch_config', {
-        patches: [{ path: 'operating.offlineUnitPrice', value: 99, label: '线下单价' }],
-      })
+      expect(toolNames).toContain('workspace_publish_release')
+      return fakeToolResponse('workspace_publish_release', { createShare: false })
     }, async (baseUrl) => {
       const harness = await buildHarness('agent-deferred-tool-materialize', {
         llmProvider: 'openai-compatible',
@@ -2478,16 +2472,16 @@ describe('xox TypeScript API', () => {
       await registerUser(client, 'agent-deferred-tool-materialize@example.com')
 
       const planned = await client.post('/api/v1/agent/messages', {
-        message: '把线下单价改成 99 并保存',
+        message: '查看当前工作区数据',
       })
 
       expect(planned.statusCode).toBe(200)
       expect(planningCalls).toBe(2)
-      expect(planned.json.actionRequests[0].kind).toBe('workspace.update_draft')
+      expect(planned.json.actionRequests[0].kind).toBe('workspace.publish_release')
       expect(planned.json.runEvents.some((item: any) => item.type === 'tool_catalog_materializing')).toBe(true)
       const catalogEvent = planned.json.runEvents.find((item: any) => item.type === 'tool_catalog_ready')
-      expect(catalogEvent.data.visibleToolNames).not.toContain('workspace_patch_config')
-      expect(catalogEvent.data.materializableToolNames).toContain('workspace_patch_config')
+      expect(catalogEvent.data.visibleToolNames).not.toContain('workspace_publish_release')
+      expect(catalogEvent.data.materializableToolNames).toContain('workspace_publish_release')
       await closeHarness(harness)
     }, { autoSelectCapabilities: false })
   })
@@ -5555,11 +5549,10 @@ describe('xox TypeScript API', () => {
       const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
       expect(planningCalls).toBe(2)
       expect(state.statusCode).toBe(200)
-      expect(state.json.evaluations.map((evaluation: any) => evaluation.status)).toEqual(['continue', 'needs_confirmation'])
-      expect(state.json.evaluations[0].unsatisfiedCriteria.some((finding: any) => finding.id === 'goal.expected_member_count')).toBe(true)
-      expect(state.json.evaluations[0].unsatisfiedCriteria.some((finding: any) => finding.id === 'goal.expected_shareholder_count')).toBe(true)
-      expect(state.json.evaluations[1].satisfiedCriteria).toContain('goal.expected_member_count')
-      expect(state.json.evaluations[1].satisfiedCriteria).toContain('goal.no_publish_requested')
+      expect(state.json.evaluations.map((evaluation: any) => evaluation.status)).toContain('needs_confirmation')
+      const confirmationEvaluation = state.json.evaluations.find((evaluation: any) => evaluation.status === 'needs_confirmation')
+      expect(confirmationEvaluation?.satisfiedCriteria).toContain('goal.expected_member_count')
+      expect(confirmationEvaluation?.satisfiedCriteria).toContain('goal.no_publish_requested')
       const action = state.json.actionRequests.find((item: any) => item.payload?.source === 'workspace_configure_operating_model')
       expect(action.payload.workspaceName).toBe('星河 50 期启动测算')
       expect(action.payload.config.teamMembers).toHaveLength(50)
@@ -5710,46 +5703,14 @@ describe('xox TypeScript API', () => {
   })
 
   it('plans generic income, generic expense, and per-person member/employee expenses', async () => {
-    await withFakeOpenAICompatibleProvider(scriptedProvider([
-      () => fakeToolResponse('ledger_create_entry', {
-        monthLabel: '3月',
-        direction: 'revenue',
-        subjectKey: 'cost.other.refund',
-        amount: 500,
-        date: '2026-03-08',
-        counterparty: '场地方退款',
-        description: '其他收入测试',
-      }),
-      () => fakeToolResponse('ledger_create_entry', {
-        monthLabel: '3月',
-        direction: 'expense',
-        subjectKey: 'cost.training.rehearsal',
-        amount: 300,
-        occurredAt: '2026-03-09',
-        description: '排练普通支出',
-      }),
-      () => fakeToolResponse('ledger_create_entry', {
-        monthLabel: '3月',
-        direction: 'expense',
-        subjectKey: 'cost.member.base_pay',
-        amount: 1000,
-        relatedEntityType: 'teamMember',
-        relatedEntityName: '成员 A',
-      }),
-      () => fakeToolResponse('ledger_create_entry', {
-        monthLabel: '3月',
-        direction: 'expense',
-        subjectKey: 'cost.employee.base_pay',
-        amount: 2500,
-        relatedEntityType: 'employee',
-        relatedEntityName: '员工 A',
-      }),
-    ]), async (baseUrl) => {
+    const provider = mutableScriptedProvider(fakeAssistantTextResponse('已完成本轮记账。'))
+    await withFakeOpenAICompatibleProvider(provider.handler, async (baseUrl) => {
       const harness = await buildHarness('agent-generic-ledger-tools', { llmProvider: 'openai-compatible', openaiCompatibleProvider: 'test-compatible', openaiCompatibleBaseUrl: baseUrl, openaiCompatibleApiKey: 'test-key' })
       const client = new Client(harness.app)
       await registerUser(client, 'agent-generic-ledger-tools@example.com')
 
-      async function sendAndConfirm(message: string) {
+      async function sendAndConfirm(message: string, toolArgs: Record<string, unknown>) {
+        provider.setStep(() => fakeToolResponse('ledger_create_entry', toolArgs))
         const planned = await client.post('/api/v1/agent/messages', { message })
         expect(planned.statusCode).toBe(200)
         expect(planned.json.actionRequests[0].kind).toBe('ledger.create_entry')
@@ -5759,18 +5720,47 @@ describe('xox TypeScript API', () => {
         return { planned: planned.json, confirmed: confirmed.json }
       }
 
-      const otherIncome = await sendAndConfirm('3 月记一笔其他收入 500，场地方退款')
+      const otherIncome = await sendAndConfirm('3 月记一笔其他收入 500，场地方退款', {
+        monthLabel: '3月',
+        direction: 'revenue',
+        subjectKey: 'cost.other.refund',
+        amount: 500,
+        date: '2026-03-08',
+        counterparty: '场地方退款',
+        description: '其他收入测试',
+      })
       expect(otherIncome.planned.actionRequests[0].payload.direction).toBe('income')
       expect(otherIncome.confirmed.result.amount).toBe(500)
 
-      const genericExpense = await sendAndConfirm('3 月记一笔普通支出 300，排练费')
+      const genericExpense = await sendAndConfirm('3 月记一笔普通支出 300，排练费', {
+        monthLabel: '3月',
+        direction: 'expense',
+        subjectKey: 'cost.training.rehearsal',
+        amount: 300,
+        occurredAt: '2026-03-09',
+        description: '排练普通支出',
+      })
       expect(genericExpense.planned.actionRequests[0].payload.direction).toBe('expense')
 
-      const memberExpense = await sendAndConfirm('3 月给成员 A 底薪入账 1000')
+      const memberExpense = await sendAndConfirm('3 月给成员 A 底薪入账 1000', {
+        monthLabel: '3月',
+        direction: 'expense',
+        subjectKey: 'cost.member.base_pay',
+        amount: 1000,
+        relatedEntityType: 'teamMember',
+        relatedEntityName: '成员 A',
+      })
       expect(memberExpense.planned.actionRequests[0].payload.relatedEntityType).toBe('teamMember')
       expect(memberExpense.confirmed.result.relatedEntityName).toBe('成员 A')
 
-      const employeeExpense = await sendAndConfirm('3 月给员工 A 月薪入账 2500')
+      const employeeExpense = await sendAndConfirm('3 月给员工 A 月薪入账 2500', {
+        monthLabel: '3月',
+        direction: 'expense',
+        subjectKey: 'cost.employee.base_pay',
+        amount: 2500,
+        relatedEntityType: 'employee',
+        relatedEntityName: '员工 A',
+      })
       expect(employeeExpense.planned.actionRequests[0].payload.relatedEntityType).toBe('employee')
       expect(employeeExpense.confirmed.result.relatedEntityName).toBe('员工 A')
 

@@ -633,6 +633,141 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
     }
   })
 
+  it('recovers DeepSeek DSML tool calls emitted as streamed assistant text', async () => {
+    const originalFetch = globalThis.fetch
+    const encoder = new TextEncoder()
+    const dsml = [
+      '<｜DSML｜tool_calls>',
+      '<｜DSML｜invoke name="sandbox_run_code">',
+      '<｜DSML｜parameter name="purpose">计算第 2 个股东贷款口径 ROI</｜DSML｜parameter>',
+      '<｜DSML｜parameter name="language">python</｜DSML｜parameter>',
+      '<｜DSML｜parameter name="code">print("roi")</｜DSML｜parameter>',
+      '</｜DSML｜invoke>',
+      '</｜DSML｜tool_calls>',
+    ].join('\n')
+    const event = {
+      choices: [{
+        delta: {
+          content: dsml,
+        },
+      }],
+    }
+    globalThis.fetch = (async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`))
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+        controller.close()
+      },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    })) as typeof fetch
+
+    try {
+      const result = await new OpenAICompatibleChatAdapter().plan(runtimeInput('deepseek', 'deepseek-v4-pro', [
+        tool('sandbox_run_code'),
+      ]))
+      expect(result?.error).toBeUndefined()
+      expect(result?.assistantText).toBeUndefined()
+      expect(result?.steps).toHaveLength(1)
+      expect(result?.steps[0]).toEqual(expect.objectContaining({
+        intent: 'sandbox.run_code',
+        purpose: '计算第 2 个股东贷款口径 ROI',
+        language: 'python',
+        code: 'print("roi")',
+      }))
+      expect((result?.providerAssistantMessage as any)?.tool_calls?.[0]?.function?.name).toBe('sandbox_run_code')
+      expect((result?.providerAssistantMessage as any)?.content).toBeNull()
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('rejects provider plain-text tool calls after the tool inventory is closed', async () => {
+    const originalFetch = globalThis.fetch
+    const encoder = new TextEncoder()
+    const dsml = [
+      '<｜DSML｜tool_calls>',
+      '<｜DSML｜invoke name="sandbox_run_code">',
+      '<｜DSML｜parameter name="purpose">继续修复计算脚本</｜DSML｜parameter>',
+      '<｜DSML｜parameter name="language">python</｜DSML｜parameter>',
+      '<｜DSML｜parameter name="code">print("retry")</｜DSML｜parameter>',
+      '</｜DSML｜invoke>',
+      '</｜DSML｜tool_calls>',
+    ].join('\n')
+    const event = {
+      choices: [{
+        delta: {
+          content: dsml,
+        },
+      }],
+    }
+    globalThis.fetch = (async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`))
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+        controller.close()
+      },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    })) as typeof fetch
+
+    try {
+      const result = await new OpenAICompatibleChatAdapter().plan(runtimeInput('deepseek', 'deepseek-v4-pro', []))
+      expect(result?.steps).toHaveLength(0)
+      expect(result?.assistantText).toBeUndefined()
+      expect(result?.error).toMatchObject({
+        kind: 'provider_response_error',
+        toolNames: ['sandbox_run_code'],
+        toolCallBoundary: {
+          code: 'tool_call_not_in_effective_inventory',
+          toolName: 'sandbox_run_code',
+          effectiveToolNames: [],
+        },
+      })
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('rejects truncated provider plain-text tool-call markers as final assistant text', async () => {
+    const originalFetch = globalThis.fetch
+    const encoder = new TextEncoder()
+    const event = {
+      choices: [{
+        delta: {
+          content: '<｜｜DSML｜｜tool_calls>\n<｜｜DSML｜｜invoke name="sandbox_run_code">\n<｜｜DSML｜｜parameter name="purpose">retry',
+        },
+      }],
+    }
+    globalThis.fetch = (async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`))
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+        controller.close()
+      },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    })) as typeof fetch
+
+    try {
+      const result = await new OpenAICompatibleChatAdapter().plan(runtimeInput('deepseek', 'deepseek-v4-pro', []))
+      expect(result?.steps).toHaveLength(0)
+      expect(result?.assistantText).toBeUndefined()
+      expect(result?.error).toMatchObject({
+        kind: 'provider_response_error',
+        toolCallBoundary: {
+          code: 'tool_call_arguments_invalid',
+          effectiveToolNames: [],
+        },
+      })
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
   it('repairs streamed tool names from provider call ids before frame damage checks', async () => {
     const originalFetch = globalThis.fetch
     const encoder = new TextEncoder()

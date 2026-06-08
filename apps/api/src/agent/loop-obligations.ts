@@ -154,6 +154,7 @@ export function loopObligationsFromResponseEvaluation(evaluation: ResponseEvalua
 function mergeGoalFacts(values: AgentGoalFacts[]) {
   const merged: AgentGoalFacts = {}
   const forbiddenActions = new Set<NonNullable<AgentGoalFacts['forbiddenActions']>[number]>()
+  const requiredActionCapabilities = new Set<NonNullable<AgentGoalFacts['requiredActionCapabilities']>[number]>()
   for (const value of values) {
     if (value.workspaceName) merged.workspaceName = value.workspaceName
     if (value.expectedMemberCount) merged.expectedMemberCount = value.expectedMemberCount
@@ -163,8 +164,10 @@ function mergeGoalFacts(values: AgentGoalFacts[]) {
     if (value.requiresForecastSummary) merged.requiresForecastSummary = true
     if (value.requiresSandboxComputation) merged.requiresSandboxComputation = true
     if (value.requiresOrderedEntityFacts) merged.requiresOrderedEntityFacts = true
+    for (const capability of value.requiredActionCapabilities ?? []) requiredActionCapabilities.add(capability)
     for (const action of value.forbiddenActions ?? []) forbiddenActions.add(action)
   }
+  if (requiredActionCapabilities.size > 0) merged.requiredActionCapabilities = [...requiredActionCapabilities]
   if (forbiddenActions.size > 0) merged.forbiddenActions = [...forbiddenActions]
   return merged
 }

@@ -21,7 +21,6 @@ export type MaterializedToolContext = {
 }
 
 const DEFAULT_MAX_MATERIALIZED_TOOLS = 8
-const ROUTER_EMPTY_RETRIEVAL_DIRECT_THRESHOLD = 25
 
 function descriptorFromManifest(manifest: ToolManifest): ToolDescriptor {
   return {
@@ -46,12 +45,10 @@ function shouldKeepTool(input: {
   if (ranked.reasons.includes('workflow_prerequisite')) return true
   if (ranked.reasons.includes('required_action_capability')) return true
   if (ranked.reasons.some((reason) => reason.startsWith('required_capability:'))) return true
-  if (
-    selectedCapabilities.size === 0 &&
-    ranked.reasons.includes('retrieval') &&
-    ranked.score >= ROUTER_EMPTY_RETRIEVAL_DIRECT_THRESHOLD
-  ) {
-    return true
+  if (selectedCapabilities.size === 0) {
+    if (!ranked.reasons.includes('retrieval')) return false
+    if (ranked.score > 1.25) return true
+    return index < 3 && ranked.score > 0
   }
   if (!selectedCapabilities.has(ranked.manifest.capability)) return false
   if (ranked.score > 0.75) return true
@@ -73,6 +70,7 @@ export function materializeToolSchemas(input: {
   const remainingTools = nonKernel.filter((ranked) => !ranked.reasons.includes('workflow_prerequisite'))
 
   for (const ranked of kernel) {
+    if (ranked.manifest.name === 'tool_discover' && selectedCapabilities.size > 0) continue
     if (seen.has(ranked.manifest.name)) continue
     selected.push(ranked.manifest)
     seen.add(ranked.manifest.name)

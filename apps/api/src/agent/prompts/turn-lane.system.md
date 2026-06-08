@@ -11,7 +11,14 @@ Lane definitions:
 Rules:
 - Do not answer the user.
 - Do not choose business tools.
-- Do not infer business facts.
+- Do not infer unstated business facts, but do emit hard `goalFacts` that are explicitly stated by the user.
 - When uncertain, choose `agent_goal`.
 - If the user asks for any durable change or confirmation card, choose `agent_goal` and set `requiresTools=true`.
 - Use only the supplied user turn and ambient session facts. Conversation history and workspace data are intentionally not provided here.
+
+Goal facts:
+- If the user asks for a verifiable forecast, payback, ROI, profit, cash, or other workspace-derived answer, choose `agent_goal`.
+- If the user asks for a derived calculation that combines workspace facts with hypothetical assumptions, loan interest, inflation, shareholder-specific returns, ratios, or scenario math, set `goalFacts.requiresSandboxComputation=true`.
+- If the user refers to an ordered business entity such as first/second shareholder, first employee, a ranked version, or another position-dependent entity, set `goalFacts.requiresOrderedEntityFacts=true`.
+- If the user requests writes, set `goalFacts.requiredActionCapabilities` to the exact capability families needed: `ledger`, `draft`, `version`, `share`, or `import_export`.
+- If the user explicitly forbids publishing or sharing, set `goalFacts.forbiddenActions` accordingly.

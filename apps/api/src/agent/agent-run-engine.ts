@@ -1,9 +1,9 @@
-import type { AgentGoalStatus, AgentNavigationEvent, AgentPlannerSource } from '@xox/contracts'
+import type { AgentGoalFacts, AgentGoalStatus, AgentNavigationEvent, AgentPlannerSource } from '@xox/contracts'
 import type { Row } from '../db/schema.js'
 import type { PlannerContext } from './planning-context.js'
 import { createGoalContract, serializeEvaluation, updateGoalStatus } from './goal-contract.js'
 import { evaluateAgentGoal } from './loop-readiness-check.js'
-import { buildEvidenceLedger } from './evidence-ledger.js'
+import { buildEvidenceLedger, type AgentEvidenceItem } from './evidence-ledger.js'
 import {
   consolidateAgentMemoryCandidates,
   consolidateExecutedActionMemory,
@@ -23,8 +23,10 @@ import { buildClarificationResumeContext } from './clarification-resume.js'
 import { evaluateToolLoopGuardrails } from './tool-runtime/tool-loop-guardrails.js'
 import { resolveAfterEvaluation, resolveAfterPlanning } from './turn-resolver.js'
 import { evaluateAssistantResponse, responseEvaluationSummary } from './response-evaluator.js'
-import { readRuntimeGoalFacts } from './runtime-goal-facts.js'
+import { mergeAgentGoalFacts, readRuntimeGoalFacts } from './runtime-goal-facts.js'
 import { extractFinalAnswerClaims } from './final-answer-claim-extractor.js'
+import { configuredRuntimePlannerSource } from './runtime-plan-reader.js'
+import { runPrerequisiteObservations } from './prerequisite-observations.js'
 import {
   applyObservationToLedger,
   applyResponseEvaluationToLedger,
@@ -72,8 +74,73 @@ function hasRepairableToolObservations(observations: AgentToolObservation[]) {
   return observations.some(isRepairableToolObservation)
 }
 
+function parseObservationModelContent(observation: AgentToolObservation) {
+  try {
+    const parsed = JSON.parse(observation.modelContent)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null
+  } catch {
+    return null
+  }
+}
+
+function shouldUseAssistantContinuationAfterObservation(observations: AgentToolObservation[]) {
+  return observations.some((observation) => {
+    if (observation.toolName === 'sandbox_run_code') return true
+    const facts = parseObservationModelContent(observation)
+    return facts?.observationType === 'action_result'
+  })
+}
+
+function evidenceHasValidSandbox(evidence: AgentEvidenceItem[]) {
+  return evidence.some((item) => item.authority === 'sandbox' && item.validity === 'valid')
+}
+
+function evidenceHasOrderedShareholderFacts(evidence: AgentEvidenceItem[]) {
+  return evidence.some((item) => {
+    if (item.authority !== 'domain_read' || item.validity !== 'valid') return false
+    const facts = item.facts
+    return Object.prototype.hasOwnProperty.call(facts, 'firstShareholder') ||
+      Object.prototype.hasOwnProperty.call(facts, 'shareholders')
+  })
+}
+
+function goalContractFacts(goal: Row<'agent_goals'>): AgentGoalFacts {
+  try {
+    const contract = JSON.parse(goal.contract_json)
+    return contract && typeof contract === 'object' ? contract.facts ?? {} : {}
+  } catch {
+    return {}
+  }
+}
+
+function shouldRunFinalAnswerClaimReview(input: {
+  assistantText: string | null
+  pendingActionCount: number
+  awaitingClarification: boolean
+  preReviewEvaluation: ReturnType<typeof evaluateAssistantResponse>
+  evidence: AgentEvidenceItem[]
+  goalFacts: AgentGoalFacts
+}) {
+  if (!input.assistantText?.trim()) return false
+  if (input.pendingActionCount > 0 || input.awaitingClarification) return false
+  if (input.preReviewEvaluation.status !== 'pass') return false
+  // ADR 0039: claim review is an optional aid, not a hot-path completion gate.
+  // When structured goal facts already required and satisfied the evidence,
+  // do not add another provider call before completing the run.
+  if (input.goalFacts.requiresSandboxComputation || input.goalFacts.requiresOrderedEntityFacts) {
+    const sandboxSatisfied = !input.goalFacts.requiresSandboxComputation || evidenceHasValidSandbox(input.evidence)
+    const entitySatisfied = !input.goalFacts.requiresOrderedEntityFacts || evidenceHasOrderedShareholderFacts(input.evidence)
+    if (sandboxSatisfied && entitySatisfied) return false
+  }
+  if (input.evidence.length === 0) return true
+  if (evidenceHasValidSandbox(input.evidence)) return !evidenceHasOrderedShareholderFacts(input.evidence)
+  return false
+}
+
 export async function executeAgentRun(
-  ctx: PlannerContext & { thread: Row<'agent_threads'> },
+  ctx: PlannerContext & { thread: Row<'agent_threads'>; initialGoalFacts?: AgentGoalFacts | null },
   options: { beforeStateWrite: () => Promise<boolean> },
 ): Promise<AgentRunResult | null> {
   const resumeContext = await buildClarificationResumeContext({
@@ -85,7 +152,6 @@ export async function executeAgentRun(
     message: ctx.message,
   })
   const objective = resumeContext?.objective ?? ctx.message
-  const planningCtx = { ...ctx, message: objective }
   const goal = await createGoalContract({
     db: ctx.db,
     workspace: ctx.workspace,
@@ -94,7 +160,9 @@ export async function executeAgentRun(
     runId: ctx.runId,
     objective,
     automationLevel: ctx.automationLevel,
+    goalFacts: ctx.initialGoalFacts ?? null,
   })
+  const planningCtx = { ...ctx, message: objective, goalFacts: goalContractFacts(goal) ?? null }
   await addRunEvent(ctx.db, {
     threadId: ctx.thread.id,
     runId: ctx.runId,
@@ -131,6 +199,19 @@ export async function executeAgentRun(
   let lastEvaluation: ReturnType<typeof serializeEvaluation> | null = null
   const maxIterations = Math.max(1, Math.min(8, Number(JSON.parse(goal.contract_json).maxIterations ?? 5)))
   const obligationLedger = initializeObligationLedger({ runId: ctx.runId })
+  const initialPrerequisites = await runPrerequisiteObservations(planningCtx, {
+    goalFacts: goalContractFacts(goal),
+    observations,
+    plannerSource: configuredRuntimePlannerSource(ctx.settings) ?? plannerSource,
+  })
+  if (!(await options.beforeStateWrite())) return null
+  if (initialPrerequisites) {
+    plannerSource = initialPrerequisites.plannerSource
+    navigationEvents.push(...initialPrerequisites.navigationEvents)
+    actionRows.push(...initialPrerequisites.actionRows)
+    planRows.push(...initialPrerequisites.planRows)
+    observations.push(...initialPrerequisites.observations)
+  }
 
   const evaluateFinalAssistant = async (
     assistantText: string | null,
@@ -142,9 +223,27 @@ export async function executeAgentRun(
       observations,
     })
     const runtimeFacts = await readRuntimeGoalFacts(ctx.db, ctx.runId)
+    const goalFacts = mergeAgentGoalFacts(goalContractFacts(goal), runtimeFacts)
     const pendingActionCount = actionRows.filter((action) => action.status === 'pending').length
     const awaitingClarification = lastEvaluation?.status === 'needs_clarification'
-    const claimExtraction = assistantText?.trim() && pendingActionCount === 0 && !awaitingClarification
+    const preReviewEvaluation = evaluateAssistantResponse({
+      goal,
+      finalAssistantText: assistantText,
+      observations,
+      evidence,
+      runtimeFacts,
+      finalAnswerClaims: [],
+      pendingActionCount,
+      awaitingClarification,
+    })
+    const claimExtraction = shouldRunFinalAnswerClaimReview({
+      assistantText,
+      pendingActionCount,
+      awaitingClarification,
+      preReviewEvaluation,
+      evidence,
+      goalFacts,
+    })
       ? await extractFinalAnswerClaims({
           db: ctx.db,
           settings: ctx.settings,
@@ -158,18 +257,22 @@ export async function executeAgentRun(
           finalAssistantText: assistantText,
           evidence,
         })
-      : null
+      : assistantText?.trim()
+        ? { status: 'skipped' as const, reason: 'deterministic_evidence_satisfied' as const }
+        : null
     const finalAnswerClaims = claimExtraction?.status === 'completed' ? claimExtraction.claims : []
-    const responseEvaluation = evaluateAssistantResponse({
-      goal,
-      finalAssistantText: assistantText,
-      observations,
-      evidence,
-      runtimeFacts,
-      finalAnswerClaims,
-      pendingActionCount,
-      awaitingClarification,
-    })
+    const responseEvaluation = claimExtraction?.status === 'completed'
+      ? evaluateAssistantResponse({
+          goal,
+          finalAssistantText: assistantText,
+          observations,
+          evidence,
+          runtimeFacts,
+          finalAnswerClaims,
+          pendingActionCount,
+          awaitingClarification,
+        })
+      : preReviewEvaluation
     applyResponseEvaluationToLedger({
       ledger: obligationLedger,
       evaluation: responseEvaluation,
@@ -252,11 +355,28 @@ export async function executeAgentRun(
     })
 
     const loopObligationPlan = ledgerToObligationPlan({ ledger: obligationLedger, objective })
+    const prerequisiteResult = await runPrerequisiteObservations(planningCtx, {
+      goalFacts: goalContractFacts(goal),
+      ...(loopObligationPlan ? { obligationPlan: loopObligationPlan } : {}),
+      observations,
+      plannerSource: configuredRuntimePlannerSource(ctx.settings) ?? plannerSource,
+    })
+    if (!(await options.beforeStateWrite())) return null
+    if (prerequisiteResult) {
+      plannerSource = prerequisiteResult.plannerSource
+      navigationEvents.push(...prerequisiteResult.navigationEvents)
+      actionRows.push(...prerequisiteResult.actionRows)
+      planRows.push(...prerequisiteResult.planRows)
+      observations.push(...prerequisiteResult.observations)
+      for (const observation of prerequisiteResult.observations) {
+        applyObservationToLedger({ ledger: obligationLedger, observation, iteration })
+      }
+    }
     const planned = await planResponse({
       ...planningCtx,
       message: nextMessage,
       planningTurn: iteration === 1 && !resumeContext ? 'user_objective' : 'evaluator_repair',
-      priorObservations: iteration === 1 ? [] : observations,
+      priorObservations: observations,
       ...(loopObligationPlan ? { loopObligationPlan } : {}),
     })
     if (!(await options.beforeStateWrite())) return null
@@ -522,6 +642,68 @@ export async function executeAgentRun(
     if (evaluationNextStep.type === 'continue_with_observations') {
       if (!shouldContinueObservationInMainLoop(evaluationNextStep.observations)) {
         break
+      }
+      if (
+        canAttemptFinalAnswer(obligationLedger) &&
+        !hasRepairableToolObservations(evaluationNextStep.observations) &&
+        shouldUseAssistantContinuationAfterObservation(evaluationNextStep.observations)
+      ) {
+        await addRunEvent(ctx.db, {
+          threadId: ctx.thread.id,
+          runId: ctx.runId,
+          type: 'observation_assistant_continuation_requested',
+          title: '基于工具结果生成回复',
+          message: '工具 observation 已满足当前 runner obligations，下一步用无工具 assistant continuation 生成最终回答候选。',
+          status: 'running',
+          data: {
+            goalId: goal.id,
+            iteration,
+            observationCount: observations.length,
+            toolNames: evaluationNextStep.observations.map((observation) => observation.toolName),
+          },
+        })
+        const continuation = await continueModelAfterToolObservations(planningCtx, observations)
+        if (!(await options.beforeStateWrite())) return null
+        if (continuation.status === 'answered') {
+          await addRunEvent(ctx.db, {
+            threadId: ctx.thread.id,
+            runId: ctx.runId,
+            type: 'final_answer_candidate',
+            title: '最终回答候选已生成',
+            message: '模型已基于工具 observation 生成最终回答候选，进入 response evaluation。',
+            status: 'running',
+            channel: 'assistant',
+            data: {
+              goalId: goal.id,
+              iteration,
+              priorObservationCount: observations.length,
+              continuation: true,
+            },
+          })
+          const finalDecision = await evaluateFinalAssistant(continuation.assistantText.trim(), iteration)
+          if (finalDecision.status === 'pass') {
+            assistantParts.push(finalDecision.assistantText)
+            break
+          }
+          if (finalDecision.status === 'interrupt') {
+            if (finalDecision.assistantText) assistantParts.push(finalDecision.assistantText)
+            break
+          }
+          if (finalDecision.status === 'failed') {
+            if (assistantParts.length === 0) assistantParts.push(finalDecision.reason)
+            break
+          }
+        } else if (continuation.status === 'failed') {
+          planRows.push(continuation.planStep)
+        }
+        if (iteration >= maxIterations) {
+          const safeSummary = userSafeLedgerFailureSummary({ ledger: obligationLedger, objective })
+          await updateGoalStatus(ctx.db, goal, 'failed', { blockedReason: safeSummary })
+          if (assistantParts.length === 0) assistantParts.push(safeSummary)
+          break
+        }
+        nextMessage = objective
+        continue
       }
       if (iteration >= maxIterations) {
         await addRunEvent(ctx.db, {

@@ -71,6 +71,43 @@ describe('Agent response evaluator', () => {
     })
   })
 
+  it('rejects provider plain-text tool-call artifacts as final assistant answers', () => {
+    const observations = [observation()]
+    const evidence = buildEvidenceLedger({ threadId: 'thread_1', runId: 'run_1', observations })
+    const leakedToolCallText = [
+      '<｜DSML｜tool_calls>',
+      '<｜DSML｜invoke name="sandbox_run_code">',
+      '<｜DSML｜parameter name="code">print("roi")</｜DSML｜parameter>',
+      '</｜DSML｜invoke>',
+      '</｜DSML｜tool_calls>',
+    ].join('\n')
+
+    expect(evaluateAssistantResponse({
+      goal: goal(),
+      finalAssistantText: leakedToolCallText,
+      observations,
+      evidence,
+    })).toMatchObject({
+      status: 'needs_final_answer',
+      findings: [expect.objectContaining({ code: 'response.provider_tool_call_text_not_final' })],
+    })
+  })
+
+  it('rejects truncated provider plain-text tool-call markers as final assistant answers', () => {
+    const observations = [observation()]
+    const evidence = buildEvidenceLedger({ threadId: 'thread_1', runId: 'run_1', observations })
+
+    expect(evaluateAssistantResponse({
+      goal: goal(),
+      finalAssistantText: '<｜｜DSML｜｜tool_calls>\n<｜｜DSML｜｜invoke name="sandbox_run_code">\n<｜｜DSML｜｜parameter name="purpose">retry',
+      observations,
+      evidence,
+    })).toMatchObject({
+      status: 'needs_final_answer',
+      findings: [expect.objectContaining({ code: 'response.provider_tool_call_text_not_final' })],
+    })
+  })
+
   it('requires sandbox evidence when the goal contract asks for derived computation', () => {
     const observations = [observation()]
     const evidence = buildEvidenceLedger({ threadId: 'thread_1', runId: 'run_1', observations })
