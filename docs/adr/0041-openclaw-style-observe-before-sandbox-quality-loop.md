@@ -169,11 +169,22 @@ Important rules:
 - Ordered shareholders, members and cost objects must be represented in `entities` or in named structured fields.
 - Field aliases used by tools (`grossSales`, `totalProfit`, `roi`, `shareholders`, `plannedRevenue`) must be shared with sandbox bundles.
 
-### Sandbox Tool SDK
+### Generated Sandbox Tool SDK
 
-`sandbox_run_code` remains a real manifest-scoped execution tool, but code inside the sandbox should primarily use a **tool-shaped SDK** that mirrors the model-facing provider tools.
+`sandbox_run_code` remains a real manifest-scoped execution tool, but code inside the sandbox should use a **generated tool-shaped SDK** that mirrors the model-facing provider tools.
 
-Primary Python API:
+The point is not that `data_query_workspace` is a special sandbox entrypoint. It is only one example of the broader rule:
+
+```text
+AGENT_TOOL_REGISTRY / buildToolManifests
+-> provider tool definitions
+-> sandbox SDK function definitions
+-> docs/agent-tool-manifest.md
+```
+
+Every provider tool should have a generated sandbox SDK function with the same semantic name, argument schema and documented result contract. This gives the model one vocabulary across tool calls and sandbox code instead of forcing it to paste prior observations into code as prose.
+
+Python authoring shape:
 
 ```python
 import xox_sandbox
@@ -188,56 +199,71 @@ entities = xox_sandbox.data_query_workspace(
     metrics=["shareholderNames", "shareholderInvestments"],
 )
 
+matches = xox_sandbox.rg(
+    pattern="shareholder",
+    paths=["tools/effective-tool-manifest.md", "observations/domain.json"],
+)
+
 xox_sandbox.emit({...})
 ```
 
-Primary JavaScript API:
+JavaScript authoring shape:
 
 ```js
-import { dataQueryWorkspace, emit } from './xox_sandbox.mjs'
+import { dataQueryWorkspace, rg, emit } from './xox_sandbox.mjs'
 
 const summary = dataQueryWorkspace({
   scope: 'workspace_summary',
   metrics: ['roi', 'cash', 'payback'],
 })
 
+const matches = rg({
+  pattern: 'shareholder',
+  paths: ['tools/effective-tool-manifest.md', 'observations/domain.json'],
+})
+
 emit({...})
 ```
 
-The sandbox SDK method names and argument schema should match provider tool names as closely as possible:
+The sandbox SDK method names and argument schema must be generated from provider tools as closely as language conventions allow:
 
 ```text
 provider tool: data_query_workspace
 sandbox SDK:  xox_sandbox.data_query_workspace(...)
+JS SDK:       dataQueryWorkspace(...)
+
+provider tool: workspace_patch_config
+sandbox SDK:  xox_sandbox.workspace_patch_config(...)
+JS SDK:       workspacePatchConfig(...)
 ```
 
-This is not a second live tool execution path. It is a deterministic façade over runner-approved observations and manifest bundles.
+This is not a second live tool execution path. It is a deterministic façade over runner-approved observations, manifest bundles and policy stops.
 
 Target backing contract:
 
 ```ts
 type SandboxToolRequest = {
-  toolName: 'data_query_workspace'
-  arguments: {
-    scope: DomainObservation['scope']
-    metrics?: string[]
-    monthLabel?: string
-    memberName?: string
-    order?: string
-    limit?: number
-  }
+  toolName: AgentToolName
+  arguments: Record<string, unknown>
   sourceObservationIds?: string[]
 }
+
+type SandboxToolAuthority =
+  | 'observation_replay'
+  | 'manifest_search'
+  | 'pure_calculation'
+  | 'emit_output'
+  | 'policy_stop'
 ```
 
 Rules:
 
-- `xox_sandbox.data_query_workspace(...)` returns the same `DomainObservation` structure the model saw from the provider tool.
-- It may only read observations/bundles that the runner already authorized for the sandbox manifest.
-- It must not call the production API, production database, internal HTTP endpoints or arbitrary tools.
-- If the requested scope was not observed or bundled, it fails with a typed missing-observation error; it must not invent data or silently broaden access.
-- Business writes are not exposed in the sandbox SDK. Write actions remain provider tools plus confirmation cards outside sandbox.
-- `load_structured()` and `load_rows()` may remain as low-level escape hatches for generic file/data transformation, manifest debugging or non-domain bundles, but they are not the primary API in prompts, examples or finance calculation code.
+- Read-only observation tools return the same structure the model saw from the corresponding provider tool.
+- SDK functions may only read observations/bundles that the runner already authorized for the sandbox manifest.
+- SDK functions must not call the production API, production database, internal HTTP endpoints or arbitrary tools.
+- If requested data was not observed or bundled, the function fails with a typed missing-observation error; it must not invent data or silently broaden access.
+- Write-capable provider tools are still represented as generated SDK functions, but their sandbox authority is `policy_stop`. Calling them from sandbox must not mutate data, create confirmations or call domain services; it returns/raises a structured policy result that tells the main loop to leave sandbox and use the normal provider tool plus confirmation-card path.
+- `load_structured()` and `load_rows()` may remain as low-level escape hatches for generic file/data transformation, manifest debugging or non-domain bundles, but model-facing prompts and examples should prefer generated tool-shaped SDK functions.
 
 ### Tool Manifest And Scoped `rg`
 

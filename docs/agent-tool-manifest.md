@@ -10,12 +10,14 @@ This document is the human/model-readable tool surface for xox-model Agent OS. I
 
 ## Purpose
 
-The Agent runtime has two tool surfaces:
+The Agent runtime has two generated tool surfaces:
 
 1. Provider tools: model-selected tools exposed through OpenAI-compatible `tool_calls`.
-2. Sandbox SDK tools: read-only façades available inside `sandbox_run_code`.
+2. Sandbox SDK tools: language-native functions available inside `sandbox_run_code`.
 
-The sandbox must not learn a different private protocol. When code needs current workspace data, it should call a tool-shaped SDK method such as:
+The sandbox must not learn a different private protocol. Every provider tool should have a generated SDK function with the same semantic name, argument schema and documented result contract. Read-only functions can replay authorized observations or read manifest-mounted bundles. Write-capable functions exist as policy-stop stubs: they never mutate SaaS data from sandbox and instead tell the main loop to use the normal provider tool plus confirmation-card path.
+
+When code needs current workspace data or tool documentation, it should call tool-shaped SDK methods instead of pasting previous tool results into code as prose:
 
 ```python
 import xox_sandbox
@@ -54,15 +56,16 @@ Default behavior:
 - bounded matches, context lines, bytes and timeout;
 - secret redaction before returning results.
 
-## Sandbox SDK Facades
+## Generated Sandbox SDK Contract
 
-| Provider tool | Sandbox SDK | Authority | Notes |
+| Surface | Sandbox SDK | Authority | Notes |
 | --- | --- | --- | --- |
-| `data_query_workspace` | `xox_sandbox.data_query_workspace(...)` / `dataQueryWorkspace(...)` | read-only observation | Returns the same domain observation structure the model saw. |
-| tool manifest search | `xox_sandbox.rg(...)` / `rg(...)` | read-only search | Searches only manifest-authorized virtual docs and safe input text. |
-| sandbox output | `xox_sandbox.emit(...)` / `emit(...)` | observation output | Emits structured sandbox result. |
+| read-only provider tools | `xox_sandbox.<tool_name>(...)` / generated JS camelCase | observation replay | Returns the same structured observation contract as the provider tool when the data is authorized in the manifest. |
+| write-capable provider tools | `xox_sandbox.<tool_name>(...)` / generated JS camelCase | policy stop | Preserves name and argument schema, but cannot mutate data or create confirmations from sandbox. It returns/raises a structured policy result for the main loop. |
+| tool manifest search | `xox_sandbox.rg(...)` / `rg(...)` | manifest search | Searches only manifest-authorized virtual docs and safe input text. |
+| sandbox output | `xox_sandbox.emit(...)` / `emit(...)` | output | Emits structured sandbox result. |
 
-Business-write tools are not available inside sandbox SDK. Writes must return to provider tools, confirmation cards, domain services and audit.
+The implementation should generate these functions from `AGENT_TOOL_REGISTRY` / `buildToolManifests`, not maintain a hand-written sandbox API list.
 
 ## Current Provider Tool Index
 
@@ -70,47 +73,47 @@ This table lists the current complete provider tool names. Detailed JSON schema 
 
 | Tool | Capability | Risk | Confirmation | Navigation | Sandbox SDK |
 | --- | --- | --- | --- | --- | --- |
-| `account_forbidden` | account | read | never | none | no |
-| `ask_user_clarification` | clarification | read | never | none | no |
-| `tool_discover` | tooling | read | never | none | no |
+| `account_forbidden` | account | read | never | none | `xox_sandbox.account_forbidden` |
+| `ask_user_clarification` | clarification | read | never | none | `xox_sandbox.ask_user_clarification` |
+| `tool_discover` | tooling | read | never | none | `xox_sandbox.tool_discover` |
 | `data_query_workspace` | data | read | never | none | `xox_sandbox.data_query_workspace` |
 | `sandbox_run_code` | sandbox | read | never | none | outer tool only |
-| `memory_search` | memory | read | never | none | no |
-| `memory_get` | memory | read | never | none | no |
-| `memory_remember` | memory | low | never | none | no |
-| `ui_navigate` | navigation | read | never | none | no |
-| `ledger_create_entry` | ledger | medium | always | bookkeeping | no |
-| `ledger_create_member_income` | ledger | medium | always | bookkeeping | no |
-| `ledger_create_planned_member_income_batch` | ledger | medium | always | bookkeeping | no |
-| `ledger_create_planned_related_expense_batch` | ledger | medium | always | bookkeeping | no |
-| `ledger_update_entry` | ledger | medium | always | bookkeeping | no |
-| `ledger_void_entry` | ledger | high | always | bookkeeping | no |
-| `ledger_restore_entry` | ledger | high | always | bookkeeping | no |
-| `ledger_set_period_lock` | ledger | high | always | bookkeeping | no |
-| `team_member_add` | draft | medium | always | inputs | no |
-| `team_member_delete` | draft | high | always | inputs | no |
-| `employee_add` | draft | medium | always | inputs | no |
-| `employee_delete` | draft | high | always | inputs | no |
-| `shareholder_add` | draft | medium | always | inputs | no |
-| `shareholder_delete` | draft | high | always | inputs | no |
-| `cost_item_add` | draft | medium | always | inputs | no |
-| `cost_item_delete` | draft | high | always | inputs | no |
-| `stage_cost_type_add` | draft | medium | always | inputs | no |
-| `stage_cost_type_delete` | draft | high | always | inputs | no |
-| `workspace_update_online_factor` | draft | medium | conditional | inputs | no |
-| `workspace_patch_config` | draft | medium | always | inputs | no |
-| `workspace_configure_operating_model` | draft | high | always | inputs | no |
-| `workspace_rename` | draft | medium | always | workspace | no |
-| `workspace_export_bundle` | import_export | read | never | workspace | no |
-| `workspace_import_bundle` | import_export | high | always | workspace | no |
-| `workspace_save_snapshot` | version | low | always | workspace | no |
-| `workspace_publish_release` | version | high | always | workspace | no |
-| `workspace_promote_version` | version | high | always | workspace | no |
-| `workspace_rollback_version` | version | high | always | workspace | no |
-| `workspace_delete_version` | version | high | always | workspace | no |
-| `workspace_reset_draft` | version | high | always | inputs | no |
-| `share_create` | share | high | always | workspace | no |
-| `share_revoke` | share | medium | always | workspace | no |
+| `memory_search` | memory | read | never | none | `xox_sandbox.memory_search` |
+| `memory_get` | memory | read | never | none | `xox_sandbox.memory_get` |
+| `memory_remember` | memory | low | never | none | `xox_sandbox.memory_remember` |
+| `ui_navigate` | navigation | read | never | none | `xox_sandbox.ui_navigate` |
+| `ledger_create_entry` | ledger | medium | always | bookkeeping | `xox_sandbox.ledger_create_entry` |
+| `ledger_create_member_income` | ledger | medium | always | bookkeeping | `xox_sandbox.ledger_create_member_income` |
+| `ledger_create_planned_member_income_batch` | ledger | medium | always | bookkeeping | `xox_sandbox.ledger_create_planned_member_income_batch` |
+| `ledger_create_planned_related_expense_batch` | ledger | medium | always | bookkeeping | `xox_sandbox.ledger_create_planned_related_expense_batch` |
+| `ledger_update_entry` | ledger | medium | always | bookkeeping | `xox_sandbox.ledger_update_entry` |
+| `ledger_void_entry` | ledger | high | always | bookkeeping | `xox_sandbox.ledger_void_entry` |
+| `ledger_restore_entry` | ledger | high | always | bookkeeping | `xox_sandbox.ledger_restore_entry` |
+| `ledger_set_period_lock` | ledger | high | always | bookkeeping | `xox_sandbox.ledger_set_period_lock` |
+| `team_member_add` | draft | medium | always | inputs | `xox_sandbox.team_member_add` |
+| `team_member_delete` | draft | high | always | inputs | `xox_sandbox.team_member_delete` |
+| `employee_add` | draft | medium | always | inputs | `xox_sandbox.employee_add` |
+| `employee_delete` | draft | high | always | inputs | `xox_sandbox.employee_delete` |
+| `shareholder_add` | draft | medium | always | inputs | `xox_sandbox.shareholder_add` |
+| `shareholder_delete` | draft | high | always | inputs | `xox_sandbox.shareholder_delete` |
+| `cost_item_add` | draft | medium | always | inputs | `xox_sandbox.cost_item_add` |
+| `cost_item_delete` | draft | high | always | inputs | `xox_sandbox.cost_item_delete` |
+| `stage_cost_type_add` | draft | medium | always | inputs | `xox_sandbox.stage_cost_type_add` |
+| `stage_cost_type_delete` | draft | high | always | inputs | `xox_sandbox.stage_cost_type_delete` |
+| `workspace_update_online_factor` | draft | medium | conditional | inputs | `xox_sandbox.workspace_update_online_factor` |
+| `workspace_patch_config` | draft | medium | always | inputs | `xox_sandbox.workspace_patch_config` |
+| `workspace_configure_operating_model` | draft | high | always | inputs | `xox_sandbox.workspace_configure_operating_model` |
+| `workspace_rename` | draft | medium | always | workspace | `xox_sandbox.workspace_rename` |
+| `workspace_export_bundle` | import_export | read | never | workspace | `xox_sandbox.workspace_export_bundle` |
+| `workspace_import_bundle` | import_export | high | always | workspace | `xox_sandbox.workspace_import_bundle` |
+| `workspace_save_snapshot` | version | low | always | workspace | `xox_sandbox.workspace_save_snapshot` |
+| `workspace_publish_release` | version | high | always | workspace | `xox_sandbox.workspace_publish_release` |
+| `workspace_promote_version` | version | high | always | workspace | `xox_sandbox.workspace_promote_version` |
+| `workspace_rollback_version` | version | high | always | workspace | `xox_sandbox.workspace_rollback_version` |
+| `workspace_delete_version` | version | high | always | workspace | `xox_sandbox.workspace_delete_version` |
+| `workspace_reset_draft` | version | high | always | inputs | `xox_sandbox.workspace_reset_draft` |
+| `share_create` | share | high | always | workspace | `xox_sandbox.share_create` |
+| `share_revoke` | share | medium | always | workspace | `xox_sandbox.share_revoke` |
 
 ## Provider Tool Summaries
 
