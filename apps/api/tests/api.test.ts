@@ -1818,10 +1818,9 @@ describe('xox TypeScript API', () => {
       })
 
       expect(response.statusCode).toBe(200)
-      expect(response.json.planSteps.map((step: any) => step.toolName).filter(Boolean)).toEqual(expect.arrayContaining([
+      expect(response.json.planSteps.map((step: any) => step.toolName).filter(Boolean)).toEqual([
         'sandbox_run_code',
-        'data_query_workspace',
-      ]))
+      ])
       const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
       expect(state.json.goals.at(-1).status).toBe('completed')
       expect(state.json.runEvents.some((event: any) =>
@@ -1835,7 +1834,7 @@ describe('xox TypeScript API', () => {
       expect(state.json.planSteps.some((step: any) =>
         step.toolName === 'data_query_workspace' &&
         step.toolArguments?.scope === 'entity_summary',
-      )).toBe(true)
+      )).toBe(false)
       await closeHarness(harness)
     }, {
       capabilities: ['sandbox'],
@@ -1863,6 +1862,11 @@ describe('xox TypeScript API', () => {
       }
       if (planningCalls === 2) {
         expect(body.messages.some((message: any) => message.role === 'tool')).toBe(true)
+        expect(body.messages.some((message: any) =>
+          message.role === 'system' &&
+          String(message.content).includes('Runner evidence context') &&
+          String(message.content).includes('entity_summary'),
+        )).toBe(true)
         return fakeAssistantTextResponse('第 2 位股东贷款后的个人 ROI 是 12%。')
       }
       throw new Error(`Unexpected planning call ${planningCalls}`)
@@ -1882,7 +1886,6 @@ describe('xox TypeScript API', () => {
       expect(planningCalls).toBeLessThanOrEqual(2)
       expect(response.json.planSteps.map((step: any) => step.toolName).filter(Boolean)).toEqual([
         'sandbox_run_code',
-        'data_query_workspace',
       ])
       expect(response.json.messages.at(-1).content).toContain('第 2 位股东')
       expect(response.json.messages.at(-1).content).not.toContain('Runner evidence obligations')
@@ -1895,7 +1898,7 @@ describe('xox TypeScript API', () => {
       expect(state.json.planSteps.some((step: any) =>
         step.toolName === 'data_query_workspace' &&
         step.toolArguments?.scope === 'entity_summary',
-      )).toBe(true)
+      )).toBe(false)
       expect(state.json.goals.at(-1).status).toBe('completed')
       await closeHarness(harness)
     }, {

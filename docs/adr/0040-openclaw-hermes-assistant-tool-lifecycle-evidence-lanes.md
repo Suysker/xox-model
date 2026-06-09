@@ -1,6 +1,6 @@
 # ADR 0040: OpenClaw/Hermes Assistant Tool Lifecycle Evidence Lanes
 
-Status: Proposed
+Status: Implemented
 
 Date: 2026-06-09
 
@@ -164,6 +164,22 @@ Only provider/model-selected tool calls belong to the user-visible tool lane.
 Runner evidence can inform the model and evaluator, but it is not a tool call.
 Lifecycle can explain the run to engineers, but it is not user-facing work.
 ```
+
+## Implementation Notes
+
+Implemented on 2026-06-09 without adding a parallel runtime or a new persistence table.
+
+The current implementation uses a small formal lane contract first:
+
+- `packages/contracts/src/index.ts` defines `AgentToolObservationLane = "provider_tool" | "runner_evidence"`.
+- `apps/api/src/agent/action-draft-builder.ts` and `apps/api/src/agent/tool-observation-continuation.ts` carry the lane on read drafts and observations.
+- `apps/api/src/agent/prerequisite-observations.ts` marks ordered entity prerequisites as `runner_evidence` and stops emitting plan-ready user events for that runner-owned read.
+- `apps/api/src/agent/action-graph-store.ts` stores runner evidence as model/evaluator observation only; it does not insert a user-visible `agent_plan_steps` tool row, so tool counts stay provider-owned.
+- `apps/api/src/agent/runtime/provider-transcript-replay.ts` replays provider tool observations as assistant `tool_calls` plus `tool` messages, while runner evidence is injected as source-aware evidence context instead of a fake provider tool result.
+- `apps/api/src/agent/sandbox-service.ts` preserves `extraction.parsedOutput` in the display preview, alongside bounded text previews and raw-output refs.
+- `apps/web/src/components/agent/AgentChatTimeline.test.ts` locks the expanded sandbox tool row so structured result fields remain visible.
+
+This intentionally does not add `agent_run_evidence` yet. The existing in-loop observation path is sufficient for the current failure mode and avoids introducing a second source of truth. A future table is still valid if cross-run runner evidence auditing becomes a product requirement, but it must not reintroduce prerequisite-as-tool rows.
 
 ## Hard Invariants
 
@@ -424,6 +440,13 @@ npm.cmd run test:web -- AgentChatTimeline
 npm.cmd run build:web
 ```
 
+Implemented validation:
+
+- `npm.cmd run test:api` passed: 14 files, 211 tests.
+- `npm.cmd run test:web -- AgentChatTimeline` passed: 1 file, 19 tests.
+- `npm.cmd run test:web` passed: 11 files, 76 tests.
+- `npm.cmd run build:web` passed.
+
 Manual smoke:
 
 ```text
@@ -489,4 +512,3 @@ OpenAI Agents JS:
 - No keyword/regex semantic routing.
 - No UI-only fix that leaves backend evidence mixed.
 - No fake sandbox or contract-only execution path.
-

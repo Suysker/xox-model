@@ -46,6 +46,7 @@ function observationFromRead(item: PlannedItem, sequence: number): AgentToolObse
   if (!('readKind' in item) || item.readKind !== 'tool_observation') return null
   const toolName = toolNameForRead(item, sequence)
   const displayPreview = item.displayPreview ?? item.message
+  const lane = item.observationLane ?? 'provider_tool'
   const status = item.observationStatus ??
     (item.status === 'failed' ? 'failed' : item.status === 'cancelled' ? 'cancelled' : 'completed')
   const observation = {
@@ -56,6 +57,7 @@ function observationFromRead(item: PlannedItem, sequence: number): AgentToolObse
     displayPreview,
     modelContent: item.modelContent ?? displayPreview,
     status,
+    lane,
     ...(item.syntheticObservation ? { synthetic: true } : {}),
   }
   return {
@@ -107,7 +109,7 @@ async function getPlanStep(ctx: ActionGraphContext, id: string) {
 
 export async function storePlannedActionGraph(
   ctx: ActionGraphContext,
-  input: { items: PlannedItem[]; plannerSource: AgentPlannerSource },
+  input: { items: PlannedItem[]; plannerSource: AgentPlannerSource; emitPlanReady?: boolean },
 ): Promise<StoredActionGraph> {
   const navigationEvents: AgentNavigationEvent[] = []
   const actionRows: Row<'agent_action_requests'>[] = []
@@ -150,6 +152,12 @@ export async function storePlannedActionGraph(
       continue
     }
 
+    if (item.readKind === 'tool_observation' && item.observationLane === 'runner_evidence') {
+      const observation = observationFromRead(item, sequence)
+      if (observation) observations.push(observation)
+      continue
+    }
+
     if (item.navigation) navigationEvents.push(item.navigation)
     const step = await addAgentPlanStep(ctx, {
       sequence,
@@ -173,18 +181,28 @@ export async function storePlannedActionGraph(
   const actionSummary = actionCount > 0
     ? `，其中 ${pendingActionCount} 个写入动作需要确认，${executedActionCount} 个已按自动化策略执行。`
     : '。'
-  await addRunEvent(ctx.db, {
-    threadId: ctx.threadId,
-    runId: ctx.runId,
-    type: 'tool_plan_ready',
-    title: failedCount > 0 ? '模型规划需要处理' : actionCount > 0 ? '模型工具调用已解析' : '模型回复已生成',
-    message:
-      input.items.length > 0
-        ? `模型规划生成 ${input.items.length} 个步骤${actionSummary}`
-        : '模型没有生成可执行步骤。',
-    status: failedCount > 0 ? 'failed' : pendingActionCount > 0 ? 'blocked' : executedActionCount > 0 ? 'completed' : 'info',
-    data: { plannerSource: input.plannerSource, stepCount: input.items.length, actionCount, pendingActionCount, executedActionCount, failedCount, automationLevel: ctx.automationLevel },
-  })
+  if (input.emitPlanReady !== false) {
+    await addRunEvent(ctx.db, {
+      threadId: ctx.threadId,
+      runId: ctx.runId,
+      type: 'tool_plan_ready',
+      title: failedCount > 0 ? '模型规划需要处理' : actionCount > 0 ? '模型工具调用已解析' : '模型回复已生成',
+      message:
+        planRows.length > 0 || assistantTexts.length > 0
+          ? `模型规划生成 ${planRows.length + assistantTexts.length} 个步骤${actionSummary}`
+          : '模型没有生成可执行步骤。',
+      status: failedCount > 0 ? 'failed' : pendingActionCount > 0 ? 'blocked' : executedActionCount > 0 ? 'completed' : 'info',
+      data: {
+        plannerSource: input.plannerSource,
+        stepCount: planRows.length + assistantTexts.length,
+        actionCount,
+        pendingActionCount,
+        executedActionCount,
+        failedCount,
+        automationLevel: ctx.automationLevel,
+      },
+    })
+  }
   if (pendingActionCount > 0) {
     await addRunEvent(ctx.db, {
       threadId: ctx.threadId,

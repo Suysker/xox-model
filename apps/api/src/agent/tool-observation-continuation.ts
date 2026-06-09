@@ -13,7 +13,7 @@ import { runtimeMessagesFromThreadConversationLog } from './runtime-conversation
 import { planWithRuntimeAdapter } from './runtime/adapter-router.js'
 import type { RuntimeChatMessage } from './runtime/runtime-adapter.js'
 import { providerToolObservationReplayMessages } from './runtime/provider-transcript-replay.js'
-import type { AgentToolObservationOutcome } from '@xox/contracts'
+import type { AgentToolObservationLane, AgentToolObservationOutcome } from '@xox/contracts'
 
 export type AgentToolObservation = {
   title: string
@@ -24,6 +24,7 @@ export type AgentToolObservation = {
   modelContent: string
   status: 'completed' | 'failed' | 'cancelled' | 'not_executed' | 'invalid'
   outcome?: AgentToolObservationOutcome
+  lane?: AgentToolObservationLane
   synthetic?: boolean
 }
 

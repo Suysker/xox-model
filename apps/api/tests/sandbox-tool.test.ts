@@ -378,7 +378,13 @@ describe('manifest-scoped sandbox tool', () => {
         network: { mode: 'disabled' },
         capabilities: { businessWrites: false },
       },
-      extraction: { extractionStatus: 'text_only' },
+      extraction: {
+        extractionStatus: 'parsed',
+        parsedOutput: {
+          realROI_noInterest_percent: 12.3456,
+          loanAdjustedROI_percent: 8.7654,
+        },
+      },
       outputText: longOutput,
       result: { summary: longOutput },
       sandboxRunId: 'sandbox_long_output',
@@ -391,6 +397,13 @@ describe('manifest-scoped sandbox tool', () => {
     })
     expect(preview.outputText.preview).toContain('realROI_noInterest_percent')
     expect(preview.outputText.preview.length).toBeLessThan(longOutput.length)
+    expect(preview.extraction).toMatchObject({
+      status: 'parsed',
+      parsedOutput: {
+        realROI_noInterest_percent: 12.3456,
+        loanAdjustedROI_percent: 8.7654,
+      },
+    })
     expect(preview.rawOutputRef).toMatchObject({
       storage: 'sandbox_observation',
       id: 'sandbox_long_output',

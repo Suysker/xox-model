@@ -189,6 +189,41 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
     expect((genericReplay[0] as any).reasoning_content).toBeUndefined()
   })
 
+  it('keeps runner evidence out of provider tool replay messages', () => {
+    const replay = providerToolObservationReplayMessages({
+      settings: settings('deepseek', 'deepseek-v4-pro'),
+      observations: [
+        {
+          toolName: 'data_query_workspace',
+          toolCallId: 'runner_evidence_run_entity_summary',
+          toolArguments: { scope: 'entity_summary' },
+          modelContent: JSON.stringify({ scope: 'entity_summary', shareholders: [{ name: '股东 A' }] }),
+          lane: 'runner_evidence',
+        },
+        {
+          toolName: 'sandbox_run_code',
+          toolCallId: 'call_sandbox',
+          toolArguments: { purpose: 'calculate ROI' },
+          modelContent: JSON.stringify({ observationType: 'sandbox_execution', completed: true }),
+          lane: 'provider_tool',
+        },
+      ],
+    })
+
+    expect(replay[0]).toMatchObject({
+      role: 'system',
+      content: expect.stringContaining('Runner evidence context'),
+    })
+    expect((replay[0] as any).content).toContain('entity_summary')
+    const toolMessages = replay.filter((message: any) => message.role === 'tool')
+    expect(toolMessages).toHaveLength(1)
+    expect(toolMessages[0]).toMatchObject({
+      tool_call_id: 'call_sandbox',
+      name: 'sandbox_run_code',
+    })
+    expect(JSON.stringify(replay)).not.toContain('runner_evidence_run_entity_summary_finalizer_observation')
+  })
+
   it('resolves provider runtime capabilities across major model families', () => {
     const cases = [
       {

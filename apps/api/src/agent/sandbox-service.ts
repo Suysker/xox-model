@@ -387,9 +387,41 @@ function displayTextReference(value: string) {
   }
 }
 
+function displayStructuredReference(value: unknown, depth = 0): unknown {
+  if (value === null || value === undefined) return value ?? null
+  if (typeof value === 'string') {
+    return value.length > DISPLAY_TEXT_PREVIEW_LIMIT
+      ? {
+          preview: value.slice(0, DISPLAY_TEXT_PREVIEW_LIMIT),
+          truncatedForDisplay: true,
+          sha256: hashText(value),
+          bytes: Buffer.byteLength(value, 'utf8'),
+        }
+      : value
+  }
+  if (typeof value !== 'object') return value
+  if (depth >= 4) return '[nested structure truncated]'
+  if (Array.isArray(value)) {
+    const items = value.slice(0, 20).map((item) => displayStructuredReference(item, depth + 1))
+    return value.length > items.length
+      ? [...items, { truncatedItems: value.length - items.length }]
+      : items
+  }
+  const entries = Object.entries(value as Record<string, unknown>)
+  const compact: Record<string, unknown> = {}
+  for (const [key, entryValue] of entries.slice(0, 40)) {
+    compact[key] = displayStructuredReference(entryValue, depth + 1)
+  }
+  if (entries.length > 40) compact.truncatedKeys = entries.length - 40
+  return compact
+}
+
 function displayPreview(observation: SandboxObservation) {
   const outputText = displayTextReference(observation.outputText)
   const resultSummary = displayTextReference(observation.result.summary)
+  const parsedOutput = observation.extraction.parsedOutput === undefined
+    ? undefined
+    : displayStructuredReference(observation.extraction.parsedOutput)
   return JSON.stringify({
     status: observation.status,
     executionMode: observation.executionMode,
@@ -403,6 +435,12 @@ function displayPreview(observation: SandboxObservation) {
     network: observation.manifest.network.mode,
     businessWrites: observation.manifest.capabilities.businessWrites,
     extractionStatus: observation.extraction.extractionStatus,
+    extraction: {
+      status: observation.extraction.extractionStatus,
+      ...(parsedOutput !== undefined ? { parsedOutput } : {}),
+      ...(observation.extraction.summary ? { summary: displayTextReference(observation.extraction.summary) } : {}),
+      ...(observation.extraction.warnings?.length ? { warnings: observation.extraction.warnings } : {}),
+    },
     outputText,
     result: {
       summary: resultSummary,

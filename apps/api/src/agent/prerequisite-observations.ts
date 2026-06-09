@@ -69,9 +69,11 @@ export async function runPrerequisiteObservations(
     items: [{
       ...read,
       toolName: 'data_query_workspace',
-      toolCallId: `prerequisite_${ctx.runId}_entity_summary`,
+      toolCallId: `runner_evidence_${ctx.runId}_entity_summary`,
       toolArguments: ENTITY_SUMMARY_TOOL_ARGUMENTS,
+      observationLane: 'runner_evidence',
       syntheticObservation: true,
     }],
+    emitPlanReady: false,
   })
 }

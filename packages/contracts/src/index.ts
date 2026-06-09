@@ -301,6 +301,10 @@ export type AgentToolObservationOutcome =
   | 'pending_human'
   | 'policy_blocked'
 
+export type AgentToolObservationLane =
+  | 'provider_tool'
+  | 'runner_evidence'
+
 export type AgentToolNavigationTarget = 'dashboard' | 'inputs' | 'bookkeeping' | 'variance' | 'workspace' | null
 
 export type AgentToolInventoryItem = {

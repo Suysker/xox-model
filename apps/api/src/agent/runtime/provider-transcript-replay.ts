@@ -11,6 +11,7 @@ export type ProviderReplayObservation = {
   toolCallId: string
   toolArguments: Record<string, unknown>
   modelContent: string
+  lane?: 'provider_tool' | 'runner_evidence'
 }
 
 function safeJson(value: unknown) {
@@ -24,6 +25,19 @@ function safeJson(value: unknown) {
 function observationCallId(observation: ProviderReplayObservation, index: number, suffix: string) {
   const base = observation.toolCallId || `call_observation_${index}_${observation.toolName}`
   return suffix ? `${base}_${suffix}_${index}` : base
+}
+
+function runnerEvidenceMessage(observations: ProviderReplayObservation[]): RuntimeChatMessage | null {
+  if (observations.length === 0) return null
+  const content = [
+    'Runner evidence context. These facts were collected by the harness before planning; they are not provider tool calls and must not be described as tools you called.',
+    ...observations.map((observation, index) => [
+      `Evidence ${index + 1}: ${observation.toolName}`,
+      `Arguments: ${safeJson(observation.toolArguments)}`,
+      `Content: ${redactSecretLikeContent(observation.modelContent).slice(0, 12000)}`,
+    ].join('\n')),
+  ].join('\n\n')
+  return { role: 'system', content }
 }
 
 export function sanitizeProviderReplayMessages(input: {
@@ -58,7 +72,10 @@ export function providerToolObservationReplayMessages(input: {
   const usable = input.observations.slice(-(input.maxObservations ?? 12))
   if (usable.length === 0) return []
   const suffix = input.suffix ?? ''
-  const toolCalls = usable.map((observation, index) => ({
+  const runnerEvidence = usable.filter((observation) => observation.lane === 'runner_evidence')
+  const providerObservations = usable.filter((observation) => observation.lane !== 'runner_evidence')
+  const evidenceMessage = runnerEvidenceMessage(runnerEvidence)
+  const toolCalls = providerObservations.map((observation, index) => ({
     id: observationCallId(observation, index, suffix),
     type: 'function' as const,
     function: {
@@ -66,18 +83,24 @@ export function providerToolObservationReplayMessages(input: {
       arguments: safeJson(observation.toolArguments),
     },
   }))
+  const providerMessages: RuntimeChatMessage[] = toolCalls.length > 0
+    ? [
+        {
+          role: 'assistant',
+          content: null,
+          tool_calls: toolCalls,
+        },
+        ...providerObservations.map((observation, index) => ({
+          role: 'tool' as const,
+          tool_call_id: observationCallId(observation, index, suffix),
+          name: observation.toolName,
+          content: redactSecretLikeContent(observation.modelContent).slice(0, 12000),
+        })),
+      ]
+    : []
   const messages: RuntimeChatMessage[] = [
-    {
-      role: 'assistant',
-      content: null,
-      tool_calls: toolCalls,
-    },
-    ...usable.map((observation, index) => ({
-      role: 'tool' as const,
-      tool_call_id: observationCallId(observation, index, suffix),
-      name: observation.toolName,
-      content: redactSecretLikeContent(observation.modelContent).slice(0, 12000),
-    })),
+    ...(evidenceMessage ? [evidenceMessage] : []),
+    ...providerMessages,
   ]
   return sanitizeProviderReplayMessages({
     settings: input.settings,

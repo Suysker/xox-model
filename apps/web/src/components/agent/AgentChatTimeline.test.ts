@@ -391,6 +391,64 @@ describe('AgentChatTimeline helpers', () => {
     expect(html).not.toContain('workspace_summary')
   })
 
+  it('renders structured sandbox result preview inside the expanded tool body', () => {
+    const resultPreview = JSON.stringify({
+      status: 'completed',
+      extraction: {
+        status: 'parsed',
+        parsedOutput: {
+          shareholder: '股东 B',
+          nominalROI: 0.42,
+          realROI: 0.27,
+          loanInterest: 30000,
+        },
+      },
+      rawOutputRef: {
+        storage: 'sandbox_observation',
+        id: 'sandbox_1',
+      },
+    }, null, 2)
+    const html = renderToStaticMarkup(createElement(AgentChatTimeline, {
+      nodes: [
+        item({
+          id: 'sandbox',
+          kind: 'tool_call',
+          title: '受控沙箱执行完成',
+          status: 'completed',
+          defaultOpen: true,
+          tool: {
+            name: 'sandbox_run_code',
+            argumentsPreview: '{"purpose":"calculate shareholder ROI"}',
+            resultPreview,
+          },
+          sections: [
+            {
+              id: 'sandbox:result',
+              kind: 'result',
+              title: '返回',
+              summary: 'parsed output',
+              content: resultPreview,
+              defaultOpen: true,
+            },
+          ],
+        }),
+      ],
+      busy: false,
+      actionDiffsById: new Map(),
+      onCancel: () => undefined,
+      onConfirm: () => undefined,
+      onUpdate: () => undefined,
+    }))
+
+    expect(html).toContain('受控沙箱执行完成')
+    expect(html).toContain('sandbox_run_code')
+    expect(html).toContain('parsedOutput')
+    expect(html).toContain('realROI')
+    expect(html).toContain('0.27')
+    expect(html).toContain('loanInterest')
+    expect(html).toContain('sandbox_observation')
+  })
+
   it('renders expanded strict work cycle and tool group hierarchy without inline JSON', () => {
     const html = renderToStaticMarkup(createElement(AgentChatTimeline, {
       nodes: [
