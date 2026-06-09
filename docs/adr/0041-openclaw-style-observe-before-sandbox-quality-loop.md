@@ -17,7 +17,7 @@ Recent regression comparisons between `6af70c27` and `9010a623` exposed a qualit
 - the sandbox executed, but the generated code misunderstood the bundle shape (`totalRevenue` vs `grossSales`, `rows` as one summary row rather than twelve month rows);
 - the final answer became shorter and less informative because the finalizer prompt also pushed a global short-answer policy.
 
-The mistake was not that `xox_sandbox.load_structured()` exists. That helper is useful. The mistake was treating the sandbox data helper as a substitute for the model first observing the domain tool result.
+The mistake was not only that sandbox mounted data directly. The deeper issue is that `xox_sandbox.load_structured()` is a low-level bundle helper, while the model thinks in provider tools such as `data_query_workspace`. If the provider turn teaches the model one tool contract and the sandbox code asks it to use another unrelated helper contract, the harness has created two mental models.
 
 For xox-model, OpenClaw remains the benchmark: one main loop, model observes environment feedback, tools return observations, and the assistant final answer is generated after those observations. Hermes contributes provider/tool-call hygiene and tool-result persistence discipline. OpenAI Agents JS contributes runner-side guardrail, tracing, HITL and sandbox boundaries.
 
@@ -169,32 +169,75 @@ Important rules:
 - Ordered shareholders, members and cost objects must be represented in `entities` or in named structured fields.
 - Field aliases used by tools (`grossSales`, `totalProfit`, `roi`, `shareholders`, `plannedRevenue`) must be shared with sandbox bundles.
 
-### Sandbox Data Request
+### Sandbox Tool SDK
 
-`sandbox_run_code` remains a real manifest-scoped execution tool, but its data request must be aligned with domain observations.
+`sandbox_run_code` remains a real manifest-scoped execution tool, but code inside the sandbox should primarily use a **tool-shaped SDK** that mirrors the model-facing provider tools.
 
-Target shape:
-
-```ts
-type SandboxDataRequest = {
-  sourceObservationIds: string[]
-  scopes: Array<DomainObservation['scope']>
-  rowKind?: DomainObservation['rowKind']
-  fields?: string[]
-  assumptions?: Record<string, unknown>
-}
-```
-
-The sandbox helper remains valid:
+Primary Python API:
 
 ```python
 import xox_sandbox
-data = xox_sandbox.load_structured()
-rows = xox_sandbox.load_rows()
+
+summary = xox_sandbox.data_query_workspace(
+    scope="workspace_summary",
+    metrics=["roi", "cash", "payback"],
+)
+
+entities = xox_sandbox.data_query_workspace(
+    scope="entity_summary",
+    metrics=["shareholderNames", "shareholderInvestments"],
+)
+
 xox_sandbox.emit({...})
 ```
 
-But the helper must expose the same semantic contract the model already saw through `data_query_workspace`. It must not expose a second, hidden, incompatible shape.
+Primary JavaScript API:
+
+```js
+import { dataQueryWorkspace, emit } from './xox_sandbox.mjs'
+
+const summary = dataQueryWorkspace({
+  scope: 'workspace_summary',
+  metrics: ['roi', 'cash', 'payback'],
+})
+
+emit({...})
+```
+
+The sandbox SDK method names and argument schema should match provider tool names as closely as possible:
+
+```text
+provider tool: data_query_workspace
+sandbox SDK:  xox_sandbox.data_query_workspace(...)
+```
+
+This is not a second live tool execution path. It is a deterministic façade over runner-approved observations and manifest bundles.
+
+Target backing contract:
+
+```ts
+type SandboxToolRequest = {
+  toolName: 'data_query_workspace'
+  arguments: {
+    scope: DomainObservation['scope']
+    metrics?: string[]
+    monthLabel?: string
+    memberName?: string
+    order?: string
+    limit?: number
+  }
+  sourceObservationIds?: string[]
+}
+```
+
+Rules:
+
+- `xox_sandbox.data_query_workspace(...)` returns the same `DomainObservation` structure the model saw from the provider tool.
+- It may only read observations/bundles that the runner already authorized for the sandbox manifest.
+- It must not call the production API, production database, internal HTTP endpoints or arbitrary tools.
+- If the requested scope was not observed or bundled, it fails with a typed missing-observation error; it must not invent data or silently broaden access.
+- Business writes are not exposed in the sandbox SDK. Write actions remain provider tools plus confirmation cards outside sandbox.
+- `load_structured()` and `load_rows()` may remain as low-level escape hatches for generic file/data transformation, manifest debugging or non-domain bundles, but they are not the primary API in prompts, examples or finance calculation code.
 
 ### Observation Replay
 
@@ -242,8 +285,8 @@ Replacement policy:
 
 ADR 0039's sandbox fast path must be narrowed:
 
-- Keep `xox_sandbox.load_structured()` and `load_rows()`.
-- Keep self-describing sandbox bundles.
+- Keep self-describing sandbox bundles and low-level helpers as internal/advanced APIs.
+- Promote tool-shaped sandbox SDK methods such as `xox_sandbox.data_query_workspace(...)` as the model-facing code authoring API.
 - Remove the claim that sandbox should avoid a separate domain read for facts the model needs to reason about.
 - The optimization target is not "one sandbox call instead of a domain observation"; it is "one domain observation, one sandbox call, no duplicate capability-router churn, no repeated memory injection, no fake tool rows".
 
@@ -277,8 +320,9 @@ Edit:
 
 Changes:
 
-- Introduce `DomainObservation` and `SandboxDataRequest` types.
+- Introduce `DomainObservation` and `SandboxToolRequest` types.
 - Make `data_query_workspace` response and sandbox bundles share field names and row semantics.
+- Add `xox_sandbox.data_query_workspace(...)` and `dataQueryWorkspace(...)` SDK façades backed by the same observation contract.
 - Ensure `workspace_summary` does not expose ambiguous `rows`.
 - Ensure `forecast_months` exposes month rows with a clear `rowKind`.
 - Ensure `entity_summary` exposes ordered shareholders and investments.
@@ -390,7 +434,7 @@ For the shareholder inflation/loan ROI class:
 
 - The run cannot call `sandbox_run_code` as the first workspace-data observation.
 - `data_query_workspace` must appear before sandbox unless an equivalent model-visible same-run domain observation already exists.
-- Sandbox code reads the same structured contract the model observed.
+- Sandbox code reads the same structured contract the model observed through `xox_sandbox.data_query_workspace(...)`, not through a separate hidden bundle shape.
 - The final answer includes:
   - selected shareholder identity or ordinal;
   - investment amount;
@@ -419,7 +463,7 @@ For UI/transcript:
 
 - Do not add a second runtime adapter.
 - Do not reintroduce keyword, regex or language-specific semantic routing.
-- Do not remove `xox_sandbox.load_structured()`; align it with domain observation instead.
+- Do not use `xox_sandbox.load_structured()` as the primary domain-data API; keep it only as a low-level helper behind the tool-shaped SDK.
 - Do not import OpenClaw/Hermes control planes.
 - Do not make OpenAI Responses-only behavior a requirement.
 
