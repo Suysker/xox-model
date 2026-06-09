@@ -4,6 +4,7 @@ import type { Database, Row } from '../db/schema.js'
 import { parseJson } from '../db/database.js'
 import { unprocessable } from '../core/http.js'
 import type { CurrentUser } from '../modules/auth.js'
+import { recordAudit } from '../modules/audit.js'
 import {
   deleteVersion,
   getWorkspaceDraft,
@@ -28,6 +29,40 @@ export async function executeAgentTool(
   action: Row<'agent_action_requests'>,
 ) {
   const payload = parseJson<any>(action.payload_json, {})
+
+  if (action.kind === 'sandbox.aggregate_tool_calls') {
+    const nestedActions = Array.isArray(payload.nestedActions) ? payload.nestedActions : []
+    if (nestedActions.length === 0) throw unprocessable('Sandbox aggregate action requires nestedActions')
+    const results: unknown[] = []
+    for (const [index, nested] of nestedActions.entries()) {
+      if (!nested || typeof nested !== 'object' || Array.isArray(nested)) throw unprocessable('Sandbox nested action is invalid')
+      const nestedRecord = nested as Record<string, unknown>
+      const kind = typeof nestedRecord.kind === 'string' ? nestedRecord.kind : ''
+      if (!kind || kind === 'sandbox.aggregate_tool_calls') throw unprocessable('Sandbox nested action kind is invalid')
+      const nestedAction = {
+        ...action,
+        kind,
+        title: typeof nestedRecord.title === 'string' ? nestedRecord.title : kind,
+        summary: typeof nestedRecord.summary === 'string' ? nestedRecord.summary : kind,
+        target_label: typeof nestedRecord.targetLabel === 'string' ? nestedRecord.targetLabel : `Sandbox nested action ${index + 1}`,
+        risk_level: typeof nestedRecord.riskLevel === 'string' ? nestedRecord.riskLevel : action.risk_level,
+        payload_json: JSON.stringify(nestedRecord.payload ?? {}),
+        navigation_json: JSON.stringify(nestedRecord.navigation ?? {}),
+        details_json: JSON.stringify(nestedRecord.details ?? []),
+      } as Row<'agent_action_requests'>
+      const result = await executeAgentTool(db, workspace, user, nestedAction)
+      await recordAudit(db, {
+        workspaceId: workspace.id,
+        actorId: user.id,
+        action: 'agent.sandbox_nested_action_executed',
+        entityType: 'agent_action_request',
+        entityId: action.id,
+        meta: { aggregateKind: action.kind, nestedKind: kind, nestedIndex: index },
+      })
+      results.push({ kind, result })
+    }
+    return { ok: true, results }
+  }
 
   if (action.kind === 'ledger.create_entry') {
     return createActualEntry(db, { workspace, actor: user, ...payload })

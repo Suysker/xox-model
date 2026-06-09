@@ -126,6 +126,13 @@ export type AgentToolCallStep = {
   limit?: number
   maxResults?: number
   toolNames?: string[]
+  pattern?: string
+  paths?: string[]
+  contextLines?: number
+  context_lines?: number
+  maxMatches?: number
+  max_matches?: number
+  regex?: boolean
   includeDailyNotes?: boolean
   includeDurable?: boolean
   patches?: Array<{ path: string; value: unknown; label?: string }>
@@ -366,6 +373,37 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
           description: 'Maximum descriptors to return. The server enforces a small upper bound.',
         },
       }, ['query']),
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'rg',
+      description:
+        'Manifest-scoped read-only search over authorized tool documents and same-run observation documents. Use it to inspect available sandbox SDK functions, tool contracts, parameter names, or observation text. It cannot search repository files, env, DB, logs, memory stores, absolute paths, or other tenants.',
+      parameters: objectSchema({
+        pattern: {
+          type: 'string',
+          description: 'Search text or regex pattern. Literal, case-insensitive search is used unless regex=true.',
+        },
+        paths: {
+          type: 'array',
+          description: 'Optional allowed document paths such as tools/agent-tool-manifest.md or tools/effective-tool-manifest.md.',
+          items: { type: 'string' },
+        },
+        contextLines: {
+          type: 'number',
+          description: 'Number of context lines before and after each match. Server clamps to a small bound.',
+        },
+        maxMatches: {
+          type: 'number',
+          description: 'Maximum matches to return. Server clamps to a small bound.',
+        },
+        regex: {
+          type: 'boolean',
+          description: 'Set true only when pattern should be treated as a regular expression.',
+        },
+      }, ['pattern']),
     },
   },
   {
@@ -860,14 +898,14 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
     function: {
       name: 'sandbox_run_code',
       description:
-        '在 manifest-scoped 受控沙箱中运行一段只读代码，用于复杂计算、临时数据清洗、文件校验/转换、公式实验或短期 artifact 生成。需要把当前工作区预测/账本/实体事实与外部假设或公式结合时，优先用 dataRequest 让沙箱挂载最小数据包，不要为了同一份计算数据先额外读取普通工作区摘要。沙箱不允许业务写入、内部 API、生产 DB、provider key、用户 session、记忆写入或网络访问。结果只是 observation；如需保存/导入/记账/改模型，必须继续调用普通业务工具生成确认卡。',
+        '在 manifest-scoped 受控沙箱中运行代码，用于复杂计算、临时数据清洗、文件校验/转换、公式实验、短期 artifact 生成，或通过同名工具 SDK 请求受控业务工具。沙箱不能直连内部 API、生产 DB、provider key、用户 session、记忆存储、任意文件系统或网络；读写都必须通过 `xox_sandbox.<tool_name>(...)` 桥回同一个 Tool Runtime Gateway。写入类 nested calls 会按自动化等级生成聚合确认卡或自动执行，不允许绕过确认、领域校验和审计。',
       parameters: objectSchema({
         purpose: { type: 'string', description: '本次沙箱任务目的，用一句中文说明，例如“对当前 12 个月预测做敏感性分析”。' },
         language: { type: 'string', enum: ['python', 'javascript'], description: '代码语言。默认优先 python；轻量 JSON/文本转换可用 javascript。' },
         code: {
           type: 'string',
           description:
-            '要在受控沙箱里运行的代码。不要尝试访问网络、内部 API、生产数据库、任意文件系统路径或安装包。Python 优先 `import xox_sandbox; data = xox_sandbox.load_structured(); rows = xox_sandbox.load_rows(); xox_sandbox.emit({...})`；JavaScript 优先从 `./xox_sandbox.mjs` 导入 `loadStructured/loadRows/emit`。不要直接猜 input.json 顶层结构；只有需要 manifest 证据时才读取 `xox_sandbox.load()` envelope。结构化输出优先用 helper emit，或写 XOX_SANDBOX_OUTPUT_DIR/result.json。',
+            '要在受控沙箱里运行的代码。不要访问网络、内部 API、生产数据库、任意文件系统路径或安装包。Python 优先 `import xox_sandbox` 后调用与 provider tools 同名的函数，例如 `xox_sandbox.data_query_workspace(scope="workspace_summary", metrics=["roi"])`、`xox_sandbox.rg(pattern="data_query_workspace")`、`xox_sandbox.workspace_patch_config(patches=[...])`；JavaScript 从 `./xox_sandbox.mjs` 导入 snake_case 或 camelCase 函数。`load_structured/load_rows` 仅是低层 helper。结构化输出用 `xox_sandbox.emit({...})` 或写 XOX_SANDBOX_OUTPUT_DIR/result.json。',
         },
         dataRequest: objectSchema({
           scope: {
@@ -1036,6 +1074,12 @@ const TOOL_METADATA: Record<string, Omit<AgentToolMetadata, 'name'>> = {
     navigationTarget: null,
   },
   tool_discover: {
+    capability: 'tooling',
+    riskLevel: 'read',
+    confirmationMode: 'never',
+    navigationTarget: null,
+  },
+  rg: {
     capability: 'tooling',
     riskLevel: 'read',
     confirmationMode: 'never',
@@ -1270,6 +1314,8 @@ export function toolCallToPlannerStep(toolName: string, args: Record<string, unk
       return { intent: 'tool_catalog.select_capabilities', ...args }
     case 'tool_discover':
       return { intent: 'tool.discover', ...args }
+    case 'rg':
+      return { intent: 'tool.rg', ...args }
     case 'ledger_create_member_income':
       return { intent: 'ledger.create_member_income', ...args }
     case 'ledger_create_entry':

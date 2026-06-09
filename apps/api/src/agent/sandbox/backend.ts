@@ -21,6 +21,21 @@ export type SandboxDataBundle = {
   contentHash: string
 }
 
+export type SandboxToolSdkEntry = {
+  name: string
+  capability: string
+  riskLevel: string
+  confirmationMode: string
+  navigationTarget: string | null
+  parameterNames: string[]
+  summary: string
+}
+
+export type SandboxToolDocument = {
+  path: string
+  text: string
+}
+
 export type SandboxSessionRef = {
   id: string
   manifest: SandboxManifest
@@ -30,6 +45,10 @@ export type SandboxSessionRef = {
 export type SandboxExecuteInput = {
   input: SandboxRunCodeInput
   bundle: SandboxDataBundle
+  toolSdk?: {
+    tools: SandboxToolSdkEntry[]
+    documents: SandboxToolDocument[]
+  }
 }
 
 export type SandboxExecutionStatus = SandboxObservation['status']

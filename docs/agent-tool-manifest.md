@@ -78,8 +78,9 @@ This table lists the current complete provider tool names. Detailed JSON schema 
 | `account_forbidden` | account | read | never | none | `xox_sandbox.account_forbidden` |
 | `ask_user_clarification` | clarification | read | never | none | `xox_sandbox.ask_user_clarification` |
 | `tool_discover` | tooling | read | never | none | `xox_sandbox.tool_discover` |
+| `rg` | tooling | read | never | none | `xox_sandbox.rg` |
 | `data_query_workspace` | data | read | never | none | `xox_sandbox.data_query_workspace` |
-| `sandbox_run_code` | sandbox | dynamic | conditional | none | outer tool only |
+| `sandbox_run_code` | sandbox | read | never | none | outer tool only |
 | `memory_search` | memory | read | never | none | `xox_sandbox.memory_search` |
 | `memory_get` | memory | read | never | none | `xox_sandbox.memory_get` |
 | `memory_remember` | memory | low | never | none | `xox_sandbox.memory_remember` |
@@ -124,6 +125,7 @@ This table lists the current complete provider tool names. Detailed JSON schema 
 - `account_forbidden`: refuse account-impacting actions.
 - `ask_user_clarification`: ask for missing information that is not available from current context or allowed observations.
 - `tool_discover`: search the authorized tool manifest and materialize real schemas in the main loop.
+- `rg`: search manifest-authorized tool and observation documents; never host files.
 - `ui_navigate`: open the relevant product page without writing business data.
 
 ### Data And Computation

@@ -42,7 +42,7 @@ function materializationBudget(input: {
 }) {
   const count = uniqueCapabilities(input.selectedCapabilities).length
   const requiredWriteCount = uniqueCapabilities(input.requiredActionCapabilities ?? []).length
-  const base = count === 0 ? 8 : count >= 6 ? 8 : count >= 3 ? 7 : 6
+  const base = count === 0 ? 10 : count >= 6 ? 12 : count >= 3 ? 10 : 8
   return Math.min(12, base + requiredWriteCount * 3)
 }
 

@@ -13,7 +13,8 @@ describe('Progressive Tool Discovery Runtime', () => {
 
     expect(pack.strategy).toBe('progressive_tool_discovery')
     expect(pack.toolNames).toContain('data_query_workspace')
-    expect(pack.toolNames.length).toBeLessThanOrEqual(4)
+    expect(pack.toolNames).toContain('rg')
+    expect(pack.toolNames.length).toBeLessThanOrEqual(6)
     expect(pack.toolNames).not.toContain('workspace_patch_config')
     expect(pack.toolDescriptors.find((descriptor) => descriptor.name === 'data_query_workspace')).toMatchObject({
       title: '查询工作区数据',
@@ -29,7 +30,8 @@ describe('Progressive Tool Discovery Runtime', () => {
 
     expect(pack.strategy).toBe('progressive_tool_discovery')
     expect(pack.toolNames).toContain('data_query_workspace')
-    expect(pack.toolNames.length).toBeLessThanOrEqual(4)
+    expect(pack.toolNames).toContain('rg')
+    expect(pack.toolNames.length).toBeLessThanOrEqual(6)
   })
 
   it('fuses capability disclosure and retrieval for cross-domain SaaS goals', () => {
@@ -39,7 +41,7 @@ describe('Progressive Tool Discovery Runtime', () => {
       message: '我们几个月才能回本？帮我记一笔成员A的今天的线上10张，然后帮我第一个股东注资100w',
     })
 
-    expect(pack.toolNames.length).toBeLessThanOrEqual(7)
+    expect(pack.toolNames.length).toBeLessThanOrEqual(10)
     expect(pack.toolNames).toEqual(expect.arrayContaining([
       'data_query_workspace',
       'ledger_create_member_income',
@@ -62,7 +64,8 @@ describe('Progressive Tool Discovery Runtime', () => {
 
     expect(pack.toolNames).toContain('data_query_workspace')
     expect(pack.toolNames).toContain('workspace_patch_config')
-    expect(pack.toolNames.length).toBeLessThanOrEqual(6)
+    expect(pack.toolNames).toContain('rg')
+    expect(pack.toolNames.length).toBeLessThanOrEqual(8)
     expect(pack.discoveryTrace.materializedToolNames).toEqual(pack.toolNames)
   })
 
@@ -107,17 +110,19 @@ describe('Progressive Tool Discovery Runtime', () => {
       'account_forbidden',
       'ask_user_clarification',
       'data_query_workspace',
+      'rg',
       'sandbox_run_code',
     ]))
     expect(projection.kernelToolNames).toEqual(expect.arrayContaining([
       'account_forbidden',
       'ask_user_clarification',
       'data_query_workspace',
+      'rg',
       'sandbox_run_code',
     ]))
     expect(projection.visibleToolNames).toContain('workspace_patch_config')
     expect(projection.visibleToolNames).toContain('tool_discover')
-    expect(projection.visibleToolNames.length).toBeLessThanOrEqual(8)
+    expect(projection.visibleToolNames.length).toBeLessThanOrEqual(10)
     expect(projection.visibleToolNames).not.toContain('share_create')
     expect(projection.visibleToolNames).not.toContain('workspace_publish_release')
     expect(projection.surfacePlan?.schemaVersion).toBe('xox.tool_surface.v2')
@@ -136,13 +141,14 @@ describe('Progressive Tool Discovery Runtime', () => {
     expect(projection.selectedCapabilities).toEqual([])
     expect(projection.visibleToolNames).toEqual(expect.arrayContaining([
       'data_query_workspace',
+      'rg',
       'sandbox_run_code',
       'ask_user_clarification',
       'account_forbidden',
       'tool_discover',
     ]))
     expect(projection.visibleToolNames).toContain('shareholder_add')
-    expect(projection.visibleToolNames.length).toBeLessThanOrEqual(8)
+    expect(projection.visibleToolNames.length).toBeLessThanOrEqual(10)
     expect(projection.visibleToolNames).not.toContain('share_create')
     expect(projection.visibleToolNames).not.toContain('workspace_publish_release')
   })

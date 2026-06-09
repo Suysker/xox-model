@@ -19,6 +19,7 @@ const FACT_DEPENDENT_CAPABILITIES = new Set<AgentToolCapability>([
 
 export const KERNEL_TOOL_NAMES = [
   'tool_discover',
+  'rg',
   'data_query_workspace',
   'sandbox_run_code',
   'ask_user_clarification',
@@ -36,7 +37,7 @@ const CANONICAL_TOOLS_BY_CAPABILITY: Partial<Record<AgentToolCapability, string[
   navigation: ['ui_navigate'],
   sandbox: ['sandbox_run_code'],
   share: ['share_create', 'share_revoke'],
-  tooling: ['tool_discover'],
+  tooling: ['tool_discover', 'rg'],
   version: ['workspace_save_snapshot', 'workspace_publish_release', 'workspace_rollback_version'],
 }
 

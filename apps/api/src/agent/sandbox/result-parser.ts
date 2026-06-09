@@ -34,6 +34,33 @@ function record(value: unknown): Record<string, unknown> | null {
     : null
 }
 
+function parseJsonLines(value: string) {
+  const items: unknown[] = []
+  for (const line of value.split(/\r?\n/)) {
+    if (!line.trim()) continue
+    const parsed = parseJson(line)
+    if (parsed.ok) items.push(parsed.value)
+  }
+  return items
+}
+
+function mergeSandboxToolCalls(value: unknown, sandboxToolCalls: unknown[]) {
+  if (sandboxToolCalls.length === 0) return value
+  const current = record(value)
+  if (current) {
+    const existing = Array.isArray(current.sandboxToolCalls) ? current.sandboxToolCalls : []
+    const merged = [...existing, ...sandboxToolCalls].filter((item, index, items) => {
+      const key = JSON.stringify(item)
+      return items.findIndex((candidate) => JSON.stringify(candidate) === key) === index
+    })
+    return {
+      ...current,
+      sandboxToolCalls: merged,
+    }
+  }
+  return { value, sandboxToolCalls }
+}
+
 function resultFromStructuredOutput(value: unknown, fallbackSummary: string): SandboxObservation['result'] {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return { summary: fallbackSummary, structured: value }
@@ -113,7 +140,7 @@ export async function collectSandboxArtifacts(input: {
   const allowed = new Set(input.allowedKinds)
   const artifacts: SandboxArtifactDescriptor[] = []
   for (const name of names) {
-    if (name === 'result.json') continue
+    if (name === 'result.json' || name === 'tool_calls.jsonl') continue
     if (artifacts.length >= input.maxArtifactCount) break
     const kind = artifactKindFromName(name)
     if (!kind || !allowed.has(kind)) continue
@@ -144,6 +171,8 @@ export async function parseSandboxOutput(input: {
 }): Promise<ParsedSandboxOutput> {
   const resultPath = join(input.outputDir, 'result.json')
   const resultText = await readFile(resultPath, 'utf8').catch(() => null)
+  const sandboxToolCallsText = await readFile(join(input.outputDir, 'tool_calls.jsonl'), 'utf8').catch(() => null)
+  const sandboxToolCalls = sandboxToolCallsText ? parseJsonLines(sandboxToolCallsText) : []
   const stdoutText = redactSecretLikeContent(input.stdout)
   const stderrText = redactSecretLikeContent(input.stderr)
   const modelOutputText = outputText({ stdout: stdoutText, stderr: stderrText })
@@ -156,20 +185,24 @@ export async function parseSandboxOutput(input: {
   })
   const rawParseSource = resultText ?? input.stdout
   const parsed = rawParseSource.trim().length > 0 ? parseJson(rawParseSource) : { ok: false as const, error: 'empty_output' }
-  const parsedOutput = parsed.ok ? redactStructuredSecrets(parsed.value) : null
+  const parsedOutput = parsed.ok
+    ? redactStructuredSecrets(mergeSandboxToolCalls(parsed.value, sandboxToolCalls))
+    : sandboxToolCalls.length > 0
+      ? redactStructuredSecrets({ sandboxToolCalls })
+      : null
   const artifactSummary = artifacts.length > 0 ? `生成 ${artifacts.length} 个输出文件。` : ''
   const fallbackSummary = modelOutputText.trim().slice(0, 500) ||
     artifactSummary ||
     (input.status === 'completed' ? `${input.purpose} 已完成。` : `${input.purpose} 未完成。`)
-  const result = !parsed.ok
+  const result = !parsed.ok && sandboxToolCalls.length === 0
     ? {
       summary: fallbackSummary,
       structured: modelOutputText.trim().length > 0 ? { outputText: modelOutputText } : null,
       proposedPatches: [],
     }
     : resultFromStructuredOutput(parsedOutput, fallbackSummary)
-  const extractedTables = parsed.ok ? tablesFromStructuredOutput(parsedOutput) : undefined
-  const extraction: SandboxObservation['extraction'] = parsed.ok
+  const extractedTables = parsed.ok || sandboxToolCalls.length > 0 ? tablesFromStructuredOutput(parsedOutput) : undefined
+  const extraction: SandboxObservation['extraction'] = parsed.ok || sandboxToolCalls.length > 0
     ? {
       extractionStatus: 'parsed',
       parsedOutput,

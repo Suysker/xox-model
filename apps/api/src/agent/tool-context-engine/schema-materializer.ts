@@ -70,7 +70,6 @@ export function materializeToolSchemas(input: {
   const remainingTools = nonKernel.filter((ranked) => !ranked.reasons.includes('workflow_prerequisite'))
 
   for (const ranked of kernel) {
-    if (ranked.manifest.name === 'tool_discover' && selectedCapabilities.size > 0) continue
     if (seen.has(ranked.manifest.name)) continue
     selected.push(ranked.manifest)
     seen.add(ranked.manifest.name)

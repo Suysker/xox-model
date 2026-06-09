@@ -18,7 +18,7 @@ export type AgentActionAuthorityDecision =
 type AgentActionPolicy = {
   kind: AgentActionKind
   minRiskLevel: RiskLevel
-  requiredMainTab: AgentNavigationEvent['route']['mainTab']
+  requiredMainTab?: AgentNavigationEvent['route']['mainTab']
   requiredPanel?: AgentNavigationEvent['panel']
 }
 
@@ -52,6 +52,7 @@ const ACTION_POLICIES: Record<AgentActionKind, AgentActionPolicy> = {
   'workspace.import_bundle': { kind: 'workspace.import_bundle', minRiskLevel: 'high', requiredMainTab: 'dashboard', requiredPanel: 'workspace' },
   'share.create': { kind: 'share.create', minRiskLevel: 'high', requiredMainTab: 'dashboard', requiredPanel: 'workspace' },
   'share.revoke': { kind: 'share.revoke', minRiskLevel: 'medium', requiredMainTab: 'dashboard', requiredPanel: 'workspace' },
+  'sandbox.aggregate_tool_calls': { kind: 'sandbox.aggregate_tool_calls', minRiskLevel: 'low' },
 }
 
 function actionPolicy(kind: AgentActionKind) {
@@ -120,12 +121,43 @@ function assertRisk(kind: AgentActionKind, riskLevel: string) {
 function assertNavigation(kind: AgentActionKind, navigation: AgentNavigationEvent) {
   const policy = actionPolicy(kind)
   if (navigation.type !== 'navigation') throw unprocessable('Agent write action requires visible navigation')
-  if (navigation.route.mainTab !== policy.requiredMainTab) {
+  if (policy.requiredMainTab && navigation.route.mainTab !== policy.requiredMainTab) {
     throw unprocessable(`Agent action ${kind} must navigate to ${policy.requiredMainTab}`)
   }
   if (policy.requiredPanel && navigation.panel !== policy.requiredPanel) {
     throw unprocessable(`Agent action ${kind} must open ${policy.requiredPanel} panel`)
   }
+}
+
+function nestedSandboxActions(payload: Record<string, unknown>) {
+  const nested = payload.nestedActions
+  if (!Array.isArray(nested) || nested.length === 0) throw unprocessable('Sandbox aggregate action requires nestedActions')
+  return nested.map((item) => {
+    if (!isRecord(item)) throw unprocessable('Sandbox nested action is invalid')
+    const kind = typeof item.kind === 'string' ? coerceAgentActionKind(item.kind) : null
+    if (!kind || kind === 'sandbox.aggregate_tool_calls') throw unprocessable('Sandbox nested action kind is invalid')
+    const riskLevel = typeof item.riskLevel === 'string' ? item.riskLevel : ''
+    if (!(riskLevel in riskRank)) throw unprocessable('Sandbox nested action risk level is invalid')
+    const navigation = isRecord(item.navigation) ? item.navigation as AgentNavigationEvent : null
+    if (!navigation) throw unprocessable('Sandbox nested action navigation is required')
+    const payloadValue = item.payload ?? {}
+    const details = Array.isArray(item.details) ? item.details : []
+    const title = typeof item.title === 'string' && item.title.trim() ? item.title.trim() : kind
+    const summary = typeof item.summary === 'string' && item.summary.trim() ? item.summary.trim() : title
+    const targetLabel = typeof item.targetLabel === 'string' && item.targetLabel.trim() ? item.targetLabel.trim() : 'Sandbox nested action'
+    const draft = {
+      kind,
+      riskLevel: riskLevel as RiskLevel,
+      navigation,
+      title,
+      summary,
+      targetLabel,
+      details,
+      payload: payloadValue,
+    }
+    assertActionDraftAllowed(draft)
+    return draft
+  })
 }
 
 async function assertPeriodAllowed(db: Kysely<Database>, workspace: Row<'workspaces'>, periodId: unknown, options?: { allowLocked?: boolean }) {
@@ -211,6 +243,19 @@ export async function assertActionExecutionAllowed(
     case 'workspace.reset_draft':
     case 'workspace.import_bundle':
       return
+    case 'sandbox.aggregate_tool_calls': {
+      const nested = nestedSandboxActions(payload)
+      for (const nestedAction of nested) {
+        await assertActionExecutionAllowed(db, workspace, user, {
+          ...action,
+          kind: nestedAction.kind,
+          risk_level: nestedAction.riskLevel,
+          payload_json: JSON.stringify(nestedAction.payload),
+          navigation_json: JSON.stringify(nestedAction.navigation),
+        })
+      }
+      return
+    }
     default:
       actionPolicy(kind)
   }

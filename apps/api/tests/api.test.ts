@@ -2293,7 +2293,7 @@ describe('xox TypeScript API', () => {
       expect(toolNames.has('agent_reply')).toBe(false)
       expect(toolNames.has('ledger_create_member_income')).toBe(true)
       expect(toolNames.has('workspace_publish_release')).toBe(false)
-      expect(body.tools.length).toBeLessThanOrEqual(8)
+      expect(body.tools.length).toBeLessThanOrEqual(10)
       expect(body.messages[0].content).toContain('tool_calls')
       return {
         choices: [{
@@ -2710,7 +2710,7 @@ describe('xox TypeScript API', () => {
       expect(planned.json.runEvents.some((event: any) =>
         event.type === 'tool_catalog_ready' &&
         event.data?.projectionStrategy === 'progressive_tool_discovery' &&
-        event.data?.toolCount <= 8 &&
+        event.data?.toolCount <= 10 &&
         event.data?.toolNames.includes('workspace_configure_operating_model'),
       )).toBe(true)
       await closeHarness(harness)

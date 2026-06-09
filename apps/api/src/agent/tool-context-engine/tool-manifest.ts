@@ -44,6 +44,7 @@ type ToolManifestOverride = Partial<Pick<ToolManifest,
 const ENTITY_FACT_TOOL = 'data_query_workspace'
 const KERNEL_TOOL_NAMES = new Set([
   'tool_discover',
+  'rg',
   'data_query_workspace',
   'sandbox_run_code',
   'ask_user_clarification',
@@ -66,6 +67,12 @@ const MANIFEST_OVERRIDES: Record<string, ToolManifestOverride> = {
     summary: '在当前授权工具目录中查找下一步需要的工具，并返回短描述供下一轮物化真实 schema。',
     searchHints: ['tool search', 'tool discover', 'find tools', 'materialize tools', '工具搜索', '查找工具', '物化工具'],
     entityTags: ['tooling'],
+  },
+  rg: {
+    title: '搜索工具文档',
+    summary: '在 manifest 授权的工具文档、同轮 observation 文档和 sandbox SDK 文档中执行只读搜索。',
+    searchHints: ['rg', 'ripgrep', 'search manifest', 'search tools', 'search sdk', '搜索工具文档', '搜索函数', '查找参数'],
+    entityTags: ['tooling', 'manifest', 'sandbox'],
   },
   cost_item_add: {
     title: '新增成本项',

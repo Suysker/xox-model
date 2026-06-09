@@ -176,6 +176,7 @@ export type AgentActionKind =
   | 'workspace.import_bundle'
   | 'share.create'
   | 'share.revoke'
+  | 'sandbox.aggregate_tool_calls'
 
 export type AgentActionRequestStatus = 'pending' | 'confirmed' | 'cancelled' | 'executed' | 'failed'
 export type AgentAutomationLevel = 'manual' | 'low' | 'medium' | 'high'

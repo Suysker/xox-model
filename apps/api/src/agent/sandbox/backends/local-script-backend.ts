@@ -76,6 +76,7 @@ export class LocalScriptSandboxBackend implements SandboxBackend {
       mountedInputJsonPath,
       manifest: session.manifest,
       bundle: input.bundle,
+      ...(input.toolSdk ? { toolSdk: input.toolSdk } : {}),
     })
 
     const command = commandForLanguage(session.manifest.runtime.language)

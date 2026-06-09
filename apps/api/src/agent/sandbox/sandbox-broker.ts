@@ -82,6 +82,7 @@ export class SandboxBroker {
     manifest: SandboxManifest
     toolInput: SandboxRunCodeInput
     bundle: SandboxDataBundle
+    toolSdk?: import('./backend.js').SandboxExecuteInput['toolSdk']
     preferredBackendId?: string
   }): Promise<SandboxExecutionResult> {
     const policy = validateSandboxPolicy({
@@ -107,6 +108,7 @@ export class SandboxBroker {
       const result = await backend.execute(session, {
         input: input.toolInput,
         bundle: input.bundle,
+        ...(input.toolSdk ? { toolSdk: input.toolSdk } : {}),
       })
       const collected = await backend.collect(session)
       return {

@@ -210,8 +210,8 @@ describe('manifest-scoped sandbox tool', () => {
       code: [
         'import os',
         'import xox_sandbox',
-        'payload = xox_sandbox.load_structured()',
-        'rows = xox_sandbox.load_rows()',
+        'payload = xox_sandbox.data_query_workspace(scope="workspace_summary", metrics=["roi"])',
+        'rows = payload["rows"]',
         'xox_sandbox.emit({',
         '  "summary": "计算完成",',
         '  "structured": {',
@@ -229,7 +229,7 @@ describe('manifest-scoped sandbox tool', () => {
       scope: 'workspace_summary' as const,
       fields: ['grossSales', 'totalCost'],
       rows: [{ grossSales: 100, totalCost: 80 }],
-      structured: { grossSales: 100, totalCost: 80, totalProfit: 20 },
+      structured: { grossSales: 100, totalCost: 80, totalProfit: 20, rows: [{ grossSales: 100, totalCost: 80 }] },
       rowCount: 1,
       redactions: 0,
       contentHash: 'hash',
@@ -242,7 +242,12 @@ describe('manifest-scoped sandbox tool', () => {
     } as any, input, bundle, 'tool_call_1') as SandboxManifest
     process.env.XOX_SANDBOX_SECRET_FOR_TEST = 'secret-value-that-must-not-leak'
     try {
-      const result = await new SandboxBroker().execute({ manifest, toolInput: input, bundle })
+      const result = await new SandboxBroker().execute({
+        manifest,
+        toolInput: input,
+        bundle,
+        toolSdk: sandboxInternalsForTests.buildSandboxToolSdk(),
+      })
       expect(result.status).toBe('completed')
       expect(result.executionMode).toBe('executed')
       expect(result.exitCode).toBe(0)
@@ -321,6 +326,120 @@ describe('manifest-scoped sandbox tool', () => {
         schemaVersion: 'xox.sandbox.result.v1',
         structured: { profit: 20 },
       },
+    })
+  })
+
+  it('generates same-name sandbox SDK tools from the provider registry and scopes rg to tool docs', async () => {
+    const input: SandboxRunCodeInput = {
+      purpose: '同名工具 SDK 校验',
+      language: 'python',
+      code: [
+        'import xox_sandbox',
+        'summary = xox_sandbox.data_query_workspace(scope="workspace_summary", metrics=["roi", "payback"])',
+        'matches = xox_sandbox.rg(pattern="data_query_workspace", paths=["tools/agent-tool-manifest.md"], max_matches=3)',
+        'xox_sandbox.emit({',
+        '  "summary": "SDK ok",',
+        '  "structured": {',
+        '    "roi": summary["roi"],',
+        '    "paybackMonthLabel": summary["paybackMonthLabel"],',
+        '    "matchCount": len(matches["matches"])',
+        '  }',
+        '})',
+      ].join('\n'),
+      dataRequest: { scope: 'workspace_summary' },
+      expectedOutputs: ['json'],
+    }
+    const bundle = {
+      bundleId: 'bundle_sdk',
+      scope: 'workspace_summary' as const,
+      fields: ['grossSales', 'totalCost', 'roi', 'paybackMonthLabel'],
+      rows: [{ grossSales: 100, totalCost: 80, totalProfit: 20 }],
+      structured: { scope: 'workspace_summary', grossSales: 100, totalCost: 80, totalProfit: 20, roi: 0.2, paybackMonthLabel: '4月', rows: [{ grossSales: 100 }] },
+      rowCount: 1,
+      redactions: 0,
+      contentHash: 'hash',
+    }
+    const manifest = sandboxInternalsForTests.buildManifest({
+      workspace: { id: 'workspace_1', owner_id: 'tenant_1' },
+      user: { id: 'user_1' },
+      threadId: 'thread_1',
+      runId: 'run_1',
+    } as any, input, bundle, 'tool_call_sdk') as SandboxManifest
+    const result = await new SandboxBroker().execute({
+      manifest,
+      toolInput: input,
+      bundle,
+      toolSdk: sandboxInternalsForTests.buildSandboxToolSdk(),
+    })
+
+    expect(result.status).toBe('completed')
+    expect(result.exitCode).toBe(0)
+    expect(result.extraction).toMatchObject({
+      extractionStatus: 'parsed',
+      parsedOutput: {
+        schemaVersion: 'xox.sandbox.result.v1',
+        structured: {
+          roi: 0.2,
+          paybackMonthLabel: '4月',
+          matchCount: expect.any(Number),
+        },
+      },
+    })
+    expect((result.extraction.parsedOutput as any).structured.matchCount).toBeGreaterThan(0)
+  })
+
+  it('records sandbox write-capable SDK calls for aggregate Tool Runtime approval', async () => {
+    const input: SandboxRunCodeInput = {
+      purpose: '沙箱写入桥接校验',
+      language: 'python',
+      code: [
+        'import xox_sandbox',
+        'request = xox_sandbox.workspace_patch_config(patches=[',
+        '  {"path": "shareholders[0].investmentAmount", "value": 123456, "label": "股东 1 投资额"}',
+        '])',
+        'xox_sandbox.emit({"summary": "write requested", "structured": {"request": request}})',
+      ].join('\n'),
+      dataRequest: { scope: 'workspace_summary' },
+      expectedOutputs: ['json'],
+    }
+    const bundle = {
+      bundleId: 'bundle_write_sdk',
+      scope: 'workspace_summary' as const,
+      fields: ['grossSales'],
+      rows: [{ grossSales: 100 }],
+      structured: { scope: 'workspace_summary', grossSales: 100 },
+      rowCount: 1,
+      redactions: 0,
+      contentHash: 'hash',
+    }
+    const manifest = sandboxInternalsForTests.buildManifest({
+      workspace: { id: 'workspace_1', owner_id: 'tenant_1' },
+      user: { id: 'user_1' },
+      threadId: 'thread_1',
+      runId: 'run_1',
+    } as any, input, bundle, 'tool_call_write_sdk') as SandboxManifest
+    const result = await new SandboxBroker().execute({
+      manifest,
+      toolInput: input,
+      bundle,
+      toolSdk: sandboxInternalsForTests.buildSandboxToolSdk(),
+    })
+
+    expect(result.status).toBe('completed')
+    expect(result.exitCode).toBe(0)
+    expect(result.artifacts.map((artifact) => artifact.name)).not.toContain('tool_calls.jsonl')
+    expect(result.extraction.parsedOutput).toMatchObject({
+      schemaVersion: 'xox.sandbox.result.v1',
+      sandboxToolCalls: [
+        {
+          toolName: 'workspace_patch_config',
+          arguments: {
+            patches: [
+              { path: 'shareholders[0].investmentAmount', value: 123456, label: '股东 1 投资额' },
+            ],
+          },
+        },
+      ],
     })
   })
 
