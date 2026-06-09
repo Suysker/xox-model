@@ -213,6 +213,8 @@
 - When converting evaluator findings into runner obligations, model the result as a state machine with explicit open/satisfied/invalid transitions. A matching observation may close one obligation without closing its siblings; partial repair must keep the remaining obligations projected into the next tool catalog until they are explicitly satisfied or the run fails closed.
 - Failed tool plan steps are not automatically failed goals. Classify tool observations from typed runtime facts first; sandbox syntax/runtime errors, provider argument boundaries and empty-but-fixable outputs should re-enter the AgentRunEngine loop as repairable observations, while policy/auth/tenant failures remain terminal.
 - Do not rely only on provider `tool_call_id` to correlate repair attempts. Some providers or tests can reuse ids across retries; plan-step local execution facts such as sandbox status, exit code, boundary code and structured display data must take precedence when closing or superseding repairable observations.
+- Runner-owned prerequisite evidence must not be persisted or displayed as provider-selected tool calls. Prerequisite reads, memory/context hydration, readiness checks and evaluator obligations can feed the model/evaluator, but user-visible tool rows and tool counts must come only from actual provider/model-selected tool calls.
+- Sandbox observations need separate model content, display projection and raw artifact references. A structured `parsedOutput` that the model can use must also have a bounded user/audit projection; never collapse a successful sandbox calculation to a generic "completed" preview.
 
 ## Testing
 
