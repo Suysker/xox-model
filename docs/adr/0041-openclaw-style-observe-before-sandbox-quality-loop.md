@@ -239,6 +239,85 @@ Rules:
 - Business writes are not exposed in the sandbox SDK. Write actions remain provider tools plus confirmation cards outside sandbox.
 - `load_structured()` and `load_rows()` may remain as low-level escape hatches for generic file/data transformation, manifest debugging or non-domain bundles, but they are not the primary API in prompts, examples or finance calculation code.
 
+### Tool Manifest And Scoped `rg`
+
+The sandbox needs a searchable description of available tools and SDK façades. It should not infer tool availability from prompt prose or from ad hoc examples.
+
+Add a canonical tool document:
+
+```text
+docs/agent-tool-manifest.md
+```
+
+Rules:
+
+- The document is the human/model-readable tool reference.
+- Its source of truth is still `AGENT_TOOL_REGISTRY` plus `buildToolManifests(...)`; implementation should generate or verify this document from code, not maintain a drifting second registry.
+- It lists provider tool names, capabilities, risk levels, confirmation modes, navigation targets, prerequisites, read/write status and sandbox SDK façade names.
+- The same document, or a run-scoped subset of it, is mounted read-only into sandbox manifests.
+
+Sandbox SDK should expose a restricted ripgrep façade:
+
+```python
+matches = xox_sandbox.rg(
+    pattern="data_query_workspace",
+    paths=["tools/agent-tool-manifest.md"],
+    context_lines=2,
+    max_matches=20,
+)
+```
+
+JavaScript equivalent:
+
+```js
+const matches = rg({
+  pattern: 'data_query_workspace',
+  paths: ['tools/agent-tool-manifest.md'],
+  contextLines: 2,
+  maxMatches: 20,
+})
+```
+
+`rg` is a read-only search tool, not a filesystem capability.
+
+Allowed search roots:
+
+- `tools/agent-tool-manifest.md`: generated full or effective tool documentation.
+- `tools/effective-tool-manifest.md`: current run's policy-filtered, materialized tool subset.
+- `observations/*.json` and `observations/*.md`: model-visible observations already authorized for this run.
+- `inputs/**`: user-uploaded or generated text artifacts that passed file policy and are explicitly in the sandbox manifest.
+
+Forbidden search roots:
+
+- production repository files;
+- production database files;
+- environment files and provider keys;
+- server logs and run logs outside the current manifest;
+- raw tenant data not minimized into the manifest;
+- memory stores outside current authorized memory observations;
+- arbitrary absolute paths, symlinks, `..` traversal and hidden host paths.
+
+`xox_sandbox.rg(...)` returns structured matches:
+
+```ts
+type SandboxRgMatch = {
+  path: string
+  line: number
+  text: string
+  before?: string[]
+  after?: string[]
+  truncated?: boolean
+}
+```
+
+Security and correctness rules:
+
+- Search is literal by default; regex mode must be explicit.
+- Server enforces max files, max bytes, max matches, max context lines and timeout.
+- Search output is redacted with the same secret policy as tool observations.
+- `rg` cannot discover tools that are not in the effective manifest; it can only help code use already documented/authorized tools correctly.
+- If a model needs a tool outside the effective manifest, it must return to the main loop through `tool_discover` / progressive discovery, not use sandbox `rg` to bypass the catalog.
+
 ### Observation Replay
 
 Tool results must be replayed to the model as observations. The model, not the tool result projector, writes the final user answer.
@@ -312,17 +391,21 @@ Changes:
 
 Edit:
 
+- `docs/agent-tool-manifest.md`
 - `packages/contracts/src/index.ts`
 - `apps/api/src/agent/data-agent.ts`
 - `apps/api/src/agent/tool-catalog.ts`
+- `apps/api/src/agent/tool-context-engine/tool-manifest.ts`
 - `apps/api/src/agent/sandbox-service.ts`
 - `apps/api/src/agent/sandbox/backends/staged-sandbox-io.ts`
 
 Changes:
 
 - Introduce `DomainObservation` and `SandboxToolRequest` types.
+- Add a generated or verified tool manifest document from `AGENT_TOOL_REGISTRY` and `buildToolManifests`.
 - Make `data_query_workspace` response and sandbox bundles share field names and row semantics.
 - Add `xox_sandbox.data_query_workspace(...)` and `dataQueryWorkspace(...)` SDK façades backed by the same observation contract.
+- Add `xox_sandbox.rg(...)` and `rg(...)` as manifest-scoped read-only search over authorized virtual docs.
 - Ensure `workspace_summary` does not expose ambiguous `rows`.
 - Ensure `forecast_months` exposes month rows with a clear `rowKind`.
 - Ensure `entity_summary` exposes ordered shareholders and investments.
@@ -435,6 +518,7 @@ For the shareholder inflation/loan ROI class:
 - The run cannot call `sandbox_run_code` as the first workspace-data observation.
 - `data_query_workspace` must appear before sandbox unless an equivalent model-visible same-run domain observation already exists.
 - Sandbox code reads the same structured contract the model observed through `xox_sandbox.data_query_workspace(...)`, not through a separate hidden bundle shape.
+- Sandbox code can use `xox_sandbox.rg(...)` only to search the generated/effective tool manifest or other manifest-authorized read-only content.
 - The final answer includes:
   - selected shareholder identity or ordinal;
   - investment amount;
@@ -464,6 +548,7 @@ For UI/transcript:
 - Do not add a second runtime adapter.
 - Do not reintroduce keyword, regex or language-specific semantic routing.
 - Do not use `xox_sandbox.load_structured()` as the primary domain-data API; keep it only as a low-level helper behind the tool-shaped SDK.
+- Do not expose unrestricted filesystem `rg`; sandbox `rg` is a manifest-scoped virtual document search.
 - Do not import OpenClaw/Hermes control planes.
 - Do not make OpenAI Responses-only behavior a requirement.
 

@@ -82,6 +82,7 @@ Goal Interpreter
 - `runtime-goal-facts.ts` 只校验模型在 `tool_catalog_select_capabilities` 中给出的结构化 `goalFacts`；服务端不再从用户原话做关键词/正则式目标推断。无变化的 `workspace_patch_config` 作为 observation 返回给模型，不生成伪确认卡。
 - `memory-candidate-detector.ts` 和 `memory-consolidator.ts` 会在 action 执行后主动沉淀 scoped episodic/procedural memory；显式 `memory_remember` 仍保留为用户可控记忆入口。
 - `sandbox-service.ts` 已收敛为 manifest-scoped sandbox tool façade：模型只能请求 `sandbox_run_code`，服务端生成只读 `SandboxManifest`、最小化数据包和输出策略，再交给 `SandboxBroker` 选择真实 backend 执行。默认 `local-script` backend 在临时工作区启动 Python/Node 子进程；`docker` backend 可通过配置切换。sandbox observation 会记录真实 `executionMode/backendId/exitCode/structuredOutput`，Response Evaluator 只接受 executed + completed + exitCode 0 + structured output 的计算证据；业务写入仍必须走确认卡和领域服务。
+- sandbox 内的工具说明必须来自同一个工具 manifest，而不是另一套私有协议。`docs/agent-tool-manifest.md` 是面向模型和 sandbox 的工具文档目标面，后续应由 `AGENT_TOOL_REGISTRY` 与 `buildToolManifests(...)` 生成或校验。`sandbox_run_code` 内优先使用 `xox_sandbox.data_query_workspace(...)` 这类和 provider tool 同名/同 schema 的只读 façade；`xox_sandbox.rg(...)` 只能检索 manifest 授权的工具文档、同轮 observation 文档和安全输入文本，不能访问 repo、DB、env、日志或其他租户数据。
 - React `AgentConsole` 已显示最新目标、评估轮次、满足/未满足数量、blocker 和下一轮 planner brief。
 
 验证命令：
