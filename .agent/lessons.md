@@ -215,6 +215,8 @@
 - Do not rely only on provider `tool_call_id` to correlate repair attempts. Some providers or tests can reuse ids across retries; plan-step local execution facts such as sandbox status, exit code, boundary code and structured display data must take precedence when closing or superseding repairable observations.
 - Runner-owned prerequisite evidence must not be persisted or displayed as provider-selected tool calls. Prerequisite reads, memory/context hydration, readiness checks and evaluator obligations can feed the model/evaluator, but user-visible tool rows and tool counts must come only from actual provider/model-selected tool calls.
 - Sandbox observations need separate model content, display projection and raw artifact references. A structured `parsedOutput` that the model can use must also have a bounded user/audit projection; never collapse a successful sandbox calculation to a generic "completed" preview.
+- For workspace-data calculations, do not optimize away the model-visible domain observation. The correct path is `data_query_workspace` or an equivalent same-run domain observation first, then `sandbox_run_code` referencing that observation; sandbox helpers such as `load_structured()` must expose the same semantic contract the model already observed, not a hidden second shape.
+- Do not enforce a global short-answer finalizer for Agent goals. Simple direct-answer turns should be concise because the turn lane is simple, while derived finance or sandbox-backed answers must preserve the evidence, assumptions, formulas and useful structured outputs needed for accuracy.
 
 ## Testing
 
