@@ -375,7 +375,7 @@ Preserved:
 
 - manifest-scoped input;
 - no production DB/API/secrets/session access;
-- no business writes from sandbox;
+- no direct business writes from sandbox; ADR 0042 later allows sandbox code to request write-capable tools only through the unified Tool Runtime Gateway, with normal policy, confirmation and audit;
 - output is an observation.
 
 Refined:

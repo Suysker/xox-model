@@ -347,7 +347,7 @@ Mandatory controls:
 - no API process env inheritance except a tiny allowlist required by the runtime;
 - no provider keys, database URLs, auth cookies, user tokens or memory values;
 - network disabled unless a future manifest explicitly grants an allowlisted external resource;
-- no business writes, no internal API access, no object-storage bucket access;
+- no direct business writes, no internal API access, no object-storage bucket access; ADR 0042 later allows nested business write tools only by bridging back to the normal Tool Runtime Gateway with policy, confirmation and audit;
 - maximum input bundle size;
 - maximum code size;
 - maximum stdout/stderr bytes;
@@ -552,7 +552,7 @@ Validation:
 
 - No general terminal for the product Agent.
 - No arbitrary filesystem browsing.
-- No business writes from sandbox.
+- No direct business writes from sandbox. ADR 0042 later allows sandbox code to request write-capable tools only through the unified Tool Runtime Gateway.
 - No internal API access from sandbox.
 - No provider-specific sandbox DTOs in shared contracts.
 - No second agent loop owned by sandbox.

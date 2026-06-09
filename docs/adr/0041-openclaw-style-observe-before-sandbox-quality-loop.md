@@ -1,12 +1,12 @@
 # ADR 0041: OpenClaw-Style Observe-Before-Sandbox Quality Loop
 
-Status: Proposed
+Status: Superseded by ADR 0042 for runtime policy; retained as regression analysis
 
 Date: 2026-06-10
 
 Refines: ADR 0016 Manifest Scoped Sandbox Tool, ADR 0020 Progressive Tool Discovery Runtime, ADR 0032 Runner-Owned Evidence Contract v2, ADR 0036 Claim-Grounded Observation Loop, ADR 0039 Fast Accurate Main Loop, ADR 0040 Assistant Tool Lifecycle Evidence Lanes
 
-Supersedes one decision from ADR 0039: a sandbox call must **not** replace model-visible domain observation for workspace-data calculations.
+Superseded by ADR 0042: the hardcoded observe-before-sandbox route and write-SDK policy-stop semantics are no longer normative. The retained lesson is contract unification: provider tool calls and sandbox SDK calls must use the same tool names, argument schemas and output contracts.
 
 ## Context
 
@@ -92,11 +92,11 @@ Do not copy:
 
 - OpenAI-specific Responses-only assumptions into xox-model's OpenAI-compatible provider runtime.
 
-## Decision
+## Superseded Decision
 
-Adopt an **Observe-Before-Sandbox Quality Loop** for any task that combines current workspace data with external assumptions, scenario math, financing assumptions, inflation/discounting, or other derived calculations.
+ADR 0041 originally proposed an **Observe-Before-Sandbox Quality Loop** for tasks combining current workspace data with external assumptions, scenario math, financing assumptions, inflation/discounting, or other derived calculations. This fixed route solved one regression but overfit the harness.
 
-The required shape is:
+The old shape was:
 
 ```mermaid
 flowchart TD
@@ -121,13 +121,13 @@ flowchart TD
   Eval -->|terminal| Fail["Fail Closed"]
 ```
 
-Short invariant:
+Superseded invariant:
 
 ```text
-For workspace-data calculations, the model must observe the domain tool result before it writes sandbox code, unless an equivalent model-visible domain observation already exists in the same run.
+Historical invariant, no longer normative: workspace-data calculations should not hide ground truth from the model; ADR 0042 now implements this through one unified tool runtime rather than a fixed tool order.
 ```
 
-This keeps the run fast by avoiding repeated reads, but not by hiding ground truth from the model.
+ADR 0042 replaces this with a more general OpenClaw/Hermes contract: the model decides the next tool from observations inside the single loop; sandbox code can call the same tools through `xox_sandbox.<tool_name>(...)`; the runtime enforces tenant policy, approval, audit and repair. A domain observation is often the right next step, but it is not a hardcoded path.
 
 ## Contract
 
@@ -237,7 +237,7 @@ sandbox SDK:  xox_sandbox.workspace_patch_config(...)
 JS SDK:       workspacePatchConfig(...)
 ```
 
-This is not a second live tool execution path. It is a deterministic façade over runner-approved observations, manifest bundles and policy stops.
+This paragraph is superseded by ADR 0042. The sandbox SDK is not a second implementation path, but it is a live bridge into the same Tool Runtime Gateway. Read and write tools keep the same name, argument schema and result contract as provider tool calls. Write-capable calls execute only through normal tenant policy, confirmation, domain service and audit boundaries, and may pause the whole sandbox run on one aggregate approval.
 
 Target backing contract:
 
@@ -253,7 +253,7 @@ type SandboxToolAuthority =
   | 'manifest_search'
   | 'pure_calculation'
   | 'emit_output'
-  | 'policy_stop'
+  | 'tool_runtime_bridge'
 ```
 
 Rules:
@@ -262,7 +262,7 @@ Rules:
 - SDK functions may only read observations/bundles that the runner already authorized for the sandbox manifest.
 - SDK functions must not call the production API, production database, internal HTTP endpoints or arbitrary tools.
 - If requested data was not observed or bundled, the function fails with a typed missing-observation error; it must not invent data or silently broaden access.
-- Write-capable provider tools are still represented as generated SDK functions, but their sandbox authority is `policy_stop`. Calling them from sandbox must not mutate data, create confirmations or call domain services; it returns/raises a structured policy result that tells the main loop to leave sandbox and use the normal provider tool plus confirmation-card path.
+- Write-capable provider tools are still represented as generated SDK functions, but their sandbox authority is `tool_runtime_bridge`. Calling them from sandbox must not access DB or domain services directly; it bridges to the same Tool Runtime Gateway, which may execute, return an action preview, or pause the whole sandbox run on one aggregate approval.
 - `load_structured()` and `load_rows()` may remain as low-level escape hatches for generic file/data transformation, manifest debugging or non-domain bundles, but model-facing prompts and examples should prefer generated tool-shaped SDK functions.
 
 ### Tool Manifest And Scoped `rg`
@@ -380,7 +380,7 @@ Replacement policy:
 
 ### Keep
 
-- ADR 0016: real manifest-scoped sandbox, no business writes from sandbox.
+- ADR 0016: real manifest-scoped sandbox isolation. ADR 0042 corrects the interpretation: sandbox cannot write directly, but it may request writes through the unified Tool Runtime Gateway.
 - ADR 0020: progressive tool discovery plus Hermes-style search/retrieval.
 - ADR 0032: runner-owned evidence and response evaluation.
 - ADR 0036: claim-grounded loop requiring domain facts before shareholder ROI claims.
@@ -388,12 +388,12 @@ Replacement policy:
 
 ### Correct
 
-ADR 0039's sandbox fast path must be narrowed:
+ADR 0039's sandbox fast path must be narrowed, and ADR 0042 provides the current normative shape:
 
 - Keep self-describing sandbox bundles and low-level helpers as internal/advanced APIs.
 - Promote tool-shaped sandbox SDK methods such as `xox_sandbox.data_query_workspace(...)` as the model-facing code authoring API.
-- Remove the claim that sandbox should avoid a separate domain read for facts the model needs to reason about.
-- The optimization target is not "one sandbox call instead of a domain observation"; it is "one domain observation, one sandbox call, no duplicate capability-router churn, no repeated memory injection, no fake tool rows".
+- Remove the claim that sandbox should use a private bundle/helper contract for facts the model needs to reason about.
+- The optimization target is not "one sandbox call instead of a domain observation"; it is "one unified tool runtime, no duplicate capability-router churn, no repeated memory injection, no fake tool rows".
 
 ADR 0040's runner evidence separation remains valid, but it does not mean current workspace facts should always be hidden as runner-only evidence. For workspace-data calculations, the domain read is part of model cognition and should be a model-visible observation. Hidden runner evidence may support safety or evaluator checks, but it cannot replace the model's observed domain tool result.
 
@@ -409,7 +409,7 @@ Edit:
 Changes:
 
 - Delete the instruction that says not to call `data_query_workspace` before sandbox for the same summary.
-- Replace it with observe-before-sandbox language.
+- Replace it with unified tool-runtime language from ADR 0042.
 - Delete the global short-answer rule.
 - Keep simple direct-answer behavior in the turn resolver, not in the finalizer prompt.
 
@@ -542,7 +542,7 @@ no goal/evaluator loop
 For the shareholder inflation/loan ROI class:
 
 - The run cannot call `sandbox_run_code` as the first workspace-data observation.
-- `data_query_workspace` must appear before sandbox unless an equivalent model-visible same-run domain observation already exists.
+- Provider and sandbox code must use the same tool contracts; ADR 0042 no longer requires `data_query_workspace` to appear before every sandbox run as a fixed path.
 - Sandbox code reads the same structured contract the model observed through `xox_sandbox.data_query_workspace(...)`, not through a separate hidden bundle shape.
 - Sandbox code can use `xox_sandbox.rg(...)` only to search the generated/effective tool manifest or other manifest-authorized read-only content.
 - The final answer includes:
@@ -582,7 +582,7 @@ For UI/transcript:
 
 1. Prompt cleanup and documentation alignment.
 2. Contract unification with tests for domain observation and sandbox bundle shape.
-3. Loop obligation for observe-before-sandbox.
+3. Loop obligation for unified tool-runtime evidence.
 4. Evaluator quality checks.
 5. Transcript projection checks.
 6. Real-provider smoke with DeepSeek key supplied through local environment only.

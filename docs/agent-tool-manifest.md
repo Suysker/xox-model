@@ -15,7 +15,9 @@ The Agent runtime has two generated tool surfaces:
 1. Provider tools: model-selected tools exposed through OpenAI-compatible `tool_calls`.
 2. Sandbox SDK tools: language-native functions available inside `sandbox_run_code`.
 
-The sandbox must not learn a different private protocol. Every provider tool should have a generated SDK function with the same semantic name, argument schema and documented result contract. Read-only functions can replay authorized observations or read manifest-mounted bundles. Write-capable functions exist as policy-stop stubs: they never mutate SaaS data from sandbox and instead tell the main loop to use the normal provider tool plus confirmation-card path.
+The sandbox must not learn a different private protocol. Every provider tool should have a generated SDK function with the same semantic name, argument schema and documented result contract. Sandbox SDK calls are not a second implementation path: they bridge back to the same Tool Runtime Gateway used by provider `tool_calls`, tool search bridge calls and normal server tools.
+
+Read-only tools return the same tenant-authorized observation contract as provider calls. Write-capable tools may also be called from sandbox code, but they can only execute through the same policy, confirmation, navigation, domain-service and audit path as provider calls. If nested sandbox writes exceed the current automation level, the sandbox run pauses on one aggregate approval for the whole code run. The sandbox still cannot access DB, secrets, internal HTTP endpoints or domain services directly.
 
 When code needs current workspace data or tool documentation, it should call tool-shaped SDK methods instead of pasting previous tool results into code as prose:
 
@@ -60,8 +62,8 @@ Default behavior:
 
 | Surface | Sandbox SDK | Authority | Notes |
 | --- | --- | --- | --- |
-| read-only provider tools | `xox_sandbox.<tool_name>(...)` / generated JS camelCase | observation replay | Returns the same structured observation contract as the provider tool when the data is authorized in the manifest. |
-| write-capable provider tools | `xox_sandbox.<tool_name>(...)` / generated JS camelCase | policy stop | Preserves name and argument schema, but cannot mutate data or create confirmations from sandbox. It returns/raises a structured policy result for the main loop. |
+| read-only provider tools | `xox_sandbox.<tool_name>(...)` / generated JS camelCase | Tool Runtime Gateway | Returns the same structured observation contract as the provider tool when the data is authorized in the manifest. |
+| write-capable provider tools | `xox_sandbox.<tool_name>(...)` / generated JS camelCase | Tool Runtime Gateway + aggregate approval | Preserves name, argument schema and output contract. Writes execute only through the same policy/confirmation/audit path as provider tools; if automation is insufficient, the sandbox run asks for one aggregate approval. |
 | tool manifest search | `xox_sandbox.rg(...)` / `rg(...)` | manifest search | Searches only manifest-authorized virtual docs and safe input text. |
 | sandbox output | `xox_sandbox.emit(...)` / `emit(...)` | output | Emits structured sandbox result. |
 
@@ -77,7 +79,7 @@ This table lists the current complete provider tool names. Detailed JSON schema 
 | `ask_user_clarification` | clarification | read | never | none | `xox_sandbox.ask_user_clarification` |
 | `tool_discover` | tooling | read | never | none | `xox_sandbox.tool_discover` |
 | `data_query_workspace` | data | read | never | none | `xox_sandbox.data_query_workspace` |
-| `sandbox_run_code` | sandbox | read | never | none | outer tool only |
+| `sandbox_run_code` | sandbox | dynamic | conditional | none | outer tool only |
 | `memory_search` | memory | read | never | none | `xox_sandbox.memory_search` |
 | `memory_get` | memory | read | never | none | `xox_sandbox.memory_get` |
 | `memory_remember` | memory | low | never | none | `xox_sandbox.memory_remember` |
@@ -127,7 +129,7 @@ This table lists the current complete provider tool names. Detailed JSON schema 
 ### Data And Computation
 
 - `data_query_workspace`: read tenant-scoped workspace facts such as forecast summary, month summary, member/team/entity lists, ledger history and variance detail.
-- `sandbox_run_code`: execute manifest-scoped read-only code for calculations, file transformations and temporary artifacts.
+- `sandbox_run_code`: execute manifest-scoped code for calculations, file transformations, temporary artifacts and nested tool calls. It cannot write directly; write-capable SDK calls bridge to the normal Tool Runtime Gateway and may create an aggregate sandbox approval.
 
 ### Memory
 

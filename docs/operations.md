@@ -94,7 +94,7 @@ sudo systemctl status xox-model-web
 
 ## Agent Sandbox Runtime
 
-`sandbox_run_code` 是 Agent harness 的只读代码执行工具，不是业务写入接口。服务端会先构造 manifest-scoped 输入包，再通过 `SandboxBroker` 选择真实 backend 执行模型代码。
+`sandbox_run_code` 是 Agent harness 的 manifest-scoped 代码执行工具，不是公开 REST 写入接口。服务端会先构造 manifest-scoped 输入包、同名工具 SDK 和输出策略，再通过 `SandboxBroker` 选择真实 backend 执行模型代码。sandbox 不能直接访问 DB、provider key、internal API、领域服务或其他租户数据；代码里的 `xox_sandbox.<tool_name>(...)` 会桥回同一个 Tool Runtime Gateway，按正常租户、权限、确认、领域服务和审计链路执行。
 
 配置项：
 
@@ -110,6 +110,7 @@ sudo systemctl status xox-model-web
 - 输入文件为 `input.json` 和 `input/input.json`；结构化输出优先写 `output/result.json`。
 - 只有 `executionMode=executed`、`status=completed`、`exitCode=0` 且存在结构化输出的 sandbox observation 能满足可复核计算目标。
 - `executionMode=not_executed` 只表示 policy 在执行前阻断，不是 fake 结果，不能作为计算 evidence。
+- sandbox nested writes 只能通过同名 SDK 桥回 Tool Runtime Gateway。如果嵌套写入超过当前自动化等级，整次 sandbox run 暂停为一张聚合确认/授权；确认后恢复执行或确定性重放，不让模型重新编造写入动作。
 
 ### 真实模型 Smoke
 
