@@ -35,13 +35,17 @@ const PYTHON_HELPER = String.raw`
 import json
 import os
 import re
+import time
+import uuid
 from pathlib import Path
 
 _TOOL_CALLS = []
 
 def load():
     with open(os.environ["XOX_SANDBOX_INPUT_JSON"], "r", encoding="utf-8") as file:
-        return json.load(file)
+        payload = json.load(file)
+    _mark_manifest_consumed("load")
+    return payload
 
 def load_bundle():
     return load()["bundle"]
@@ -79,6 +83,22 @@ def _output_dir():
     output_dir.mkdir(parents=True, exist_ok=True)
     return output_dir
 
+def _mark_manifest_consumed(reason):
+    try:
+        payload = json.loads(Path(os.environ["XOX_SANDBOX_INPUT_JSON"]).read_text(encoding="utf-8"))
+        manifest = payload.get("manifest", {})
+        bundle = payload.get("bundle", {})
+        proof = {
+            "manifestId": manifest.get("manifestId"),
+            "bundleId": bundle.get("bundleId"),
+            "contentHash": bundle.get("contentHash"),
+            "nonce": manifest.get("nonce"),
+            "reason": reason,
+        }
+        (_output_dir() / "manifest_consumed.json").write_text(json.dumps(proof, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        return
+
 def _write_tool_calls():
     path = _output_dir() / "tool_calls.jsonl"
     path.write_text(
@@ -86,37 +106,83 @@ def _write_tool_calls():
         encoding="utf-8",
     )
 
-def _record_tool_call(name, arguments):
+def _record_tool_call(name, arguments, status="running", observation_id=None):
     tool = _tool_by_name(name) or {}
     call = {
+        "callId": f"sandbox_sdk_{len(_TOOL_CALLS) + 1}_{name}_{uuid.uuid4().hex[:8]}",
         "toolName": name,
         "arguments": arguments,
         "riskLevel": tool.get("riskLevel"),
         "confirmationMode": tool.get("confirmationMode"),
         "navigationTarget": tool.get("navigationTarget"),
+        "source": "sandbox_sdk",
+        "status": status,
     }
+    if observation_id:
+        call["observationId"] = observation_id
     _TOOL_CALLS.append(call)
     _write_tool_calls()
+    return call
+
+def _update_tool_call(call, **updates):
+    call.update({key: value for key, value in updates.items() if value is not None})
+    _write_tool_calls()
+
+def _rpc_dirs():
+    root = os.environ.get("XOX_SANDBOX_TOOL_RPC_DIR")
+    if not root:
+        return None, None
+    root_path = Path(root)
+    requests = root_path / "requests"
+    responses = root_path / "responses"
+    requests.mkdir(parents=True, exist_ok=True)
+    responses.mkdir(parents=True, exist_ok=True)
+    return requests, responses
+
+def _rpc_tool_call(name, arguments):
+    _mark_manifest_consumed(f"tool:{name}")
+    call = _record_tool_call(name, arguments)
+    requests, responses = _rpc_dirs()
+    if not requests or not responses:
+        _update_tool_call(call, status="failed", error={"code": "sandbox.tool_runtime_unavailable"})
+        return {
+            "ok": False,
+            "toolName": name,
+            "error": {
+                "code": "sandbox.tool_runtime_unavailable",
+                "message": "No Tool Runtime Gateway handler is attached to this sandbox session.",
+                "repairable": True,
+            },
+        }
+    request = {"id": call["callId"], "toolName": name, "arguments": arguments}
+    request_path = requests / f"{call['callId']}.json"
+    response_path = responses / f"{call['callId']}.json"
+    request_path.write_text(json.dumps(request, ensure_ascii=False), encoding="utf-8")
+    deadline = time.time() + float(os.environ.get("XOX_SANDBOX_TOOL_RPC_TIMEOUT_SECONDS", "8"))
+    while time.time() < deadline:
+        if response_path.exists():
+            response = json.loads(response_path.read_text(encoding="utf-8"))
+            status = response.get("status") or ("completed" if response.get("ok") else "failed")
+            _update_tool_call(
+                call,
+                status=status,
+                observationId=response.get("observationId"),
+                error=response.get("error"),
+            )
+            return response.get("output") if response.get("ok") else response
+        time.sleep(0.025)
+    _update_tool_call(call, status="failed", error={"code": "sandbox.tool_runtime_timeout"})
     return {
         "ok": False,
-        "requiresApproval": True,
         "toolName": name,
-        "arguments": arguments,
-        "message": "This sandbox tool call is recorded for the Tool Runtime Gateway.",
+        "error": {
+            "code": "sandbox.tool_runtime_timeout",
+            "message": f"Timed out waiting for Tool Runtime Gateway response for {name}.",
+            "repairable": True,
+        },
     }
 
 def _read_tool_result(name, arguments):
-    if name == "data_query_workspace":
-        structured = load_structured()
-        if isinstance(structured, dict):
-            result = dict(structured)
-            requested_scope = arguments.get("scope")
-            if requested_scope:
-                result["scope"] = requested_scope
-            if arguments.get("metrics") is not None:
-                result["metrics"] = arguments.get("metrics")
-            return result
-        return {"scope": arguments.get("scope") or load_bundle().get("scope"), "structured": structured}
     if name == "rg":
         return rg(**arguments)
     if name == "tool_discover":
@@ -156,9 +222,20 @@ def call_tool(name, *args, **kwargs):
                 "repairable": True,
             },
         }
+    _mark_manifest_consumed(f"tool:{name}")
     if tool.get("riskLevel") == "read" and tool.get("confirmationMode") == "never":
-        return _read_tool_result(name, arguments)
-    return _record_tool_call(name, arguments)
+        if name in ("rg", "tool_discover"):
+            return _read_tool_result(name, arguments)
+        return _rpc_tool_call(name, arguments)
+    call = _record_tool_call(name, arguments, status="pending_approval")
+    return {
+        "ok": False,
+        "requiresApproval": True,
+        "toolName": name,
+        "arguments": arguments,
+        "observationId": call.get("callId"),
+        "message": "This sandbox tool call is recorded for the Tool Runtime Gateway.",
+    }
 
 def rg(pattern, paths=None, context_lines=0, max_matches=20, regex=False, **_unused):
     needle = str(pattern or "")
@@ -236,13 +313,16 @@ function javascriptHelper(tools: SandboxToolSdkEntry[] = []) {
     })
     .join('\n')
   return String.raw`
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 
 const toolCalls = [];
 
 export function load() {
-  return JSON.parse(readFileSync(process.env.XOX_SANDBOX_INPUT_JSON, "utf8"));
+  const payload = JSON.parse(readFileSync(process.env.XOX_SANDBOX_INPUT_JSON, "utf8"));
+  markManifestConsumed("load");
+  return payload;
 }
 
 export function loadBundle() {
@@ -278,6 +358,23 @@ function outputDir() {
   return process.env.XOX_SANDBOX_OUTPUT_DIR;
 }
 
+function markManifestConsumed(reason) {
+  try {
+    const payload = JSON.parse(readFileSync(process.env.XOX_SANDBOX_INPUT_JSON, "utf8"));
+    const manifest = payload.manifest ?? {};
+    const bundle = payload.bundle ?? {};
+    writeFileSync(join(outputDir(), "manifest_consumed.json"), JSON.stringify({
+      manifestId: manifest.manifestId,
+      bundleId: bundle.bundleId,
+      contentHash: bundle.contentHash,
+      nonce: manifest.nonce,
+      reason,
+    }), "utf8");
+  } catch {
+    // Consumption proof is best-effort; the parent treats missing proof as invalid evidence.
+  }
+}
+
 function writeToolCalls() {
   writeFileSync(
     join(outputDir(), "tool_calls.jsonl"),
@@ -286,23 +383,86 @@ function writeToolCalls() {
   );
 }
 
-function recordToolCall(name, args) {
+function recordToolCall(name, args, status = "running", observationId = null) {
   const tool = toolByName(name) ?? {};
   const call = {
+    callId: "sandbox_sdk_" + (toolCalls.length + 1) + "_" + name + "_" + randomUUID().slice(0, 8),
     toolName: name,
     arguments: args ?? {},
     riskLevel: tool.riskLevel,
     confirmationMode: tool.confirmationMode,
     navigationTarget: tool.navigationTarget,
+    source: "sandbox_sdk",
+    status,
   };
+  if (observationId) call.observationId = observationId;
   toolCalls.push(call);
   writeToolCalls();
+  return call;
+}
+
+function updateToolCall(call, updates = {}) {
+  Object.assign(call, Object.fromEntries(Object.entries(updates).filter(([, value]) => value !== undefined && value !== null)));
+  writeToolCalls();
+}
+
+function rpcDirs() {
+  const root = process.env.XOX_SANDBOX_TOOL_RPC_DIR;
+  if (!root) return null;
+  const requests = join(root, "requests");
+  const responses = join(root, "responses");
+  mkdirSync(requests, { recursive: true });
+  mkdirSync(responses, { recursive: true });
+  return { requests, responses };
+}
+
+function sleep(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function rpcToolCall(name, args = {}) {
+  markManifestConsumed("tool:" + name);
+  const call = recordToolCall(name, args);
+  const dirs = rpcDirs();
+  if (!dirs) {
+    updateToolCall(call, { status: "failed", error: { code: "sandbox.tool_runtime_unavailable" } });
+    return {
+      ok: false,
+      toolName: name,
+      error: {
+        code: "sandbox.tool_runtime_unavailable",
+        message: "No Tool Runtime Gateway handler is attached to this sandbox session.",
+        repairable: true,
+      },
+    };
+  }
+  const request = { id: call.callId, toolName: name, arguments: args ?? {} };
+  const requestPath = join(dirs.requests, call.callId + ".json");
+  const responsePath = join(dirs.responses, call.callId + ".json");
+  writeFileSync(requestPath, JSON.stringify(request), "utf8");
+  const deadline = Date.now() + Number(process.env.XOX_SANDBOX_TOOL_RPC_TIMEOUT_SECONDS ?? 8) * 1000;
+  while (Date.now() < deadline) {
+    if (existsSync(responsePath)) {
+      const response = JSON.parse(readFileSync(responsePath, "utf8"));
+      const status = response.status ?? (response.ok ? "completed" : "failed");
+      updateToolCall(call, {
+        status,
+        observationId: response.observationId,
+        error: response.error,
+      });
+      return response.ok ? response.output : response;
+    }
+    sleep(25);
+  }
+  updateToolCall(call, { status: "failed", error: { code: "sandbox.tool_runtime_timeout" } });
   return {
     ok: false,
-    requiresApproval: true,
     toolName: name,
-    arguments: args ?? {},
-    message: "This sandbox tool call is recorded for the Tool Runtime Gateway.",
+    error: {
+      code: "sandbox.tool_runtime_timeout",
+      message: "Timed out waiting for Tool Runtime Gateway response for " + name + ".",
+      repairable: true,
+    },
   };
 }
 
@@ -337,17 +497,6 @@ export function rg(args = {}) {
 }
 
 function readToolResult(name, args = {}) {
-  if (name === "data_query_workspace") {
-    const structured = loadStructured();
-    if (structured && typeof structured === "object" && !Array.isArray(structured)) {
-      return {
-        ...structured,
-        ...(args.scope ? { scope: args.scope } : {}),
-        ...(args.metrics ? { metrics: args.metrics } : {}),
-      };
-    }
-    return { scope: args.scope ?? loadBundle().scope, structured };
-  }
   if (name === "rg") return rg(args);
   if (name === "tool_discover") {
     const query = String(args.query ?? "").toLowerCase();
@@ -387,10 +536,20 @@ export function callTool(name, args = {}) {
       },
     };
   }
+  markManifestConsumed("tool:" + name);
   if (tool.riskLevel === "read" && tool.confirmationMode === "never") {
-    return readToolResult(name, args);
+    if (name === "rg" || name === "tool_discover") return readToolResult(name, args);
+    return rpcToolCall(name, args);
   }
-  return recordToolCall(name, args);
+  const call = recordToolCall(name, args, "pending_approval");
+  return {
+    ok: false,
+    requiresApproval: true,
+    toolName: name,
+    arguments: args ?? {},
+    observationId: call.callId,
+    message: "This sandbox tool call is recorded for the Tool Runtime Gateway.",
+  };
 }
 
 export function emit(result) {

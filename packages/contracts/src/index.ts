@@ -1090,6 +1090,7 @@ export type SandboxAuditProvenance = {
   bundleId: string
   bundleContentHash: string
   inputBundleMounted: boolean
+  inputBundleConsumed?: boolean
   codeHash: string
   stdoutHash?: string
   stderrHash?: string
@@ -1101,6 +1102,38 @@ export type SandboxAuditProvenance = {
     memoryBytesPeak?: number
     cpuMs?: number
   }
+}
+
+export type SandboxEvidenceProof = {
+  executionMode: 'executed'
+  status: 'completed'
+  exitCode: 0
+  backendId: string
+  codeHash: string
+  outputHash: string
+  manifest: {
+    manifestId: string
+    bundleId: string
+    contentHash: string
+    nonce: string
+    consumed: boolean
+  }
+  sdkCalls: Array<{
+    name: string
+    argumentsHash: string
+    observationId: string
+    status: 'completed' | 'failed' | 'pending_approval'
+  }>
+  sourceObservationRefs: string[]
+}
+
+export type SandboxNestedToolObservation = {
+  observationId: string
+  name: string
+  argumentsHash: string
+  status: 'completed' | 'failed' | 'pending_approval'
+  modelContent?: string
+  outputHash?: string
 }
 
 export type SandboxObservation = {
@@ -1120,6 +1153,8 @@ export type SandboxObservation = {
   manifestHash: string
   inputEvidenceIds: string[]
   manifestScoped: true
+  evidenceProof?: SandboxEvidenceProof
+  nestedToolObservations?: SandboxNestedToolObservation[]
   purpose: string
   language: 'python' | 'javascript'
   manifest: Pick<SandboxManifest, 'schemaVersion' | 'manifestId' | 'nonce' | 'identity' | 'inputBundle' | 'runtime' | 'capabilities' | 'network' | 'outputPolicy'>

@@ -16,6 +16,30 @@ function bytes(value: string) {
   return Buffer.from(value, 'utf8')
 }
 
+function toolRuntimeHandlerFrom(output: unknown) {
+  return async (request: { id: string; toolName: string; arguments: Record<string, unknown> }) => {
+    if (request.toolName !== 'data_query_workspace') {
+      return {
+        ok: false,
+        toolName: request.toolName,
+        status: 'failed' as const,
+        error: {
+          code: 'test.tool_unavailable',
+          message: `${request.toolName} is not available in this test handler.`,
+          repairable: true,
+        },
+      }
+    }
+    return {
+      ok: true,
+      toolName: request.toolName,
+      observationId: `test_observation_${request.id}`,
+      status: 'completed' as const,
+      output,
+    }
+  }
+}
+
 describe('manifest-scoped sandbox tool', () => {
   it('registers sandbox_run_code as a provider-native sandbox capability tool', () => {
     expect(AGENT_TOOL_CATALOG.some((tool) => tool.function.name === 'sandbox_run_code')).toBe(true)
@@ -247,6 +271,7 @@ describe('manifest-scoped sandbox tool', () => {
         toolInput: input,
         bundle,
         toolSdk: sandboxInternalsForTests.buildSandboxToolSdk(),
+        toolRuntimeHandler: toolRuntimeHandlerFrom(bundle.structured),
       })
       expect(result.status).toBe('completed')
       expect(result.executionMode).toBe('executed')
@@ -258,6 +283,7 @@ describe('manifest-scoped sandbox tool', () => {
         bundleId: bundle.bundleId,
         bundleContentHash: bundle.contentHash,
         inputBundleMounted: true,
+        inputBundleConsumed: true,
       })
       expect(result.extraction).toMatchObject({
         extractionStatus: 'parsed',
@@ -319,6 +345,7 @@ describe('manifest-scoped sandbox tool', () => {
       bundleId: bundle.bundleId,
       bundleContentHash: bundle.contentHash,
       inputBundleMounted: true,
+      inputBundleConsumed: false,
     })
     expect(result.extraction).toMatchObject({
       extractionStatus: 'parsed',
@@ -370,10 +397,12 @@ describe('manifest-scoped sandbox tool', () => {
       toolInput: input,
       bundle,
       toolSdk: sandboxInternalsForTests.buildSandboxToolSdk(),
+      toolRuntimeHandler: toolRuntimeHandlerFrom(bundle.structured),
     })
 
     expect(result.status).toBe('completed')
     expect(result.exitCode).toBe(0)
+    expect(result.provenance.inputBundleConsumed).toBe(true)
     expect(result.extraction).toMatchObject({
       extractionStatus: 'parsed',
       parsedOutput: {

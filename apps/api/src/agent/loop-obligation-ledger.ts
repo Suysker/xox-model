@@ -221,6 +221,7 @@ export function applyObservationToLedger(input: {
   observation: AgentToolObservation
   iteration: number
 }) {
+  if (input.observation.synthetic === true || input.observation.lane === 'runner_evidence') return
   for (const obligation of input.ledger.obligations) {
     if (!isActive(obligation.status)) continue
     if (obligation.kind === 'sandbox_calculation') {

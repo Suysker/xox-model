@@ -56,11 +56,13 @@ function blockedResult(input: {
     manifestHash: hashJson(input.manifest),
     inputEvidenceIds: [`bundle:${input.bundle.bundleId}`, `content:${input.bundle.contentHash}`],
     manifestScoped: true,
+    inputBundleConsumed: false,
     provenance: {
       manifestId: input.manifest.manifestId,
       bundleId: input.bundle.bundleId,
       bundleContentHash: input.bundle.contentHash,
       inputBundleMounted: false,
+      inputBundleConsumed: false,
       codeHash: hashText(input.toolInput.code),
       stdoutHash: hashText(''),
       stderrHash: hashText(''),
@@ -83,6 +85,7 @@ export class SandboxBroker {
     toolInput: SandboxRunCodeInput
     bundle: SandboxDataBundle
     toolSdk?: import('./backend.js').SandboxExecuteInput['toolSdk']
+    toolRuntimeHandler?: import('./backend.js').SandboxExecuteInput['toolRuntimeHandler']
     preferredBackendId?: string
   }): Promise<SandboxExecutionResult> {
     const policy = validateSandboxPolicy({
@@ -109,6 +112,7 @@ export class SandboxBroker {
         input: input.toolInput,
         bundle: input.bundle,
         ...(input.toolSdk ? { toolSdk: input.toolSdk } : {}),
+        ...(input.toolRuntimeHandler ? { toolRuntimeHandler: input.toolRuntimeHandler } : {}),
       })
       const collected = await backend.collect(session)
       return {

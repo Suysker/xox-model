@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { SandboxManifest } from '@xox/contracts'
@@ -12,6 +12,7 @@ import {
 import { parseSandboxOutput } from '../result-parser.js'
 import { runSandboxProcess } from './process-runner.js'
 import { stageSandboxIo } from './staged-sandbox-io.js'
+import { prepareSandboxToolRpcDirectories, sandboxToolRpcPoller } from './tool-rpc-files.js'
 
 function hashJson(value: unknown) {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex')
@@ -49,6 +50,11 @@ function dockerSpec(language: SandboxManifest['runtime']['language']) {
   }
 }
 
+async function inputBundleConsumed(outputDir: string) {
+  const text = await readFile(join(outputDir, 'manifest_consumed.json'), 'utf8').catch(() => null)
+  return Boolean(text)
+}
+
 export class DockerSandboxBackend implements SandboxBackend {
   id = 'docker'
   supportedLanguages = ['python', 'javascript'] as const
@@ -76,8 +82,20 @@ export class DockerSandboxBackend implements SandboxBackend {
       mountedInputJsonPath,
       manifest: session.manifest,
       bundle: input.bundle,
+      ...(input.toolSdk ? { toolSdk: input.toolSdk } : {}),
     })
 
+    const handler = input.toolRuntimeHandler
+    let rpc: Awaited<ReturnType<typeof prepareSandboxToolRpcDirectories>> | null = null
+    let poll: (() => Promise<void>) | undefined
+    if (handler) {
+      rpc = await prepareSandboxToolRpcDirectories(workDir)
+      poll = sandboxToolRpcPoller({
+        requestsDir: rpc.requestsDir,
+        responsesDir: rpc.responsesDir,
+        handler,
+      })
+    }
     const spec = dockerSpec(session.manifest.runtime.language)
     await writeFile(join(workDir, spec.scriptName), input.input.code, 'utf8')
     const dockerArgs = [
@@ -99,6 +117,7 @@ export class DockerSandboxBackend implements SandboxBackend {
       'XOX_SANDBOX_INPUT_JSON=/workspace/input.json',
       '-e',
       'XOX_SANDBOX_OUTPUT_DIR=/workspace/output',
+      ...(rpc ? ['-e', 'XOX_SANDBOX_TOOL_RPC_DIR=/workspace/tool-rpc', '-e', 'XOX_SANDBOX_TOOL_RPC_TIMEOUT_SECONDS=8'] : []),
       '-e',
       'PYTHONIOENCODING=utf-8',
       '-e',
@@ -114,7 +133,9 @@ export class DockerSandboxBackend implements SandboxBackend {
       timeoutMs: session.manifest.runtime.timeoutMs,
       stdoutLimitBytes: session.manifest.runtime.stdoutLimitBytes,
       stderrLimitBytes: session.manifest.runtime.stderrLimitBytes,
+      ...(poll ? { poll } : {}),
     })
+    if (poll) await poll()
     const parsed = await parseSandboxOutput({
       outputDir,
       stdout: processResult.stdout,
@@ -126,6 +147,7 @@ export class DockerSandboxBackend implements SandboxBackend {
       maxArtifactBytes: session.manifest.outputPolicy.maxArtifactBytes,
       sessionId: session.id,
     })
+    const consumed = await inputBundleConsumed(outputDir)
     return {
       status: processResult.status,
       executionMode: 'executed',
@@ -147,11 +169,13 @@ export class DockerSandboxBackend implements SandboxBackend {
       manifestHash: hashJson(session.manifest),
       inputEvidenceIds: [`bundle:${input.bundle.bundleId}`, `content:${input.bundle.contentHash}`],
       manifestScoped: true,
+      inputBundleConsumed: consumed,
       provenance: {
         manifestId: session.manifest.manifestId,
         bundleId: input.bundle.bundleId,
         bundleContentHash: input.bundle.contentHash,
         inputBundleMounted: true,
+        inputBundleConsumed: consumed,
         codeHash: hashText(input.input.code),
         stdoutHash: hashText(processResult.stdout),
         stderrHash: hashText(processResult.stderr),

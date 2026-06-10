@@ -49,7 +49,31 @@ export type SandboxExecuteInput = {
     tools: SandboxToolSdkEntry[]
     documents: SandboxToolDocument[]
   }
+  toolRuntimeHandler?: SandboxToolRuntimeHandler
 }
+
+export type SandboxToolRuntimeRequest = {
+  id: string
+  toolName: string
+  arguments: Record<string, unknown>
+}
+
+export type SandboxToolRuntimeResponse = {
+  ok: boolean
+  toolName: string
+  observationId?: string
+  output?: unknown
+  status?: 'completed' | 'failed' | 'pending_approval'
+  error?: {
+    code: string
+    message: string
+    repairable: boolean
+  }
+}
+
+export type SandboxToolRuntimeHandler = (
+  request: SandboxToolRuntimeRequest,
+) => Promise<SandboxToolRuntimeResponse>
 
 export type SandboxExecutionStatus = SandboxObservation['status']
 
@@ -71,6 +95,7 @@ export type SandboxExecutionResult = {
   manifestHash: string
   inputEvidenceIds: string[]
   manifestScoped: true
+  inputBundleConsumed?: boolean
   errorMessage?: string
 }
 

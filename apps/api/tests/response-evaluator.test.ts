@@ -55,6 +55,27 @@ function observation(overrides: Partial<AgentToolObservation> = {}): AgentToolOb
   }
 }
 
+function sandboxProof(overrides: Record<string, unknown> = {}) {
+  return {
+    executionMode: 'executed',
+    status: 'completed',
+    exitCode: 0,
+    backendId: 'local-script',
+    codeHash: 'code_hash',
+    outputHash: 'output_hash',
+    manifest: {
+      manifestId: 'manifest_1',
+      bundleId: 'bundle_1',
+      contentHash: 'content_hash',
+      nonce: 'nonce_1',
+      consumed: true,
+    },
+    sdkCalls: [],
+    sourceObservationRefs: ['bundle:bundle_1', 'content:content_hash'],
+    ...overrides,
+  }
+}
+
 describe('Agent response evaluator', () => {
   it('does not let tool observations replace the final assistant answer', () => {
     const observations = [observation()]
@@ -172,6 +193,7 @@ describe('Agent response evaluator', () => {
           executionMode: 'executed',
           exitCode: 0,
           manifestScoped: true,
+          evidenceProof: sandboxProof(),
           outputText: '',
           stdout: '',
           artifacts: [],
@@ -223,6 +245,7 @@ describe('Agent response evaluator', () => {
           executionMode: 'executed',
           exitCode: 0,
           manifestScoped: true,
+          evidenceProof: sandboxProof(),
           stdout: 'shareholder ROI: 12%',
           artifacts: [],
           purpose: '计算第一位股东投资回报',
@@ -261,6 +284,7 @@ describe('Agent response evaluator', () => {
           executionMode: 'not_executed',
           exitCode: 0,
           manifestScoped: true,
+          evidenceProof: sandboxProof(),
           outputText: 'answer: 1',
           extraction: { extractionStatus: 'text_only', summary: 'answer: 1' },
         }),
@@ -328,6 +352,102 @@ describe('Agent response evaluator', () => {
     })
   })
 
+  it('rejects sandbox calculations that did not consume the manifest bundle', () => {
+    const observations = [
+      observation({
+        title: '受控沙箱执行完成',
+        toolName: 'sandbox_run_code',
+        toolCallId: 'call_sandbox',
+        modelContent: JSON.stringify({
+          observationType: 'sandbox_execution',
+          completed: true,
+          status: 'completed',
+          executionMode: 'executed',
+          exitCode: 0,
+          manifestScoped: true,
+          outputText: 'hardcoded answer: 530%',
+          stdout: 'hardcoded answer: 530%',
+          artifacts: [],
+          extraction: { extractionStatus: 'text_only', summary: 'hardcoded answer: 530%' },
+          evidenceProof: sandboxProof({
+            manifest: {
+              manifestId: 'manifest_1',
+              bundleId: 'bundle_1',
+              contentHash: 'content_hash',
+              nonce: 'nonce_1',
+              consumed: false,
+            },
+            sourceObservationRefs: [],
+          }),
+        }),
+      }),
+    ]
+    const evidence = buildEvidenceLedger({ threadId: 'thread_1', runId: 'run_1', observations })
+
+    expect(evidence[0]).toMatchObject({
+      authority: 'sandbox',
+      validity: 'invalid',
+      invalidReasons: expect.arrayContaining(['sandbox_manifest_not_consumed', 'sandbox_source_observation_missing']),
+    })
+    expect(evaluateAssistantResponse({
+      goal: goal({ requiresSandboxComputation: true }),
+      finalAssistantText: '沙箱已经算完。',
+      observations,
+      evidence,
+    })).toMatchObject({
+      status: 'needs_calculation',
+      findings: [expect.objectContaining({ code: 'response.sandbox_evidence_invalid' })],
+    })
+  })
+
+  it('requires same-name SDK observations for workspace-data sandbox calculations', () => {
+    const observations = [
+      observation({
+        title: '受控沙箱执行完成',
+        toolName: 'sandbox_run_code',
+        toolCallId: 'call_sandbox',
+        modelContent: JSON.stringify({
+          observationType: 'sandbox_execution',
+          completed: true,
+          status: 'completed',
+          executionMode: 'executed',
+          exitCode: 0,
+          manifestScoped: true,
+          outputText: 'roi: 530%',
+          stdout: 'roi: 530%',
+          artifacts: [],
+          dataBundleSummary: { scope: 'workspace_summary', rows: 1, fields: ['roi'] },
+          extraction: { extractionStatus: 'text_only', summary: 'roi: 530%' },
+          evidenceProof: sandboxProof(),
+        }),
+      }),
+    ]
+    const evidence = buildEvidenceLedger({ threadId: 'thread_1', runId: 'run_1', observations })
+
+    expect(evidence[0]).toMatchObject({
+      authority: 'sandbox',
+      validity: 'invalid',
+      invalidReasons: expect.arrayContaining(['sandbox_sdk_observation_missing']),
+    })
+  })
+
+  it('keeps synthetic runner evidence out of the acceptance ledger', () => {
+    const observations = [
+      observation({
+        toolCallId: 'runner_evidence_run_1_entity_summary',
+        toolArguments: { scope: 'entity_summary' },
+        modelContent: JSON.stringify({
+          scope: 'entity_summary',
+          shareholders: [{ index: 1, name: '股东 A' }],
+        }),
+        lane: 'runner_evidence',
+        synthetic: true,
+      }),
+    ]
+
+    expect(buildEvidenceLedger({ threadId: 'thread_1', runId: 'run_1', observations })).toEqual([])
+  })
+
   it('rejects failed sandbox trajectory even when initial goal facts are empty', () => {
     const observations = [
       observation({
@@ -375,6 +495,7 @@ describe('Agent response evaluator', () => {
           executionMode: 'executed',
           exitCode: 0,
           manifestScoped: true,
+          evidenceProof: sandboxProof(),
           outputText: 'answer: 1',
           stdout: 'answer: 1',
           artifacts: [],
@@ -413,6 +534,7 @@ describe('Agent response evaluator', () => {
           executionMode: 'executed',
           exitCode: 0,
           manifestScoped: true,
+          evidenceProof: sandboxProof(),
           outputText: 'personal ROI: 12%',
           stdout: 'personal ROI: 12%',
           artifacts: [],
@@ -466,7 +588,7 @@ describe('Agent response evaluator', () => {
       expect.objectContaining({
         kind: 'sandbox_calculation',
         toolNames: ['sandbox_run_code'],
-        findingCodes: expect.arrayContaining(['response.sandbox_evidence_invalid']),
+        findingCodes: expect.arrayContaining(['response.sandbox_evidence_missing']),
       }),
       expect.objectContaining({
         kind: 'domain_fact',

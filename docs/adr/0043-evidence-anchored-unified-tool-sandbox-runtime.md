@@ -1,6 +1,6 @@
 # ADR 0043: Evidence-Anchored Unified Tool Sandbox Runtime
 
-Status: Proposed
+Status: Implemented
 
 Date: 2026-06-10
 
@@ -365,6 +365,29 @@ Rules:
   - sandbox SDK nested reads plus a proof listing those nested observations.
 - The final assistant response is generated after observations are replayed to the model, not by projecting tool output directly to the user.
 - `npm.cmd run test:api`, `npm.cmd run test:web`, and `npm.cmd run build:web` pass after implementation.
+
+## Implementation Notes
+
+Implemented on 2026-06-10:
+
+- Added shared contracts for `SandboxEvidenceProof`, nested sandbox SDK observations, and manifest consumption provenance in `packages/contracts/src/index.ts`.
+- Routed high-level sandbox SDK calls through the parent Tool Runtime Gateway using file-based RPC in `apps/api/src/agent/sandbox/backends/tool-rpc-files.ts`.
+- Removed fake high-level staged implementations from sandbox helpers. Python and JavaScript helpers now expose registry-generated `xox_sandbox.<tool_name>` functions, while low-level bundle helpers remain explicitly low level.
+- Added manifest consumption handshake for both low-level bundle reads and high-level SDK tool calls. A sandbox run that never consumes the manifest cannot satisfy calculation evidence.
+- Made file RPC response writes atomic to avoid the child process reading partial JSON while the parent process is still writing the tool result.
+- Added sandbox evidence proof construction in `apps/api/src/agent/sandbox-service.ts`, including code/output hashes, manifest id/bundle/content/nonce, nested SDK call refs, and source observation refs.
+- Tightened `apps/api/src/agent/evidence-ledger.ts` so valid sandbox calculation evidence requires executed status, readable output, manifest consumption, source refs, and completed SDK observations for domain-scoped bundles.
+- Demoted synthetic runner observations in the evidence and obligation ledgers so hidden prerequisites can guide context but cannot close final-answer evidence.
+- Updated API tests so shareholder-specific sandbox answers require model-visible `entity_summary` evidence or nested same-name SDK observations, not hidden runner prerequisites.
+
+Validation evidence from implementation:
+
+- `npm.cmd run build:api`: passed.
+- `npm.cmd run test -- tests/api.test.ts -t sandbox` from `apps/api`: 6/6 sandbox loop tests passed.
+- `npm.cmd run test:api`: 14 test files, 216 tests passed.
+- `npm.cmd run build:web`: passed.
+- `npm.cmd run test:web`: 11 test files, 76 tests passed.
+- `npm.cmd run test`: web 11/11 files and 76/76 tests passed, then api 14/14 files and 216/216 tests passed.
 
 ## Non-Goals
 

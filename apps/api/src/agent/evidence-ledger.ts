@@ -50,6 +50,10 @@ export type AgentEvidenceRequirement = {
   source: 'goal_facts' | 'trajectory' | 'final_answer_claim'
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
 function parseObservationContent(value: string): Record<string, unknown> {
   try {
     const parsed = JSON.parse(value)
@@ -62,12 +66,14 @@ function parseObservationContent(value: string): Record<string, unknown> {
 }
 
 export function isExecutedSandboxEvidenceFacts(facts: Record<string, unknown>) {
+  const invalid = sandboxInvalidReasons(facts)
   return isSandboxObservationFacts(facts) &&
     facts.executionMode === 'executed' &&
     facts.status === 'completed' &&
     facts.exitCode === 0 &&
     facts.manifestScoped === true &&
-    hasReadableSandboxOutput(facts)
+    hasReadableSandboxOutput(facts) &&
+    invalid.length === 0
 }
 
 function isSandboxObservationFacts(facts: Record<string, unknown>) {
@@ -101,7 +107,33 @@ function sandboxInvalidReasons(facts: Record<string, unknown>) {
   if (facts.exitCode !== 0) reasons.push('sandbox_exit_not_zero')
   if (facts.manifestScoped !== true) reasons.push('sandbox_not_manifest_scoped')
   if (!hasReadableSandboxOutput(facts)) reasons.push('sandbox_output_missing')
-  return reasons.length > 0 ? reasons : ['sandbox_evidence_invalid']
+  const proof = isRecord(facts.evidenceProof) ? facts.evidenceProof : null
+  if (!proof) {
+    reasons.push('sandbox_proof_missing')
+    return reasons
+  }
+  const manifest = isRecord(proof.manifest) ? proof.manifest : null
+  if (!manifest?.consumed) reasons.push('sandbox_manifest_not_consumed')
+  const sdkCalls = Array.isArray(proof.sdkCalls) ? proof.sdkCalls : []
+  const completedSdkCalls = sdkCalls.filter((call) =>
+    isRecord(call) && call.status === 'completed' && typeof call.observationId === 'string' && call.observationId.trim().length > 0)
+  const sourceRefs = Array.isArray(proof.sourceObservationRefs)
+    ? proof.sourceObservationRefs.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    : []
+  const scope = isRecord(facts.dataBundleSummary) && typeof facts.dataBundleSummary.scope === 'string'
+    ? facts.dataBundleSummary.scope
+    : null
+  const needsToolAnchoredDomainRead = scope === 'workspace_summary' ||
+    scope === 'forecast_months' ||
+    scope === 'entity_summary' ||
+    scope === 'ledger_entries'
+  if (needsToolAnchoredDomainRead && completedSdkCalls.length === 0) {
+    reasons.push('sandbox_sdk_observation_missing')
+  }
+  if (sourceRefs.length === 0) reasons.push('sandbox_source_observation_missing')
+  if (typeof proof.codeHash !== 'string' || !proof.codeHash.trim()) reasons.push('sandbox_code_hash_missing')
+  if (typeof proof.outputHash !== 'string' || !proof.outputHash.trim()) reasons.push('sandbox_output_hash_missing')
+  return reasons
 }
 
 function observationAuthority(observation: AgentToolObservation): AgentEvidenceAuthority {
@@ -187,7 +219,9 @@ export function buildEvidenceLedger(input: {
   observations: AgentToolObservation[]
   now?: string
 }) {
-  return input.observations.map((observation, index) =>
+  return input.observations
+    .filter((observation) => observation.synthetic !== true && observation.lane !== 'runner_evidence')
+    .map((observation, index) =>
     evidenceFromToolObservation({
       threadId: input.threadId,
       runId: input.runId,
@@ -195,7 +229,7 @@ export function buildEvidenceLedger(input: {
       index,
       ...(input.now ? { now: input.now } : {}),
     }),
-  )
+    )
 }
 
 export function buildEvidenceRequirements(input: {

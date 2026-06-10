@@ -45,6 +45,26 @@ function observation(overrides: Partial<AgentToolObservation> = {}): AgentToolOb
   }
 }
 
+function sandboxProof() {
+  return {
+    executionMode: 'executed',
+    status: 'completed',
+    exitCode: 0,
+    backendId: 'local-script',
+    codeHash: 'code_hash',
+    outputHash: 'output_hash',
+    manifest: {
+      manifestId: 'manifest_1',
+      bundleId: 'bundle_1',
+      contentHash: 'content_hash',
+      nonce: 'nonce_1',
+      consumed: true,
+    },
+    sdkCalls: [],
+    sourceObservationRefs: ['bundle:bundle_1'],
+  }
+}
+
 function completedSandbox(): AgentToolObservation {
   return observation({
     title: '受控沙箱执行完成',
@@ -56,6 +76,7 @@ function completedSandbox(): AgentToolObservation {
       executionMode: 'executed',
       exitCode: 0,
       manifestScoped: true,
+      evidenceProof: sandboxProof(),
       outputText: 'shareholder roi: 0.12',
       purpose: '计算第二位股东贷款后 ROI',
     }),

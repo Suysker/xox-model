@@ -1439,10 +1439,11 @@ describe('xox TypeScript API', () => {
           language: 'python',
           code: [
             'import xox_sandbox',
-            'payload = xox_sandbox.load()',
-            'data = payload["bundle"]["structured"]',
-            'first = data.get("firstShareholder")',
-            'profit = data.get("totalProfit", 0)',
+            'summary = xox_sandbox.data_query_workspace(scope="workspace_summary", metrics=["roi", "cash", "payback"])',
+            'entities = xox_sandbox.data_query_workspace(scope="entity_summary", metrics=["shareholderNames", "shareholderInvestments"])',
+            'shareholders = entities.get("shareholders", [])',
+            'first = shareholders[0] if shareholders else None',
+            'profit = summary.get("totalProfit", 0)',
             'investment = (first or {}).get("investmentAmount", 0) or 0',
             'loan_interest = investment * 0.05',
             'personal_roi = None if investment == 0 else (profit - loan_interest) / investment',
@@ -1450,7 +1451,7 @@ describe('xox TypeScript API', () => {
             '  "summary": "已完成第一位股东个人回报测算",',
             '  "structured": {',
             '    "firstShareholder": first,',
-            '    "shareholders": data.get("shareholders", []),',
+            '    "shareholders": shareholders,',
             '    "totalProfit": profit,',
             '    "loanInterest": loan_interest,',
             '    "personalRoi": personal_roi',
@@ -1542,8 +1543,7 @@ describe('xox TypeScript API', () => {
           language: 'python',
           code: [
             'import xox_sandbox',
-            'payload = xox_sandbox.load()',
-            'data = payload["bundle"]["structured"]',
+            'summary = xox_sandbox.data_query_workspace(scope="workspace_summary", metrics=["roi", "cash", "payback"])',
             'print("starting")',
             'broken = ',
           ].join('\n'),
@@ -1561,11 +1561,12 @@ describe('xox TypeScript API', () => {
           language: 'python',
           code: [
             'import xox_sandbox',
-            'payload = xox_sandbox.load()',
-            'data = payload["bundle"]["structured"]',
-            'first = data.get("firstShareholder") or {}',
+            'summary = xox_sandbox.data_query_workspace(scope="workspace_summary", metrics=["roi", "cash", "payback"])',
+            'entities = xox_sandbox.data_query_workspace(scope="entity_summary", metrics=["shareholderNames", "shareholderInvestments"])',
+            'shareholders = entities.get("shareholders", [])',
+            'first = shareholders[0] if shareholders else {}',
             'investment = first.get("investmentAmount", 0) or 0',
-            'profit = data.get("totalProfit", 0) or 0',
+            'profit = summary.get("totalProfit", 0) or 0',
             'interest = investment * 0.05',
             'personal_roi = None if investment == 0 else (profit - interest) / investment',
             'xox_sandbox.emit({',
@@ -1726,7 +1727,9 @@ describe('xox TypeScript API', () => {
       expect(state.json.runEvents.some((event: any) =>
         event.type === 'response_evaluated' &&
         event.data?.evaluationStatus === 'needs_calculation' &&
-        event.data?.findings?.some((finding: any) => finding.code === 'response.sandbox_evidence_invalid') &&
+        event.data?.findings?.some((finding: any) =>
+          finding.code === 'response.sandbox_evidence_missing' ||
+          finding.code === 'response.sandbox_evidence_invalid') &&
         event.data?.obligationLedger?.obligations?.some((obligation: any) =>
           obligation.kind === 'sandbox_calculation' &&
           (obligation.status === 'open' || obligation.status === 'invalid') &&
@@ -1790,21 +1793,44 @@ describe('xox TypeScript API', () => {
     })
   })
 
-  it('auto-materializes ordered shareholder evidence before accepting shareholder-specific sandbox answers', async () => {
+  it('requires model-visible ordered shareholder evidence before accepting shareholder-specific sandbox answers', async () => {
     let planningCalls = 0
     await withFakeOpenAICompatibleProvider((body) => {
       planningCalls += 1
       if (planningCalls === 1) {
+        expectProviderTools(body, ['data_query_workspace'])
+        return fakeToolResponse('data_query_workspace', {
+          question: '读取有序股东事实',
+          scope: 'entity_summary',
+          metrics: ['shareholderNames', 'shareholderInvestments'],
+        })
+      }
+      if (planningCalls === 2) {
+        expect(body.messages.some((message: any) => message.role === 'tool')).toBe(true)
         expectProviderTools(body, ['sandbox_run_code'])
         return fakeToolResponse('sandbox_run_code', {
           purpose: '计算第 2 位股东贷款后的个人 ROI',
           language: 'python',
-          code: 'print("personal shareholder ROI: 12%")',
+          code: [
+            'import xox_sandbox',
+            'summary = xox_sandbox.data_query_workspace(scope="workspace_summary", metrics=["roi", "cash", "payback"])',
+            'entities = xox_sandbox.data_query_workspace(scope="entity_summary", metrics=["shareholderNames", "shareholderInvestments"])',
+            'shareholders = entities.get("shareholders", [])',
+            'second = shareholders[1] if len(shareholders) > 1 else {}',
+            'profit = summary.get("totalProfit", 0) or 0',
+            'investment = second.get("investmentAmount", 0) or 0',
+            'loan_interest = investment * 0.03',
+            'roi = None if investment == 0 else (profit * (second.get("dividendRate", 0) or 0) - loan_interest) / investment',
+            'xox_sandbox.emit({',
+            '  "summary": "第 2 位股东贷款后的个人 ROI 已计算",',
+            '  "structured": {"shareholder": second, "personalRoi": roi, "loanInterest": loan_interest}',
+            '})',
+          ].join('\n'),
           dataRequest: { scope: 'forecast_months' },
-          expectedOutputs: ['markdown'],
+          expectedOutputs: ['json'],
         })
       }
-      return fakeAssistantTextResponse('第 2 位股东贷款后的个人 ROI 是 12%。')
+      return fakeAssistantTextResponse('第 2 位股东是股东 B。基于沙箱计算结果，贷款后的个人 ROI 已完成测算。')
     }, async (baseUrl) => {
       const harness = await buildHarness('agent-shareholder-evidence-required', {
         ...fakeProviderSettings(baseUrl),
@@ -1819,6 +1845,7 @@ describe('xox TypeScript API', () => {
 
       expect(response.statusCode).toBe(200)
       expect(response.json.planSteps.map((step: any) => step.toolName).filter(Boolean)).toEqual([
+        'data_query_workspace',
         'sandbox_run_code',
       ])
       const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
@@ -1834,7 +1861,7 @@ describe('xox TypeScript API', () => {
       expect(state.json.planSteps.some((step: any) =>
         step.toolName === 'data_query_workspace' &&
         step.toolArguments?.scope === 'entity_summary',
-      )).toBe(false)
+      )).toBe(true)
       await closeHarness(harness)
     }, {
       capabilities: ['sandbox'],
@@ -1846,7 +1873,7 @@ describe('xox TypeScript API', () => {
     })
   })
 
-  it('uses runner-owned ordered entity prerequisites instead of spending model turns on shareholder fact repair', async () => {
+  it('repairs shareholder fact obligations with model-visible entity reads', async () => {
     let planningCalls = 0
     await withFakeOpenAICompatibleProvider((body) => {
       planningCalls += 1
@@ -1855,19 +1882,28 @@ describe('xox TypeScript API', () => {
         return fakeToolResponse('sandbox_run_code', {
           purpose: '计算第 2 位股东贷款后的个人 ROI',
           language: 'python',
-          code: 'print("personal shareholder ROI: 12%")',
+          code: [
+            'import xox_sandbox',
+            'summary = xox_sandbox.data_query_workspace(scope="workspace_summary", metrics=["roi", "cash", "payback"])',
+            'xox_sandbox.emit({"summary": "只有计算证据，尚未显式读取股东顺序", "structured": {"roi": summary.get("roi")}})',
+          ].join('\n'),
           dataRequest: { scope: 'forecast_months' },
-          expectedOutputs: ['markdown'],
+          expectedOutputs: ['json'],
         })
       }
       if (planningCalls === 2) {
         expect(body.messages.some((message: any) => message.role === 'tool')).toBe(true)
-        expect(body.messages.some((message: any) =>
-          message.role === 'system' &&
-          String(message.content).includes('Runner evidence context') &&
-          String(message.content).includes('entity_summary'),
-        )).toBe(true)
-        return fakeAssistantTextResponse('第 2 位股东贷款后的个人 ROI 是 12%。')
+        expectProviderTools(body, ['data_query_workspace'])
+        return fakeToolResponse('data_query_workspace', {
+          question: '读取有序股东事实',
+          scope: 'entity_summary',
+          metrics: ['shareholderNames', 'shareholderInvestments'],
+        })
+      }
+      if (planningCalls === 3) {
+        const toolMessages = body.messages.filter((message: any) => message.role === 'tool')
+        expect(JSON.stringify(toolMessages)).toContain('shareholders')
+        return fakeAssistantTextResponse('第 2 位股东是股东 B。结合沙箱计算结果，贷款后的个人 ROI 是 12%。')
       }
       throw new Error(`Unexpected planning call ${planningCalls}`)
     }, async (baseUrl) => {
@@ -1883,9 +1919,9 @@ describe('xox TypeScript API', () => {
       })
 
       expect(response.statusCode).toBe(200)
-      expect(planningCalls).toBeLessThanOrEqual(2)
       expect(response.json.planSteps.map((step: any) => step.toolName).filter(Boolean)).toEqual([
         'sandbox_run_code',
+        'data_query_workspace',
       ])
       expect(response.json.messages.at(-1).content).toContain('第 2 位股东')
       expect(response.json.messages.at(-1).content).not.toContain('Runner evidence obligations')
@@ -1898,7 +1934,7 @@ describe('xox TypeScript API', () => {
       expect(state.json.planSteps.some((step: any) =>
         step.toolName === 'data_query_workspace' &&
         step.toolArguments?.scope === 'entity_summary',
-      )).toBe(false)
+      )).toBe(true)
       expect(state.json.goals.at(-1).status).toBe('completed')
       await closeHarness(harness)
     }, {
@@ -1937,9 +1973,23 @@ describe('xox TypeScript API', () => {
         return fakeToolResponse('sandbox_run_code', {
           purpose: '计算第 2 位股东贷款后的个人 ROI',
           language: 'python',
-          code: 'print("loan adjusted ROI: 12%")',
+          code: [
+            'import xox_sandbox',
+            'summary = xox_sandbox.data_query_workspace(scope="workspace_summary", metrics=["roi", "cash", "payback"])',
+            'entities = xox_sandbox.data_query_workspace(scope="entity_summary", metrics=["shareholderNames", "shareholderInvestments"])',
+            'shareholders = entities.get("shareholders", [])',
+            'second = shareholders[1] if len(shareholders) > 1 else {}',
+            'profit = summary.get("totalProfit", 0) or 0',
+            'investment = second.get("investmentAmount", 0) or 0',
+            'interest = investment * 0.03',
+            'roi = None if investment == 0 else (profit * (second.get("dividendRate", 0) or 0) - interest) / investment',
+            'xox_sandbox.emit({',
+            '  "summary": "贷款后的第 2 位股东 ROI 已计算",',
+            '  "structured": {"shareholder": second, "personalRoi": roi, "loanInterest": interest}',
+            '})',
+          ].join('\n'),
           dataRequest: { scope: 'workspace_summary' },
-          expectedOutputs: ['markdown'],
+          expectedOutputs: ['json'],
         })
       }
       if (planningCalls === 4) {

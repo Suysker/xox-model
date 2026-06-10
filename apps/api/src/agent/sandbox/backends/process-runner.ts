@@ -24,6 +24,8 @@ export function runSandboxProcess(input: {
   timeoutMs: number
   stdoutLimitBytes: number
   stderrLimitBytes: number
+  poll?: () => Promise<void>
+  pollIntervalMs?: number
 }): Promise<SandboxProcessRunResult> {
   const startedAt = Date.now()
   return new Promise((resolve) => {
@@ -31,15 +33,35 @@ export function runSandboxProcess(input: {
     let stderr = ''
     let settled = false
     let timedOut = false
+    let polling = false
     const child = spawn(input.command, input.args, {
       cwd: input.cwd,
       env: input.env,
       windowsHide: true,
     })
+    const poll = () => {
+      if (!input.poll || polling || settled) return
+      polling = true
+      input.poll()
+        .catch((error) => {
+          stderr = cappedAppend(
+            stderr,
+            Buffer.from(`${stderr ? '\n' : ''}sandbox_rpc_poll_failed: ${error instanceof Error ? error.message : String(error)}`),
+            input.stderrLimitBytes,
+          )
+        })
+        .finally(() => {
+          polling = false
+        })
+    }
+    const pollTimer = input.poll
+      ? setInterval(poll, Math.max(10, input.pollIntervalMs ?? 25))
+      : null
     const finish = (result: Omit<SandboxProcessRunResult, 'durationMs'>) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
+      if (pollTimer) clearInterval(pollTimer)
       resolve({
         ...result,
         stdout: redactSecretLikeContent(result.stdout),
