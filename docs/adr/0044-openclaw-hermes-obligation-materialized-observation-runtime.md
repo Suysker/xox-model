@@ -1,8 +1,10 @@
 # ADR 0044: OpenClaw/Hermes Obligation-Materialized Observation Runtime
 
-Status: Proposed
+Status: Accepted
 
 Date: 2026-06-11
+
+Implementation: 2026-06-11
 
 Refines: ADR 0018, ADR 0020, ADR 0021, ADR 0034, ADR 0035, ADR 0036, ADR 0042, ADR 0043
 
@@ -405,3 +407,11 @@ ADR 0042 made provider tools and sandbox SDK tools one runtime. ADR 0043 made ev
 - hidden context never closes answer-critical evidence.
 
 This is the OpenClaw/Hermes lesson applied to xox-model: keep one clean loop, keep one execution gateway, and turn missing evidence into real observations rather than prompt hints.
+
+## Implementation Notes
+
+- `apps/api/src/agent/obligation-materializer.ts` now converts active typed `domain_fact` obligations into `runner_obligation` observations.
+- `runner_obligation` is model-visible and replayed as a tool observation, but it is not persisted as a provider-selected plan step and should not inflate user-facing model tool-call counts.
+- Hidden `runner_evidence` remains context-only and cannot close evidence obligations.
+- `runtime-planning-call.ts` still protects sandbox continuation turns from streamed argument truncation, but active non-sandbox obligations now block sandbox stable mode.
+- The current gateway landing path reuses existing tool execution services (`answerWorkspaceDataQuestion` and `storePlannedActionGraph`) so arguments, result shape, tenant scope, observation replay, and ledger evidence stay aligned with provider-selected `data_query_workspace`.

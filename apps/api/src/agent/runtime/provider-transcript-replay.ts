@@ -11,7 +11,7 @@ export type ProviderReplayObservation = {
   toolCallId: string
   toolArguments: Record<string, unknown>
   modelContent: string
-  lane?: 'provider_tool' | 'runner_evidence'
+  lane?: 'provider_tool' | 'runner_evidence' | 'runner_obligation'
 }
 
 function safeJson(value: unknown) {

@@ -37,18 +37,38 @@ function hasRuntimeTool(tools: RuntimePlanningInput['tools'], toolName: string) 
   return tools.some((tool) => tool.function.name === toolName)
 }
 
-function isSandboxObservationPlanning(input: {
+function activeRequiredToolNames(loopObligationPlan: PlannerContext['loopObligationPlan'] | undefined) {
+  return loopObligationPlan?.requiredToolNames ?? []
+}
+
+function isSandboxCalculationPlanning(input: {
+  tools: RuntimePlanningInput['tools']
+  loopObligationPlan?: PlannerContext['loopObligationPlan']
+}) {
+  const required = activeRequiredToolNames(input.loopObligationPlan)
+  if (!required.includes('sandbox_run_code')) return false
+  if (required.some((toolName) => toolName !== 'sandbox_run_code')) return false
+  return hasRuntimeTool(input.tools, 'sandbox_run_code')
+}
+
+function isSandboxPinnedCatalogPlanning(input: {
   tools: RuntimePlanningInput['tools']
   priorObservationCount: number
+  loopObligationPlan?: PlannerContext['loopObligationPlan']
 }) {
-  return input.priorObservationCount > 0 && hasRuntimeTool(input.tools, 'sandbox_run_code')
+  const required = activeRequiredToolNames(input.loopObligationPlan)
+  if (required.some((toolName) => toolName !== 'sandbox_run_code')) return false
+  return input.priorObservationCount > 0 &&
+    hasRuntimeTool(input.tools, 'sandbox_run_code')
 }
 
 function stableStructuredToolName(input: {
   tools: RuntimePlanningInput['tools']
   priorObservationCount: number
+  loopObligationPlan?: PlannerContext['loopObligationPlan']
 }) {
-  if (isSandboxObservationPlanning(input)) return 'sandbox_run_code'
+  if (isSandboxCalculationPlanning(input)) return 'sandbox_run_code'
+  if (isSandboxPinnedCatalogPlanning(input)) return 'sandbox_run_code'
   return highVolumeStructuredToolName(input.tools)
 }
 
@@ -56,9 +76,11 @@ function isHighVolumeStructuredPlanning(input: {
   message: string
   tools: RuntimePlanningInput['tools']
   priorObservationCount: number
+  loopObligationPlan?: PlannerContext['loopObligationPlan']
 }) {
   const structuredLineCount = input.message.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).length
-  if (isSandboxObservationPlanning(input)) return true
+  if (isSandboxCalculationPlanning(input)) return true
+  if (isSandboxPinnedCatalogPlanning(input)) return true
   return hasHighVolumeStructuredTool(input.tools) &&
     (input.message.length >= 600 || structuredLineCount >= 8)
 }
@@ -67,6 +89,7 @@ function runtimeMaxTokens(input: {
   message: string
   tools: RuntimePlanningInput['tools']
   priorObservationCount: number
+  loopObligationPlan?: PlannerContext['loopObligationPlan']
 }) {
   return isHighVolumeStructuredPlanning(input) ? HIGH_VOLUME_STRUCTURED_MAX_TOKENS : plannerTokenBudget(input.message)
 }
@@ -276,8 +299,18 @@ export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePl
   })
 
   const priorObservationCount = ctx.priorObservations?.length ?? 0
-  const maxTokens = runtimeMaxTokens({ message: ctx.message, tools: toolCatalog.tools, priorObservationCount })
-  const stableLongToolMode = isHighVolumeStructuredPlanning({ message: ctx.message, tools: toolCatalog.tools, priorObservationCount })
+  const maxTokens = runtimeMaxTokens({
+    message: ctx.message,
+    tools: toolCatalog.tools,
+    priorObservationCount,
+    loopObligationPlan: ctx.loopObligationPlan,
+  })
+  const stableLongToolMode = isHighVolumeStructuredPlanning({
+    message: ctx.message,
+    tools: toolCatalog.tools,
+    priorObservationCount,
+    loopObligationPlan: ctx.loopObligationPlan,
+  })
   const runtimeInput: RuntimePlanningInput = {
     settings: ctx.settings,
     message: redactSecretLikeContent(ctx.message),
@@ -304,7 +337,11 @@ export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePl
   }
 
   if (stableLongToolMode) {
-    const stableToolName = stableStructuredToolName({ tools: toolCatalog.tools, priorObservationCount })
+    const stableToolName = stableStructuredToolName({
+      tools: toolCatalog.tools,
+      priorObservationCount,
+      loopObligationPlan: ctx.loopObligationPlan,
+    })
     await addRunEvent(ctx.db, {
       threadId: ctx.threadId,
       runId: ctx.runId,

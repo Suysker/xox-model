@@ -305,6 +305,7 @@ export type AgentToolObservationOutcome =
 export type AgentToolObservationLane =
   | 'provider_tool'
   | 'runner_evidence'
+  | 'runner_obligation'
 
 export type AgentToolNavigationTarget = 'dashboard' | 'inputs' | 'bookkeeping' | 'variance' | 'workspace' | null
 

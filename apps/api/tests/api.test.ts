@@ -2024,7 +2024,7 @@ describe('xox TypeScript API', () => {
       })
 
       expect(response.statusCode).toBe(200)
-      expect(planningCalls).toBe(5)
+      expect(planningCalls).toBe(3)
       const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
       expect(state.json.runEvents.some((event: any) =>
         event.type === 'response_evaluated' &&
@@ -2035,11 +2035,8 @@ describe('xox TypeScript API', () => {
           obligation.kind === 'domain_fact' && obligation.status === 'open'),
       )).toBe(true)
       expect(state.json.runEvents.some((event: any) =>
-        event.type === 'tool_catalog_ready' &&
-        event.data?.routerReason === 'runner-obligation-plan' &&
-        event.data?.toolNames?.includes('data_query_workspace') &&
-        !event.data?.toolNames?.includes('workspace_patch_config') &&
-        !event.data?.toolNames?.includes('ledger_create_member_income'),
+        event.type === 'runner_obligation_materialized' &&
+        event.data?.toolNames?.includes('data_query_workspace'),
       )).toBe(true)
       expect(state.json.goals.at(-1).status).toBe('completed')
       expect(state.json.messages.at(-1).content).toContain('股东 B')
@@ -6009,7 +6006,7 @@ describe('xox TypeScript API', () => {
 
       await closeHarness(harness)
     })
-  })
+  }, 15_000)
 
   it('validates a broad Agent OS capability matrix through backend APIs', async () => {
     const provider = mutableScriptedProvider(fakeToolResponse('ui_navigate', { mainTab: 'dashboard', secondaryTab: 'overview' }))

@@ -220,6 +220,7 @@
 - Sandbox SDK helpers that share names with provider tools must be real Tool Runtime Gateway calls, not staged-bundle lookups that merely mimic the shape. Low-level bundle helpers may support parsing and transformation, but they cannot satisfy domain-grounded answer evidence by themselves.
 - File-based sandbox SDK RPC must be race-safe in both directions. Do not mark a request processed until its JSON parses, and write parent responses atomically before the child process can read them; otherwise valid generated code can fail with partial JSON and be misdiagnosed as a model/sandbox reasoning failure.
 - Runner-owned prerequisite observations are context hints unless explicitly replayed as model-visible observations. Hidden synthetic reads must not close final-answer evidence or appear as provider-selected tool work.
+- Evaluator-owned missing-evidence obligations must materialize into model-visible runner observations before repair replanning. Do not leave concrete obligations such as `data_query_workspace(scope=entity_summary)` as prompt hints; execute the typed tool contract through the shared action-graph/observation path, replay it to the model, and only then accept a final answer.
 - Sandbox evidence acceptance needs proof, not vibes: execution status, manifest consumption, code/output hashes, nested SDK tool observations or source observation refs, and invalid reasons must live in the evidence ledger before ResponseEvaluator can accept a sandbox-backed claim.
 
 ## Testing

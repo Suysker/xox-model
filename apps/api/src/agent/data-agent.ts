@@ -11,6 +11,7 @@ type DataAgentContext = {
 }
 
 export type DataAgentQueryStep = {
+  question?: string | null
   scope?: unknown
   metrics?: unknown
   monthLabel?: string | null

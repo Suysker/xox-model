@@ -37,6 +37,10 @@ import {
   serializeObligationLedger,
   userSafeLedgerFailureSummary,
 } from './loop-obligation-ledger.js'
+import {
+  materializeLoopObligations,
+  type ObligationMaterializationCache,
+} from './obligation-materializer.js'
 
 export type AgentRunResult = {
   plannerSource: AgentPlannerSource
@@ -194,6 +198,7 @@ export async function executeAgentRun(
   const planRows: Row<'agent_plan_steps'>[] = []
   const assistantParts: string[] = []
   const observations: AgentToolObservation[] = []
+  const materializedObligationTasks: ObligationMaterializationCache = new Set()
   let nextMessage = objective
   let pendingAssistantText: string | null = null
   let lastEvaluation: ReturnType<typeof serializeEvaluation> | null = null
@@ -314,6 +319,29 @@ export async function executeAgentRun(
         nextPlannerBrief: responseEvaluation.nextPlannerBrief,
       },
     })
+
+    if (
+      responseEvaluation.status === 'needs_calculation' ||
+      responseEvaluation.status === 'needs_more_evidence' ||
+      responseEvaluation.status === 'needs_final_answer'
+    ) {
+      const materialized = await materializeLoopObligations({
+        ctx: planningCtx,
+        ledger: obligationLedger,
+        plannerSource,
+        taskCache: materializedObligationTasks,
+      })
+      if (materialized) {
+        plannerSource = materialized.plannerSource
+        navigationEvents.push(...materialized.navigationEvents)
+        actionRows.push(...materialized.actionRows)
+        planRows.push(...materialized.planRows)
+        observations.push(...materialized.observations)
+        for (const observation of materialized.observations) {
+          applyObservationToLedger({ ledger: obligationLedger, observation, iteration })
+        }
+      }
+    }
 
     if (responseEvaluation.status === 'pass' && assistantText?.trim()) {
       await updateGoalStatus(ctx.db, goal, 'completed')

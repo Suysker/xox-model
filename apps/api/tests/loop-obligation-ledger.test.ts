@@ -160,6 +160,56 @@ describe('Agent loop obligation ledger', () => {
     expect(canAttemptFinalAnswer(ledger)).toBe(true)
   })
 
+  it('only closes shareholder facts from model-visible runner obligation observations', () => {
+    const ledger = initializeObligationLedger({ runId: 'run_1' })
+    applyResponseEvaluationToLedger({
+      ledger,
+      evaluation: evaluation({
+        status: 'needs_more_evidence',
+        requiredEvidence: [
+          { authority: 'domain_read', subject: 'shareholder', reason: '需要有序股东事实。' },
+        ],
+      }),
+      iteration: 1,
+    })
+
+    const entitySummary = {
+      scope: 'entity_summary',
+      firstShareholder: { index: 1, name: '股东 A', investmentAmount: 1000000 },
+      shareholders: [{ index: 1, name: '股东 A', investmentAmount: 1000000 }],
+    }
+
+    applyObservationToLedger({
+      ledger,
+      observation: observation({
+        toolCallId: 'runner_evidence_run_1_entity_summary',
+        toolArguments: { scope: 'entity_summary' },
+        modelContent: JSON.stringify(entitySummary),
+        lane: 'runner_evidence',
+        synthetic: true,
+      }),
+      iteration: 2,
+    })
+
+    expect(activeLedgerObligations(ledger)).toEqual([
+      expect.objectContaining({ kind: 'domain_fact', status: 'open' }),
+    ])
+
+    applyObservationToLedger({
+      ledger,
+      observation: observation({
+        toolCallId: 'runner_obligation_run_1_entity_summary',
+        toolArguments: { scope: 'entity_summary' },
+        modelContent: JSON.stringify(entitySummary),
+        lane: 'runner_obligation',
+      }),
+      iteration: 3,
+    })
+
+    expect(activeLedgerObligations(ledger)).toEqual([])
+    expect(canAttemptFinalAnswer(ledger)).toBe(true)
+  })
+
   it('keeps invalid sandbox observations active for a repair loop', () => {
     const ledger = initializeObligationLedger({ runId: 'run_1' })
     applyResponseEvaluationToLedger({

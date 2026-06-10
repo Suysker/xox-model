@@ -66,6 +66,10 @@ function observationFromRead(item: PlannedItem, sequence: number): AgentToolObse
   }
 }
 
+function isRunnerOwnedObservationLane(lane: unknown) {
+  return lane === 'runner_evidence' || lane === 'runner_obligation'
+}
+
 type AddAgentPlanStepInput = {
   sequence: number
   title: string
@@ -152,7 +156,7 @@ export async function storePlannedActionGraph(
       continue
     }
 
-    if (item.readKind === 'tool_observation' && item.observationLane === 'runner_evidence') {
+    if (item.readKind === 'tool_observation' && isRunnerOwnedObservationLane(item.observationLane)) {
       const observation = observationFromRead(item, sequence)
       if (observation) observations.push(observation)
       continue
