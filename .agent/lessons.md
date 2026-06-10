@@ -217,6 +217,9 @@
 - Sandbox observations need separate model content, display projection and raw artifact references. A structured `parsedOutput` that the model can use must also have a bounded user/audit projection; never collapse a successful sandbox calculation to a generic "completed" preview.
 - Do not turn one failed workspace-data calculation into a fixed tool order. The durable rule is OpenClaw-style single-loop evidence: provider tools and sandbox SDK calls must share the same tool names, argument schemas and output contracts, and the model must receive tool observations before final claims. `data_query_workspace` is often useful evidence, but it is not a hardcoded prerequisite for every sandbox run.
 - Do not enforce a global short-answer finalizer for Agent goals. Simple direct-answer turns should be concise because the turn lane is simple, while derived finance or sandbox-backed answers must preserve the evidence, assumptions, formulas and useful structured outputs needed for accuracy.
+- Sandbox SDK helpers that share names with provider tools must be real Tool Runtime Gateway calls, not staged-bundle lookups that merely mimic the shape. Low-level bundle helpers may support parsing and transformation, but they cannot satisfy domain-grounded answer evidence by themselves.
+- Runner-owned prerequisite observations are context hints unless explicitly replayed as model-visible observations. Hidden synthetic reads must not close final-answer evidence or appear as provider-selected tool work.
+- Sandbox evidence acceptance needs proof, not vibes: execution status, manifest consumption, code/output hashes, nested SDK tool observations or source observation refs, and invalid reasons must live in the evidence ledger before ResponseEvaluator can accept a sandbox-backed claim.
 
 ## Testing
 
