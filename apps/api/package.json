@@ -10,6 +10,8 @@
     "smoke:agent": "tsx src/agent/real-provider-smoke.ts"
   },
   "dependencies": {
+    "@agentic-os/contracts": "file:../../../agentic-os/packages/contracts",
+    "@agentic-os/core": "file:../../../agentic-os/packages/core",
     "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^11.1.0",
     "@openai/agents": "^0.11.4",

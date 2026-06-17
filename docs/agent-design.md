@@ -2,6 +2,8 @@
 
 本文件描述 `xox-model` 的目标 Agent OS 架构。正式 runtime 采用策略见 [ADR 0001](adr/0001-agent-runtime-architecture.md)，Harness Agent 分层架构见 [ADR 0002](adr/0002-harness-agent-architecture.md)，历史收敛记录见 [ADR 0003](adr/0003-xox-model-agent-os-target-architecture.md)，当前可靠性核心以 [ADR 0004: Evaluator-Centered Harness Agent 架构](adr/0004-evaluator-centered-harness-agent.md) 为准；后续架构收束以 [ADR 0018: AgentRunEngine v2 Single-Loop Harness Upgrade](adr/0018-agent-run-engine-v2-single-loop-harness.md) 为准，目标是把 `AgentRunEngine`、turn resolution、context、tool runtime、agent actions、evaluator、sandbox 和 transcript/trace 收束到一个更清晰的单循环 harness。受控代码执行边界见 [ADR 0016: Manifest-Scoped Sandbox Tool](adr/0016-manifest-scoped-sandbox-tool.md)，统一工具/sandbox 运行面见 [ADR 0042: OpenClaw/Hermes Unified Tool Sandbox Runtime](adr/0042-openclaw-hermes-unified-tool-sandbox-runtime.md)：sandbox 只能在服务端生成的 manifest 内运行，不能直接访问 DB、secrets、internal HTTP 或领域服务；但 sandbox 内的 `xox_sandbox.<tool_name>(...)` 必须桥回同一个 Tool Runtime Gateway，按同一套租户、权限、确认、导航、领域服务和审计链路执行。Memory Kernel 后续以 [ADR 0019: OpenClaw-First Memory Kernel v2](adr/0019-openclaw-first-memory-kernel-v2.md) 为准：记忆不是日志池，必须按 working/session/semantic/procedural/episodic/diagnostic/archive 分层治理，OpenClaw 是 active recall、hybrid retrieval、promotion 和 compaction flush 的优先参考。
 
+Agentic OS 抽取正在以 compatibility pilot 方式接入：`apps/api/src/agent/agentic-os-adapter.ts` 已消费 `@agentic-os/contracts` 和 `@agentic-os/core`，并用 Agentic OS `TurnResolver` 校验 xox provider output 到 next step 的基础分类语义。当前不替换 xox production `AgentRunEngine`；xox 继续作为成熟度压力源，把 evaluator、action graph、memory、sandbox 和 smoke discipline 的通用不变量反哺 Agentic OS。
+
 ## 目标
 
 把测算、调模型、记账、预实分析、版本发布、恢复版本、分享、锁账等平台能力开放给 Agent。Agent 不是绕过页面和权限的后门，而是一个受控操作系统层：它能理解用户指令、显式切换页面、拆分多步骤任务、生成可编辑确认卡，并在用户确认后调用同一套领域服务执行。
