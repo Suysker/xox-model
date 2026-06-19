@@ -10,7 +10,6 @@ import type {
   AgentContext as OsAgentContext,
   AgentEvidence as OsAgentEvidence,
   AgentFinalReview as OsFinalReview,
-  AgentLoopObligation as OsLoopObligation,
   AgentObservation as OsObservation,
   AgentRunEvent as OsRunEvent,
   AgentRunInput as OsRunInput,
@@ -33,6 +32,7 @@ import type {
 } from '@agentic-os/contracts'
 import {
   createAgentHostKit,
+  ledgerToReviewObligations,
   type AgentActionPort,
   type AgentCompletionPort,
   type AgentContextPort,
@@ -111,11 +111,11 @@ import { runtimeIntentHandlers } from '../runtime-intent-handlers.js'
 import { runPrerequisiteObservations } from '../prerequisite-observations.js'
 import { evaluateAgentGoal } from '../loop-readiness-check.js'
 import {
-  activeLedgerObligations,
   applyObservationToLedger,
   applyResponseEvaluationToLedger,
   initializeObligationLedger,
   ledgerToObligationPlan,
+  osLedgerFromXoxLedger,
   serializeObligationLedger,
   type AgentLoopObligationLedger,
 } from '../loop-obligation-ledger.js'
@@ -1137,31 +1137,6 @@ function osEvidenceFromXoxEvidence(evidence: ReturnType<typeof buildEvidenceLedg
   }))
 }
 
-function osObligationsFromLedger(
-  ledger: AgentLoopObligationLedger,
-): OsLoopObligation[] {
-  return activeLedgerObligations(ledger).map((obligation) => ({
-    obligationId: obligation.id,
-    kind: obligation.kind === 'assistant_final_answer'
-      ? 'assistant_final_answer'
-      : 'tool_observation',
-    reason: obligation.reason,
-    toolNames: obligation.toolNames,
-    capabilities: obligation.capabilities,
-    requiredOutcomes: ['completed_valid'],
-    metadata: compactJsonObject({
-      xoxKind: obligation.kind,
-      authority: obligation.authority ?? null,
-      subject: obligation.subject ?? null,
-      requiredDataScopes: obligation.requiredDataScopes ?? [],
-      requiredMetrics: obligation.requiredMetrics ?? [],
-      goalFacts: obligation.goalFacts,
-      findingCodes: obligation.findingCodes,
-      xoxStatus: obligation.status,
-    }),
-  }))
-}
-
 async function addReadinessEvaluation(input: {
   ctx: XoxAgenticOsPlannerContext
   state: XoxAgenticOsRunState
@@ -1981,7 +1956,7 @@ function createXoxAgenticOsHost(
         repairable: evaluation.status === 'needs_calculation' ||
           evaluation.status === 'needs_more_evidence' ||
           evaluation.status === 'needs_final_answer',
-        obligations: osObligationsFromLedger(state.obligationLedger),
+        obligations: ledgerToReviewObligations(osLedgerFromXoxLedger(state.obligationLedger)),
         evidence: osEvidence,
       }
     },

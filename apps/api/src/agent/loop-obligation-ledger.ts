@@ -2,6 +2,8 @@ import type { AgentToolObservation } from './tool-observation-continuation.js'
 import type {
   AgentLoopObligationLedger as OsAgentLoopObligationLedger,
   AgentLoopObligationSource as OsAgentLoopObligationSource,
+  JsonObject,
+  JsonValue,
 } from '@agentic-os/contracts'
 import { projectObligationLedger } from '@agentic-os/core'
 import { isExecutedSandboxEvidenceFacts } from './evidence-ledger.js'
@@ -276,6 +278,17 @@ function osSourceFromXoxSource(source: AgentLoopObligationSource): OsAgentLoopOb
   return 'host'
 }
 
+function osMetadataFromXoxLedgerObligation(obligation: AgentLoopLedgerObligation): JsonObject {
+  const metadata: Record<string, JsonValue> = {
+    ...osMetadataFromXoxObligation(obligation),
+    xoxStatus: obligation.status,
+  }
+  if (obligation.goalFacts !== undefined) {
+    metadata.goalFacts = JSON.parse(JSON.stringify(obligation.goalFacts)) as JsonValue
+  }
+  return metadata
+}
+
 export function osLedgerFromXoxLedger(ledger: AgentLoopObligationLedger): OsAgentLoopObligationLedger {
   return {
     schemaVersion: 'agentic-os.loop_obligation_ledger.v1',
@@ -287,7 +300,7 @@ export function osLedgerFromXoxLedger(ledger: AgentLoopObligationLedger): OsAgen
       reason: obligation.reason,
       toolNames: obligation.toolNames,
       capabilities: obligation.capabilities,
-      metadata: osMetadataFromXoxObligation(obligation),
+      metadata: osMetadataFromXoxLedgerObligation(obligation),
       status: obligation.status,
       source: osSourceFromXoxSource(obligation.source),
       createdAtIteration: obligation.createdAtIteration,
