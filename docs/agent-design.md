@@ -318,7 +318,7 @@ planning-session.ts
 
 ### 自动化与确认策略
 
-ADR 0015 已取代这里的旧语义：`automationLevel` 是执行授权策略，不是 planner 推进力度。Agentic OS harness、provider planner、tool catalog、observation loop、evaluator 和 repair planner 都必须始终全力推进用户目标；自动化级别只在 action draft 已生成后决定是否可以自动执行。
+ADR 0015 已取代这里的旧语义：`automationLevel` 是执行授权策略，不是 planner 推进力度。Agentic OS harness、provider planner、tool catalog、observation loop、evaluator 和 repair planner 都必须始终全力推进用户目标；自动化级别只在 action draft 已生成后决定是否可以自动执行。写入自动化策略由 `@agentic-os/core` 的 approval policy composer 提供，xox 不维护第二套 composer。
 
 ```text
 manual  -> 读操作自动执行；所有写入保持可编辑 pending 确认卡
@@ -1155,7 +1155,7 @@ Agent: workspace_import_bundle
 - OpenAI Agents SDK adapter 已形成可验证 runtime adapter 路径，并把 runner lifecycle / function tool execute 映射为 provider-neutral run events；SDK 原生 streaming/tracing/guardrail/human-in-the-loop event 细节后续必须进入 provider-neutral run events 或 harness hooks。
 - 前端已有后端状态刷新式 unified timeline / memory panel，OpenAI-compatible provider chunk 和 OpenAI Agents SDK lifecycle/tool trace 已进入统一时间线；后续要继续做跨实例 pubsub 和 SDK tracing。
 - 任何 SDK 原生成熟化增强都必须进入 provider-neutral run events 或 Tool Policy hooks，不能替代确认卡、租户隔离、domain services 或 audit。
-- ADR 0017 的本地 Tool Runtime Maturity Layer 已收敛为 xox host port 能力：保留 effective tool inventory、tool-call supervisor、tool-loop guardrails、provider sanitation 和 approval policy composer 这些 xox/provider 边界，不再保留本地 agent control plane。
+- ADR 0017 的本地 Tool Runtime Maturity Layer 已继续收敛：approval policy composer 和 tool-loop guardrails 已迁入 `@agentic-os/core`；xox 当前只保留 effective inventory 旧 DTO、tool-call supervisor/action-draft adapter、run-event projection 和业务 action policy，不再保留本地 agent control plane。
 - ADR 0018 的本地单循环核心已作为成熟度压力源被迁移到 Agentic OS host kit：xox 不再保留本地 `agent-run-engine.ts`、`turn-resolver.ts`、`agent-action-runtime.ts` 或 `context-engine/index.ts`，而是通过 Agentic OS ports 复用 loop ownership，并保留业务 evidence projection、tool gateway、action graph 和 transcript/trace 投影。
 - ADR 0019 的 OpenClaw-first Memory Kernel v2 已落地：记忆不再是日志池，而是 Agentic OS host kit 调用的上下文能力。OpenClaw-derived 纯模块进入 `packages/agent-memory-core`，负责 memory budget、flush plan、citation、MMR retrieval 和 short-term promotion scoring；`memory_search / memory_get` 是一等只读工具；`agent_memories` 继续承载 SaaS durable memory 和治理字段；`agent_memory_notes` 映射 OpenClaw daily notes；`agent_memory_recall_signals` 映射短期召回信号；`agent_memory_dream_reports` 映射 DREAMS/review surface。普通 prompt 只允许相关的可注入 working/semantic/procedural 记忆进入，candidate/diagnostic/episodic/archive/expired/superseded 默认不可注入；压缩摘要先写日记忆，不直接写长期候选。
 

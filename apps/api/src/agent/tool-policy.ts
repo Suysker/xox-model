@@ -2,7 +2,7 @@ import type { AgentActionKind, AgentNavigationEvent } from '@xox/contracts'
 import type { Kysely } from 'kysely'
 import type { Database, Row } from '../db/schema.js'
 import { conflict, forbidden, unprocessable } from '../core/http.js'
-import { composeAgentWriteApprovalPolicy } from './tool-runtime/approval-policy-composer.js'
+import { composeAgentWriteApprovalPolicy } from '@agentic-os/core'
 
 type RiskLevel = 'low' | 'medium' | 'high'
 export type AgentAutomationLevel = 'manual' | RiskLevel

@@ -8,7 +8,7 @@ import {
 } from '@agentic-os/runtime-openai-compatible'
 import { superviseRuntimeToolCalls } from '../src/agent/tool-runtime/tool-call-supervisor.js'
 import { evaluateToolLoopGuardrails } from '../src/agent/tool-runtime/tool-loop-guardrails.js'
-import { composeAgentWriteApprovalPolicy } from '../src/agent/tool-runtime/approval-policy-composer.js'
+import { composeAgentWriteApprovalPolicy } from '@agentic-os/core'
 import type { PlannerContext } from '../src/agent/planning-context.js'
 import type { AgentToolObservation } from '../src/agent/tool-observation-continuation.js'
 

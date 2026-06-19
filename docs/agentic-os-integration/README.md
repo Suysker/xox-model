@@ -1,6 +1,6 @@
 # xox-model Agentic OS Integration Plan
 
-Status: Draft (M72 provider observation turn message assembly consumption)
+Status: Draft (M75 tool loop guardrails consumption)
 
 Date: 2026-06-19
 
@@ -122,6 +122,7 @@ Current integration is no longer compatibility-only:
 - xox tool observation continuation/finalizer system prompt now consumes `@agentic-os/core` `toolObservationContinuationSystemPrompt()`. `apps/api/src/agent/prompt-registry.ts` only injects xox platform identity, agent name, and provider identity rule; the former local `apps/api/src/agent/prompts/tool-observation-finalizer.system.md` file has been deleted.
 - xox provider observation turn message assembly now consumes `@agentic-os/runtime-openai-compatible` `buildProviderToolObservationTurnMessages()` for planning turns and `buildProviderToolObservationContinuationMessages()` for finalizer/continuation turns. `apps/api/src/agent/runtime-planning-call.ts` still builds xox context/tool catalog/budget inputs, and `apps/api/src/agent/tool-observation-continuation.ts` still loads xox runtime context and records run events, but neither file hand-assembles OpenAI-compatible assistant `tool_calls` and matching `tool` replay messages.
 - xox progressive tool surface runtime now consumes `@agentic-os/core` `buildToolSurfacePack()` / `buildToolSurfaceManifests()` and search helpers. Local `apps/api/src/agent/tool-context-engine/*` algorithm files have been removed; xox keeps only `apps/api/src/agent/tool-surface-manifest.ts` for business manifest overrides, kernel tool names, canonical capability map, fact-dependent capability hints, and legacy xox DTO mapping.
+- xox tool loop progress guardrails now consume `@agentic-os/core` `evaluateToolLoopGuardrails()`. Local guardrail algorithm branches for repeated failures, no-progress turns, and executed-write reapply have been removed; `apps/api/src/agent/tool-runtime/tool-loop-guardrails.ts` is now only a Row/DTO adapter. Local `approval-policy-composer.ts` has also been removed in favor of core `composeAgentWriteApprovalPolicy()`.
 - xox still owns provider final-answer claim extraction and financial/shareholder policy, including the xox adapter rule that unscoped entity/domain final-answer claims require shareholder domain evidence.
 - xox still owns response-evaluator finding to financial/domain obligation mapping, plus `goalFacts`, `requiredDataScopes`, and `requiredMetrics`.
 - xox still owns obligation materializer selection, `data_query_workspace` arguments, business read execution, and product run event persistence.

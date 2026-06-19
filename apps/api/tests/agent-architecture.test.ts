@@ -107,6 +107,7 @@ describe('Agent ADR architecture boundaries', () => {
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-argument-repair.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-name-normalizer.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-stream-assembler.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'tool-runtime', 'approval-policy-composer.ts'))).toBe(false)
 
     const obsoleteToolContextDir = join(srcRoot, 'agent', 'tool-context-engine')
     expect(existsSync(join(obsoleteToolContextDir, 'index.ts'))).toBe(false)
@@ -174,8 +175,12 @@ describe('Agent ADR architecture boundaries', () => {
 
     const guardrails = source('agent/tool-runtime/tool-loop-guardrails.ts')
     expect(guardrails).toContain("@agentic-os/core")
-    expect(guardrails).toContain('isCompletedActionResultToolObservation')
+    expect(guardrails).toContain('evaluateToolLoopGuardrails')
     expect(guardrails).not.toContain('JSON.parse(observation.modelContent)')
+    expect(guardrails).not.toContain('function repeatedFailure')
+    expect(guardrails).not.toContain('function noProgress')
+    expect(guardrails).not.toContain('function executedWriteReapplied')
+    expect(guardrails).not.toContain('function stableJson')
   })
 
   it('keeps the tool observation continuation prompt in Agentic OS core', () => {
