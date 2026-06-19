@@ -16,6 +16,10 @@ import {
   providerToolObservationReplayMessages,
   resolveProviderRuntimeProfile,
 } from '@agentic-os/runtime-openai-compatible'
+import {
+  buildActionPreviewObservation,
+  buildActionResultObservation,
+} from '@agentic-os/core'
 import type { AgentToolObservationLane, AgentToolObservationOutcome } from '@xox/contracts'
 
 export type AgentToolObservation = {
@@ -86,8 +90,16 @@ export function actionExecutionObservation(input: {
 }): AgentToolObservation {
   const displayPreview = `已执行：${input.action.title}`
   const details = parseJsonObject(input.action.details_json)
-  return {
+  return buildActionResultObservation({
+    actionRequestId: input.action.id,
+    actionKind: input.action.kind,
+    actionStatus: input.action.status,
     title: input.action.title,
+    summary: input.action.summary,
+    targetLabel: input.action.target_label,
+    riskLevel: input.action.risk_level,
+    changeSet: details,
+    displayPreview,
     toolName: input.action.kind,
     toolCallId: `action_${input.action.id}`,
     toolArguments: {
@@ -95,26 +107,33 @@ export function actionExecutionObservation(input: {
       actionKind: input.action.kind,
       status: input.action.status,
     },
+    executedAt: input.action.executed_at,
+    result: conciseResult(input.result),
+  }) as AgentToolObservation
+}
+
+export function actionFailureObservation(input: {
+  action: Row<'agent_action_requests'>
+  reason: string
+  error?: string | null
+}): AgentToolObservation {
+  const displayPreview = input.error
+    ? `自动执行失败：${input.action.title}：${input.error}`
+    : `动作被策略阻止：${input.action.title}`
+  return buildActionResultObservation({
+    actionRequestId: input.action.id,
+    actionKind: input.action.kind,
+    actionStatus: input.action.status,
+    title: input.action.title,
     displayPreview,
-    modelContent: JSON.stringify({
-      observationType: 'action_result',
-      displayPreview,
-      actionRequestId: input.action.id,
-      actionKind: input.action.kind,
-      title: input.action.title,
-      summary: input.action.summary,
-      targetLabel: input.action.target_label,
-      riskLevel: input.action.risk_level,
-      executionState: input.action.status,
-      completed: input.action.status === 'executed',
-      status: input.action.status,
-      executedAt: input.action.executed_at,
-      changeSet: details,
-      result: conciseResult(input.result),
-    }),
-    status: input.action.status === 'executed' ? 'completed' : input.action.status === 'failed' ? 'failed' : 'cancelled',
-    outcome: input.action.status === 'executed' ? 'completed_valid' : input.action.status === 'failed' ? 'failed_terminal' : 'pending_human',
-  }
+    toolName: input.action.kind,
+    toolCallId: `action_${input.action.id}`,
+    toolArguments: {},
+    reason: input.reason,
+    error: input.error ?? null,
+    observationStatus: 'failed',
+    outcome: input.error ? 'failed_terminal' : 'policy_blocked',
+  }) as AgentToolObservation
 }
 
 export function actionPreviewObservation(input: {
@@ -128,30 +147,20 @@ export function actionPreviewObservation(input: {
     }
   })()
   const displayPreview = `待确认：${input.action.title}`
-  return {
+  return buildActionPreviewObservation({
+    actionRequestId: input.action.id,
+    actionKind: input.action.kind,
+    actionStatus: input.action.status,
     title: input.action.title,
+    summary: input.action.summary,
+    targetLabel: input.action.target_label,
+    riskLevel: input.action.risk_level,
+    changeSet: details,
+    displayPreview,
     toolName: input.action.kind,
     toolCallId: `action_preview_${input.action.id}`,
     toolArguments: {},
-    displayPreview,
-    modelContent: JSON.stringify({
-      observationType: 'action_preview',
-      displayPreview,
-      actionRequestId: input.action.id,
-      actionKind: input.action.kind,
-      title: input.action.title,
-      summary: input.action.summary,
-      targetLabel: input.action.target_label,
-      riskLevel: input.action.risk_level,
-      executionState: 'pending_confirmation',
-      completed: false,
-      editable: true,
-      status: input.action.status,
-      changeSet: details,
-    }),
-    status: 'completed',
-    outcome: 'pending_human',
-  }
+  }) as AgentToolObservation
 }
 
 export type ToolObservationContinuationContext = {

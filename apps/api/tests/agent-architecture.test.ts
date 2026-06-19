@@ -126,6 +126,19 @@ describe('Agent ADR architecture boundaries', () => {
     expect(classifier).not.toContain('tool_call_arguments_truncated')
   })
 
+  it('keeps action observation envelopes in Agentic OS core', () => {
+    const continuation = source('agent/tool-observation-continuation.ts')
+    expect(continuation).toContain("@agentic-os/core")
+    expect(continuation).toContain('buildActionPreviewObservation')
+    expect(continuation).toContain('buildActionResultObservation')
+    expect(continuation).not.toContain("observationType: 'action_preview'")
+    expect(continuation).not.toContain("observationType: 'action_result'")
+
+    const actionGraph = source('agent/action-graph-store.ts')
+    expect(actionGraph).toContain('actionFailureObservation')
+    expect(actionGraph).not.toContain("observationType: 'action_result'")
+  })
+
   it('routes provider planning through the xox context pack without an obsolete local context wrapper', () => {
     const planningCall = source('agent/runtime-planning-call.ts')
     expect(planningCall).toContain("from './context-pack.js'")

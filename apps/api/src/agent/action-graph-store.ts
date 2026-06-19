@@ -16,6 +16,7 @@ import { addRunEvent } from './run-events.js'
 import { assertAgentRunLease } from './run-lease.js'
 import { agentThreadEvents } from './thread-events.js'
 import {
+  actionFailureObservation,
   actionExecutionObservation,
   actionPreviewObservation,
   type AgentToolObservation,
@@ -121,35 +122,6 @@ async function getPlanStep(ctx: ActionGraphContext, id: string) {
   return ctx.db.selectFrom('agent_plan_steps').selectAll().where('id', '=', id).executeTakeFirstOrThrow()
 }
 
-function failedActionObservation(input: {
-  action: Row<'agent_action_requests'>
-  reason: string
-  error?: string | null
-}): AgentToolObservation {
-  const displayPreview = input.error
-    ? `自动执行失败：${input.action.title}：${input.error}`
-    : `动作被策略阻止：${input.action.title}`
-  return {
-    title: input.action.title,
-    toolName: input.action.kind,
-    toolCallId: `action_${input.action.id}`,
-    toolArguments: {},
-    displayPreview,
-    modelContent: JSON.stringify({
-      observationType: 'action_result',
-      displayPreview,
-      actionRequestId: input.action.id,
-      actionKind: input.action.kind,
-      title: input.action.title,
-      status: input.action.status,
-      reason: input.reason,
-      error: input.error ?? null,
-    }),
-    status: 'failed',
-    outcome: input.error ? 'failed_terminal' : 'policy_blocked',
-  }
-}
-
 async function settleStoredAction(
   ctx: ActionGraphContext,
   input: {
@@ -168,7 +140,7 @@ async function settleStoredAction(
     return {
       action: executed.actionRequest,
       observation: executed.error
-        ? failedActionObservation({ action: executed.actionRequest, reason: authority.reason, error: executed.error })
+        ? actionFailureObservation({ action: executed.actionRequest, reason: authority.reason, error: executed.error })
         : actionExecutionObservation({ action: executed.actionRequest, result: executed.result }),
     }
   }
@@ -194,7 +166,7 @@ async function settleStoredAction(
     const action = await ctx.db.selectFrom('agent_action_requests').selectAll().where('id', '=', input.action.id).executeTakeFirstOrThrow()
     return {
       action,
-      observation: failedActionObservation({ action, reason: authority.reason }),
+      observation: actionFailureObservation({ action, reason: authority.reason }),
     }
   }
 
