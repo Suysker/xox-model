@@ -12,7 +12,10 @@ import { buildThreadConversationLog } from './context-pack.js'
 import { runtimeMessagesFromThreadConversationLog } from './runtime-conversation-log.js'
 import { planWithRuntimeAdapter } from './runtime/adapter-router.js'
 import type { RuntimeChatMessage } from './runtime/runtime-adapter.js'
-import { providerToolObservationReplayMessages } from './runtime/provider-transcript-replay.js'
+import {
+  providerToolObservationReplayMessages,
+  resolveProviderRuntimeProfile,
+} from '@agentic-os/runtime-openai-compatible'
 import type { AgentToolObservationLane, AgentToolObservationOutcome } from '@xox/contracts'
 
 export type AgentToolObservation = {
@@ -168,15 +171,22 @@ function observationMessages(input: {
   observations: AgentToolObservation[]
   threadConversationLog?: ReturnType<typeof buildThreadConversationLog>
 }): RuntimeChatMessage[] {
+  const providerRuntime = resolveProviderRuntimeProfile({
+    provider: input.settings.openaiCompatibleProvider,
+    model: input.settings.openaiCompatibleModel,
+  })
   return [
     { role: 'system', content: toolObservationFinalizerSystemPrompt() },
     ...runtimeMessagesFromThreadConversationLog(input.threadConversationLog),
     { role: 'user', content: redactSecretLikeContent(input.userMessage) },
     ...providerToolObservationReplayMessages({
-      settings: input.settings,
+      profile: providerRuntime.profile,
+      capability: providerRuntime.capability,
+      thinkingLevel: providerRuntime.thinkingLevel,
       observations: input.observations,
       suffix: 'finalizer_observation',
-    }),
+      redact: redactSecretLikeContent,
+    }) as RuntimeChatMessage[],
   ]
 }
 

@@ -26,7 +26,10 @@ import {
   threadConversationLogFromContext,
 } from './runtime-conversation-log.js'
 import type { RuntimeToolCatalogProjection } from './tool-gateway.js'
-import { providerToolObservationReplayMessages } from './runtime/provider-transcript-replay.js'
+import {
+  providerToolObservationReplayMessages,
+  resolveProviderRuntimeProfile,
+} from '@agentic-os/runtime-openai-compatible'
 
 function plannerTokenBudget(message: string) {
   const structuredLineCount = message.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).length
@@ -126,6 +129,10 @@ function plannerRuntimeMessages(input: {
   message: string
   priorObservations?: AgentToolObservation[] | undefined
 }): RuntimeChatMessage[] {
+  const providerRuntime = resolveProviderRuntimeProfile({
+    provider: input.settings.openaiCompatibleProvider,
+    model: input.settings.openaiCompatibleModel,
+  })
   const messages: RuntimeChatMessage[] = [
     { role: 'system', content: plannerSystemPrompt() },
     ...runtimeMessagesFromThreadConversationLog(threadConversationLogFromContext(input.context)),
@@ -135,11 +142,14 @@ function plannerRuntimeMessages(input: {
     },
   ]
   messages.push(...providerToolObservationReplayMessages({
-    settings: input.settings,
+    profile: providerRuntime.profile,
+    capability: providerRuntime.capability,
+    thinkingLevel: providerRuntime.thinkingLevel,
     observations: input.priorObservations ?? [],
     suffix: 'planning_observation',
     maxObservations: 12,
-  }))
+    redact: redactSecretLikeContent,
+  }) as RuntimeChatMessage[])
   return messages
 }
 

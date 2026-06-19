@@ -3,15 +3,11 @@ import type { ChatTool } from '../tool-catalog.js'
 import type { RuntimePlanningInput } from './runtime-adapter.js'
 import {
   normalizeProviderToolSchemas,
-  resolveProviderModelProfile,
+  replayPolicyPreservedMessageKeys,
+  resolveProviderRuntimeProfile,
   sanitizeOpenAICompatibleRequestBody,
   type ProviderModelProfile,
 } from '@agentic-os/runtime-openai-compatible'
-import {
-  resolveProviderRuntimeCapability,
-  resolveRuntimeThinkingLevel,
-} from './provider-capability-registry.js'
-import { replayPolicyPreservedMessageKeys } from './provider-capability.js'
 
 export type ProviderRequestShape = {
   profile: ProviderModelProfile
@@ -33,10 +29,12 @@ function toolChoiceForProfile(profile: ProviderModelProfile) {
   return 'auto'
 }
 
-function profileFromInput(input: RuntimePlanningInput) {
-  return resolveProviderModelProfile({
+function runtimeProfileFromInput(input: RuntimePlanningInput, thinkingLevel?: string) {
+  const requestedThinkingLevel = thinkingLevel ?? input.thinkingLevel
+  return resolveProviderRuntimeProfile({
     provider: input.settings.openaiCompatibleProvider,
     model: input.settings.openaiCompatibleModel,
+    ...(requestedThinkingLevel !== undefined ? { thinkingLevel: requestedThinkingLevel } : {}),
   })
 }
 
@@ -64,12 +62,7 @@ export function shapeOpenAICompatibleChatRequest(
   input: RuntimePlanningInput,
   options: ProviderRequestShapeOptions = {},
 ): ProviderRequestShape {
-  const profile = profileFromInput(input)
-  const capability = resolveProviderRuntimeCapability(profile)
-  const thinkingLevel = resolveRuntimeThinkingLevel({
-    capability,
-    requested: options.thinkingLevel ?? input.thinkingLevel,
-  })
+  const { profile, capability, thinkingLevel } = runtimeProfileFromInput(input, options.thinkingLevel)
   const tools = normalizedTools(input, profile)
   const body: Record<string, unknown> = {
     model: profile.requestModel,

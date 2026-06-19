@@ -12,15 +12,13 @@ import {
 import { ToolCallStreamAssembler, type StreamingToolCall } from './tool-call-stream-assembler.js'
 import { validateProviderToolCallsForExecution } from './tool-call-validator.js'
 import {
-  resolveProviderRuntimeCapability,
-  resolveRuntimeThinkingLevel,
-} from './provider-capability-registry.js'
-import {
   classifyProviderHttpError,
   detectProviderPlainTextToolCallArtifact,
   providerRejectsToolChoice,
   recoverProviderPlainTextToolCalls,
   type ProviderModelProfile,
+  resolveProviderRuntimeCapability,
+  resolveRuntimeThinkingLevel,
   safeProviderErrorMessage,
 } from '@agentic-os/runtime-openai-compatible'
 

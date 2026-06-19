@@ -3,15 +3,18 @@ import type { Settings } from '../src/core/settings.js'
 import type { ChatTool } from '../src/agent/tool-catalog.js'
 import type { RuntimePlanningInput, RuntimePlanResult } from '../src/agent/runtime/runtime-adapter.js'
 import { retryRuntimeInput, shouldRetryRuntimePlan } from '../src/agent/runtime/provider-failover-policy.js'
-import { resolveProviderRuntimeCapability, resolveRuntimeThinkingLevel } from '../src/agent/runtime/provider-capability-registry.js'
 import { shapeOpenAICompatibleChatRequest } from '../src/agent/runtime/provider-request-shaper.js'
-import { providerToolObservationReplayMessages } from '../src/agent/runtime/provider-transcript-replay.js'
 import {
   classifyProviderHttpError,
   extractBalancedJson,
   normalizeProviderToolSchemas,
+  providerToolObservationReplayMessages as buildProviderToolObservationReplayMessages,
+  resolveProviderRuntimeCapability,
+  resolveProviderRuntimeProfile,
+  resolveRuntimeThinkingLevel,
   resolveProviderModelProfile,
   resolveProviderModelRef,
+  type ProviderReplayObservation,
 } from '@agentic-os/runtime-openai-compatible'
 import { readDraftsFromRuntimeResult } from '../src/agent/runtime-plan-reader.js'
 import { OpenAICompatibleChatAdapter } from '../src/agent/runtime/openai-compatible-chat-adapter.js'
@@ -68,6 +71,26 @@ function runtimeInput(provider: string, model: string, tools: ChatTool[] = [tool
     tools,
     stream: false,
   }
+}
+
+function providerToolObservationReplayMessages(input: {
+  settings: Settings
+  observations: ProviderReplayObservation[]
+  suffix?: string
+  maxObservations?: number
+}) {
+  const providerRuntime = resolveProviderRuntimeProfile({
+    provider: input.settings.openaiCompatibleProvider,
+    model: input.settings.openaiCompatibleModel,
+  })
+  return buildProviderToolObservationReplayMessages({
+    profile: providerRuntime.profile,
+    capability: providerRuntime.capability,
+    thinkingLevel: providerRuntime.thinkingLevel,
+    observations: input.observations,
+    ...(input.suffix !== undefined ? { suffix: input.suffix } : {}),
+    ...(input.maxObservations !== undefined ? { maxObservations: input.maxObservations } : {}),
+  })
 }
 
 describe('OpenClaw-inspired provider runtime compatibility layer', () => {
