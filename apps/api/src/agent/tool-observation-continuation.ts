@@ -13,7 +13,7 @@ import { runtimeMessagesFromThreadConversationLog } from './runtime-conversation
 import { planWithRuntimeAdapter } from './runtime/adapter-router.js'
 import type { RuntimeChatMessage } from './runtime/runtime-adapter.js'
 import {
-  providerToolObservationReplayMessages,
+  buildProviderToolObservationContinuationMessages,
   resolveProviderRuntimeProfile,
 } from '@agentic-os/runtime-openai-compatible'
 import {
@@ -184,19 +184,17 @@ function observationMessages(input: {
     provider: input.settings.openaiCompatibleProvider,
     model: input.settings.openaiCompatibleModel,
   })
-  return [
-    { role: 'system', content: toolObservationFinalizerSystemPrompt() },
-    ...runtimeMessagesFromThreadConversationLog(input.threadConversationLog),
-    { role: 'user', content: redactSecretLikeContent(input.userMessage) },
-    ...providerToolObservationReplayMessages({
-      profile: providerRuntime.profile,
-      capability: providerRuntime.capability,
-      thinkingLevel: providerRuntime.thinkingLevel,
-      observations: input.observations,
-      suffix: 'finalizer_observation',
-      redact: redactSecretLikeContent,
-    }) as RuntimeChatMessage[],
-  ]
+  return buildProviderToolObservationContinuationMessages({
+    profile: providerRuntime.profile,
+    capability: providerRuntime.capability,
+    thinkingLevel: providerRuntime.thinkingLevel,
+    systemPrompt: toolObservationFinalizerSystemPrompt(),
+    priorMessages: runtimeMessagesFromThreadConversationLog(input.threadConversationLog),
+    userMessage: input.userMessage,
+    observations: input.observations,
+    suffix: 'finalizer_observation',
+    redact: redactSecretLikeContent,
+  }) as RuntimeChatMessage[]
 }
 
 async function addContinuationFailureStep(
@@ -269,7 +267,7 @@ export async function continueModelAfterToolObservations(
     tools: [],
     messages: observationMessages({
       settings: ctx.settings,
-      userMessage: redactSecretLikeContent(ctx.message),
+      userMessage: ctx.message,
       observations,
       threadConversationLog,
     }),

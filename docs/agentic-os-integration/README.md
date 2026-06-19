@@ -1,6 +1,6 @@
 # xox-model Agentic OS Integration Plan
 
-Status: Draft (M70 tool observation continuation prompt consumption)
+Status: Draft (M71 provider observation continuation message assembly consumption)
 
 Date: 2026-06-19
 
@@ -39,6 +39,7 @@ Agentic OS should own reusable harness concerns:
 - provider runtime capability, thinking profile, request patch, replay policy, and transcript replay primitives;
 - provider tool-call stream assembly and frame damage primitives;
 - provider boundary failure observation payloads;
+- provider observation continuation message assembly for protocol-native assistant/tool replay;
 - tool observation outcome classification for provider boundary, sandbox execution, action preview, and action result observations;
 - tool observation facts parsing and role helpers for action, sandbox, provider boundary, tool supervisor failure, discovery, and clarification observations;
 - action observation envelope builders for action preview, executed result, failed result, and policy-blocked result observations;
@@ -119,6 +120,7 @@ Current integration is no longer compatibility-only:
 - xox action observation payloads now consume `@agentic-os/core` `buildActionPreviewObservation()` and `buildActionResultObservation()`. `apps/api/src/agent/tool-observation-continuation.ts` remains the xox adapter for Chinese display copy, action row mapping, details parsing, and business result summaries; `apps/api/src/agent/action-graph-store.ts` no longer hand-writes `action_result` model payloads for blocked or failed actions.
 - xox observation loop role checks now consume `@agentic-os/core` `parseToolObservationModelFacts()` and `is*ToolObservation()` helpers. `apps/api/src/agent/agentic-os/xox-agentic-os-host-kit.ts` still owns xox readable text and business finalization policy, but no longer directly parses `observation.modelContent` for action/sandbox/provider boundary/tool supervisor/tool discovery/clarification semantics; `tool-runtime/tool-loop-guardrails.ts` also uses core helpers for completed action-result detection.
 - xox tool observation continuation/finalizer system prompt now consumes `@agentic-os/core` `toolObservationContinuationSystemPrompt()`. `apps/api/src/agent/prompt-registry.ts` only injects xox platform identity, agent name, and provider identity rule; the former local `apps/api/src/agent/prompts/tool-observation-finalizer.system.md` file has been deleted.
+- xox tool observation continuation message assembly now consumes `@agentic-os/runtime-openai-compatible` `buildProviderToolObservationContinuationMessages()`. `apps/api/src/agent/tool-observation-continuation.ts` still loads xox runtime context and records run events, but no longer hand-assembles OpenAI-compatible assistant `tool_calls` and matching `tool` replay messages.
 - xox still owns provider final-answer claim extraction and financial/shareholder policy, including the xox adapter rule that unscoped entity/domain final-answer claims require shareholder domain evidence.
 - xox still owns response-evaluator finding to financial/domain obligation mapping, plus `goalFacts`, `requiredDataScopes`, and `requiredMetrics`.
 - xox still owns obligation materializer selection, `data_query_workspace` arguments, business read execution, and product run event persistence.
@@ -429,6 +431,7 @@ The integration is not considered successful until:
 - Obsolete local provider harness helpers, including `apps/api/src/agent/runtime/provider-error-classifier.ts`, `apps/api/src/agent/runtime/provider-tool-schema.ts`, `apps/api/src/agent/runtime/provider-payload-sanitizer.ts`, `apps/api/src/agent/runtime/provider-capability.ts`, `apps/api/src/agent/runtime/provider-capability-registry.ts`, `apps/api/src/agent/runtime/provider-transcript-replay.ts`, and `apps/api/src/agent/runtime/provider-families/*`, remain deleted after Agentic OS replacement.
 - `apps/api/src/agent/tool-observation-outcome.ts` remains a thin adapter that imports `@agentic-os/core`; it must not reintroduce local provider boundary, sandbox execution, or action observation outcome branches.
 - Tool observation continuation/finalizer instructions remain sourced from `@agentic-os/core`; `apps/api/src/agent/prompts/tool-observation-finalizer.system.md` must not return as a local prompt fork.
+- Provider observation continuation messages remain sourced from `@agentic-os/runtime-openai-compatible`; `apps/api/src/agent/tool-observation-continuation.ts` must not reintroduce direct `providerToolObservationReplayMessages()` calls or local assistant/tool message pairing.
 - `xox-model` business behavior is unchanged unless explicitly approved.
 - `npm run build:api` passes.
 - `npm run test:api` passes.

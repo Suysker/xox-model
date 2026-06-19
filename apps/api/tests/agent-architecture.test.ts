@@ -160,6 +160,15 @@ describe('Agent ADR architecture boundaries', () => {
     expect(existsSync(join(srcRoot, 'agent', 'prompts', 'tool-observation-finalizer.system.md'))).toBe(false)
   })
 
+  it('keeps provider observation continuation message assembly in Agentic OS runtime', () => {
+    const continuation = source('agent/tool-observation-continuation.ts')
+    expect(continuation).toContain("@agentic-os/runtime-openai-compatible")
+    expect(continuation).toContain('buildProviderToolObservationContinuationMessages')
+    expect(continuation).not.toContain('providerToolObservationReplayMessages')
+    expect(continuation).not.toContain("role: 'tool'")
+    expect(continuation).not.toContain('tool_calls')
+  })
+
   it('routes provider planning through the xox context pack without an obsolete local context wrapper', () => {
     const planningCall = source('agent/runtime-planning-call.ts')
     expect(planningCall).toContain("from './context-pack.js'")
