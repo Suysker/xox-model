@@ -199,6 +199,29 @@ describe('Agent ADR architecture boundaries', () => {
     expect(hostKit).not.toContain("input.confirmationMode === 'always'")
   })
 
+  it('keeps tool call supervision and runtime event payloads in Agentic OS core', () => {
+    const supervisor = source('agent/tool-runtime/tool-call-supervisor.ts')
+    expect(supervisor).toContain("@agentic-os/core")
+    expect(supervisor).toContain('createToolSupervisorCall')
+    expect(supervisor).toContain('toolSupervisorInventoryByName')
+    expect(supervisor).toContain('shouldBlockToolCallOutsideInventory')
+    expect(supervisor).toContain('buildToolSupervisorFailureObservation')
+    expect(supervisor).toContain('summarizeToolSupervisorObservation')
+    expect(supervisor).not.toContain('function safeToolArguments')
+    expect(supervisor).not.toContain('function resolvedToolName')
+    expect(supervisor).not.toContain('function resultPreview')
+    expect(supervisor).not.toContain("observationType: 'tool_supervisor_failure'")
+
+    const events = source('agent/tool-runtime/tool-execution-events.ts')
+    expect(events).toContain("@agentic-os/core")
+    expect(events).toContain('buildToolInventoryReadyEvent')
+    expect(events).toContain('buildToolCallStartedEvent')
+    expect(events).toContain('buildToolCallCompletedEvent')
+    expect(events).not.toContain('function runStatusForToolObservation')
+    expect(events).not.toContain("kind: 'tool_call_started'")
+    expect(events).not.toContain('observationStatus: input.observation.status')
+  })
+
   it('keeps the tool observation continuation prompt in Agentic OS core', () => {
     const registry = source('agent/prompt-registry.ts')
     expect(registry).toContain("@agentic-os/core")

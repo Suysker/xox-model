@@ -1,28 +1,23 @@
 import type { AgentToolExecutionObservation, AgentToolInventorySnapshot, AgentToolRuntimeEvent } from '@xox/contracts'
-
-function runStatusForToolObservation(status: AgentToolExecutionObservation['status']) {
-  if (status === 'completed') return 'completed'
-  if (status === 'cancelled') return 'cancelled'
-  return 'failed'
-}
+import {
+  buildToolCallCompletedEvent,
+  buildToolCallStartedEvent,
+  buildToolInventoryReadyEvent,
+  type ToolExecutionObservation,
+  type ToolInventoryEventSnapshotLike,
+} from '@agentic-os/core'
 
 export function inventoryReadyEvent(input: {
   runId: string
   inventory: AgentToolInventorySnapshot
 }): AgentToolRuntimeEvent {
   return {
-    kind: 'inventory_ready',
-    runId: input.runId,
-    status: 'running',
+    ...buildToolInventoryReadyEvent({
+      runId: input.runId,
+      inventory: input.inventory as ToolInventoryEventSnapshotLike,
+    }),
     summary: `工具目录已生成：${input.inventory.tools.length} 个工具，${input.inventory.source}。`,
-    payload: {
-      snapshotId: input.inventory.snapshotId,
-      source: input.inventory.source,
-      freshness: input.inventory.freshness,
-      toolCount: input.inventory.tools.length,
-      capabilities: input.inventory.capabilities,
-    },
-  }
+  } as AgentToolRuntimeEvent
 }
 export function toolCallStartedEvent(input: {
   runId: string
@@ -31,14 +26,9 @@ export function toolCallStartedEvent(input: {
   arguments: Record<string, unknown>
 }): AgentToolRuntimeEvent {
   return {
-    kind: 'tool_call_started',
-    runId: input.runId,
-    toolName: input.toolName,
-    toolCallId: input.toolCallId ?? null,
-    status: 'running',
+    ...buildToolCallStartedEvent(input),
     summary: `工具调用开始：${input.toolName}`,
-    payload: { arguments: input.arguments },
-  }
+  } as AgentToolRuntimeEvent
 }
 
 export function toolCallCompletedEvent(input: {
@@ -46,17 +36,10 @@ export function toolCallCompletedEvent(input: {
   observation: AgentToolExecutionObservation
 }): AgentToolRuntimeEvent {
   return {
-    kind: input.observation.status === 'completed' ? 'tool_call_completed' : 'tool_call_failed',
-    runId: input.runId,
-    toolName: input.observation.toolName,
-    toolCallId: input.observation.toolCallId,
-    status: runStatusForToolObservation(input.observation.status),
+    ...buildToolCallCompletedEvent({
+      runId: input.runId,
+      observation: input.observation as ToolExecutionObservation,
+    }),
     summary: input.observation.resultPreview ?? `工具调用${input.observation.status === 'completed' ? '完成' : '失败'}：${input.observation.toolName}`,
-    payload: {
-      observationStatus: input.observation.status,
-      outcome: input.observation.outcome ?? null,
-      authorityClass: input.observation.authorityClass,
-      errorMessage: input.observation.errorMessage ?? null,
-    },
-  }
+  } as AgentToolRuntimeEvent
 }
