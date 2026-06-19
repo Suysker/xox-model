@@ -1,4 +1,6 @@
 import type { AgentGoalFacts } from '@xox/contracts'
+import type { AgentFinalAnswerClaim as OsAgentFinalAnswerClaim } from '@agentic-os/contracts'
+import { evidenceRequirementsFromFinalAnswerClaims } from '@agentic-os/core'
 import type { AgentToolObservation } from './tool-observation-continuation.js'
 import { objectHasKey } from './structured-evidence-utils.js'
 
@@ -34,13 +36,8 @@ export type AgentEvidenceItem = {
   createdAt: string
 }
 
-export type AgentFinalAnswerClaim = {
-  claimId?: string
-  kind: 'domain_fact' | 'derived_calculation' | 'entity_specific' | 'action_status' | 'refusal' | 'clarification'
+export type AgentFinalAnswerClaim = Omit<OsAgentFinalAnswerClaim, 'subject'> & {
   subject?: AgentEvidenceSubject['type'] | AgentEvidenceSubject
-  dependsOn?: string[]
-  text?: string
-  reason: string
 }
 
 export type AgentEvidenceRequirement = {
@@ -239,8 +236,10 @@ export function buildEvidenceRequirements(input: {
 }): AgentEvidenceRequirement[] {
   const requirements: AgentEvidenceRequirement[] = []
   const claims = input.finalAnswerClaims ?? []
+  const claimRequirements = xoxEvidenceRequirementsFromFinalAnswerClaims(claims)
   const hasSandboxTrajectory = input.evidence.some((item) => item.authority === 'sandbox' || item.source === 'sandbox_run_code')
-  const calculationClaim = claims.find((claim) => claim.kind === 'derived_calculation')
+  const calculationClaimRequirement = claimRequirements.find((requirement) =>
+    requirement.authority === 'sandbox' && requirement.subject === 'calculation')
   if (input.facts.requiresSandboxComputation) {
     requirements.push({
       authority: 'sandbox',
@@ -255,18 +254,17 @@ export function buildEvidenceRequirements(input: {
       reason: '本轮轨迹已调用 sandbox_run_code，最终回答必须基于有效沙箱 observation。',
       source: 'trajectory',
     })
-  } else if (calculationClaim) {
+  } else if (calculationClaimRequirement) {
     requirements.push({
       authority: 'sandbox',
       subject: 'calculation',
-      reason: calculationClaim.reason,
+      reason: calculationClaimRequirement.reason,
       source: 'final_answer_claim',
     })
   }
 
-  const shareholderClaim = claims.find((claim) =>
-    (claim.kind === 'entity_specific' || claim.kind === 'domain_fact') &&
-    (!claim.subject || claimSubjectType(claim) === 'shareholder'))
+  const shareholderClaimRequirement = claimRequirements.find((requirement) =>
+    requirement.authority === 'domain_read' && requirement.subject === 'shareholder')
   if (input.facts.requiresOrderedEntityFacts) {
     requirements.push({
       authority: 'domain_read',
@@ -274,11 +272,11 @@ export function buildEvidenceRequirements(input: {
       reason: '目标契约要求有序实体事实。',
       source: 'goal_facts',
     })
-  } else if (shareholderClaim) {
+  } else if (shareholderClaimRequirement) {
     requirements.push({
       authority: 'domain_read',
       subject: 'shareholder',
-      reason: shareholderClaim.reason,
+      reason: shareholderClaimRequirement.reason,
       source: 'final_answer_claim',
     })
   }
@@ -286,10 +284,51 @@ export function buildEvidenceRequirements(input: {
   return requirements
 }
 
-function claimSubjectType(claim: AgentFinalAnswerClaim) {
-  if (!claim.subject) return undefined
-  if (typeof claim.subject === 'string') return claim.subject
-  return claim.subject.type
+function xoxEvidenceRequirementsFromFinalAnswerClaims(
+  claims: AgentFinalAnswerClaim[],
+): AgentEvidenceRequirement[] {
+  return evidenceRequirementsFromFinalAnswerClaims({
+    claims: claims.map(osClaimFromXoxClaim),
+  }).flatMap((requirement): AgentEvidenceRequirement[] => {
+    if (requirement.authority === 'sandbox' && requirement.subject?.type === 'calculation') {
+      return [{
+        authority: 'sandbox',
+        subject: 'calculation',
+        reason: requirement.reason,
+        source: 'final_answer_claim',
+      }]
+    }
+    if (requirement.authority === 'domain_read' && requirement.subject?.type === 'shareholder') {
+      return [{
+        authority: 'domain_read',
+        subject: 'shareholder',
+        reason: requirement.reason,
+        source: 'final_answer_claim',
+      }]
+    }
+    return []
+  })
+}
+
+function osClaimFromXoxClaim(claim: AgentFinalAnswerClaim): OsAgentFinalAnswerClaim {
+  const { subject: _subject, ...claimWithoutSubject } = claim
+  const subject = claimSubject(claim)
+  return {
+    ...claimWithoutSubject,
+    ...(subject ? { subject } : {}),
+  }
+}
+
+function claimSubject(claim: AgentFinalAnswerClaim): OsAgentFinalAnswerClaim['subject'] | undefined {
+  if (!claim.subject) {
+    return claim.kind === 'entity_specific' || claim.kind === 'domain_fact'
+      ? { type: 'shareholder' }
+      : undefined
+  }
+  if (typeof claim.subject === 'string') {
+    return { type: claim.subject }
+  }
+  return claim.subject
 }
 
 export function evidenceContainsKey(items: AgentEvidenceItem[], key: string) {

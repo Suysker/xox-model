@@ -557,6 +557,25 @@ describe('Agent response evaluator', () => {
     })
   })
 
+  it('keeps unscoped xox entity claims mapped to shareholder evidence requirements', () => {
+    const evaluation = evaluateAssistantResponse({
+      goal: goal(),
+      finalAssistantText: '第 2 位股东的个人投资回报率是 12%。',
+      observations: [],
+      evidence: [],
+      finalAnswerClaims: [{ kind: 'entity_specific', reason: 'xox treats unscoped entity claims as shareholder facts' }],
+    })
+
+    expect(evaluation).toMatchObject({
+      status: 'needs_more_evidence',
+      requiredEvidence: [expect.objectContaining({
+        authority: 'domain_read',
+        subject: 'shareholder',
+      })],
+      findings: [expect.objectContaining({ code: 'response.entity_evidence_missing' })],
+    })
+  })
+
   it('turns evaluator findings into typed runner obligations', () => {
     const observations = [
       observation({
