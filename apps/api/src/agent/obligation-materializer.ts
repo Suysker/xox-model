@@ -1,7 +1,16 @@
 import type { AgentPlannerSource } from '@xox/contracts'
+import type {
+  AgentLoopObligationMaterializationRequest,
+  JsonObject,
+} from '@agentic-os/contracts'
+import {
+  obligationMaterializationCompletedEventPayload,
+  planObligationMaterialization,
+  type AgentLoopObligationMaterializationCache,
+} from '@agentic-os/core'
 import type { PlannerContext } from './planning-context.js'
 import {
-  activeLedgerObligations,
+  osLedgerFromXoxLedger,
   type AgentLoopLedgerObligation,
   type AgentLoopObligationLedger,
 } from './loop-obligation-ledger.js'
@@ -9,16 +18,7 @@ import { answerWorkspaceDataQuestion, type DataAgentQueryStep } from './data-age
 import { storePlannedActionGraph, type StoredActionGraph } from './action-graph-store.js'
 import { addRunEvent } from './run-events.js'
 
-export type ObligationMaterializationCache = Set<string>
-
-function stableTaskKey(obligation: AgentLoopLedgerObligation, toolArguments: Record<string, unknown>) {
-  return [
-    obligation.id,
-    obligation.kind,
-    obligation.toolNames.slice().sort().join(','),
-    JSON.stringify(toolArguments),
-  ].join(':')
-}
+export type ObligationMaterializationCache = AgentLoopObligationMaterializationCache
 
 function dataQueryArguments(obligation: AgentLoopLedgerObligation): DataAgentQueryStep | null {
   if (obligation.kind !== 'domain_fact') return null
@@ -35,10 +35,10 @@ function dataQueryArguments(obligation: AgentLoopLedgerObligation): DataAgentQue
 async function materializeDataObservation(input: {
   ctx: PlannerContext
   obligation: AgentLoopLedgerObligation
+  toolArguments: DataAgentQueryStep
   plannerSource: AgentPlannerSource
 }) {
-  const toolArguments = dataQueryArguments(input.obligation)
-  if (!toolArguments) return null
+  const toolArguments = input.toolArguments
 
   const read = await answerWorkspaceDataQuestion(input.ctx, toolArguments)
   if (!read) {
@@ -82,6 +82,18 @@ async function materializeDataObservation(input: {
   })
 }
 
+function materializationRequests(ledger: AgentLoopObligationLedger): AgentLoopObligationMaterializationRequest[] {
+  return ledger.obligations.flatMap((obligation) => {
+    const toolArguments = dataQueryArguments(obligation)
+    if (!toolArguments) return []
+    return [{
+      obligationId: obligation.id,
+      toolName: 'data_query_workspace',
+      toolArguments: toolArguments as unknown as JsonObject,
+    }]
+  })
+}
+
 export async function materializeLoopObligations(input: {
   ctx: PlannerContext
   ledger: AgentLoopObligationLedger
@@ -89,13 +101,16 @@ export async function materializeLoopObligations(input: {
   taskCache: ObligationMaterializationCache
 }): Promise<StoredActionGraph | null> {
   const graphs: StoredActionGraph[] = []
+  const obligationsById = new Map(input.ledger.obligations.map((obligation) => [obligation.id, obligation]))
+  const plan = planObligationMaterialization({
+    ledger: osLedgerFromXoxLedger(input.ledger),
+    taskCache: input.taskCache,
+    tasks: materializationRequests(input.ledger),
+  })
 
-  for (const obligation of activeLedgerObligations(input.ledger)) {
-    const toolArguments = dataQueryArguments(obligation)
-    if (!toolArguments) continue
-    const taskKey = stableTaskKey(obligation, toolArguments as Record<string, unknown>)
-    if (input.taskCache.has(taskKey)) continue
-    input.taskCache.add(taskKey)
+  for (const task of plan.tasks) {
+    const obligation = obligationsById.get(task.obligationId)
+    if (obligation === undefined) continue
 
     await addRunEvent(input.ctx.db, {
       threadId: input.ctx.threadId,
@@ -104,17 +119,13 @@ export async function materializeLoopObligations(input: {
       title: 'Runner observation task',
       message: 'A required evidence obligation is being materialized as a model-visible observation.',
       status: 'running',
-      data: {
-        obligationId: obligation.id,
-        obligationKind: obligation.kind,
-        toolName: 'data_query_workspace',
-        toolArguments,
-      },
+      data: task.startedEventPayload as Record<string, unknown>,
     })
 
     const graph = await materializeDataObservation({
       ctx: input.ctx,
       obligation,
+      toolArguments: task.toolArguments as unknown as DataAgentQueryStep,
       plannerSource: input.plannerSource,
     })
     if (graph) graphs.push(graph)
@@ -129,10 +140,10 @@ export async function materializeLoopObligations(input: {
     title: 'Runner observation materialized',
     message: `${graphs.reduce((sum, graph) => sum + graph.observations.length, 0)} required observation(s) were materialized for model replay.`,
     status: graphs.some((graph) => graph.observations.some((observation) => observation.status === 'failed')) ? 'failed' : 'completed',
-    data: {
+    data: obligationMaterializationCompletedEventPayload({
       observationCount: graphs.reduce((sum, graph) => sum + graph.observations.length, 0),
-      toolNames: [...new Set(graphs.flatMap((graph) => graph.observations.map((observation) => observation.toolName)))],
-    },
+      toolNames: graphs.flatMap((graph) => graph.observations.map((observation) => observation.toolName)),
+    }) as Record<string, unknown>,
   })
 
   return {

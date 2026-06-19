@@ -276,7 +276,7 @@ function osSourceFromXoxSource(source: AgentLoopObligationSource): OsAgentLoopOb
   return 'host'
 }
 
-function osLedgerFromXoxLedger(ledger: AgentLoopObligationLedger): OsAgentLoopObligationLedger {
+export function osLedgerFromXoxLedger(ledger: AgentLoopObligationLedger): OsAgentLoopObligationLedger {
   return {
     schemaVersion: 'agentic-os.loop_obligation_ledger.v1',
     runId: ledger.runId,
