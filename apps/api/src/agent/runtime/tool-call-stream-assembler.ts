@@ -1,6 +1,6 @@
 import type { ProviderToolCall } from './tool-call-repair.js'
 import type { ToolCallBoundaryViolationCode } from './runtime-adapter.js'
-import { extractBalancedJson } from './balanced-json.js'
+import { extractBalancedJson } from '@agentic-os/runtime-openai-compatible'
 
 export type StreamingToolCall = {
   id?: string

@@ -1,6 +1,6 @@
 # xox-model Agentic OS Integration Plan
 
-Status: Draft
+Status: Draft (M60 provider tool-call repair primitive consumption)
 
 Date: 2026-06-19
 
@@ -34,6 +34,7 @@ Agentic OS should own reusable harness concerns:
 - final answer hygiene for provider protocol artifacts;
 - obligation plan aggregation and runner-obligation instruction;
 - runtime adapter contract testing;
+- provider plain-text tool-call recovery and bounded provider tool-call repair primitives;
 - host profile and host kit composition.
 
 Agentic OS packages should be consumed as versioned `@agentic-os/*` packages:
@@ -41,6 +42,7 @@ Agentic OS packages should be consumed as versioned `@agentic-os/*` packages:
 ```json
 "@agentic-os/contracts": "^0.1.0",
 "@agentic-os/core": "^0.1.0",
+"@agentic-os/runtime-openai-compatible": "^0.1.0",
 "@agentic-os/testing": "^0.1.0"
 ```
 
@@ -98,11 +100,12 @@ Current integration is no longer compatibility-only:
 - xox `apps/api/src/agent/obligation-materializer.ts` now consumes `@agentic-os/core` `planObligationMaterialization()` for active obligation task filtering, stable de-duplication, and generic event payloads.
 - xox final review response now consumes `@agentic-os/core` `ledgerToReviewObligations()` for active ledger obligation to completion repair obligation projection.
 - xox `apps/api/src/agent/runtime/openai-compatible-chat-adapter.ts` now consumes `@agentic-os/runtime-openai-compatible` `detectProviderPlainTextToolCallArtifact()` and `recoverProviderPlainTextToolCalls()` for provider plain-text tool-call recovery; the local `provider-plain-text-tool-calls.ts` duplicate has been removed.
+- xox provider runtime now consumes `@agentic-os/runtime-openai-compatible` `extractBalancedJson()`, `parseToolArgumentsWithRepair()`, and `repairToolName()` for provider-frame JSON extraction, bounded streamed argument repair, and inventory-bound tool-name repair; local `balanced-json.ts`, `tool-call-argument-repair.ts`, and `tool-call-name-normalizer.ts` duplicates have been removed.
 - xox still owns provider final-answer claim extraction and financial/shareholder policy, including the xox adapter rule that unscoped entity/domain final-answer claims require shareholder domain evidence.
 - xox still owns response-evaluator finding to financial/domain obligation mapping, plus `goalFacts`, `requiredDataScopes`, and `requiredMetrics`.
 - xox still owns obligation materializer selection, `data_query_workspace` arguments, business read execution, and product run event persistence.
-- xox still owns provider runtime retry/failover, stream events, provider capability profiles, and `ProviderToolCallParseError` wrapping around recovered tool calls.
-- Obsolete local harness helper files are intentionally removed: `agent-run-engine.ts`, `turn-resolver.ts`, `agent-action-runtime.ts`, `context-engine/index.ts`, and the former top-level `agentic-os-adapter.ts`.
+- xox still owns provider runtime retry/failover, stream events, provider capability profiles, `ProviderToolCallParseError` wrapping, and provider tool call to xox planner-step mapping.
+- Obsolete local harness helper files are intentionally removed: `agent-run-engine.ts`, `turn-resolver.ts`, `agent-action-runtime.ts`, `context-engine/index.ts`, the former top-level `agentic-os-adapter.ts`, and provider repair duplicates now owned by Agentic OS runtime packages.
 
 This is a real kernel introduction. Remaining package work is registry/release hardening, not code copying.
 

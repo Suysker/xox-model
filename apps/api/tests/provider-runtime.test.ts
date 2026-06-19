@@ -10,7 +10,7 @@ import { resolveProviderRuntimeCapability, resolveRuntimeThinkingLevel } from '.
 import { shapeOpenAICompatibleChatRequest } from '../src/agent/runtime/provider-request-shaper.js'
 import { providerToolObservationReplayMessages } from '../src/agent/runtime/provider-transcript-replay.js'
 import { normalizeProviderToolSchemas } from '../src/agent/runtime/provider-tool-schema.js'
-import { extractBalancedJson } from '../src/agent/runtime/balanced-json.js'
+import { extractBalancedJson } from '@agentic-os/runtime-openai-compatible'
 import { readDraftsFromRuntimeResult } from '../src/agent/runtime-plan-reader.js'
 import { OpenAICompatibleChatAdapter } from '../src/agent/runtime/openai-compatible-chat-adapter.js'
 import {

@@ -38,7 +38,6 @@ describe('Agent ADR architecture boundaries', () => {
   it('keeps runtime adapters provider-only and free of DB, routes, approvals, and domain execution', () => {
     const runtimeFiles = [
       'agent/runtime/adapter-router.ts',
-      'agent/runtime/balanced-json.ts',
       'agent/runtime/high-volume-tool-policy.ts',
       'agent/runtime/openai-agents-adapter.ts',
       'agent/runtime/openai-compatible-chat-adapter.ts',
@@ -50,8 +49,6 @@ describe('Agent ADR architecture boundaries', () => {
       'agent/runtime/provider-request-shaper.ts',
       'agent/runtime/provider-tool-schema.ts',
       'agent/runtime/runtime-adapter.ts',
-      'agent/runtime/tool-call-argument-repair.ts',
-      'agent/runtime/tool-call-name-normalizer.ts',
       'agent/runtime/tool-call-repair.ts',
       'agent/runtime/tool-call-stream-assembler.ts',
       'agent/runtime/tool-call-validator.ts',
@@ -102,6 +99,9 @@ describe('Agent ADR architecture boundaries', () => {
     expect(existsSync(join(srcRoot, 'agent', 'agent-action-runtime.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'context-engine', 'index.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'turn-resolver.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'runtime', 'balanced-json.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-argument-repair.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-name-normalizer.ts'))).toBe(false)
   })
 
   it('routes provider planning through the xox context pack without an obsolete local context wrapper', () => {

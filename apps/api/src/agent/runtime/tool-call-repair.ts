@@ -1,7 +1,10 @@
 import { toolCallToPlannerStep, type AgentToolCallStep } from '../tool-catalog.js'
-import { extractBalancedJson } from './balanced-json.js'
-import { parseToolArgumentsWithRepair, type ToolArgumentRepairPolicy } from './tool-call-argument-repair.js'
-import { repairToolName } from './tool-call-name-normalizer.js'
+import {
+  extractBalancedJson,
+  parseToolArgumentsWithRepair,
+  repairToolName,
+  type ToolArgumentRepairPolicy,
+} from '@agentic-os/runtime-openai-compatible'
 import type { RuntimeToolCallBoundaryViolation, ToolCallBoundaryViolationCode } from './runtime-adapter.js'
 
 // OpenClaw-inspired provider output repair boundary. This only normalizes
