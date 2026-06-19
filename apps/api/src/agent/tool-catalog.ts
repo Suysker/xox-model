@@ -188,6 +188,14 @@ export type AgentToolRegistryEntry = AgentToolMetadata & {
   tool: ChatTool
 }
 
+export function isManualBoundaryNoticeToolName(name: string): boolean {
+  return name === 'account_forbidden'
+}
+
+export function isHarnessManagedObservationToolName(name: string): boolean {
+  return name === 'memory_remember'
+}
+
 const monthLabel: JsonSchema = {
   type: 'string',
   description: '业务账期中文月份标签，例如 3月、4月。',

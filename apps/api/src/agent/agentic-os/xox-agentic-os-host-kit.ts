@@ -18,6 +18,7 @@ import type {
   AgentRunRecord as OsRunRecord,
   AgentRunResult as OsRunResult,
   AgentScope as OsScope,
+  AgentSandboxExecutionResult as OsSandboxExecutionResult,
   AgentToolDefinition as OsToolDefinition,
   AgentToolHandlerResult as OsToolHandlerResult,
   AgentToolObservationOutcome as OsToolObservationOutcome,
@@ -32,6 +33,7 @@ import type {
 } from '@agentic-os/contracts'
 import {
   createAgentHostKit,
+  inferToolAuthorityClass,
   isActionResultToolObservation,
   isActionToolObservation,
   isClarificationToolObservation,
@@ -47,6 +49,7 @@ import {
   type AgentCompletionPort,
   type AgentContextPort,
   type AgentHostAdapter,
+  type AgentSandboxPort,
   type AgentStorePort,
   type AgentToolRegistryPort,
 } from '@agentic-os/core'
@@ -104,6 +107,8 @@ import { addRunEvent } from '../run-events.js'
 import { addMessage } from '../thread-store.js'
 import {
   AGENT_TOOL_REGISTRY,
+  isHarnessManagedObservationToolName,
+  isManualBoundaryNoticeToolName,
   toolCallToPlannerStep,
   type AgentToolCapability,
   type AgentToolCallStep,
@@ -276,6 +281,36 @@ function osObservationFromXox(
   }
 }
 
+function sandboxExecutionMode(
+  facts: Record<string, unknown> | null,
+): NonNullable<OsSandboxExecutionResult['executionMode']> | null {
+  const value = facts?.executionMode
+  return value === 'executed' || value === 'not_executed'
+    ? value
+    : null
+}
+
+function sandboxExecutionStatus(
+  facts: Record<string, unknown> | null,
+  observation: AgentToolObservation,
+): NonNullable<OsSandboxExecutionResult['status']> | null {
+  const status = facts?.status
+  if (
+    status === 'completed' ||
+    status === 'blocked' ||
+    status === 'failed' ||
+    status === 'timeout' ||
+    status === 'cancelled'
+  ) {
+    return status
+  }
+  if (observation.status === 'completed') return 'completed'
+  if (observation.status === 'cancelled') return 'cancelled'
+  if (observation.status === 'not_executed') return 'blocked'
+  if (observation.status === 'failed') return 'failed'
+  return null
+}
+
 function rememberObservationMapping(
   state: XoxAgenticOsRunState,
   osObservation: OsObservation,
@@ -388,12 +423,17 @@ function agenticOsCapability(capability: AgentToolCapability): string {
 
 function agenticOsAuthorityClass(input: {
   toolName: string
+  capability: AgentToolCapability
   riskLevel: AgentToolRiskLevel
   confirmationMode: AgentToolConfirmationMode
 }): OsToolAuthorityClass {
-  if (input.confirmationMode === 'always') return 'confirmation_write'
-  if (input.riskLevel === 'read') return 'read'
-  return 'read'
+  return inferToolAuthorityClass({
+    capability: input.capability,
+    riskLevel: input.riskLevel,
+    confirmationMode: input.confirmationMode,
+    manualBoundaryNotice: isManualBoundaryNoticeToolName(input.toolName),
+    harnessManagedObservation: isHarnessManagedObservationToolName(input.toolName),
+  })
 }
 
 function toolSchema(tool: ChatTool): OsJsonObject {
@@ -407,6 +447,7 @@ function agenticOsToolDefinition(
 ): OsToolDefinition {
   const authorityClass = agenticOsAuthorityClass({
     toolName: entry.name,
+    capability: entry.capability,
     riskLevel: entry.riskLevel,
     confirmationMode: entry.confirmationMode,
   })
@@ -1677,6 +1718,42 @@ function createXoxAgenticOsHost(
     }),
   }
 
+  const sandbox: AgentSandboxPort = {
+    executeSandbox: async (input): Promise<OsSandboxExecutionResult> => {
+      const rawStep = plannerStepFromToolCall(input.tool.name, input.toolCall.toolCallId, input.input)
+      const step = rawStep ? normalizeToolStepForObjective(state, rawStep) : null
+      if (!step) {
+        return {
+          content: {
+            error: `No xox planner step mapping exists for sandbox tool ${input.tool.name}.`,
+          },
+          manifestScoped: false,
+          executionMode: 'not_executed',
+          status: 'failed',
+          outcome: 'failed_terminal',
+        }
+      }
+
+      const graph = await storeSingleToolStep(ctx, state, step)
+      const xoxObservation = graph.observations.at(-1) ?? fallbackToolObservation(step)
+      const osObservation = osObservationFromXox(xoxObservation, state.xoxObservations.length)
+      rememberObservationMapping(state, osObservation, xoxObservation)
+      const facts = parseToolObservationModelFacts(xoxObservation)
+      const result: OsSandboxExecutionResult = {
+        content: osObservation.content,
+        manifestScoped: facts?.manifestScoped === true,
+      }
+      if (osObservation.outcome !== undefined) result.outcome = osObservation.outcome
+      const executionMode = sandboxExecutionMode(facts)
+      if (executionMode !== null) result.executionMode = executionMode
+      const status = sandboxExecutionStatus(facts, xoxObservation)
+      if (status !== null) result.status = status
+      const actionRequests = graph.actionRows.map((row) => osActionRequest(row, input.toolCall.toolCallId))
+      if (actionRequests.length > 0) result.actionRequests = actionRequests
+      return result
+    },
+  }
+
   const completion: AgentCompletionPort = {
     reviewFinal: async (input): Promise<OsFinalReview> => {
       if (!state.goal) {
@@ -1947,6 +2024,7 @@ function createXoxAgenticOsHost(
     context,
     tools,
     actions,
+    sandbox,
     completion,
   }
 }

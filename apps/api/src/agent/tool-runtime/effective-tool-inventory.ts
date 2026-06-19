@@ -1,15 +1,20 @@
 import type {
   AgentAutomationLevel,
-  AgentToolAuthorityClass,
   AgentToolInventorySnapshot,
 } from '@xox/contracts'
+import { inferToolAuthorityClass } from '@agentic-os/core'
 import type { Settings } from '../../core/settings.js'
 import { newId } from '../../core/security.js'
 import { utcNow } from '../../core/time.js'
-import type { AgentToolCapability, AgentToolMetadata } from '../tool-catalog.js'
 import {
+  isHarnessManagedObservationToolName,
+  isManualBoundaryNoticeToolName,
+  type AgentToolCapability,
+  type AgentToolMetadata,
+} from '../tool-catalog.js'
+import {
+  providerCompatibilityFlags,
   resolveProviderModelProfile,
-  type ProviderModelProfile,
 } from '@agentic-os/runtime-openai-compatible'
 
 // Inspired by OpenClaw's effective tool inventory boundary, adapted for xox-model's SaaS authority model.
@@ -27,27 +32,6 @@ export type EffectiveToolInventoryInput = {
   routerReason?: string
   snapshotId?: string
   createdAt?: string
-}
-
-export function authorityClassForTool(tool: AgentToolMetadata): AgentToolAuthorityClass {
-  if (tool.capability === 'account') return 'manual_only'
-  if (tool.capability === 'sandbox') return 'sandbox_compute'
-  if (tool.confirmationMode !== 'never' || tool.riskLevel !== 'read' || tool.capability === 'memory') {
-    return 'confirmation_write'
-  }
-  return 'read'
-}
-
-export function providerCompatibilityFlags(profile: ProviderModelProfile) {
-  const flags: string[] = [profile.apiFamily]
-  flags.push(profile.supportsTools ? 'tools' : 'no_tools')
-  flags.push(profile.supportsStreaming ? 'streaming' : 'no_streaming')
-  flags.push(profile.supportsParallelToolCalls ? 'parallel_tool_calls' : 'serial_tool_calls')
-  flags.push(`tool_choice_${profile.toolChoicePolicy}`)
-  flags.push(`schema_${profile.schemaProfile ?? 'generic'}`)
-  if (profile.streamArgumentRepair !== 'off') flags.push(`stream_repair_${profile.streamArgumentRepair}`)
-  if (profile.replayPolicy) flags.push(`replay_${profile.replayPolicy}`)
-  return flags
 }
 
 export function buildEffectiveToolInventorySnapshot(input: EffectiveToolInventoryInput): AgentToolInventorySnapshot {
@@ -74,7 +58,13 @@ export function buildEffectiveToolInventorySnapshot(input: EffectiveToolInventor
       risk: tool.riskLevel,
       confirmationMode: tool.confirmationMode,
       navigationTarget: tool.navigationTarget,
-      authorityClass: authorityClassForTool(tool),
+      authorityClass: inferToolAuthorityClass({
+        capability: tool.capability,
+        riskLevel: tool.riskLevel,
+        confirmationMode: tool.confirmationMode,
+        manualBoundaryNotice: isManualBoundaryNoticeToolName(tool.name),
+        harnessManagedObservation: isHarnessManagedObservationToolName(tool.name),
+      }),
       providerCompatibility: compatibility,
       provenance: 'xox',
     })),

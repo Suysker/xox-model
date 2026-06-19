@@ -68,8 +68,8 @@ describe('Tool Runtime Maturity Layer', () => {
       data_query_workspace: 'read',
       sandbox_run_code: 'sandbox_compute',
       workspace_patch_config: 'confirmation_write',
-      account_forbidden: 'manual_only',
-      memory_remember: 'confirmation_write',
+      account_forbidden: 'read',
+      memory_remember: 'read',
     })
     expect(snapshot.tools.every((tool) => tool.provenance === 'xox')).toBe(true)
     expect(snapshot.tools[0]?.providerCompatibility).toContain('tools')

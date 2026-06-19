@@ -183,6 +183,22 @@ describe('Agent ADR architecture boundaries', () => {
     expect(guardrails).not.toContain('function stableJson')
   })
 
+  it('keeps tool inventory metadata in Agentic OS packages', () => {
+    const inventory = source('agent/tool-runtime/effective-tool-inventory.ts')
+    expect(inventory).toContain("@agentic-os/core")
+    expect(inventory).toContain('inferToolAuthorityClass')
+    expect(inventory).toContain("@agentic-os/runtime-openai-compatible")
+    expect(inventory).toContain('providerCompatibilityFlags')
+    expect(inventory).not.toContain('function authorityClassForTool')
+    expect(inventory).not.toContain('function providerCompatibilityFlags')
+    expect(inventory).not.toContain("tool.capability === 'sandbox'")
+
+    const hostKit = source('agent/agentic-os/xox-agentic-os-host-kit.ts')
+    expect(hostKit).toContain('inferToolAuthorityClass')
+    expect(hostKit).not.toContain("input.riskLevel === 'read'")
+    expect(hostKit).not.toContain("input.confirmationMode === 'always'")
+  })
+
   it('keeps the tool observation continuation prompt in Agentic OS core', () => {
     const registry = source('agent/prompt-registry.ts')
     expect(registry).toContain("@agentic-os/core")
