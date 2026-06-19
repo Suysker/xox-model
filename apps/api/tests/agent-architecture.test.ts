@@ -98,28 +98,16 @@ describe('Agent ADR architecture boundaries', () => {
     ])
   })
 
-  it('keeps AgentActionRuntime as the Agent-owned write lifecycle boundary', () => {
-    expect(existsSync(join(srcRoot, 'agent', 'agent-action-runtime.ts'))).toBe(true)
-    expectNoImports('agent/action-graph-store.ts', [
-      /approval-executor/,
-      /autoExecuteAgentActionRequest/,
-      /resolveActionAuthority/,
-    ])
-    const runtime = source('agent/agent-action-runtime.ts')
-    expect(runtime).toContain('addAgentActionRequest')
-    expect(runtime).toContain('autoExecuteAgentActionRequest')
-    expectNoImports('agent/agent-action-runtime.ts', [
-      /runtime\//,
-      /tool-gateway/,
-      /planner/,
-    ])
+  it('does not keep obsolete local harness helper boundaries after Agentic OS replacement', () => {
+    expect(existsSync(join(srcRoot, 'agent', 'agent-action-runtime.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'context-engine', 'index.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'turn-resolver.ts'))).toBe(false)
   })
 
-  it('routes provider planning through ContextEngine instead of ad hoc context pack assembly', () => {
-    expect(existsSync(join(srcRoot, 'agent', 'context-engine', 'index.ts'))).toBe(true)
+  it('routes provider planning through the xox context pack without an obsolete local context wrapper', () => {
     const planningCall = source('agent/runtime-planning-call.ts')
-    expect(planningCall).toContain("from './context-engine/index.js'")
-    expect(planningCall).not.toContain("from './context-pack.js'")
+    expect(planningCall).toContain("from './context-pack.js'")
+    expect(planningCall).not.toContain("from './context-engine/index.js'")
   })
 
   it('keeps historical Agent route imports pointed at current boundaries', () => {

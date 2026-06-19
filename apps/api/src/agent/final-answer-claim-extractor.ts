@@ -101,7 +101,7 @@ const FINAL_ANSWER_CLAIM_TOOL: ChatTool = {
 
 function systemPrompt() {
   return [
-    'You are the claim extraction stage of xox-model AgentRunEngine.',
+    'You are the claim extraction stage of the xox-model Agentic OS harness.',
     'You only convert an assistant final answer into structured evidence-relevant claims.',
     'Use final_answer_extract_claims when the provider supports tool calls for this review turn.',
     'Do not decide whether the final answer is correct.',

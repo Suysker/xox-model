@@ -4,7 +4,7 @@ import type { RuntimePlanResult } from '../src/agent/runtime/runtime-adapter.js'
 import {
   resolveRuntimePlanWithAgenticOs,
   runtimePlanResultToAgenticOsTurnOutput,
-} from '../src/agent/agentic-os-adapter.js'
+} from '../src/agent/agentic-os/xox-runtime-turn-output.js'
 
 function plan(overrides: Partial<RuntimePlanResult> = {}): RuntimePlanResult {
   return {

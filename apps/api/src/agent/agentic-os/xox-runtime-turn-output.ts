@@ -5,7 +5,7 @@ import type {
   RuntimeTurnOutput,
 } from '@agentic-os/contracts'
 import { TurnResolver } from '@agentic-os/core'
-import type { RuntimePlanResult } from './runtime/runtime-adapter.js'
+import type { RuntimePlanResult } from '../runtime/runtime-adapter.js'
 
 function toJsonObject(value: unknown): JsonObject {
   if (value === undefined || value === null) return {}

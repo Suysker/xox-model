@@ -1,8 +1,8 @@
 # Agent OS 设计
 
-本文件描述 `xox-model` 的目标 Agent OS 架构。正式 runtime 采用策略见 [ADR 0001](adr/0001-agent-runtime-architecture.md)，Harness Agent 分层架构见 [ADR 0002](adr/0002-harness-agent-architecture.md)，历史收敛记录见 [ADR 0003](adr/0003-xox-model-agent-os-target-architecture.md)，当前可靠性核心以 [ADR 0004: Evaluator-Centered Harness Agent 架构](adr/0004-evaluator-centered-harness-agent.md) 为准；后续架构收束以 [ADR 0018: AgentRunEngine v2 Single-Loop Harness Upgrade](adr/0018-agent-run-engine-v2-single-loop-harness.md) 为准，目标是把 `AgentRunEngine`、turn resolution、context、tool runtime、agent actions、evaluator、sandbox 和 transcript/trace 收束到一个更清晰的单循环 harness。受控代码执行边界见 [ADR 0016: Manifest-Scoped Sandbox Tool](adr/0016-manifest-scoped-sandbox-tool.md)，统一工具/sandbox 运行面见 [ADR 0042: OpenClaw/Hermes Unified Tool Sandbox Runtime](adr/0042-openclaw-hermes-unified-tool-sandbox-runtime.md)：sandbox 只能在服务端生成的 manifest 内运行，不能直接访问 DB、secrets、internal HTTP 或领域服务；但 sandbox 内的 `xox_sandbox.<tool_name>(...)` 必须桥回同一个 Tool Runtime Gateway，按同一套租户、权限、确认、导航、领域服务和审计链路执行。Memory Kernel 后续以 [ADR 0019: OpenClaw-First Memory Kernel v2](adr/0019-openclaw-first-memory-kernel-v2.md) 为准：记忆不是日志池，必须按 working/session/semantic/procedural/episodic/diagnostic/archive 分层治理，OpenClaw 是 active recall、hybrid retrieval、promotion 和 compaction flush 的优先参考。
+本文件描述 `xox-model` 的目标 Agent OS 架构。正式 runtime 采用策略见 [ADR 0001](adr/0001-agent-runtime-architecture.md)，Harness Agent 分层架构见 [ADR 0002](adr/0002-harness-agent-architecture.md)，历史收敛记录见 [ADR 0003](adr/0003-xox-model-agent-os-target-architecture.md)，可靠性核心参考 [ADR 0004: Evaluator-Centered Harness Agent 架构](adr/0004-evaluator-centered-harness-agent.md) 和 [ADR 0018: AgentRunEngine v2 Single-Loop Harness Upgrade](adr/0018-agent-run-engine-v2-single-loop-harness.md) 的历史收束经验；当前 production harness 已由版本化 `@agentic-os/core` 的 Agentic OS loop 承担，xox 只保留业务 port、context pack、tool gateway、evaluator/evidence、sandbox 和 transcript/trace 投影。受控代码执行边界见 [ADR 0016: Manifest-Scoped Sandbox Tool](adr/0016-manifest-scoped-sandbox-tool.md)，统一工具/sandbox 运行面见 [ADR 0042: OpenClaw/Hermes Unified Tool Sandbox Runtime](adr/0042-openclaw-hermes-unified-tool-sandbox-runtime.md)：sandbox 只能在服务端生成的 manifest 内运行，不能直接访问 DB、secrets、internal HTTP 或领域服务；但 sandbox 内的 `xox_sandbox.<tool_name>(...)` 必须桥回同一个 Tool Runtime Gateway，按同一套租户、权限、确认、导航、领域服务和审计链路执行。Memory Kernel 后续以 [ADR 0019: OpenClaw-First Memory Kernel v2](adr/0019-openclaw-first-memory-kernel-v2.md) 为准：记忆不是日志池，必须按 working/session/semantic/procedural/episodic/diagnostic/archive 分层治理，OpenClaw 是 active recall、hybrid retrieval、promotion 和 compaction flush 的优先参考。
 
-Agentic OS 抽取已经从 compatibility pilot 进入 production harness replacement：`agent-kernel.ts` 的复杂目标路径现在进入 `apps/api/src/agent/agentic-os/xox-agentic-os-host-kit.ts`，由版本化 `@agentic-os/core` 的 `AgentRunEngine` 承担单循环 harness。xox 继续拥有 evaluator、action graph、memory、sandbox、provider settings、tenant boundary 和业务工具语义，并把通用不变量反哺 Agentic OS。
+Agentic OS 抽取已经从 compatibility pilot 进入 production harness replacement：`agent-kernel.ts` 的复杂目标路径现在进入 `apps/api/src/agent/agentic-os/xox-agentic-os-host-kit.ts`，由版本化 `@agentic-os/core` 的 Agentic OS loop 承担单循环 harness。xox 继续拥有 evaluator、action graph、memory、sandbox、provider settings、tenant boundary 和业务工具语义，并把通用不变量反哺 Agentic OS。
 
 ## 目标
 
@@ -318,7 +318,7 @@ planning-session.ts
 
 ### 自动化与确认策略
 
-ADR 0015 已取代这里的旧语义：`automationLevel` 是执行授权策略，不是 planner 推进力度。AgentRunEngine、provider planner、tool catalog、observation loop、evaluator 和 repair planner 都必须始终全力推进用户目标；自动化级别只在 action draft 已生成后决定是否可以自动执行。
+ADR 0015 已取代这里的旧语义：`automationLevel` 是执行授权策略，不是 planner 推进力度。Agentic OS harness、provider planner、tool catalog、observation loop、evaluator 和 repair planner 都必须始终全力推进用户目标；自动化级别只在 action draft 已生成后决定是否可以自动执行。
 
 ```text
 manual  -> 读操作自动执行；所有写入保持可编辑 pending 确认卡
@@ -980,14 +980,14 @@ OpenAI Agents SDK
 - `provider_stream_delta` 只记录短 `delta`、累计 `preview`、tool call index、tool name 和 arguments preview；所有字段先经过 secret-like redaction，并有长度上限。
 - OpenAI-compatible adapter 按时间和长度合并 content/tool argument trace。它仍实时消费 provider stream，但不会把每个 token 都同步写入 DB；长 tool-call 参数只落阶段性 preview 和完成事件，防止 DeepSeek/Qwen/Doubao 等 provider 因客户端消费过慢而中断。
 - 如果兼容 provider 的 stream 已经暴露 tool name，但最终 arguments 是不完整 JSON，Runtime Planner 记录 `provider_retrying`，并用同一 provider 非流式重试一次；重试只投影已暴露的单个工具，但仍让 provider 通过正常 `tool_calls` 返回结果，不发送 forced named `tool_choice`。若 provider 明确拒绝 `tool_choice` 参数，OpenAI-compatible adapter 会保留当前工具投影并去掉 `tool_choice` 再试一次。没有 backend 语义路由：工具选择仍来自第一次 provider-native tool call，重试仍必须返回合法 provider-native tool call，否则 fail closed。
-- Provider request timeout 是 AgentRunEngine 的运行预算，不是 adapter 内部不可见常量。模块分工如下：
+- Provider request timeout 是 Agentic OS harness 的运行预算，不是 adapter 内部不可见常量。模块分工如下：
   - `settings.ts` 定义部署默认值和 env 下限，生产默认要覆盖复杂 tool-call JSON 生成时间。
   - `runtime-planning-call.ts` 根据结构化输入长度、工具目录规模和 `maxTokens` 生成本轮 `requestTimeoutMs`；普通问答保持轻量预算，复杂经营模型、批量记账或宽工具目录自动升到长预算。
   - `runtime-adapter.ts` 暴露 provider-neutral `requestTimeoutMs` 字段，具体 provider adapter 只负责执行 HTTP/stream timeout，不决定业务复杂度。
   - `openai-compatible-chat-adapter.ts` 把超时归类为 `provider_timeout`，不同于认证、HTTP、网络和响应格式错误；如果超时前已流出 tool name，重试继续沿用这个 provider-native 选择，并切到单工具非流式请求。
   - `runtime-trace-events.ts` 在 `provider_stream_started` 中记录脱敏的 `requestTimeoutMs`，便于从技术日志判断是否走了复杂任务预算。
   - `runtime-plan-reader.ts` 用“模型服务响应超时”解释超时，不再误报为 base URL/网络不可达。
-  - 依赖方向保持为 `AgentRunEngine -> Runtime Planning Call -> Runtime Adapter -> Runtime Trace`；Tool Catalog Gateway 仍只投影工具，不承担 timeout 或业务意图判断。
+  - 依赖方向保持为 `Agentic OS host kit -> Runtime Planning Call -> Runtime Adapter -> Runtime Trace`；Tool Catalog Gateway 仍只投影工具，不承担 timeout 或业务意图判断。
 - `provider_stream_completed` 只记录内容长度和 tool call 数量。
 - 不保存 provider 原始 SSE 行、完整 prompt、API key、HTTP headers、完整 tool arguments 或 provider 原始 JSON。
 - OpenAI-compatible / DeepSeek / Qwen / Doubao 等兼容 Chat Completions `stream + tools + tool_calls` 的 provider 走 token/chunk 路径；如果 provider 返回普通 JSON，adapter 仍用非流式 tool_calls 解析，但不会伪造 token delta。
@@ -1153,9 +1153,9 @@ Agent: workspace_import_bundle
 - OpenAI Agents SDK adapter 已形成可验证 runtime adapter 路径，并把 runner lifecycle / function tool execute 映射为 provider-neutral run events；SDK 原生 streaming/tracing/guardrail/human-in-the-loop event 细节后续必须进入 provider-neutral run events 或 harness hooks。
 - 前端已有后端状态刷新式 unified timeline / memory panel，OpenAI-compatible provider chunk 和 OpenAI Agents SDK lifecycle/tool trace 已进入统一时间线；后续要继续做跨实例 pubsub 和 SDK tracing。
 - 任何 SDK 原生成熟化增强都必须进入 provider-neutral run events 或 Tool Policy hooks，不能替代确认卡、租户隔离、domain services 或 audit。
-- ADR 0017 已落地第一版 Tool Runtime Maturity Layer：吸收 OpenAI Agents JS 的 tool/approval/guardrail/turn-resolution 思想、OpenClaw 的 effective tool inventory 和 stricter approval composition、Hermes 的 provider sanitation 与 tool-loop guardrails，但保留 xox 的 SaaS harness 作为主线，不引入本地 agent control plane。实现模块包括 `tool-runtime/effective-tool-inventory.ts`、`tool-runtime/tool-call-supervisor.ts`、`tool-runtime/tool-loop-guardrails.ts`、`runtime/provider-payload-sanitizer.ts` 和 `tool-runtime/approval-policy-composer.ts`。
-- ADR 0018 的本地单循环核心已作为成熟度压力源被迁移到 Agentic OS host kit：xox 不再保留本地 `agent-run-engine.ts`，而是通过 Agentic OS ports 复用 `TurnResolver`、上下文、工具监督、Agent action lifecycle、Completion Evaluator、Transcript/Trace 和业务 evidence projection。
-- ADR 0019 的 OpenClaw-first Memory Kernel v2 已落地：记忆不再是日志池，而是受 `AgentRunEngine` 调用的上下文能力。OpenClaw-derived 纯模块进入 `packages/agent-memory-core`，负责 memory budget、flush plan、citation、MMR retrieval 和 short-term promotion scoring；`memory_search / memory_get` 是一等只读工具；`agent_memories` 继续承载 SaaS durable memory 和治理字段；`agent_memory_notes` 映射 OpenClaw daily notes；`agent_memory_recall_signals` 映射短期召回信号；`agent_memory_dream_reports` 映射 DREAMS/review surface。普通 prompt 只允许相关的可注入 working/semantic/procedural 记忆进入，candidate/diagnostic/episodic/archive/expired/superseded 默认不可注入；压缩摘要先写日记忆，不直接写长期候选。
+- ADR 0017 的本地 Tool Runtime Maturity Layer 已收敛为 xox host port 能力：保留 effective tool inventory、tool-call supervisor、tool-loop guardrails、provider sanitation 和 approval policy composer 这些 xox/provider 边界，不再保留本地 agent control plane。
+- ADR 0018 的本地单循环核心已作为成熟度压力源被迁移到 Agentic OS host kit：xox 不再保留本地 `agent-run-engine.ts`、`turn-resolver.ts`、`agent-action-runtime.ts` 或 `context-engine/index.ts`，而是通过 Agentic OS ports 复用 loop ownership，并保留业务 evidence projection、tool gateway、action graph 和 transcript/trace 投影。
+- ADR 0019 的 OpenClaw-first Memory Kernel v2 已落地：记忆不再是日志池，而是 Agentic OS host kit 调用的上下文能力。OpenClaw-derived 纯模块进入 `packages/agent-memory-core`，负责 memory budget、flush plan、citation、MMR retrieval 和 short-term promotion scoring；`memory_search / memory_get` 是一等只读工具；`agent_memories` 继续承载 SaaS durable memory 和治理字段；`agent_memory_notes` 映射 OpenClaw daily notes；`agent_memory_recall_signals` 映射短期召回信号；`agent_memory_dream_reports` 映射 DREAMS/review surface。普通 prompt 只允许相关的可注入 working/semantic/procedural 记忆进入，candidate/diagnostic/episodic/archive/expired/superseded 默认不可注入；压缩摘要先写日记忆，不直接写长期候选。
 
 ## 迁移顺序
 

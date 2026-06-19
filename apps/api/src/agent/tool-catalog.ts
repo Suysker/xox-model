@@ -357,7 +357,7 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
     function: {
       name: 'tool_discover',
       description:
-        'Search the current scoped tool inventory when the visible tools are not enough. Returns short descriptors only; the next AgentRunEngine turn may materialize the real tool schemas. Use this instead of guessing hidden tool names.',
+        'Search the current scoped tool inventory when the visible tools are not enough. Returns short descriptors only; the next Agentic OS harness turn may materialize the real tool schemas. Use this instead of guessing hidden tool names.',
       parameters: objectSchema({
         query: {
           type: 'string',

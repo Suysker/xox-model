@@ -7,15 +7,20 @@ import { newId } from '../core/security.js'
 import { utcNow } from '../core/time.js'
 import type { CurrentUser } from '../modules/auth.js'
 import { isActionDraft, type PlannedItem } from './action-draft-builder.js'
+import {
+  addAgentActionRequest,
+  autoExecuteAgentActionRequest,
+  type AgentActionDraft,
+} from './approval-executor.js'
 import { addRunEvent } from './run-events.js'
 import { assertAgentRunLease } from './run-lease.js'
 import { agentThreadEvents } from './thread-events.js'
-import type { AgentToolObservation } from './tool-observation-continuation.js'
-import type { AgentAutomationLevel } from './tool-policy.js'
 import {
-  createAgentActionRuntimeRequest,
-  settleAgentActionRuntimeRequest,
-} from './agent-action-runtime.js'
+  actionExecutionObservation,
+  actionPreviewObservation,
+  type AgentToolObservation,
+} from './tool-observation-continuation.js'
+import { resolveActionAuthority, type AgentAutomationLevel } from './tool-policy.js'
 import { classifyToolObservation } from './tool-observation-outcome.js'
 
 type ActionGraphContext = {
@@ -35,6 +40,11 @@ export type StoredActionGraph = {
   actionRows: Row<'agent_action_requests'>[]
   planRows: Row<'agent_plan_steps'>[]
   plannerSource: AgentPlannerSource
+}
+
+type StoredActionResult = {
+  action: Row<'agent_action_requests'>
+  observation: AgentToolObservation
 }
 
 function toolNameForRead(item: PlannedItem, sequence: number) {
@@ -111,6 +121,89 @@ async function getPlanStep(ctx: ActionGraphContext, id: string) {
   return ctx.db.selectFrom('agent_plan_steps').selectAll().where('id', '=', id).executeTakeFirstOrThrow()
 }
 
+function failedActionObservation(input: {
+  action: Row<'agent_action_requests'>
+  reason: string
+  error?: string | null
+}): AgentToolObservation {
+  const displayPreview = input.error
+    ? `自动执行失败：${input.action.title}：${input.error}`
+    : `动作被策略阻止：${input.action.title}`
+  return {
+    title: input.action.title,
+    toolName: input.action.kind,
+    toolCallId: `action_${input.action.id}`,
+    toolArguments: {},
+    displayPreview,
+    modelContent: JSON.stringify({
+      observationType: 'action_result',
+      displayPreview,
+      actionRequestId: input.action.id,
+      actionKind: input.action.kind,
+      title: input.action.title,
+      status: input.action.status,
+      reason: input.reason,
+      error: input.error ?? null,
+    }),
+    status: 'failed',
+    outcome: input.error ? 'failed_terminal' : 'policy_blocked',
+  }
+}
+
+async function settleStoredAction(
+  ctx: ActionGraphContext,
+  input: {
+    draft: AgentActionDraft
+    action: Row<'agent_action_requests'>
+  },
+): Promise<StoredActionResult> {
+  const authority = resolveActionAuthority({
+    automationLevel: ctx.automationLevel,
+    kind: input.draft.kind,
+    riskLevel: input.draft.riskLevel,
+  })
+
+  if (authority.mode === 'auto_execute') {
+    const executed = await autoExecuteAgentActionRequest(ctx.db, ctx.settings, ctx.user, input.action, authority.reason)
+    return {
+      action: executed.actionRequest,
+      observation: executed.error
+        ? failedActionObservation({ action: executed.actionRequest, reason: authority.reason, error: executed.error })
+        : actionExecutionObservation({ action: executed.actionRequest, result: executed.result }),
+    }
+  }
+
+  if (authority.mode === 'forbidden') {
+    await ctx.db.updateTable('agent_action_requests')
+      .set({ status: 'failed', error_message: authority.reason })
+      .where('id', '=', input.action.id)
+      .execute()
+    await ctx.db.updateTable('agent_plan_steps')
+      .set({ status: 'failed', updated_at: utcNow() })
+      .where('action_request_id', '=', input.action.id)
+      .execute()
+    await addRunEvent(ctx.db, {
+      threadId: ctx.threadId,
+      runId: ctx.runId,
+      type: 'action_auto_execution_failed',
+      title: '动作被策略阻止',
+      message: `${input.draft.title}：${authority.reason}`,
+      status: 'failed',
+      data: { actionRequestId: input.action.id, actionKind: input.action.kind, reason: authority.reason },
+    })
+    const action = await ctx.db.selectFrom('agent_action_requests').selectAll().where('id', '=', input.action.id).executeTakeFirstOrThrow()
+    return {
+      action,
+      observation: failedActionObservation({ action, reason: authority.reason }),
+    }
+  }
+
+  return {
+    action: input.action,
+    observation: actionPreviewObservation({ action: input.action }),
+  }
+}
+
 export async function storePlannedActionGraph(
   ctx: ActionGraphContext,
   input: { items: PlannedItem[]; plannerSource: AgentPlannerSource; emitPlanReady?: boolean },
@@ -132,7 +225,7 @@ export async function storePlannedActionGraph(
     const sequence = sequenceOffset + index + 1
     await assertAgentRunLease(ctx.db, ctx.settings, ctx.runId)
     if (isActionDraft(item)) {
-      let action = await createAgentActionRuntimeRequest(ctx, item)
+      let action = await addAgentActionRequest(ctx, item)
       let step = await addAgentPlanStep(ctx, {
         sequence,
         title: item.title,
@@ -141,7 +234,7 @@ export async function storePlannedActionGraph(
         actionRequestId: action.id,
         navigation: item.navigation,
       })
-      const settled = await settleAgentActionRuntimeRequest(ctx, { draft: item, action })
+      const settled = await settleStoredAction(ctx, { draft: item, action })
       action = settled.action
       step = await getPlanStep(ctx, step.id)
       observations.push(settled.observation)

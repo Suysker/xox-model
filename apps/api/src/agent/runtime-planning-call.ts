@@ -1,4 +1,4 @@
-import { buildAgentContext } from './context-engine/index.js'
+import { buildAgentContextPack } from './context-pack.js'
 import { redactSecretLikeContent } from './memory.js'
 import type { PlannerContext } from './planning-context.js'
 import { addRuntimeStreamRunEvent } from './runtime-trace-events.js'
@@ -271,7 +271,7 @@ function runtimeInputWithMaterializedTools(
 }
 
 export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePlanResult | null> {
-  const baseContext = await buildAgentContext({
+  const baseContext = await buildAgentContextPack({
     db: ctx.db,
     workspace: ctx.workspace,
     user: ctx.user,

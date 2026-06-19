@@ -84,10 +84,11 @@ The current local development install still resolves those packages through junc
 
 Current integration is no longer compatibility-only:
 
-- `apps/api/src/agent/agentic-os-adapter.ts` still maps xox `RuntimePlanResult` into Agentic OS `RuntimeTurnOutput`.
+- `apps/api/src/agent/agentic-os/xox-runtime-turn-output.ts` maps xox `RuntimePlanResult` into Agentic OS `RuntimeTurnOutput`.
 - The normal xox agent kernel now enters `apps/api/src/agent/agentic-os/xox-agentic-os-host-kit.ts`.
-- The host kit calls Agentic OS `createAgentHostKit` and uses Agentic OS `AgentRunEngine` as the production harness loop.
-- xox still owns product/domain behavior, action graph projection, memory, sandbox, provider settings, and final response evidence policy.
+- The host kit calls Agentic OS `createAgentHostKit` and uses the Agentic OS loop as the production harness loop.
+- xox still owns product/domain behavior, action graph projection, memory, sandbox, provider settings, and final response evidence policy through Agentic OS ports.
+- Obsolete local harness helper files are intentionally removed: `agent-run-engine.ts`, `turn-resolver.ts`, `agent-action-runtime.ts`, `context-engine/index.ts`, and the former top-level `agentic-os-adapter.ts`.
 
 This is a real kernel introduction. Remaining package work is registry/release hardening, not code copying.
 

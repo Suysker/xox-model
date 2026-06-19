@@ -46,7 +46,7 @@ import type { Row } from '../../db/schema.js'
 import { newId } from '../../core/security.js'
 import { utcNow } from '../../core/time.js'
 import type { PlannerContext } from '../planning-context.js'
-import { runtimePlanResultToAgenticOsTurnOutput } from '../agentic-os-adapter.js'
+import { runtimePlanResultToAgenticOsTurnOutput } from './xox-runtime-turn-output.js'
 import { executeAgentActionRequest } from '../approval-executor.js'
 import {
   buildPlannedItemFromRuntimeStep,
