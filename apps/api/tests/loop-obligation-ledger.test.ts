@@ -118,6 +118,14 @@ describe('Agent loop obligation ledger', () => {
       requiredToolNames: ['data_query_workspace'],
       selectedCapabilities: ['data'],
       goalFacts: { requiresOrderedEntityFacts: true },
+      modelContext: {
+        obligations: [
+          expect.objectContaining({
+            requiredDataScopes: ['entity_summary'],
+            requiredMetrics: ['shareholderNames', 'shareholderInvestments'],
+          }),
+        ],
+      },
     })
   })
 

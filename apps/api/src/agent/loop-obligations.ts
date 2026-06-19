@@ -1,4 +1,6 @@
 import type { AgentGoalFacts } from '@xox/contracts'
+import type { AgentLoopObligationLedger as OsAgentLoopObligationLedger } from '@agentic-os/contracts'
+import { ledgerToObligationPlan as osLedgerToObligationPlan } from '@agentic-os/core'
 import type { AgentToolCapability } from './tool-catalog.js'
 import type { AgentEvidenceAuthority } from './evidence-ledger.js'
 import type { ResponseEvaluation } from './response-evaluator.js'
@@ -172,25 +174,52 @@ function mergeGoalFacts(values: AgentGoalFacts[]) {
   return merged
 }
 
+function osKindForXoxObligation(kind: AgentLoopObligationKind) {
+  return kind === 'assistant_final_answer' ? 'assistant_final_answer' : 'tool_observation'
+}
+
+function osLedgerFromXoxObligations(obligations: AgentLoopObligation[]): OsAgentLoopObligationLedger {
+  return {
+    schemaVersion: 'agentic-os.loop_obligation_ledger.v1',
+    runId: 'xox-local-obligation-plan',
+    threadId: 'xox-local-obligation-plan',
+    obligations: obligations.map((obligation) => ({
+      obligationId: obligation.id,
+      kind: osKindForXoxObligation(obligation.kind),
+      reason: obligation.reason,
+      toolNames: obligation.toolNames,
+      capabilities: obligation.capabilities,
+      status: 'open',
+      source: 'host',
+      createdAtIteration: 0,
+      evidenceIds: [],
+      invalidReasons: [],
+    })),
+  }
+}
+
 export function planLoopObligations(input: {
   objective: string
   obligations: AgentLoopObligation[]
 }): AgentLoopObligationPlan | null {
   if (input.obligations.length === 0) return null
-  const toolNames = unique(input.obligations.flatMap((obligation) => obligation.toolNames))
-  const capabilities = unique(input.obligations.flatMap((obligation) => obligation.capabilities))
+  const osPlan = osLedgerToObligationPlan({
+    ledger: osLedgerFromXoxObligations(input.obligations),
+    objective: input.objective,
+  })
+  if (!osPlan) return null
   const goalFacts = mergeGoalFacts(input.obligations.map((obligation) => obligation.goalFacts))
 
   return {
     schemaVersion: 'xox.loop_obligation_plan.v1',
     objective: input.objective,
     obligations: input.obligations,
-    requiredToolNames: toolNames,
-    selectedCapabilities: capabilities,
+    requiredToolNames: osPlan.requiredToolNames,
+    selectedCapabilities: osPlan.selectedCapabilities as AgentToolCapability[],
     requiredActionCapabilities: [],
     goalFacts,
     modelContext: {
-      purpose: 'satisfy_runner_obligations',
+      purpose: osPlan.modelContext.purpose,
       obligations: input.obligations.map((obligation) => ({
         id: obligation.id,
         kind: obligation.kind,
@@ -199,11 +228,7 @@ export function planLoopObligations(input: {
         ...(obligation.requiredDataScopes ? { requiredDataScopes: obligation.requiredDataScopes } : {}),
         ...(obligation.requiredMetrics ? { requiredMetrics: obligation.requiredMetrics } : {}),
       })),
-      instruction: [
-        'Continue the same user objective.',
-        'Satisfy the listed runner-owned obligations through tool observations before producing a final answer.',
-        'Tool outputs are observations for the model; they are not the user-facing final answer.',
-      ].join(' '),
+      instruction: osPlan.modelContext.instruction,
     },
   }
 }
