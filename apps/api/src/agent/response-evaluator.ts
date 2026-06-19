@@ -1,14 +1,13 @@
-import type { AgentGoalFacts } from '@xox/contracts'
+import type { AgentGoalContract, AgentGoalFacts } from '@xox/contracts'
+import { evaluateFinalAnswerHygiene } from '@agentic-os/core'
 import type { Row } from '../db/schema.js'
 import { parseJson } from '../db/database.js'
 import type { AgentEvidenceAuthority, AgentEvidenceItem, AgentFinalAnswerClaim } from './evidence-ledger.js'
 import { buildEvidenceRequirements, isExecutedSandboxEvidenceFacts } from './evidence-ledger.js'
 import type { AgentToolObservation } from './tool-observation-continuation.js'
-import type { AgentGoalContract } from '@xox/contracts'
 import { mergeAgentGoalFacts } from './runtime-goal-facts.js'
 import { objectHasKey } from './structured-evidence-utils.js'
 import { classifyToolObservation } from './tool-observation-outcome.js'
-import { detectProviderPlainTextToolCallArtifact } from './runtime/provider-plain-text-tool-calls.js'
 
 export type ResponseEvaluationStatus =
   | 'pass'
@@ -82,6 +81,17 @@ function hasOrderedShareholderDomainEvidence(evidence: AgentEvidenceItem[]) {
     (objectHasKey(item.facts, 'firstShareholder') || objectHasKey(item.facts, 'shareholders')))
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+function finalAnswerHygieneArtifactFormat(metadata: unknown) {
+  if (!isRecord(metadata)) return 'provider_protocol'
+  const artifact = metadata.artifact
+  if (!isRecord(artifact)) return 'provider_protocol'
+  return typeof artifact.format === 'string' ? artifact.format : 'provider_protocol'
+}
+
 export function evaluateAssistantResponse(input: {
   goal: Row<'agent_goals'>
   finalAssistantText: string | null
@@ -147,13 +157,18 @@ export function evaluateAssistantResponse(input: {
     }
   }
 
-  const providerToolCallArtifact = detectProviderPlainTextToolCallArtifact(finalText)
-  if (providerToolCallArtifact) {
+  const finalAnswerHygiene = finalText.length > 0
+    ? evaluateFinalAnswerHygiene({ assistantText: finalText })
+    : { status: 'pass' as const }
+  if (
+    finalAnswerHygiene.status === 'needs_repair' &&
+    finalAnswerHygiene.finding.code === 'provider_tool_call_text_not_final'
+  ) {
     findings.push({
       severity: 'fail',
       code: 'response.provider_tool_call_text_not_final',
       evidenceIds: input.evidence.map((item) => item.id),
-      message: `Provider 返回了 ${providerToolCallArtifact.format} 工具调用协议文本，不能作为面向用户的最终回答。`,
+      message: `Provider 返回了 ${finalAnswerHygieneArtifactFormat(finalAnswerHygiene.finding.metadata)} 工具调用协议文本，不能作为面向用户的最终回答。`,
     })
     return {
       status: 'needs_final_answer',

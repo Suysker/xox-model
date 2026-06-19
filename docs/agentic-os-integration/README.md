@@ -31,6 +31,7 @@ Agentic OS should own reusable harness concerns:
 - action lifecycle integrity;
 - context boundary and redaction;
 - final answer claim DTO and generic claim-to-evidence-requirement projection;
+- final answer hygiene for provider protocol artifacts;
 - runtime adapter contract testing;
 - host profile and host kit composition.
 
@@ -90,7 +91,9 @@ Current integration is no longer compatibility-only:
 - The host kit calls Agentic OS `createAgentHostKit` and uses the Agentic OS loop as the production harness loop.
 - xox still owns product/domain behavior, action graph projection, memory, sandbox, provider settings, and final response evidence policy through Agentic OS ports.
 - xox `apps/api/src/agent/evidence-ledger.ts` now consumes `@agentic-os/core` `evidenceRequirementsFromFinalAnswerClaims()` for generic final claim kind projection.
+- xox `apps/api/src/agent/response-evaluator.ts` now consumes `@agentic-os/core` `evaluateFinalAnswerHygiene()` for final answer protocol artifact rejection.
 - xox still owns provider final-answer claim extraction and financial/shareholder policy, including the xox adapter rule that unscoped entity/domain final-answer claims require shareholder domain evidence.
+- xox still owns provider runtime plain-text tool-call recovery in `apps/api/src/agent/runtime/provider-plain-text-tool-calls.ts`; it is runtime recovery, not final review policy.
 - Obsolete local harness helper files are intentionally removed: `agent-run-engine.ts`, `turn-resolver.ts`, `agent-action-runtime.ts`, `context-engine/index.ts`, and the former top-level `agentic-os-adapter.ts`.
 
 This is a real kernel introduction. Remaining package work is registry/release hardening, not code copying.
