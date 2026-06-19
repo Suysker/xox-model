@@ -1,5 +1,9 @@
 import type { AgentGoalFacts } from '@xox/contracts'
-import type { AgentLoopObligationLedger as OsAgentLoopObligationLedger } from '@agentic-os/contracts'
+import type {
+  AgentLoopObligationLedger as OsAgentLoopObligationLedger,
+  JsonObject,
+  JsonValue,
+} from '@agentic-os/contracts'
 import { ledgerToObligationPlan as osLedgerToObligationPlan } from '@agentic-os/core'
 import type { AgentToolCapability } from './tool-catalog.js'
 import type { AgentEvidenceAuthority } from './evidence-ledger.js'
@@ -178,6 +182,18 @@ function osKindForXoxObligation(kind: AgentLoopObligationKind) {
   return kind === 'assistant_final_answer' ? 'assistant_final_answer' : 'tool_observation'
 }
 
+function osMetadataFromXoxObligation(obligation: AgentLoopObligation): JsonObject {
+  const metadata: Record<string, JsonValue> = {
+    xoxKind: obligation.kind,
+    findingCodes: obligation.findingCodes,
+  }
+  if (obligation.authority) metadata.authority = obligation.authority
+  if (obligation.subject) metadata.subject = obligation.subject
+  if (obligation.requiredDataScopes) metadata.requiredDataScopes = obligation.requiredDataScopes
+  if (obligation.requiredMetrics) metadata.requiredMetrics = obligation.requiredMetrics
+  return metadata
+}
+
 function osLedgerFromXoxObligations(obligations: AgentLoopObligation[]): OsAgentLoopObligationLedger {
   return {
     schemaVersion: 'agentic-os.loop_obligation_ledger.v1',
@@ -189,6 +205,7 @@ function osLedgerFromXoxObligations(obligations: AgentLoopObligation[]): OsAgent
       reason: obligation.reason,
       toolNames: obligation.toolNames,
       capabilities: obligation.capabilities,
+      metadata: osMetadataFromXoxObligation(obligation),
       status: 'open',
       source: 'host',
       createdAtIteration: 0,
@@ -196,6 +213,20 @@ function osLedgerFromXoxObligations(obligations: AgentLoopObligation[]): OsAgent
       invalidReasons: [],
     })),
   }
+}
+
+function metadataStringArray(metadata: JsonObject | undefined, key: string): string[] | undefined {
+  const value = metadata?.[key]
+  if (!Array.isArray(value)) return undefined
+  const values = value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+  return values.length > 0 ? values : undefined
+}
+
+function xoxKindFromMetadata(metadata: JsonObject | undefined, fallback: AgentLoopObligationKind): AgentLoopObligationKind {
+  const value = metadata?.xoxKind
+  return value === 'assistant_final_answer' || value === 'sandbox_calculation' || value === 'domain_fact'
+    ? value
+    : fallback
 }
 
 export function planLoopObligations(input: {
@@ -209,6 +240,7 @@ export function planLoopObligations(input: {
   })
   if (!osPlan) return null
   const goalFacts = mergeGoalFacts(input.obligations.map((obligation) => obligation.goalFacts))
+  const sourceById = new Map(input.obligations.map((obligation) => [obligation.id, obligation]))
 
   return {
     schemaVersion: 'xox.loop_obligation_plan.v1',
@@ -220,14 +252,19 @@ export function planLoopObligations(input: {
     goalFacts,
     modelContext: {
       purpose: osPlan.modelContext.purpose,
-      obligations: input.obligations.map((obligation) => ({
-        id: obligation.id,
-        kind: obligation.kind,
-        reason: obligation.reason,
-        toolNames: obligation.toolNames,
-        ...(obligation.requiredDataScopes ? { requiredDataScopes: obligation.requiredDataScopes } : {}),
-        ...(obligation.requiredMetrics ? { requiredMetrics: obligation.requiredMetrics } : {}),
-      })),
+      obligations: osPlan.modelContext.obligations.map((obligation) => {
+        const source = sourceById.get(obligation.obligationId)
+        const requiredDataScopes = metadataStringArray(obligation.metadata, 'requiredDataScopes') ?? source?.requiredDataScopes
+        const requiredMetrics = metadataStringArray(obligation.metadata, 'requiredMetrics') ?? source?.requiredMetrics
+        return {
+          id: obligation.obligationId,
+          kind: xoxKindFromMetadata(obligation.metadata, source?.kind ?? 'domain_fact'),
+          reason: obligation.reason,
+          toolNames: obligation.toolNames,
+          ...(requiredDataScopes ? { requiredDataScopes } : {}),
+          ...(requiredMetrics ? { requiredMetrics } : {}),
+        }
+      }),
       instruction: osPlan.modelContext.instruction,
     },
   }

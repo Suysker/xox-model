@@ -93,7 +93,7 @@ Current integration is no longer compatibility-only:
 - xox still owns product/domain behavior, action graph projection, memory, sandbox, provider settings, and final response evidence policy through Agentic OS ports.
 - xox `apps/api/src/agent/evidence-ledger.ts` now consumes `@agentic-os/core` `evidenceRequirementsFromFinalAnswerClaims()` for generic final claim kind projection.
 - xox `apps/api/src/agent/response-evaluator.ts` now consumes `@agentic-os/core` `evaluateFinalAnswerHygiene()` for final answer protocol artifact rejection.
-- xox `apps/api/src/agent/loop-obligations.ts` now consumes `@agentic-os/core` `ledgerToObligationPlan()` for generic required-tool/capability aggregation and runner-obligation instruction.
+- xox `apps/api/src/agent/loop-obligations.ts` now consumes `@agentic-os/core` `ledgerToObligationPlan()` for generic required-tool/capability aggregation, runner-obligation instruction, and opaque metadata passthrough.
 - xox still owns provider final-answer claim extraction and financial/shareholder policy, including the xox adapter rule that unscoped entity/domain final-answer claims require shareholder domain evidence.
 - xox still owns response-evaluator finding to financial/domain obligation mapping, plus `goalFacts`, `requiredDataScopes`, and `requiredMetrics`.
 - xox still owns provider runtime plain-text tool-call recovery in `apps/api/src/agent/runtime/provider-plain-text-tool-calls.ts`; it is runtime recovery, not final review policy.

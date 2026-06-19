@@ -121,6 +121,7 @@ describe('Agent loop obligation ledger', () => {
       modelContext: {
         obligations: [
           expect.objectContaining({
+            kind: 'domain_fact',
             requiredDataScopes: ['entity_summary'],
             requiredMetrics: ['shareholderNames', 'shareholderInvestments'],
           }),
