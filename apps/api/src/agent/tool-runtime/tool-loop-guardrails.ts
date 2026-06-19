@@ -1,3 +1,7 @@
+import {
+  isCompletedActionResultToolObservation,
+  parseToolObservationModelFacts,
+} from '@agentic-os/core'
 import type { AgentToolLoopGuardrailFinding } from '@xox/contracts'
 import type { Row } from '../../db/schema.js'
 import type { AgentToolObservation } from '../tool-observation-continuation.js'
@@ -70,14 +74,10 @@ function executedWriteReapplied(input: ToolLoopGuardrailInput): AgentToolLoopGua
   const executedKinds = new Set(
     input.priorObservations
       .map((observation) => {
-        try {
-          const parsed = JSON.parse(observation.modelContent) as Record<string, unknown>
-          return parsed.observationType === 'action_result' && parsed.completed === true
-            ? String(parsed.actionKind ?? '')
-            : ''
-        } catch {
-          return ''
-        }
+        const parsed = parseToolObservationModelFacts(observation)
+        return isCompletedActionResultToolObservation(observation)
+          ? String(parsed?.actionKind ?? '')
+          : ''
       })
       .filter(Boolean),
   )

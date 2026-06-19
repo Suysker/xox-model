@@ -1,6 +1,6 @@
 # xox-model Agentic OS Integration Plan
 
-Status: Draft (M68 action observation envelope consumption)
+Status: Draft (M69 tool observation loop semantics consumption)
 
 Date: 2026-06-19
 
@@ -40,6 +40,7 @@ Agentic OS should own reusable harness concerns:
 - provider tool-call stream assembly and frame damage primitives;
 - provider boundary failure observation payloads;
 - tool observation outcome classification for provider boundary, sandbox execution, action preview, and action result observations;
+- tool observation facts parsing and role helpers for action, sandbox, provider boundary, tool supervisor failure, discovery, and clarification observations;
 - action observation envelope builders for action preview, executed result, failed result, and policy-blocked result observations;
 - host profile and host kit composition.
 
@@ -115,6 +116,7 @@ Current integration is no longer compatibility-only:
 - xox runtime plan reader now consumes `@agentic-os/runtime-openai-compatible` `providerToolCallBoundaryObservations()` for provider boundary failure model payloads; xox keeps only the `ReadDraft` wrapper, Chinese display copy, and product status mapping.
 - xox tool observation outcome classification now consumes `@agentic-os/core` `classifyToolObservationOutcome()` and related helpers. `apps/api/src/agent/tool-observation-outcome.ts` remains only as a type-compatible adapter for `@xox/contracts`; provider boundary, sandbox execution, action preview, and action result outcome branches are no longer maintained in xox.
 - xox action observation payloads now consume `@agentic-os/core` `buildActionPreviewObservation()` and `buildActionResultObservation()`. `apps/api/src/agent/tool-observation-continuation.ts` remains the xox adapter for Chinese display copy, action row mapping, details parsing, and business result summaries; `apps/api/src/agent/action-graph-store.ts` no longer hand-writes `action_result` model payloads for blocked or failed actions.
+- xox observation loop role checks now consume `@agentic-os/core` `parseToolObservationModelFacts()` and `is*ToolObservation()` helpers. `apps/api/src/agent/agentic-os/xox-agentic-os-host-kit.ts` still owns xox readable text and business finalization policy, but no longer directly parses `observation.modelContent` for action/sandbox/provider boundary/tool supervisor/tool discovery/clarification semantics; `tool-runtime/tool-loop-guardrails.ts` also uses core helpers for completed action-result detection.
 - xox still owns provider final-answer claim extraction and financial/shareholder policy, including the xox adapter rule that unscoped entity/domain final-answer claims require shareholder domain evidence.
 - xox still owns response-evaluator finding to financial/domain obligation mapping, plus `goalFacts`, `requiredDataScopes`, and `requiredMetrics`.
 - xox still owns obligation materializer selection, `data_query_workspace` arguments, business read execution, and product run event persistence.

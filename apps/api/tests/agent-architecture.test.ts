@@ -139,6 +139,19 @@ describe('Agent ADR architecture boundaries', () => {
     expect(actionGraph).not.toContain("observationType: 'action_result'")
   })
 
+  it('keeps tool observation loop semantics in Agentic OS core', () => {
+    const hostKit = source('agent/agentic-os/xox-agentic-os-host-kit.ts')
+    expect(hostKit).toContain('parseToolObservationModelFacts')
+    expect(hostKit).toContain('isActionToolObservation')
+    expect(hostKit).toContain('isSandboxToolObservation')
+    expect(hostKit).not.toContain('JSON.parse(observation.modelContent)')
+
+    const guardrails = source('agent/tool-runtime/tool-loop-guardrails.ts')
+    expect(guardrails).toContain("@agentic-os/core")
+    expect(guardrails).toContain('isCompletedActionResultToolObservation')
+    expect(guardrails).not.toContain('JSON.parse(observation.modelContent)')
+  })
+
   it('routes provider planning through the xox context pack without an obsolete local context wrapper', () => {
     const planningCall = source('agent/runtime-planning-call.ts')
     expect(planningCall).toContain("from './context-pack.js'")

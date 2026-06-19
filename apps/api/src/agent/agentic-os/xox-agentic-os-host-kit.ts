@@ -32,7 +32,17 @@ import type {
 } from '@agentic-os/contracts'
 import {
   createAgentHostKit,
+  isActionResultToolObservation,
+  isActionToolObservation,
+  isClarificationToolObservation,
+  isCompletedValidToolObservation,
+  isProviderBoundaryToolObservation,
+  isRepairableToolObservation,
+  isSandboxToolObservation,
+  isToolDiscoveryObservation,
+  isToolSupervisorFailureObservation,
   ledgerToReviewObligations,
+  parseToolObservationModelFacts,
   type AgentActionPort,
   type AgentCompletionPort,
   type AgentContextPort,
@@ -249,13 +259,7 @@ function observationContent(observation: AgentToolObservation): OsJsonObject {
 }
 
 function osOutcome(observation: AgentToolObservation): OsToolObservationOutcome {
-  if (observation.outcome) return observation.outcome
-  if (observation.status === 'completed') return 'completed_valid'
-  if (observation.status === 'failed') return 'failed_terminal'
-  if (observation.status === 'cancelled') return 'failed_terminal'
-  if (observation.status === 'not_executed') return 'policy_blocked'
-  if (observation.status === 'invalid') return 'completed_invalid'
-  return 'completed_valid'
+  return classifyToolObservation(observation) as OsToolObservationOutcome
 }
 
 function osObservationFromXox(
@@ -748,14 +752,7 @@ function runtimePlannerContext(
 }
 
 function parseXoxObservationContent(observation: AgentToolObservation): Record<string, unknown> | null {
-  try {
-    const parsed = JSON.parse(observation.modelContent)
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? parsed as Record<string, unknown>
-      : null
-  } catch {
-    return null
-  }
+  return parseToolObservationModelFacts(observation)
 }
 
 function completedActionAssistantText(
@@ -766,19 +763,13 @@ function completedActionAssistantText(
   const executedActionCount = state.actionRows.filter((row) => row.status === 'executed').length
   if (pendingActionCount > 0 || executedActionCount === 0) return null
   const actionObservations = observations
-    .filter((observation) => parseXoxObservationContent(observation)?.observationType === 'action_result')
+    .filter(isActionResultToolObservation)
   const lastActionObservation = actionObservations.at(-1)
   return lastActionObservation?.displayPreview?.trim() || null
 }
 
-function isSandboxObservation(observation: AgentToolObservation): boolean {
-  const facts = parseXoxObservationContent(observation)
-  return observation.toolName === 'sandbox_run_code' ||
-    facts?.observationType === 'sandbox_execution'
-}
-
 function lastSandboxObservation(observations: AgentToolObservation[]): AgentToolObservation | null {
-  return observations.filter(isSandboxObservation).at(-1) ?? null
+  return observations.filter(isSandboxToolObservation).at(-1) ?? null
 }
 
 function sandboxObservationForFinalizer(
@@ -787,7 +778,7 @@ function sandboxObservationForFinalizer(
 ): AgentToolObservation | null {
   const observation = lastSandboxObservation(observations)
   if (!observation) return null
-  if (classifyToolObservation(observation) !== 'completed_valid') return null
+  if (!isCompletedValidToolObservation(observation)) return null
   if (state.sandboxFinalizedToolCallIds.has(observation.toolCallId)) return null
   return observation
 }
@@ -795,13 +786,11 @@ function sandboxObservationForFinalizer(
 function shouldRunReadinessForRepairableObservation(observations: AgentToolObservation[]): AgentToolObservation | null {
   const observation = lastSandboxObservation(observations)
   if (!observation) return null
-  const outcome = classifyToolObservation(observation)
-  return outcome === 'failed_repairable' || outcome === 'completed_invalid' ? observation : null
+  return isRepairableToolObservation(observation) ? observation : null
 }
 
 function hasNonActionObservation(observations: AgentToolObservation[]): boolean {
-  return observations.some((observation) =>
-    parseXoxObservationContent(observation)?.observationType !== 'action_result')
+  return observations.some((observation) => !isActionResultToolObservation(observation))
 }
 
 function isRunnerOwnedObservation(observation: AgentToolObservation): boolean {
@@ -810,19 +799,16 @@ function isRunnerOwnedObservation(observation: AgentToolObservation): boolean {
 
 function isFinalizableBusinessObservation(observation: AgentToolObservation): boolean {
   if (observation.displayPreview.trim().length === 0) return false
-  const facts = parseXoxObservationContent(observation)
-  const observationType = typeof facts?.observationType === 'string' ? facts.observationType : null
   if (
-    observationType === 'action_preview' ||
-    observationType === 'action_result' ||
-    observationType === 'provider_tool_call_boundary' ||
-    observationType === 'sandbox_execution' ||
-    observationType === 'tool_supervisor_failure'
+    isActionToolObservation(observation) ||
+    isProviderBoundaryToolObservation(observation) ||
+    isSandboxToolObservation(observation) ||
+    isToolSupervisorFailureObservation(observation) ||
+    isToolDiscoveryObservation(observation) ||
+    isClarificationToolObservation(observation)
   ) {
     return false
   }
-  if (observation.toolName === 'sandbox_run_code') return false
-  if (observation.toolName === 'tool_discover' || observation.toolName === 'ask_user_clarification') return false
   if (observation.toolName === 'data_query_workspace') return observation.status === 'completed'
   return observation.status === 'failed' && classifyToolObservation(observation) === 'failed_terminal'
 }
@@ -833,12 +819,8 @@ function hasFinalAnswerSupportingObservation(
 ): boolean {
   const requiresWriteCapability = stateRequiresWriteCapability(state)
   return observations.some((observation) => {
-    const facts = parseXoxObservationContent(observation)
-    const observationType = typeof facts?.observationType === 'string' ? facts.observationType : null
-    if (observationType === 'action_result' || observationType === 'action_preview') return true
-    if (observation.toolName === 'sandbox_run_code' || observationType === 'sandbox_execution') {
-      return classifyToolObservation(observation) === 'completed_valid'
-    }
+    if (isActionToolObservation(observation)) return true
+    if (isSandboxToolObservation(observation)) return isCompletedValidToolObservation(observation)
     if (!isFinalizableBusinessObservation(observation)) return false
     return observation.toolName !== 'data_query_workspace' || !requiresWriteCapability
   })
@@ -977,8 +959,6 @@ function completedReadObservationAssistantText(
   if (state.actionRows.some((row) => row.status === 'pending')) return null
   const requiresWriteCapability = stateRequiresWriteCapability(state)
   const readObservations = observations.filter((observation) => {
-    const facts = parseXoxObservationContent(observation)
-    const observationType = typeof facts?.observationType === 'string' ? facts.observationType : null
     if (isFinalizableBusinessObservation(observation)) {
       return observation.toolName !== 'data_query_workspace' || !requiresWriteCapability
     }
@@ -986,11 +966,10 @@ function completedReadObservationAssistantText(
     if (observation.status !== 'completed') return false
     if (observation.displayPreview.trim().length === 0) return false
     return !isRunnerOwnedObservation(observation) &&
-      observationType !== 'action_preview' &&
-      observationType !== 'action_result' &&
-      observationType !== 'tool_supervisor_failure' &&
-      observation.toolName !== 'tool_discover' &&
-      observation.toolName !== 'ask_user_clarification'
+      !isActionToolObservation(observation) &&
+      !isToolSupervisorFailureObservation(observation) &&
+      !isToolDiscoveryObservation(observation) &&
+      !isClarificationToolObservation(observation)
   })
   const lastReadObservation = readObservations.at(-1)
   if (!lastReadObservation) return null
