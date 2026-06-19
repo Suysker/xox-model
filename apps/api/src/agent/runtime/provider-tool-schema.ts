@@ -1,5 +1,5 @@
 import type { ChatTool } from '../tool-catalog.js'
-import type { ProviderModelProfile } from './provider-model-profile.js'
+import type { ProviderModelProfile } from '@agentic-os/runtime-openai-compatible'
 
 // OpenClaw-inspired provider schema boundary. Implementation is project-local and
 // keeps xox-model tool metadata/types out of external provider runtimes.

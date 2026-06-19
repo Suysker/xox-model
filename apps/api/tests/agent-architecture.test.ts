@@ -42,8 +42,6 @@ describe('Agent ADR architecture boundaries', () => {
       'agent/runtime/openai-agents-adapter.ts',
       'agent/runtime/openai-compatible-chat-adapter.ts',
       'agent/runtime/provider-failover-policy.ts',
-      'agent/runtime/provider-model-profile.ts',
-      'agent/runtime/provider-model-ref.ts',
       'agent/runtime/provider-probe.ts',
       'agent/runtime/provider-request-shaper.ts',
       'agent/runtime/provider-tool-schema.ts',
@@ -100,6 +98,8 @@ describe('Agent ADR architecture boundaries', () => {
     expect(existsSync(join(srcRoot, 'agent', 'turn-resolver.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'balanced-json.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'provider-error-classifier.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'runtime', 'provider-model-profile.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'runtime', 'provider-model-ref.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-argument-repair.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-name-normalizer.ts'))).toBe(false)
   })

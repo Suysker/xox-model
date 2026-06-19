@@ -1,6 +1,8 @@
 import type { Settings } from '../../core/settings.js'
-import type { ProviderModelProfile } from './provider-model-profile.js'
-import { resolveProviderModelProfile } from './provider-model-profile.js'
+import {
+  resolveProviderModelProfile,
+  type ProviderModelProfile,
+} from '@agentic-os/runtime-openai-compatible'
 import type {
   ProviderRuntimeCapability,
   ProviderThinkingLevel,

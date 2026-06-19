@@ -7,7 +7,10 @@ import type { Settings } from '../../core/settings.js'
 import { newId } from '../../core/security.js'
 import { utcNow } from '../../core/time.js'
 import type { AgentToolCapability, AgentToolMetadata } from '../tool-catalog.js'
-import { resolveProviderModelProfile, type ProviderModelProfile } from '../runtime/provider-model-profile.js'
+import {
+  resolveProviderModelProfile,
+  type ProviderModelProfile,
+} from '@agentic-os/runtime-openai-compatible'
 
 // Inspired by OpenClaw's effective tool inventory boundary, adapted for xox-model's SaaS authority model.
 

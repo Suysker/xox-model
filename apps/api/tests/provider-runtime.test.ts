@@ -3,13 +3,16 @@ import type { Settings } from '../src/core/settings.js'
 import type { ChatTool } from '../src/agent/tool-catalog.js'
 import type { RuntimePlanningInput, RuntimePlanResult } from '../src/agent/runtime/runtime-adapter.js'
 import { retryRuntimeInput, shouldRetryRuntimePlan } from '../src/agent/runtime/provider-failover-policy.js'
-import { resolveProviderModelProfile } from '../src/agent/runtime/provider-model-profile.js'
-import { resolveProviderModelRef } from '../src/agent/runtime/provider-model-ref.js'
 import { resolveProviderRuntimeCapability, resolveRuntimeThinkingLevel } from '../src/agent/runtime/provider-capability-registry.js'
 import { shapeOpenAICompatibleChatRequest } from '../src/agent/runtime/provider-request-shaper.js'
 import { providerToolObservationReplayMessages } from '../src/agent/runtime/provider-transcript-replay.js'
 import { normalizeProviderToolSchemas } from '../src/agent/runtime/provider-tool-schema.js'
-import { classifyProviderHttpError, extractBalancedJson } from '@agentic-os/runtime-openai-compatible'
+import {
+  classifyProviderHttpError,
+  extractBalancedJson,
+  resolveProviderModelProfile,
+  resolveProviderModelRef,
+} from '@agentic-os/runtime-openai-compatible'
 import { readDraftsFromRuntimeResult } from '../src/agent/runtime-plan-reader.js'
 import { OpenAICompatibleChatAdapter } from '../src/agent/runtime/openai-compatible-chat-adapter.js'
 import {

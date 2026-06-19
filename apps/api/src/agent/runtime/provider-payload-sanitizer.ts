@@ -1,4 +1,4 @@
-import type { ProviderModelProfile } from './provider-model-profile.js'
+import type { ProviderModelProfile } from '@agentic-os/runtime-openai-compatible'
 
 // Inspired by Hermes Agent's provider payload sanitation layer, adapted to keep
 // OpenAI-compatible vendor quirks outside xox business tools.

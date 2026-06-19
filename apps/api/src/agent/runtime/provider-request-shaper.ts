@@ -1,7 +1,10 @@
 import { plannerSystemPrompt } from '../prompt-registry.js'
 import type { ChatTool } from '../tool-catalog.js'
 import type { RuntimePlanningInput } from './runtime-adapter.js'
-import { resolveProviderModelProfile, type ProviderModelProfile } from './provider-model-profile.js'
+import {
+  resolveProviderModelProfile,
+  type ProviderModelProfile,
+} from '@agentic-os/runtime-openai-compatible'
 import { sanitizeOpenAICompatibleRequestBody } from './provider-payload-sanitizer.js'
 import { normalizeProviderToolSchemas } from './provider-tool-schema.js'
 import {

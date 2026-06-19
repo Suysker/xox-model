@@ -1,5 +1,5 @@
 import type { RuntimeChatMessage } from './runtime-adapter.js'
-import type { ProviderModelProfile } from './provider-model-profile.js'
+import type { ProviderModelProfile } from '@agentic-os/runtime-openai-compatible'
 
 // Inspired by OpenClaw's provider replay/thinking hooks, adapted as a small
 // SaaS-safe contract. Provider capabilities translate protocol details only;

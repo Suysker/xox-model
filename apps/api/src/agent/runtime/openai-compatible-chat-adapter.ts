@@ -9,7 +9,6 @@ import { shapeOpenAICompatibleChatRequest } from './provider-request-shaper.js'
 import {
   ProviderToolCallParseError,
 } from './tool-call-repair.js'
-import type { ProviderModelProfile } from './provider-model-profile.js'
 import { ToolCallStreamAssembler, type StreamingToolCall } from './tool-call-stream-assembler.js'
 import { validateProviderToolCallsForExecution } from './tool-call-validator.js'
 import {
@@ -21,6 +20,7 @@ import {
   detectProviderPlainTextToolCallArtifact,
   providerRejectsToolChoice,
   recoverProviderPlainTextToolCalls,
+  type ProviderModelProfile,
   safeProviderErrorMessage,
 } from '@agentic-os/runtime-openai-compatible'
 

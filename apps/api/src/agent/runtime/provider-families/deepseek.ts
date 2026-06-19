@@ -1,4 +1,4 @@
-import type { ProviderModelProfile } from '../provider-model-profile.js'
+import type { ProviderModelProfile } from '@agentic-os/runtime-openai-compatible'
 import type {
   ProviderRuntimeCapability,
   ProviderRuntimeCapabilityContext,
