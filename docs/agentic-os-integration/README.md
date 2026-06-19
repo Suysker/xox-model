@@ -12,7 +12,7 @@ This is not a `xox-model` ADR and not an `agentic-os` ADR. It is an integration 
 
 ## Goal
 
-Introduce Agentic OS into `xox-model` by reference, not by copying code.
+Introduce Agentic OS into `xox-model` by versioned package reference, not by copying code and not by long-term local file dependency.
 
 The target shape is:
 
@@ -33,6 +33,16 @@ Agentic OS should own reusable harness concerns:
 - runtime adapter contract testing;
 - host profile and host kit composition.
 
+Agentic OS packages should be consumed as versioned `@agentic-os/*` packages:
+
+```json
+"@agentic-os/contracts": "^0.1.0",
+"@agentic-os/core": "^0.1.0",
+"@agentic-os/testing": "^0.1.0"
+```
+
+Exact versions should be pinned or ranged according to the release policy chosen for the first Agentic OS package release. The integration branch should not depend on copied source files or permanent `file:` references.
+
 `xox-model` should continue to own product and domain concerns:
 
 - financial model business rules;
@@ -48,13 +58,14 @@ Agentic OS should own reusable harness concerns:
 
 - Do not copy Agentic OS source files into `xox-model`.
 - Do not move xox business logic into Agentic OS core.
-- Do not replace the mature xox production harness in one step.
-- Do not change API behavior unless a parity test proves the new path is equivalent or better.
+- Do not keep two production harnesses long-term.
+- Do not merge the branch until the one-shot Agentic OS replacement reaches equal or better behavior than the current xox harness.
+- Do not change business behavior unless a parity test proves the new Agentic OS path preserves or improves the old behavior.
 - Do not put this plan under `docs/adr`; ADRs remain for architecture decisions, not this integration workstream.
 
 ## Current State
 
-`xox-model` already depends on Agentic OS packages through local file dependencies:
+`xox-model` currently depends on Agentic OS packages through local file dependencies:
 
 ```json
 "@agentic-os/contracts": "file:../../../agentic-os/packages/contracts",
@@ -69,6 +80,16 @@ Current integration is compatibility-only:
 
 This is a useful first boundary, but not yet a real kernel introduction.
 
+This is not the final dependency model. The replacement work should first prepare Agentic OS packages for versioned consumption, then switch xox dependencies to package versions.
+
+Current Agentic OS package state observed on 2026-06-19:
+
+- `@agentic-os/contracts`, `@agentic-os/core`, and `@agentic-os/testing` exist.
+- package versions are `0.0.0`.
+- packages are currently marked `private: true`.
+
+Therefore the first implementation task is release preparation in `C:/Github/agentic-os`, not xox source copying.
+
 ## Integration Principles
 
 1. **Introduce, do not copy**
@@ -79,9 +100,9 @@ This is a useful first boundary, but not yet a real kernel introduction.
 
    Existing xox tests and smoke expectations are the baseline. If a behavior is domain-specific, keep it in xox. If it is generic harness behavior, move or fix it in Agentic OS.
 
-3. **Migrate by strangler path**
+3. **Replace in one integration branch**
 
-   Add an Agentic OS pilot path next to the mature xox harness. Expand it only after parity tests pass.
+   Do the replacement in `codex/xox-agentic-os-integration` as a single cutover branch. Internal work can be sequenced, but the branch should not merge until the production xox harness entrypoint has moved to Agentic OS and full tests pass.
 
 4. **Use xox as the maturity pressure source**
 
@@ -90,6 +111,52 @@ This is a useful first boundary, but not yet a real kernel introduction.
 5. **Keep host adapter thin**
 
    The xox adapter should map existing services into Agentic OS ports. It should not become a second harness implementation.
+
+6. **Use versioned packages**
+
+   xox should consume `@agentic-os/*` through versioned package references. Local `file:` dependencies are acceptable only as the current pre-release state and should be removed before the final integration branch is considered complete.
+
+## Replacement Strategy
+
+This plan now uses a single-branch, one-shot replacement strategy:
+
+```text
+prepare versioned Agentic OS packages
+  -> switch xox dependencies from file refs to @agentic-os versions
+  -> build xox Agentic OS host adapter/profile/kit
+  -> replace xox production agent kernel entrypoint
+  -> delete or isolate obsolete duplicate harness code
+  -> run full xox tests until equal or better
+```
+
+This is "short pain" at merge level, not reckless untested replacement. The branch may still contain ordered implementation slices, but main should only receive the final cutover once the old behavior is matched or improved.
+
+Rollback strategy after merge should be package-version based:
+
+- repin `@agentic-os/*` to the last known good version;
+- revert xox adapter changes if package repin is insufficient;
+- reproduce generic failures in Agentic OS tests before releasing the next version.
+
+## Versioned Package Plan
+
+Agentic OS must be consumable as real packages before xox cutover.
+
+Required Agentic OS package work:
+
+- choose first integration version, likely `0.1.0`;
+- remove `private: true` from publishable packages or configure the chosen private registry workflow;
+- verify package `main`, `types`, and `files` point to built artifacts;
+- run `npm run check` in Agentic OS;
+- produce package artifacts through `npm pack` or publish to the selected registry;
+- document the package version consumed by xox.
+
+Required xox dependency work:
+
+- replace `file:../../../agentic-os/packages/contracts` with a versioned `@agentic-os/contracts`;
+- replace `file:../../../agentic-os/packages/core` with a versioned `@agentic-os/core`;
+- add `@agentic-os/testing` as a dev/test dependency when contract helpers are used;
+- commit `package-lock.json` updates;
+- avoid importing from Agentic OS source paths.
 
 ## Proposed Folder Shape
 
@@ -117,9 +184,32 @@ apps/api/tests/agentic-os-parity.test.ts
 
 The exact file names can change if the existing xox module structure suggests a cleaner split.
 
-## Phase 1: Contract-Harden Existing Adapter
+## Phase 1: Release-Ready Agentic OS Dependency
 
-Purpose: make the existing compatibility adapter a stable provider/runtime contract boundary.
+Purpose: make Agentic OS consumable by xox as versioned packages.
+
+Work:
+
+- prepare `@agentic-os/contracts`, `@agentic-os/core`, and `@agentic-os/testing` for versioned consumption;
+- publish or pack the packages according to the selected release workflow;
+- update xox dependencies from local `file:` refs to versioned package refs;
+- update `package-lock.json`;
+- verify xox never imports Agentic OS source files directly.
+
+Expected result:
+
+- xox consumes Agentic OS by package version, so future Agentic OS updates can be synchronized through dependency upgrades.
+
+Validation:
+
+```bash
+npm install
+npm run build:api
+```
+
+## Phase 2: Contract-Harden Existing Adapter
+
+Purpose: make the existing compatibility adapter a stable provider/runtime contract boundary before replacing the run loop.
 
 Work:
 
@@ -144,9 +234,9 @@ npm run build:api
 npm run test --workspace @xox/api -- agentic-os-adapter.test.ts
 ```
 
-## Phase 2: Build a Test-Only Agentic OS Host Kit Pilot
+## Phase 3: Build the xox Agentic OS Host Kit
 
-Purpose: prove xox can materialize Agentic OS host ports without changing the production run path.
+Purpose: materialize xox's existing harness subsystems as Agentic OS ports.
 
 Work:
 
@@ -160,12 +250,11 @@ Work:
   - readiness/final answer review -> `AgentCompletionPort`;
   - sandbox runtime -> optional `AgentSandboxPort`.
 - Create `createXoxAgenticOsHostKit()` around `createAgentHostKit()`.
-- Keep this path test-only or feature-flagged.
+- Keep the adapter thin: it maps xox services into Agentic OS; it does not reimplement the loop.
 
 Expected result:
 
-- A xox host kit can run a minimal read-only loop through Agentic OS.
-- No public API route changes yet.
+- xox can run through Agentic OS host kit in tests with xox business services still owning writes, memory, provider settings, and DB projection.
 
 Validation:
 
@@ -174,24 +263,21 @@ npm run build:api
 npm run test --workspace @xox/api -- agentic-os-host-kit.test.ts
 ```
 
-## Phase 3: Read-Only Parity
+## Phase 4: Replace Production Agent Kernel Entry
 
-Purpose: compare Agentic OS pilot behavior against xox mature harness for non-writing agent runs.
+Purpose: replace the xox production harness entrypoint with Agentic OS in the integration branch.
 
 Work:
 
-- Select existing read-only agent tests from `apps/api/tests/api.test.ts`.
-- Run equivalent scenarios through the Agentic OS host kit.
-- Verify:
-  - same or better final answer quality signals;
-  - same server-owned transcript visibility;
-  - same tool observation semantics;
-  - same provider error behavior;
-  - no business writes.
+- change `apps/api/src/agent/agent-kernel.ts` and related runner wiring to call `createXoxAgenticOsHostKit()`;
+- route read tools, write actions, sandbox, memory context, and final review through Agentic OS ports;
+- preserve xox API routes, DB projection, transcript output, and business semantics;
+- remove or isolate obsolete duplicated loop control that Agentic OS now owns;
+- keep xox-specific domain evaluators and action graph services behind host ports.
 
 Expected result:
 
-- Agentic OS path can safely handle read-only xox agent work.
+- the normal xox agent path uses Agentic OS as its harness loop.
 
 Validation:
 
@@ -200,54 +286,33 @@ npm run build:api
 npm run test:api
 ```
 
-## Phase 4: Action Lifecycle Parity
+## Phase 5: Full Parity and Hardening
 
-Purpose: prove Agentic OS `ActionRuntime` can wrap xox action graph semantics without changing business writes.
+Purpose: reach equal or better behavior than the old xox harness before merge.
 
 Work:
 
-- Map xox action graph preview/edit/execute/reject into `AgentActionPort`.
-- Ensure action request ids, audit ids, tool call ids, and observations stay bound to the same run/action/tool.
-- Preserve xox action graph persistence and audit logs.
-- Add tests for:
+- run and fix the full xox API suite;
+- run focused parity tests for:
+  - read-only agent turns;
+  - provider error behavior;
+  - progressive tool discovery and effective inventory;
+  - memory/context recall;
+  - sandbox observation loop;
   - pending action creation;
   - edit before confirm;
   - confirm execution;
   - reject;
   - invalid preview mutation fail-closed;
-  - cross-run/action result mismatch fail-closed.
+  - cross-run/action result mismatch fail-closed;
+  - final answer review/repair/clarification;
+  - obligation ledger behavior.
+- if Agentic OS lacks a generic invariant, fix Agentic OS and release a new package version;
+- if xox mapping is wrong, fix the xox adapter.
 
 Expected result:
 
-- xox business writes still occur only through xox services.
-- Agentic OS provides generic lifecycle guardrails.
-
-Validation:
-
-```bash
-npm run build:api
-npm run test:api
-```
-
-## Phase 5: Controlled Runtime Switch
-
-Purpose: route a limited production-like path through Agentic OS while preserving fallback.
-
-Work:
-
-- Add feature flag or internal setting:
-
-```text
-XOX_AGENTIC_OS_KERNEL=0|1
-```
-
-- Default remains existing xox harness until parity is proven.
-- When enabled, selected agent paths run through `createXoxAgenticOsHostKit()`.
-- Keep fallback to existing harness during rollout.
-
-Expected result:
-
-- Agentic OS can be consumed as the actual harness kernel for scoped xox flows.
+- xox tests pass with the Agentic OS kernel, and behavior is equal or better than the previous harness.
 
 Validation:
 
@@ -292,11 +357,14 @@ If a xox mature behavior looks generic, first reproduce it as an Agentic OS test
 The integration is not considered successful until:
 
 - Agentic OS is consumed as dependency, not copied.
-- `xox-model` default business behavior is unchanged unless explicitly approved.
+- Agentic OS is consumed through versioned `@agentic-os/*` packages, not permanent local `file:` refs.
+- The normal xox production agent kernel uses Agentic OS as the harness loop.
+- The old xox harness loop is removed or isolated so there is no long-term dual-harness maintenance.
+- `xox-model` business behavior is unchanged unless explicitly approved.
 - `npm run build:api` passes.
 - `npm run test:api` passes.
 - `agentic-os-adapter.test.ts` passes.
-- New Agentic OS pilot/parity tests pass.
+- New Agentic OS parity tests pass.
 - Relevant Agentic OS tests pass when Agentic OS itself changes.
 - Navigation server tests are not regressed when Agentic OS changes.
 
@@ -329,12 +397,13 @@ Escalate to full `npm run test:api` when the change touches agent routes, DB pro
 
 ## First Implementation Slice
 
-The first implementation slice should be intentionally small:
+The first implementation slice should start the one-shot replacement branch by fixing dependency shape and contract safety:
 
-1. Add `@agentic-os/testing` to xox API test dependencies if necessary.
-2. Extend `agentic-os-adapter.test.ts` with runtime contract validation.
-3. Add a small `agentic-os-runtime-contract.test.ts` if the existing test becomes too broad.
-4. Keep production harness untouched.
-5. Run `build:api` and the Agentic OS adapter tests.
+1. Prepare Agentic OS packages for versioned consumption.
+2. Replace xox local `file:` Agentic OS dependencies with versioned `@agentic-os/*` references.
+3. Add `@agentic-os/testing` to xox API test dependencies if necessary.
+4. Extend `agentic-os-adapter.test.ts` with runtime contract validation.
+5. Add a small `agentic-os-runtime-contract.test.ts` if the existing test becomes too broad.
+6. Run `build:api` and the Agentic OS adapter tests.
 
-After this slice passes, start the host kit pilot.
+After this slice passes, build the host kit and then replace the production agent kernel entrypoint in the same branch.
