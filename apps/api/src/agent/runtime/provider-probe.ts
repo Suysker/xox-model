@@ -1,5 +1,5 @@
 import type { ChatTool } from '../tool-catalog.js'
-import { classifyProviderHttpError, safeProviderErrorMessage } from './provider-error-classifier.js'
+import { classifyProviderHttpError, safeProviderErrorMessage } from '@agentic-os/runtime-openai-compatible'
 import { shapeOpenAICompatibleChatRequest } from './provider-request-shaper.js'
 import type { RuntimePlanningInput } from './runtime-adapter.js'
 

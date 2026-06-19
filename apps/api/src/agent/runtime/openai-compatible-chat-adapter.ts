@@ -5,7 +5,6 @@ import type {
   ToolCallBoundaryViolationCode,
 } from './runtime-adapter.js'
 import type { AgentToolCallStep } from '../tool-catalog.js'
-import { classifyProviderHttpError, providerRejectsToolChoice, safeProviderErrorMessage } from './provider-error-classifier.js'
 import { shapeOpenAICompatibleChatRequest } from './provider-request-shaper.js'
 import {
   ProviderToolCallParseError,
@@ -18,8 +17,11 @@ import {
   resolveRuntimeThinkingLevel,
 } from './provider-capability-registry.js'
 import {
+  classifyProviderHttpError,
   detectProviderPlainTextToolCallArtifact,
+  providerRejectsToolChoice,
   recoverProviderPlainTextToolCalls,
+  safeProviderErrorMessage,
 } from '@agentic-os/runtime-openai-compatible'
 
 const SOURCE = 'openai_compatible_tool_calls' as const

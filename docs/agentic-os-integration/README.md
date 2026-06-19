@@ -101,10 +101,11 @@ Current integration is no longer compatibility-only:
 - xox final review response now consumes `@agentic-os/core` `ledgerToReviewObligations()` for active ledger obligation to completion repair obligation projection.
 - xox `apps/api/src/agent/runtime/openai-compatible-chat-adapter.ts` now consumes `@agentic-os/runtime-openai-compatible` `detectProviderPlainTextToolCallArtifact()` and `recoverProviderPlainTextToolCalls()` for provider plain-text tool-call recovery; the local `provider-plain-text-tool-calls.ts` duplicate has been removed.
 - xox provider runtime now consumes `@agentic-os/runtime-openai-compatible` `extractBalancedJson()`, `parseToolArgumentsWithRepair()`, and `repairToolName()` for provider-frame JSON extraction, bounded streamed argument repair, and inventory-bound tool-name repair; local `balanced-json.ts`, `tool-call-argument-repair.ts`, and `tool-call-name-normalizer.ts` duplicates have been removed.
+- xox provider runtime now consumes `@agentic-os/runtime-openai-compatible` `classifyProviderHttpError()`, `safeProviderErrorMessage()`, `providerRejectsToolChoice()`, `shouldRetryProviderRuntimeResult()`, and `buildProviderRuntimeRetryPatch()` for provider HTTP taxonomy, safe error redaction, `tool_choice` rejection detection, recoverable same-turn retry checks, and retry request shaping; local `provider-error-classifier.ts` has been removed, and `provider-failover-policy.ts` is now only the xox adapter for high-volume tool budgets and Chinese run-event copy.
 - xox still owns provider final-answer claim extraction and financial/shareholder policy, including the xox adapter rule that unscoped entity/domain final-answer claims require shareholder domain evidence.
 - xox still owns response-evaluator finding to financial/domain obligation mapping, plus `goalFacts`, `requiredDataScopes`, and `requiredMetrics`.
 - xox still owns obligation materializer selection, `data_query_workspace` arguments, business read execution, and product run event persistence.
-- xox still owns provider runtime retry/failover, stream events, provider capability profiles, `ProviderToolCallParseError` wrapping, and provider tool call to xox planner-step mapping.
+- xox still owns provider stream events, provider capability profiles, `ProviderToolCallParseError` wrapping, localized retry run-event copy, high-volume business tool policy, and provider tool call to xox planner-step mapping.
 - Obsolete local harness helper files are intentionally removed: `agent-run-engine.ts`, `turn-resolver.ts`, `agent-action-runtime.ts`, `context-engine/index.ts`, the former top-level `agentic-os-adapter.ts`, and provider repair duplicates now owned by Agentic OS runtime packages.
 
 This is a real kernel introduction. Remaining package work is registry/release hardening, not code copying.
@@ -382,6 +383,7 @@ Fix in Agentic OS when the issue is generic harness behavior:
 - cancellation;
 - resume;
 - obligation/final-review mechanics;
+- provider failure classification and same-turn retry decision primitives;
 - runtime adapter contract testing.
 
 Fix in xox-model when the issue is product/domain behavior:
@@ -393,6 +395,7 @@ Fix in xox-model when the issue is product/domain behavior:
 - action graph business projection;
 - memory retrieval ranking and persistence;
 - provider settings UI/API;
+- localized provider retry event copy and business-tool budget policy;
 - real-provider smoke configuration.
 
 If a xox mature behavior looks generic, first reproduce it as an Agentic OS test, then move the generic invariant into Agentic OS.
@@ -406,6 +409,7 @@ The integration is not considered successful until:
 - Before merge, the selected registry must resolve all `@agentic-os/*` packages to the intended Agentic OS artifacts, and `package-lock.json` must no longer depend on development junctions.
 - The normal xox production agent kernel uses Agentic OS as the harness loop.
 - The old xox harness loop is removed or isolated so there is no long-term dual-harness maintenance.
+- Obsolete local provider harness helpers, including `apps/api/src/agent/runtime/provider-error-classifier.ts`, remain deleted after Agentic OS replacement.
 - `xox-model` business behavior is unchanged unless explicitly approved.
 - `npm run build:api` passes.
 - `npm run test:api` passes.

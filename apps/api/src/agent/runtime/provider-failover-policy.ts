@@ -1,73 +1,44 @@
+import {
+  buildProviderRuntimeRetryPatch,
+  isRecoverableProviderHttpRuntimeError,
+  shouldRetryProviderRuntimeResult,
+} from '@agentic-os/runtime-openai-compatible'
 import type { RuntimePlanningInput, RuntimePlanError, RuntimePlanResult } from './runtime-adapter.js'
 import {
+  HIGH_VOLUME_STRUCTURED_TOOL_NAMES,
   HIGH_VOLUME_STRUCTURED_MAX_TOKENS,
   HIGH_VOLUME_STRUCTURED_TIMEOUT_MS,
-  isHighVolumeStructuredToolName,
 } from './high-volume-tool-policy.js'
 
-function selectedToolFromError(input: RuntimePlanningInput, error?: RuntimePlanError) {
-  return error?.toolNames?.find((name) =>
-    input.tools.some((tool) => tool.function.name === name),
-  )
-}
-
-function isRecoverableHttpError(error?: RuntimePlanError) {
-  return error?.kind === 'provider_http_error' && error.classification === 'server'
-}
-
-function isRecoverableToolCallBoundary(error?: RuntimePlanError) {
-  const code = error?.toolCallBoundary?.code
-  return code === 'tool_call_arguments_truncated' ||
-    code === 'tool_call_arguments_invalid' ||
-    code === 'tool_call_stream_interrupted'
-}
-
-function retryMaxTokens(input: RuntimePlanningInput, selectedToolName?: string) {
-  const baseline = input.maxTokens ?? 1600
-  return isHighVolumeStructuredToolName(selectedToolName)
-    ? Math.max(baseline, HIGH_VOLUME_STRUCTURED_MAX_TOKENS)
-    : Math.max(baseline, 12_000)
-}
-
-function retryTimeoutMs(input: RuntimePlanningInput, selectedToolName?: string) {
-  const baseline = input.requestTimeoutMs ?? input.settings.agentProviderRequestTimeoutMs
-  return isHighVolumeStructuredToolName(selectedToolName)
-    ? Math.max(baseline, HIGH_VOLUME_STRUCTURED_TIMEOUT_MS)
-    : Math.max(baseline, 240_000)
-}
-
 export function shouldRetryRuntimePlan(result: RuntimePlanResult | null | undefined) {
-  return result?.error?.kind === 'provider_network_error' ||
-    (
-      result?.error?.kind === 'provider_response_error' &&
-      (!result.error.toolCallBoundary || isRecoverableToolCallBoundary(result.error))
-    ) ||
-    result?.error?.kind === 'provider_timeout' ||
-    isRecoverableHttpError(result?.error)
+  return shouldRetryProviderRuntimeResult(result)
 }
 
 export function retryRuntimeInput(
   input: RuntimePlanningInput,
   result: RuntimePlanResult | null | undefined,
 ): RuntimePlanningInput {
-  if (result?.error?.kind !== 'provider_response_error' && result?.error?.kind !== 'provider_timeout') {
+  const patch = buildProviderRuntimeRetryPatch({
+    availableToolNames: input.tools.map((tool) => tool.function.name),
+    baselineMaxTokens: input.maxTokens ?? 1600,
+    baselineRequestTimeoutMs: input.requestTimeoutMs ?? input.settings.agentProviderRequestTimeoutMs,
+    highVolumeToolNames: HIGH_VOLUME_STRUCTURED_TOOL_NAMES,
+    highVolumeRetryMaxTokens: HIGH_VOLUME_STRUCTURED_MAX_TOKENS,
+    highVolumeRetryTimeoutMs: HIGH_VOLUME_STRUCTURED_TIMEOUT_MS,
+    ...(result?.error ? { error: result.error } : {}),
+  })
+  if (!patch) {
     return input
   }
-  const selectedToolName = selectedToolFromError(input, result.error)
-  if (!selectedToolName) {
-    return {
-      ...input,
-      stream: false,
-      requestTimeoutMs: retryTimeoutMs(input),
-    }
-  }
-  const selectedTool = input.tools.find((tool) => tool.function.name === selectedToolName)
+  const selectedTool = patch.selectedToolName
+    ? input.tools.find((tool) => tool.function.name === patch.selectedToolName)
+    : undefined
   return {
     ...input,
-    stream: false,
-    tools: selectedTool ? [selectedTool] : input.tools,
-    maxTokens: retryMaxTokens(input, selectedToolName),
-    requestTimeoutMs: retryTimeoutMs(input, selectedToolName),
+    stream: patch.stream,
+    ...(selectedTool ? { tools: [selectedTool] } : {}),
+    ...(patch.maxTokens !== undefined ? { maxTokens: patch.maxTokens } : {}),
+    requestTimeoutMs: patch.requestTimeoutMs,
   }
 }
 
@@ -84,7 +55,7 @@ export function retryRuntimeMessage(error?: RuntimePlanError) {
   if (error?.kind === 'provider_timeout') {
     return '模型服务响应超时，正在用更稳的同轮规划请求重试一次。'
   }
-  if (isRecoverableHttpError(error)) {
+  if (isRecoverableProviderHttpRuntimeError(error)) {
     return '模型服务返回临时服务错误，正在对同一轮规划重试一次。'
   }
   return '模型服务连接中断，正在对同一轮规划重试一次。'
