@@ -27,6 +27,7 @@ describe('Agent ADR architecture boundaries', () => {
 
   it('keeps Agentic OS host kit as the single harness run-loop entrypoint', () => {
     expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-agentic-os-host-kit.ts'))).toBe(true)
+    expect(existsSync(join(srcRoot, 'agent', 'agent-run-engine.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'goal-run-engine.ts'))).toBe(false)
     const kernel = source('agent/agent-kernel.ts')
     expect(kernel).toContain("from './agentic-os/xox-agentic-os-host-kit.js'")

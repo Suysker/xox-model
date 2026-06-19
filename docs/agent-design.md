@@ -2,7 +2,7 @@
 
 本文件描述 `xox-model` 的目标 Agent OS 架构。正式 runtime 采用策略见 [ADR 0001](adr/0001-agent-runtime-architecture.md)，Harness Agent 分层架构见 [ADR 0002](adr/0002-harness-agent-architecture.md)，历史收敛记录见 [ADR 0003](adr/0003-xox-model-agent-os-target-architecture.md)，当前可靠性核心以 [ADR 0004: Evaluator-Centered Harness Agent 架构](adr/0004-evaluator-centered-harness-agent.md) 为准；后续架构收束以 [ADR 0018: AgentRunEngine v2 Single-Loop Harness Upgrade](adr/0018-agent-run-engine-v2-single-loop-harness.md) 为准，目标是把 `AgentRunEngine`、turn resolution、context、tool runtime、agent actions、evaluator、sandbox 和 transcript/trace 收束到一个更清晰的单循环 harness。受控代码执行边界见 [ADR 0016: Manifest-Scoped Sandbox Tool](adr/0016-manifest-scoped-sandbox-tool.md)，统一工具/sandbox 运行面见 [ADR 0042: OpenClaw/Hermes Unified Tool Sandbox Runtime](adr/0042-openclaw-hermes-unified-tool-sandbox-runtime.md)：sandbox 只能在服务端生成的 manifest 内运行，不能直接访问 DB、secrets、internal HTTP 或领域服务；但 sandbox 内的 `xox_sandbox.<tool_name>(...)` 必须桥回同一个 Tool Runtime Gateway，按同一套租户、权限、确认、导航、领域服务和审计链路执行。Memory Kernel 后续以 [ADR 0019: OpenClaw-First Memory Kernel v2](adr/0019-openclaw-first-memory-kernel-v2.md) 为准：记忆不是日志池，必须按 working/session/semantic/procedural/episodic/diagnostic/archive 分层治理，OpenClaw 是 active recall、hybrid retrieval、promotion 和 compaction flush 的优先参考。
 
-Agentic OS 抽取正在以 compatibility pilot 方式接入：`apps/api/src/agent/agentic-os-adapter.ts` 已消费 `@agentic-os/contracts` 和 `@agentic-os/core`，并用 Agentic OS `TurnResolver` 校验 xox provider output 到 next step 的基础分类语义。当前不替换 xox production `AgentRunEngine`；xox 继续作为成熟度压力源，把 evaluator、action graph、memory、sandbox 和 smoke discipline 的通用不变量反哺 Agentic OS。
+Agentic OS 抽取已经从 compatibility pilot 进入 production harness replacement：`agent-kernel.ts` 的复杂目标路径现在进入 `apps/api/src/agent/agentic-os/xox-agentic-os-host-kit.ts`，由版本化 `@agentic-os/core` 的 `AgentRunEngine` 承担单循环 harness。xox 继续拥有 evaluator、action graph、memory、sandbox、provider settings、tenant boundary 和业务工具语义，并把通用不变量反哺 Agentic OS。
 
 ## 目标
 
@@ -49,9 +49,9 @@ Agentic OS 抽取正在以 compatibility pilot 方式接入：`apps/api/src/agen
 | Skills | 可选过程知识层 | 不能替代 server tools，不能绕过确认、权限、审计 |
 | MCP | 外部工具和连接器边界 | 核心财务业务能力继续走受控 server tools |
 
-## Evaluator-Centered AgentRunEngine
+## Evaluator-Centered Agentic OS Harness
 
-`xox-model` 的 Agent OS 不是一次 provider tool-call 规划器。复杂目标必须进入 AgentRunEngine，由 harness 多轮执行：
+`xox-model` 的 Agent OS 不是一次 provider tool-call 规划器。复杂目标必须进入 Agentic OS host kit，由 harness 多轮执行：
 
 ```text
 Goal Interpreter
@@ -69,7 +69,7 @@ Goal Interpreter
 核心变化：
 
 - `planner.ts` 只负责一轮 provider-native planning，不再代表完整任务已经完成。
-- `agent-kernel.ts` 委托 `agent-run-engine.ts` 负责把复杂目标推进成多轮 `plan -> confirm/execute -> observe -> evaluate -> repair`。
+- `agent-kernel.ts` 委托 `agentic-os/xox-agentic-os-host-kit.ts` 负责把复杂目标推进成多轮 `plan -> confirm/execute -> observe -> evaluate -> repair`。
 - 模型每轮只需要选择下一批工具；是否继续、是否阻断、是否完成由 Completion Evaluator 根据 server-owned action graph 和领域状态决定。
 - 模型 final text 不能直接结束复杂 run；`before_stop` 必须先运行 evaluator。
 - `automationLevel` 的旧解释已由 ADR 0015 取代：它表示执行授权程度，不表示 planner 推进力度。Planner/evaluator 始终全力推进；写入动作先落 `agent_action_requests`，再按 Automation Policy Engine 判定自动执行或等待用户编辑/确认。
@@ -77,7 +77,7 @@ Goal Interpreter
 当前已实现的运行切片：
 
 - `goal-contract.ts` 持久化 `AgentGoalContract`，并把 `goalStatus` 投影到 run/thread state。
-- `agent-run-engine.ts` 在每轮 provider planning 后运行 Completion Evaluator；`continue` 会把上一轮工具 observation 注入下一轮带工具 planning，`needs_confirmation` 会停止等待用户确认。工具 observation 会先按 `completed_valid / completed_invalid / failed_repairable / failed_terminal / pending_human / policy_blocked` 分类；可修复工具失败继续主循环，终态失败才进入 failed。达到最大修复轮次仍未满足时，run/goal 必须 fail closed，不能伪装完成。
+- `agentic-os/xox-agentic-os-host-kit.ts` 把 xox 的 Completion Evaluator、evidence review、action graph 和业务 observation 映射到 Agentic OS loop ports；`continue` 会把上一轮工具 observation 注入下一轮带工具 planning，`needs_confirmation` 会停止等待用户确认。工具 observation 会先按 `completed_valid / completed_invalid / failed_repairable / failed_terminal / pending_human / policy_blocked` 分类；可修复工具失败继续主循环，终态失败才进入 failed。达到最大修复轮次仍未满足时，run/goal 必须 fail closed，不能伪装完成。
 - `data_query_workspace(scope=entity_summary)` 是当前成员、股东、员工和成本对象的只读实体检查工具。模型遇到“第一个股东”“当前成员”“现有投资额”等工作区内已有事实时，应先读取该工具，再继续生成写入确认卡或澄清真正缺失的信息。
 - `planning-context.ts` 的 `planningTurn='evaluator_repair'` 让修复回合作为一次 harness-driven model call，不被用户多步骤分隔逻辑拆散。
 - `completion-evaluator.ts` 以 action graph、确认卡、audit、Tool Catalog Gateway 的结构化信号和领域投影为硬事实；经营模型草稿还会检查非零收入/成本驱动输入，避免空壳草稿被默认值误判通过。
@@ -1115,7 +1115,7 @@ API startup / recovery
 当前关键实现状态：
 
 - 已持久化 `AgentGoalContract`、`AgentEvaluationResult` 和 run `goalStatus`，并通过 ThreadState / SSE 投影到前端。
-- `agent-kernel.ts` 已委托 `agent-run-engine.ts` 执行多轮 `plan -> action graph -> execute/confirm -> observe -> evaluate -> repair`。
+- `agent-kernel.ts` 已委托 Agentic OS host kit 执行多轮 `plan -> action graph -> execute/confirm -> observe -> evaluate -> repair`；旧 `agent-run-engine.ts` 已删除，xox 不再维护第二套 production harness loop。
 - Completion Evaluator 已作为每轮停止前的强制关口；模型 final text、空 tool-call 或失败 action 不能绕过 evaluator。
 - React Agent Console 已展示 Goal/Evaluation 面板，包括目标、评估轮次、满足/未满足数量、blocker 和下一轮 brief。
 - DeepSeek 真实 smoke 已升级为最终 domain outcome 验收：`npm.cmd run smoke:agent` 使用真实 OpenAI-compatible `tool_calls` 跑通核心方向，复杂经营模型先生成 50 个成员、12 个月草稿确认卡，确认后保存，并验证 action graph、memory 注入和 audit。
@@ -1154,7 +1154,7 @@ Agent: workspace_import_bundle
 - 前端已有后端状态刷新式 unified timeline / memory panel，OpenAI-compatible provider chunk 和 OpenAI Agents SDK lifecycle/tool trace 已进入统一时间线；后续要继续做跨实例 pubsub 和 SDK tracing。
 - 任何 SDK 原生成熟化增强都必须进入 provider-neutral run events 或 Tool Policy hooks，不能替代确认卡、租户隔离、domain services 或 audit。
 - ADR 0017 已落地第一版 Tool Runtime Maturity Layer：吸收 OpenAI Agents JS 的 tool/approval/guardrail/turn-resolution 思想、OpenClaw 的 effective tool inventory 和 stricter approval composition、Hermes 的 provider sanitation 与 tool-loop guardrails，但保留 xox 的 SaaS harness 作为主线，不引入本地 agent control plane。实现模块包括 `tool-runtime/effective-tool-inventory.ts`、`tool-runtime/tool-call-supervisor.ts`、`tool-runtime/tool-loop-guardrails.ts`、`runtime/provider-payload-sanitizer.ts` 和 `tool-runtime/approval-policy-composer.ts`。
-- ADR 0018 的单循环核心已落地：不再继续增加并列 sidecar，而是把当前成熟部件重新组织到 `AgentRunEngine v2` 单循环内。`TurnResolver` 负责模型输出到 next step 的分类，`ContextEngine` 负责上下文/记忆/压缩入口，`ToolRuntime` 负责模型已选工具的监督，`AgentActionRuntime` 负责 Agent 发起的写入生命周期，`CompletionEvaluator` 负责完成判定，Transcript/Trace 分别负责用户可见和技术诊断投影。
+- ADR 0018 的本地单循环核心已作为成熟度压力源被迁移到 Agentic OS host kit：xox 不再保留本地 `agent-run-engine.ts`，而是通过 Agentic OS ports 复用 `TurnResolver`、上下文、工具监督、Agent action lifecycle、Completion Evaluator、Transcript/Trace 和业务 evidence projection。
 - ADR 0019 的 OpenClaw-first Memory Kernel v2 已落地：记忆不再是日志池，而是受 `AgentRunEngine` 调用的上下文能力。OpenClaw-derived 纯模块进入 `packages/agent-memory-core`，负责 memory budget、flush plan、citation、MMR retrieval 和 short-term promotion scoring；`memory_search / memory_get` 是一等只读工具；`agent_memories` 继续承载 SaaS durable memory 和治理字段；`agent_memory_notes` 映射 OpenClaw daily notes；`agent_memory_recall_signals` 映射短期召回信号；`agent_memory_dream_reports` 映射 DREAMS/review surface。普通 prompt 只允许相关的可注入 working/semantic/procedural 记忆进入，candidate/diagnostic/episodic/archive/expired/superseded 默认不可注入；压缩摘要先写日记忆，不直接写长期候选。
 
 ## 迁移顺序
@@ -1167,7 +1167,7 @@ Agent: workspace_import_bundle
 6. 增强 React Agent OS 的 unified timeline、event projection、memory 管理。（已完成后端状态刷新式统一时间线、provider chunk 预览、内联确认卡和 run-scoped navigation replay；跨实例实时 pub/sub 是后续 maturity gate）
 7. 用真实 provider 分别跑只读、确认写入、多步骤、拒绝账号动作、memory 隔离测试。
 8. 增加 Goal Contract / Goal Store / Evaluation Result contract 与持久化。
-9. 把 `agent-kernel.ts` 委托给 `AgentRunEngine`：多轮 planning、执行/确认、observation、Completion Evaluator、Repair Planner。
+9. 把 `agent-kernel.ts` 委托给 Agentic OS host kit：多轮 planning、执行/确认、observation、Completion Evaluator、Repair Planner。（已完成，旧本地 harness 文件已删除。）
 10. 前端新增 Goal Panel 与 evaluator findings，真实 DeepSeek smoke 改为验证最终 domain outcome 和 evaluator pass。
 
 ## 验收标准
@@ -1182,7 +1182,7 @@ Agent: workspace_import_bundle
 - 模型草稿、记账、版本、分享和工作区 bundle 导入导出等主要手动业务能力已映射到 tool registry / tool coverage；账号动作继续保持 `manual_only`。
 - 所有写入动作都有 `agent_action_requests` 和 `audit_logs`。
 - Memory list/delete/context injection 均证明不会跨用户或跨工作区。
-- 复杂目标必须通过 AgentRunEngine 多轮 `plan -> execute/confirm -> observe -> evaluate -> repair` 闭环；模型 final text 不能绕过 Completion Evaluator。
+- 复杂目标必须通过 Agentic OS host kit 多轮 `plan -> execute/confirm -> observe -> evaluate -> repair` 闭环；模型 final text 不能绕过 Completion Evaluator。
 - `AgentEvaluationResult` 必须能解释每个未满足验收项，并把下一步 brief 或 blocker 展示到 Action Graph / Goal Panel。
 - DeepSeek 复杂经营 smoke 必须验证最终 draft/projection/ledger/version/share/audit outcome，而不是只验证 provider 返回了 tool_call。
 
