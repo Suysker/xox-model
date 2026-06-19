@@ -1,9 +1,16 @@
 import type { AgentToolObservation } from './tool-observation-continuation.js'
+import type {
+  AgentLoopObligationLedger as OsAgentLoopObligationLedger,
+  AgentLoopObligationSource as OsAgentLoopObligationSource,
+} from '@agentic-os/contracts'
+import { projectObligationLedger } from '@agentic-os/core'
 import { isExecutedSandboxEvidenceFacts } from './evidence-ledger.js'
 import type { ResponseEvaluation } from './response-evaluator.js'
 import { objectHasKey } from './structured-evidence-utils.js'
 import {
   loopObligationsFromResponseEvaluation,
+  osKindForXoxObligation,
+  osMetadataFromXoxObligation,
   planLoopObligations,
   userSafeObligationFailureSummary,
   type AgentLoopObligation,
@@ -261,26 +268,56 @@ export function userSafeLedgerFailureSummary(input: {
   return userSafeObligationFailureSummary(ledgerToObligationPlan(input))
 }
 
+function osSourceFromXoxSource(source: AgentLoopObligationSource): OsAgentLoopObligationSource {
+  if (source === 'goal_contract') return 'goal_contract'
+  if (source === 'policy') return 'policy'
+  if (source === 'human_interrupt') return 'human_interrupt'
+  if (source === 'response_evaluator') return 'completion_evaluator'
+  return 'host'
+}
+
+function osLedgerFromXoxLedger(ledger: AgentLoopObligationLedger): OsAgentLoopObligationLedger {
+  return {
+    schemaVersion: 'agentic-os.loop_obligation_ledger.v1',
+    runId: ledger.runId,
+    threadId: ledger.runId,
+    obligations: ledger.obligations.map((obligation) => ({
+      obligationId: obligation.id,
+      kind: osKindForXoxObligation(obligation.kind),
+      reason: obligation.reason,
+      toolNames: obligation.toolNames,
+      capabilities: obligation.capabilities,
+      metadata: osMetadataFromXoxObligation(obligation),
+      status: obligation.status,
+      source: osSourceFromXoxSource(obligation.source),
+      createdAtIteration: obligation.createdAtIteration,
+      ...(obligation.closedAtIteration !== undefined ? { closedAtIteration: obligation.closedAtIteration } : {}),
+      evidenceIds: obligation.evidenceIds,
+      invalidReasons: obligation.invalidReasons,
+    })),
+  }
+}
+
 export function serializeObligationLedger(ledger: AgentLoopObligationLedger): AgentLoopObligationLedgerProjection {
-  const open = activeLedgerObligations(ledger)
+  const projection = projectObligationLedger(osLedgerFromXoxLedger(ledger))
   return {
     schemaVersion: ledger.schemaVersion,
     runId: ledger.runId,
-    openCount: open.length,
-    satisfiedCount: ledger.obligations.filter((obligation) => obligation.status === 'satisfied').length,
-    invalidCount: ledger.obligations.filter((obligation) => obligation.status === 'invalid').length,
-    blockedCount: ledger.obligations.filter((obligation) => obligation.status === 'blocked').length,
-    obligations: ledger.obligations.map((obligation) => ({
-      id: obligation.id,
+    openCount: projection.activeCount,
+    satisfiedCount: projection.satisfiedCount,
+    invalidCount: projection.invalidCount,
+    blockedCount: projection.blockedCount,
+    obligations: ledger.obligations.map((obligation, index) => ({
+      id: projection.obligations[index]?.obligationId ?? obligation.id,
       kind: obligation.kind,
-      status: obligation.status,
+      status: projection.obligations[index]?.status ?? obligation.status,
       source: obligation.source,
-      reason: obligation.reason,
-      toolNames: obligation.toolNames,
+      reason: projection.obligations[index]?.reason ?? obligation.reason,
+      toolNames: projection.obligations[index]?.toolNames ?? obligation.toolNames,
       ...(obligation.requiredDataScopes ? { requiredDataScopes: obligation.requiredDataScopes } : {}),
       ...(obligation.requiredMetrics ? { requiredMetrics: obligation.requiredMetrics } : {}),
-      evidenceIds: obligation.evidenceIds,
-      invalidReasons: obligation.invalidReasons,
+      evidenceIds: projection.obligations[index]?.evidenceIds ?? obligation.evidenceIds,
+      invalidReasons: projection.obligations[index]?.invalidReasons ?? obligation.invalidReasons,
     })),
   }
 }

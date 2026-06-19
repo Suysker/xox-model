@@ -178,11 +178,11 @@ function mergeGoalFacts(values: AgentGoalFacts[]) {
   return merged
 }
 
-function osKindForXoxObligation(kind: AgentLoopObligationKind) {
+export function osKindForXoxObligation(kind: AgentLoopObligationKind) {
   return kind === 'assistant_final_answer' ? 'assistant_final_answer' : 'tool_observation'
 }
 
-function osMetadataFromXoxObligation(obligation: AgentLoopObligation): JsonObject {
+export function osMetadataFromXoxObligation(obligation: AgentLoopObligation): JsonObject {
   const metadata: Record<string, JsonValue> = {
     xoxKind: obligation.kind,
     findingCodes: obligation.findingCodes,
