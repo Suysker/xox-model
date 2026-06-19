@@ -46,7 +46,6 @@ describe('Agent ADR architecture boundaries', () => {
       'agent/runtime/provider-request-shaper.ts',
       'agent/runtime/runtime-adapter.ts',
       'agent/runtime/tool-call-repair.ts',
-      'agent/runtime/tool-call-stream-assembler.ts',
       'agent/runtime/tool-call-validator.ts',
     ]
     const forbidden = [
@@ -107,6 +106,7 @@ describe('Agent ADR architecture boundaries', () => {
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'provider-tool-schema.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-argument-repair.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-name-normalizer.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-stream-assembler.ts'))).toBe(false)
   })
 
   it('routes provider planning through the xox context pack without an obsolete local context wrapper', () => {

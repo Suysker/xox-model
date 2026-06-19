@@ -9,13 +9,14 @@ import { shapeOpenAICompatibleChatRequest } from './provider-request-shaper.js'
 import {
   ProviderToolCallParseError,
 } from './tool-call-repair.js'
-import { ToolCallStreamAssembler, type StreamingToolCall } from './tool-call-stream-assembler.js'
 import { validateProviderToolCallsForExecution } from './tool-call-validator.js'
 import {
   classifyProviderHttpError,
   detectProviderPlainTextToolCallArtifact,
+  ProviderToolCallStreamAssembler,
   providerRejectsToolChoice,
   recoverProviderPlainTextToolCalls,
+  type ProviderStreamingToolCall,
   type ProviderModelProfile,
   resolveProviderRuntimeCapability,
   resolveRuntimeThinkingLevel,
@@ -312,7 +313,7 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
     let reasoningContent = ''
     let finishReason: string | undefined
     const { capability } = providerRuntimeContext(input, profile)
-    const toolAssembler = new ToolCallStreamAssembler()
+    const toolAssembler = new ProviderToolCallStreamAssembler()
     const toolTraceState = new Map<number, { argumentLength: number; flushedAt: number; emittedName: boolean }>()
     let contentTraceLength = 0
     let contentTraceFlushedAt = 0
@@ -339,7 +340,7 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
       })
     }
 
-    const emitToolTrace = async (index: number, toolCall: StreamingToolCall, force = false) => {
+    const emitToolTrace = async (index: number, toolCall: ProviderStreamingToolCall, force = false) => {
       const previous = toolTraceState.get(index) ?? { argumentLength: 0, flushedAt: 0, emittedName: false }
       const argumentDelta = toolCall.arguments.slice(previous.argumentLength)
       const now = Date.now()

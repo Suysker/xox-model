@@ -37,6 +37,7 @@ Agentic OS should own reusable harness concerns:
 - provider plain-text tool-call recovery and bounded provider tool-call repair primitives;
 - provider tool schema normalization and OpenAI-compatible request payload sanitation;
 - provider runtime capability, thinking profile, request patch, replay policy, and transcript replay primitives;
+- provider tool-call stream assembly and frame damage primitives;
 - host profile and host kit composition.
 
 Agentic OS packages should be consumed as versioned `@agentic-os/*` packages:
@@ -107,10 +108,11 @@ Current integration is no longer compatibility-only:
 - xox provider runtime now consumes `@agentic-os/runtime-openai-compatible` `resolveProviderModelRef()` and `resolveProviderModelProfile()` for canonical provider/model refs and protocol profile facts; local `provider-model-ref.ts` and `provider-model-profile.ts` have been removed.
 - xox provider request shaping now consumes `@agentic-os/runtime-openai-compatible` `normalizeProviderToolSchemas()` and `sanitizeOpenAICompatibleRequestBody()` for provider-facing tool schema compatibility and OpenAI-compatible request body sanitation; local `provider-tool-schema.ts` and `provider-payload-sanitizer.ts` have been removed.
 - xox provider runtime now consumes `@agentic-os/runtime-openai-compatible` `resolveProviderRuntimeProfile()`, `resolveProviderRuntimeCapability()`, `resolveRuntimeThinkingLevel()`, `replayPolicyPreservedMessageKeys()`, `sanitizeProviderReplayMessages()`, and `providerToolObservationReplayMessages()` for provider family capability, thinking normalization, request patching, replay policy, assistant field backfill, and observation replay transcript construction; local `provider-capability.ts`, `provider-capability-registry.ts`, `provider-families/*`, and `provider-transcript-replay.ts` have been removed.
+- xox provider runtime now consumes `@agentic-os/runtime-openai-compatible` `ProviderToolCallStreamAssembler` for streamed `delta.tool_calls` accumulation, ordered OpenAI-compatible tool call output, and provider-neutral frame damage facts; local `tool-call-stream-assembler.ts` has been removed.
 - xox still owns provider final-answer claim extraction and financial/shareholder policy, including the xox adapter rule that unscoped entity/domain final-answer claims require shareholder domain evidence.
 - xox still owns response-evaluator finding to financial/domain obligation mapping, plus `goalFacts`, `requiredDataScopes`, and `requiredMetrics`.
 - xox still owns obligation materializer selection, `data_query_workspace` arguments, business read execution, and product run event persistence.
-- xox still owns provider stream events, business request assembly, `ProviderToolCallParseError` wrapping, localized retry run-event copy, high-volume business tool policy, user/workspace provider settings, and provider tool call to xox planner-step mapping.
+- xox still owns provider stream events, stream preview throttling, timeout/abort wiring, business request assembly, `ProviderToolCallParseError` wrapping, localized retry run-event copy, high-volume business tool policy, user/workspace provider settings, and provider tool call to xox planner-step mapping.
 - Obsolete local harness helper files are intentionally removed: `agent-run-engine.ts`, `turn-resolver.ts`, `agent-action-runtime.ts`, `context-engine/index.ts`, the former top-level `agentic-os-adapter.ts`, and provider runtime duplicates now owned by Agentic OS runtime packages.
 
 This is a real kernel introduction. Remaining package work is registry/release hardening, not code copying.
