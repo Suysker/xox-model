@@ -1,11 +1,12 @@
 import type { AgentToolExecutionObservation, AgentToolInventorySnapshot } from '@xox/contracts'
 import {
-  buildToolSupervisorFailureObservation,
-  createToolSupervisorCall,
-  shouldBlockToolCallOutsideInventory,
-  summarizeToolSupervisorObservation,
-  toolSupervisorInventoryByName,
+  runToolCallSupervisor,
+  type ToolRuntimeEvent,
+  type ToolSupervisorFailureContext,
+  type ToolSupervisorFailureCopy,
+  type ToolSupervisorFailureObservation,
   type ToolSupervisorProducedItem,
+  type ToolSupervisorRunInput,
 } from '@agentic-os/core'
 import type { PlannerContext } from '../planning-context.js'
 import {
@@ -19,7 +20,6 @@ import {
 } from '../action-draft-builder.js'
 import { redactSecretLikeContent } from '../memory.js'
 import { addRunEvent } from '../run-events.js'
-import { toolCallCompletedEvent, toolCallStartedEvent } from './tool-execution-events.js'
 
 // Inspired by OpenAI Agents JS tool execution and OpenClaw's tool loop events,
 // but constrained to xox-model's observation/action-draft boundary.
@@ -29,21 +29,32 @@ export type ToolCallSupervisorResult = {
   observations: AgentToolExecutionObservation[]
 }
 
+type ToolInventoryItem = AgentToolInventorySnapshot['tools'][number]
+
 function flattenItemResult(result: PlannedItemResult): PlannedItem[] {
   if (!result) return []
   return Array.isArray(result) ? result : [result]
 }
 
-function supervisorFailureRead(input: {
-  title: string
-  message: string
-  toolName: string
-  toolCallId?: string
-  toolArguments: Record<string, unknown>
-}): ReadDraft {
+function supervisorFailureRead(input: ToolSupervisorFailureObservation): ReadDraft {
   return {
-    ...buildToolSupervisorFailureObservation(input),
+    ...input,
     readKind: 'tool_observation',
+  }
+}
+
+function supervisorFailureCopy(
+  input: ToolSupervisorFailureContext<RuntimePlannerStep, ToolInventoryItem, AgentToolInventorySnapshot>,
+): ToolSupervisorFailureCopy {
+  if (input.reason === 'outside_inventory') {
+    return {
+      title: '工具调用被阻止',
+      message: `模型选择了当前工具目录之外的工具：${input.call.toolName}`,
+    }
+  }
+  return {
+    title: '工具未生成业务结果',
+    message: `工具 ${input.call.toolName} 没有生成可执行动作或可观察结果。`,
   }
 }
 
@@ -68,6 +79,10 @@ function supervisorProducedItem(item: PlannedItem): ToolSupervisorProducedItem {
   if (item.modelContent !== undefined) produced.modelContent = item.modelContent
   if (item.syntheticObservation !== undefined) produced.syntheticObservation = item.syntheticObservation
   return produced
+}
+
+function runtimeEventWithSummary(event: ToolRuntimeEvent, summary: string): ToolRuntimeEvent {
+  return { ...event, summary }
 }
 
 async function addToolRuntimeEvent(
@@ -100,99 +115,63 @@ export async function superviseRuntimeToolCalls(
     emitRunEvents?: boolean
   },
 ): Promise<ToolCallSupervisorResult> {
-  const items: PlannedItem[] = []
-  const observations: AgentToolExecutionObservation[] = []
-  const inventoryByName = toolSupervisorInventoryByName(input.inventorySnapshot?.tools ?? [])
+  const supervisorInput: ToolSupervisorRunInput<
+    RuntimePlannerStep,
+    PlannedItem,
+    ToolInventoryItem,
+    AgentToolInventorySnapshot
+  > = {
+    runId: ctx.runId,
+    steps: input.steps,
+    inventoryTools: input.inventorySnapshot?.tools ?? null,
+    inventorySnapshot: input.inventorySnapshot ?? null,
+    executeToolCall: async ({ step }) => flattenItemResult(
+      await buildPlannedItemFromRuntimeStep(ctx, step, input.handlers),
+    ),
+    createFailureItem: (failure) => supervisorFailureRead(failure),
+    toProducedItem: (item) => supervisorProducedItem(item),
+    failureCopy: (failureContext) => supervisorFailureCopy(failureContext),
+  }
 
-  for (const [index, step] of input.steps.entries()) {
-    const call = createToolSupervisorCall({ step, index })
-    const toolName = call.toolName
-    const toolArguments = call.arguments
-    const inventoryTool = inventoryByName.get(toolName)
-    const toolCallId = call.toolCallId
-
-    const started = toolCallStartedEvent({
-      runId: ctx.runId,
-      toolName,
-      toolCallId,
-      arguments: toolArguments,
-    })
-    if (input.emitRunEvents === true) {
+  if (input.emitRunEvents === true) {
+    supervisorInput.onToolCallStarted = async ({ call, event }) => {
       await addToolRuntimeEvent(ctx, {
         type: 'tool_call_started',
         title: '工具调用开始',
-        message: `开始处理模型选择的工具：${toolName}`,
+        message: `开始处理模型选择的工具：${call.toolName}`,
         status: 'running',
         data: {
           runtimeEvent: {
-            ...started,
-            payload: { argumentsPreview: redactSecretLikeContent(JSON.stringify(toolArguments)).slice(0, 1000) },
+            ...event,
+            payload: { argumentsPreview: redactSecretLikeContent(JSON.stringify(call.arguments)).slice(0, 1000) },
           },
           inventorySnapshotId: input.inventorySnapshot?.snapshotId ?? null,
         },
       })
     }
 
-    if (shouldBlockToolCallOutsideInventory({
-      providerToolName: call.providerToolName,
-      inventoryPresent: Boolean(input.inventorySnapshot),
-      inventoryItem: inventoryTool ?? null,
-    })) {
-      const item = supervisorFailureRead({
-        title: '工具调用被阻止',
-        message: `模型选择了当前工具目录之外的工具：${toolName}`,
-        toolName,
-        toolCallId,
-        toolArguments,
-      })
-      items.push(item)
-      const observation = summarizeToolSupervisorObservation({
-        call,
-        producedItems: [supervisorProducedItem(item)],
-        authorityClass: 'manual_only',
-      }) as AgentToolExecutionObservation
-      observations.push(observation)
-      if (input.emitRunEvents === true) {
-        await addToolRuntimeEvent(ctx, {
-          type: 'tool_call_failed',
-          title: '工具调用被阻止',
-          message: item.message,
-          status: 'failed',
-          data: { runtimeEvent: toolCallCompletedEvent({ runId: ctx.runId, observation }) },
-        })
-      }
-      continue
-    }
-
-    const result = await buildPlannedItemFromRuntimeStep(ctx, step, input.handlers)
-    const producedItems = flattenItemResult(result)
-    if (producedItems.length === 0) {
-      producedItems.push(supervisorFailureRead({
-        title: '工具未生成业务结果',
-        message: `工具 ${toolName} 没有生成可执行动作或可观察结果。`,
-        toolName,
-        toolCallId,
-        toolArguments,
-      }))
-    }
-    items.push(...producedItems)
-    const observation = summarizeToolSupervisorObservation({
-      call,
-      producedItems: producedItems.map(supervisorProducedItem),
-      authorityClass: inventoryTool?.authorityClass ?? 'read',
-    }) as AgentToolExecutionObservation
-    const hasFailure = observation.status !== 'completed'
-    observations.push(observation)
-    if (input.emitRunEvents === true) {
+    supervisorInput.onToolCallCompleted = async ({ call, event, observation, failureReason }) => {
+      const hostObservation = observation as AgentToolExecutionObservation
+      const hasFailure = hostObservation.status !== 'completed'
+      const title = failureReason === 'outside_inventory'
+        ? '工具调用被阻止'
+        : hasFailure ? '工具调用失败' : '工具调用完成'
+      const message = hostObservation.resultPreview ?? `工具调用完成：${call.toolName}`
       await addToolRuntimeEvent(ctx, {
         type: hasFailure ? 'tool_call_failed' : 'tool_call_completed',
-        title: hasFailure ? '工具调用失败' : '工具调用完成',
-        message: observation.resultPreview ?? `工具调用完成：${toolName}`,
+        title,
+        message,
         status: hasFailure ? 'failed' : 'completed',
-        data: { runtimeEvent: toolCallCompletedEvent({ runId: ctx.runId, observation }) },
+        data: {
+          runtimeEvent: runtimeEventWithSummary(event, message),
+        },
       })
     }
   }
 
-  return { items, observations }
+  const supervised = await runToolCallSupervisor(supervisorInput)
+  return {
+    items: supervised.items,
+    observations: supervised.observations as AgentToolExecutionObservation[],
+  }
 }
