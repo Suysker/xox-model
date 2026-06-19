@@ -7,9 +7,9 @@ import { addRunEvent } from './run-events.js'
 import { mergeAgentGoalFacts, sanitizeAgentGoalFacts } from './runtime-goal-facts.js'
 import {
   buildToolContextPack,
+  canonicalToolNamesForCapabilities,
   type ToolContextPack,
-} from './tool-context-engine/index.js'
-import { canonicalToolNamesForCapabilities } from './tool-context-engine/tool-reranker.js'
+} from './tool-surface-manifest.js'
 import { buildEffectiveToolInventorySnapshot } from './tool-runtime/effective-tool-inventory.js'
 import {
   AGENT_TOOL_REGISTRY,

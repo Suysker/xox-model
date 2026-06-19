@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { AGENT_TOOL_REGISTRY } from '../src/agent/tool-catalog.js'
-import { buildToolContextPack } from '../src/agent/tool-context-engine/index.js'
+import { buildToolContextPack } from '../src/agent/tool-surface-manifest.js'
 import { buildRuntimeToolCatalogProjection } from '../src/agent/tool-gateway.js'
 
 describe('Progressive Tool Discovery Runtime', () => {

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
@@ -107,6 +107,32 @@ describe('Agent ADR architecture boundaries', () => {
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-argument-repair.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-name-normalizer.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-stream-assembler.ts'))).toBe(false)
+
+    const obsoleteToolContextDir = join(srcRoot, 'agent', 'tool-context-engine')
+    expect(existsSync(join(obsoleteToolContextDir, 'index.ts'))).toBe(false)
+    if (existsSync(obsoleteToolContextDir)) {
+      expect(readdirSync(obsoleteToolContextDir).filter((name) => name.endsWith('.ts'))).toEqual([])
+    }
+  })
+
+  it('keeps progressive tool surface runtime in Agentic OS core', () => {
+    const manifest = source('agent/tool-surface-manifest.ts')
+    expect(manifest).toContain("@agentic-os/core")
+    expect(manifest).toContain('buildToolSurfacePack')
+    expect(manifest).toContain('buildToolSurfaceManifests')
+    expect(manifest).not.toContain('function tokenizeToolText')
+    expect(manifest).not.toContain('function createToolSearchIndex')
+    expect(manifest).not.toContain('function rankTool')
+    expect(manifest).not.toContain('function materializeTool')
+
+    const gateway = source('agent/tool-gateway.ts')
+    expect(gateway).toContain("from './tool-surface-manifest.js'")
+    expect(gateway).not.toContain('tool-context-engine')
+
+    const discovery = source('agent/tool-discovery-tool.ts')
+    expect(discovery).toContain("@agentic-os/core")
+    expect(discovery).toContain('createToolSearchIndex')
+    expect(discovery).not.toContain('tool-context-engine')
   })
 
   it('keeps provider boundary observation payloads in Agentic OS instead of xox read mapping', () => {

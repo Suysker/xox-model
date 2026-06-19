@@ -1,57 +1,97 @@
+import type { AgentAutomationLevel, AgentToolSurfacePlan } from '@xox/contracts'
+import type { JsonSchema } from '@agentic-os/contracts'
+import {
+  buildToolSurfaceManifests,
+  buildToolSurfacePack as buildAgenticToolSurfacePack,
+  canonicalToolNamesForCapabilities as agenticCanonicalToolNamesForCapabilities,
+  type ToolSurfaceDiscoveryTrace,
+  type ToolSurfaceManifest,
+  type ToolSurfaceManifestOverride,
+  type ToolSurfacePack,
+  type ToolSurfaceRegistryEntry,
+} from '@agentic-os/core'
 import type {
   AgentToolCapability,
-  AgentToolConfirmationMode,
   AgentToolNavigationTarget,
   AgentToolRegistryEntry,
-  AgentToolRiskLevel,
   ChatTool,
-} from '../tool-catalog.js'
+} from './tool-catalog.js'
 
-export type ToolManifest = {
-  name: string
+export type ToolManifest = Omit<ToolSurfaceManifest<ChatTool>, 'capability' | 'navigationTarget'> & {
   capability: AgentToolCapability
-  kind: 'kernel' | 'read' | 'action' | 'sandbox' | 'memory' | 'navigation' | 'account'
-  title: string
-  summary: string
-  searchHints: string[]
-  entityTags: string[]
-  parameterNames: string[]
-  deferrable: boolean
-  schemaTokenEstimate: number
-  searchDocument: {
-    text: string
-    parameterNames: string[]
-  }
-  riskLevel: AgentToolRiskLevel
-  confirmationMode: AgentToolConfirmationMode
   navigationTarget: AgentToolNavigationTarget
-  requiredFacts: string[]
-  resolvesFacts: string[]
-  prerequisiteTools: string[]
-  providerSchema: ChatTool
 }
 
-type ToolManifestOverride = Partial<Pick<ToolManifest,
-  'title' |
-  'summary' |
-  'searchHints' |
-  'entityTags' |
-  'requiredFacts' |
-  'resolvesFacts' |
-  'prerequisiteTools'
->>
+export type ToolDescriptor = ToolSurfacePack<ChatTool>['toolDescriptors'][number]
+
+export type ToolDiscoveryTrace = Omit<ToolSurfaceDiscoveryTrace, 'selectedCapabilities' | 'rankedCandidates'> & {
+  selectedCapabilities: AgentToolCapability[]
+  rankedCandidates: Array<{
+    name: string
+    capability: AgentToolCapability
+    score: number
+    reasons: string[]
+  }>
+}
+
+export type ToolContextPack = {
+  strategy: 'progressive_tool_discovery'
+  selectedCapabilities: AgentToolCapability[]
+  requiredActionCapabilities: AgentToolCapability[]
+  effectiveCatalog: ToolManifest[]
+  visibleTools: ChatTool[]
+  visibleToolNames: string[]
+  kernelToolNames: string[]
+  materializableToolNames: string[]
+  deferredCatalog: ToolManifest[]
+  replayAllowedToolNames: string[]
+  autoAddedControlNames: string[]
+  emptySurfaceStatus:
+    | 'has_callable_tools'
+    | 'direct_answer_only'
+    | 'needs_clarification'
+    | 'needs_tool_search'
+    | 'fail_closed'
+  budget: AgentToolSurfacePlan['budget']
+  surfacePlan: AgentToolSurfacePlan
+  tools: ChatTool[]
+  toolNames: string[]
+  toolDescriptors: ToolDescriptor[]
+  discoveryTrace: ToolDiscoveryTrace
+}
 
 const ENTITY_FACT_TOOL = 'data_query_workspace'
-const KERNEL_TOOL_NAMES = new Set([
+
+export const KERNEL_TOOL_NAMES = [
   'tool_discover',
   'rg',
   'data_query_workspace',
   'sandbox_run_code',
   'ask_user_clarification',
   'account_forbidden',
-])
+] as const
 
-const MANIFEST_OVERRIDES: Record<string, ToolManifestOverride> = {
+const FACT_DEPENDENT_CAPABILITIES: AgentToolCapability[] = [
+  'draft',
+  'ledger',
+  'share',
+  'version',
+]
+
+const CANONICAL_TOOLS_BY_CAPABILITY: Partial<Record<AgentToolCapability, string[]>> = {
+  data: ['data_query_workspace'],
+  draft: ['workspace_patch_config', 'workspace_configure_operating_model', 'workspace_rename'],
+  import_export: ['workspace_export_bundle', 'workspace_import_bundle'],
+  ledger: ['ledger_create_member_income', 'ledger_create_entry'],
+  memory: ['memory_search', 'memory_remember'],
+  navigation: ['ui_navigate'],
+  sandbox: ['sandbox_run_code'],
+  share: ['share_create', 'share_revoke'],
+  tooling: ['tool_discover', 'rg'],
+  version: ['workspace_save_snapshot', 'workspace_publish_release', 'workspace_rollback_version'],
+}
+
+const MANIFEST_OVERRIDES: Record<string, ToolSurfaceManifestOverride> = {
   account_forbidden: {
     title: '拒绝账号操作',
     searchHints: ['注销账号', '删除账号', '退出登录', '改密码', '账号安全'],
@@ -295,76 +335,100 @@ const MANIFEST_OVERRIDES: Record<string, ToolManifestOverride> = {
   },
 }
 
-function parameterNames(tool: ChatTool): string[] {
-  const properties = tool.function.parameters.properties ?? {}
-  return Object.keys(properties)
+function toolSurfaceEntry(entry: AgentToolRegistryEntry): ToolSurfaceRegistryEntry<ChatTool> {
+  return {
+    name: entry.name,
+    capability: entry.capability,
+    riskLevel: entry.riskLevel,
+    confirmationMode: entry.confirmationMode,
+    providerSchema: entry.tool,
+    description: entry.tool.function.description,
+    title: entry.name.split('_').filter(Boolean).join(' '),
+    inputJsonSchema: entry.tool.function.parameters as unknown as JsonSchema,
+    navigationTarget: entry.navigationTarget,
+  }
 }
 
-function defaultTitle(name: string) {
-  return name.split('_').filter(Boolean).join(' ')
+function asToolManifest(value: ToolSurfaceManifest<ChatTool>): ToolManifest {
+  return value as ToolManifest
 }
 
-function schemaTokenEstimate(tool: ChatTool) {
-  return Math.ceil(JSON.stringify(tool).length / 4)
+function asToolDiscoveryTrace(value: ToolSurfaceDiscoveryTrace): ToolDiscoveryTrace {
+  return value as ToolDiscoveryTrace
 }
 
-function manifestKind(entry: AgentToolRegistryEntry): ToolManifest['kind'] {
-  if (KERNEL_TOOL_NAMES.has(entry.name)) return 'kernel'
-  if (entry.capability === 'account') return 'account'
-  if (entry.capability === 'sandbox') return 'sandbox'
-  if (entry.capability === 'memory') return 'memory'
-  if (entry.capability === 'navigation') return 'navigation'
-  if (entry.riskLevel === 'read' && entry.confirmationMode === 'never') return 'read'
-  return 'action'
+function asToolContextPack(pack: ToolSurfacePack<ChatTool>): ToolContextPack {
+  const effectiveCatalog = pack.effectiveCatalog.map(asToolManifest)
+  const deferredCatalog = pack.deferredCatalog.map(asToolManifest)
+  const surfacePlan: AgentToolSurfacePlan = {
+    schemaVersion: 'xox.tool_surface.v2',
+    turnLane: 'agent_goal',
+    effectiveCatalog: pack.surfacePlan.effectiveCatalog,
+    kernelToolNames: pack.surfacePlan.kernelToolNames,
+    visibleToolNames: pack.surfacePlan.visibleToolNames,
+    materializableToolNames: pack.surfacePlan.materializableToolNames,
+    deferredToolNames: pack.surfacePlan.deferredToolNames,
+    replayAllowedToolNames: pack.surfacePlan.replayAllowedToolNames,
+    autoAddedControlNames: pack.surfacePlan.autoAddedControlNames,
+    capabilityHints: pack.surfacePlan.capabilityHints,
+    budget: pack.surfacePlan.budget,
+    emptySurfaceStatus: pack.surfacePlan.emptySurfaceStatus,
+    discoveryTraceId: pack.surfacePlan.discoveryTraceId,
+  }
+
+  return {
+    strategy: 'progressive_tool_discovery',
+    selectedCapabilities: pack.selectedCapabilities as AgentToolCapability[],
+    requiredActionCapabilities: pack.requiredActionCapabilities as AgentToolCapability[],
+    effectiveCatalog,
+    visibleTools: pack.visibleTools,
+    visibleToolNames: pack.visibleToolNames,
+    kernelToolNames: pack.kernelToolNames,
+    materializableToolNames: pack.materializableToolNames,
+    deferredCatalog,
+    replayAllowedToolNames: pack.replayAllowedToolNames,
+    autoAddedControlNames: pack.autoAddedControlNames,
+    emptySurfaceStatus: pack.emptySurfaceStatus,
+    budget: pack.budget,
+    surfacePlan,
+    tools: pack.tools,
+    toolNames: pack.toolNames,
+    toolDescriptors: pack.toolDescriptors,
+    discoveryTrace: asToolDiscoveryTrace(pack.discoveryTrace),
+  }
 }
 
-function unique(values: Array<string | undefined>) {
-  return [...new Set(values.filter((value): value is string => Boolean(value?.trim())).map((value) => value.trim()))]
+export function canonicalToolNamesForCapabilities(capabilities: AgentToolCapability[]) {
+  return agenticCanonicalToolNamesForCapabilities(capabilities, CANONICAL_TOOLS_BY_CAPABILITY)
 }
 
 export function buildToolManifests(entries: AgentToolRegistryEntry[]): ToolManifest[] {
-  return entries.map((entry) => {
-    const override = MANIFEST_OVERRIDES[entry.name] ?? {}
-    const params = parameterNames(entry.tool)
-    const title = override.title ?? defaultTitle(entry.name)
-    const summary = override.summary ?? entry.tool.function.description
-    const searchHints = unique([title, entry.name, ...(override.searchHints ?? []), ...params])
-    const entityTags = unique(override.entityTags ?? [])
-    const requiredFacts = unique(override.requiredFacts ?? [])
-    const resolvesFacts = unique(override.resolvesFacts ?? [])
-    const kind = manifestKind(entry)
-    const searchDocumentText = [
-      entry.name,
-      title,
-      summary,
-      ...searchHints,
-      ...entityTags,
-      ...params,
-      ...requiredFacts,
-      ...resolvesFacts,
-    ].join(' ')
-    return {
-      name: entry.name,
-      capability: entry.capability,
-      kind,
-      title,
-      summary,
-      searchHints,
-      entityTags,
-      parameterNames: params,
-      deferrable: kind !== 'kernel',
-      schemaTokenEstimate: schemaTokenEstimate(entry.tool),
-      searchDocument: {
-        text: searchDocumentText,
-        parameterNames: params,
-      },
-      riskLevel: entry.riskLevel,
-      confirmationMode: entry.confirmationMode,
-      navigationTarget: entry.navigationTarget,
-      requiredFacts,
-      resolvesFacts,
-      prerequisiteTools: unique(override.prerequisiteTools ?? []),
-      providerSchema: entry.tool,
-    }
+  return buildToolSurfaceManifests(entries.map(toolSurfaceEntry), {
+    overrides: MANIFEST_OVERRIDES,
+    kernelToolNames: KERNEL_TOOL_NAMES,
+  }).map(asToolManifest)
+}
+
+export function buildToolContextPack(input: {
+  registry: AgentToolRegistryEntry[]
+  selectedCapabilities: AgentToolCapability[]
+  requiredActionCapabilities?: AgentToolCapability[]
+  requiredToolNames?: string[]
+  message?: string
+  routerReason?: string
+  automationLevel?: AgentAutomationLevel
+}): ToolContextPack {
+  const pack = buildAgenticToolSurfacePack({
+    registry: input.registry.map(toolSurfaceEntry),
+    overrides: MANIFEST_OVERRIDES,
+    kernelToolNames: KERNEL_TOOL_NAMES,
+    canonicalToolsByCapability: CANONICAL_TOOLS_BY_CAPABILITY,
+    factDependentCapabilities: FACT_DEPENDENT_CAPABILITIES,
+    selectedCapabilities: input.selectedCapabilities,
+    requiredActionCapabilities: input.requiredActionCapabilities ?? [],
+    ...(input.requiredToolNames !== undefined ? { requiredToolNames: input.requiredToolNames } : {}),
+    ...(input.message !== undefined ? { message: input.message } : {}),
+    ...(input.routerReason !== undefined ? { routerReason: input.routerReason } : {}),
   })
+  return asToolContextPack(pack)
 }

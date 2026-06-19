@@ -363,13 +363,15 @@ web AgentConsole automation selector
 ```text
 planner.ts
   -> tool-gateway.ts
+      -> tool-surface-manifest.ts
+          -> @agentic-os/core tool surface runtime
       -> tool-catalog.ts
       -> run-events.ts
 ```
 
-模块职责：`tool-gateway.ts` 负责把 registry 投影成 runtime 可用工具目录、记录 `tool_catalog_ready` run event，并暴露投影策略和工具 metadata 给技术日志。ADR 0039 后，当前主策略已收敛为 `progressive_tool_discovery`：Tool Gateway 先从 tenant/workspace/policy 过滤后的 effective catalog、本地 Hermes-style tool search、kernel tools、runner obligations 和模型结构化 `goalFacts.requiredActionCapabilities` 组装小工具面；provider-backed capability router 只允许作为可选 hint，不在热路径上强制调用。`requiredActionCapabilities` 来自 turn-lane 结构化 contract，不来自后端关键词/正则扫描；它必须进入 Tool Context Engine，否则 evaluator 知道缺少写动作而下一轮工具面仍可能投影错工具。`account / clarification / tool_discover` 等协议工具按 runner 策略保留，业务工具和数据工具自己返回导航事件，不需要把 `ui_navigate` 常驻暴露给所有任务。该模块不能使用后端关键词/正则做语义选择。
+模块职责：`tool-gateway.ts` 负责把 registry 投影成 runtime 可用工具目录、记录 `tool_catalog_ready` run event，并暴露投影策略和工具 metadata 给技术日志。ADR 0039 后，当前主策略已收敛为 `progressive_tool_discovery`：Tool Gateway 先从 tenant/workspace/policy 过滤后的 effective catalog、Agentic OS tool surface runtime 的 Hermes-style tool search、kernel tools、runner obligations 和模型结构化 `goalFacts.requiredActionCapabilities` 组装小工具面；provider-backed capability router 只允许作为可选 hint，不在热路径上强制调用。`requiredActionCapabilities` 来自 turn-lane 结构化 contract，不来自后端关键词/正则扫描；它必须进入 Tool Gateway 的 Agentic OS surface adapter，否则 evaluator 知道缺少写动作而下一轮工具面仍可能投影错工具。`account / clarification / tool_discover` 等协议工具按 runner 策略保留，业务工具和数据工具自己返回导航事件，不需要把 `ui_navigate` 常驻暴露给所有任务。该模块不能使用后端关键词/正则做语义选择。
 
-复用计划：`runtime-planning-call.ts` 向 gateway 传入已脱敏用户消息、Context Pack、provider settings、run-scoped `goalFacts` 和当前 obligation plan；gateway 只负责本地工具面投影和 `tool_catalog_ready` trace，然后把投影后的 `tools` 交回主 planning call。runtime adapter 仍只接收 provider-neutral tool schema，不读取 registry metadata、不写 run event、不执行领域服务。
+复用计划：`runtime-planning-call.ts` 向 gateway 传入已脱敏用户消息、Context Pack、provider settings、run-scoped `goalFacts` 和当前 obligation plan；gateway 调用 `tool-surface-manifest.ts` 把 xox 业务 manifest overrides 交给 `@agentic-os/core`，由 Agentic OS 负责 search/rank/materialize/budget/trace，然后 gateway 写入 `tool_catalog_ready` trace 并把投影后的 `tools` 交回主 planning call。runtime adapter 仍只接收 provider-neutral tool schema，不读取 registry metadata、不写 run event、不执行领域服务。
 
 ### `apps/api/src/agent/kernel`
 

@@ -4,9 +4,9 @@ Status: Proposed canonical generated document
 
 Date: 2026-06-10
 
-Source of truth: `apps/api/src/agent/tool-catalog.ts` (`AGENT_TOOL_REGISTRY`) and `apps/api/src/agent/tool-context-engine/tool-manifest.ts` (`buildToolManifests`).
+Source of truth: `apps/api/src/agent/tool-catalog.ts` (`AGENT_TOOL_REGISTRY`), `apps/api/src/agent/tool-surface-manifest.ts` (`buildToolManifests`), and `@agentic-os/core` tool surface runtime.
 
-This document is the human/model-readable tool surface for xox-model Agent OS. It should become generated or verified from the registry so the provider tool catalog, progressive discovery index and sandbox SDK documentation stay in one contract.
+This document is the human/model-readable tool surface for xox-model Agent OS. It should become generated or verified from the registry so the provider tool catalog, Agentic OS progressive discovery index and sandbox SDK documentation stay in one contract.
 
 ## Purpose
 

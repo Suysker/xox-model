@@ -1,9 +1,8 @@
 import type { ReadDraft, RuntimePlannerStep } from './action-draft-builder.js'
 import type { PlannerContext } from './planning-context.js'
 import { AGENT_TOOL_REGISTRY } from './tool-catalog.js'
-import { buildToolManifests } from './tool-context-engine/tool-manifest.js'
-import { createToolSearchIndex, searchToolIndex } from './tool-context-engine/tool-search-index.js'
-import { toolSearchDocumentsFromManifests } from './tool-context-engine/tool-search-document.js'
+import { createToolSearchIndex, searchToolIndex, toolSearchDocumentsFromManifests } from '@agentic-os/core'
+import { buildToolManifests } from './tool-surface-manifest.js'
 
 function clampMaxResults(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value)

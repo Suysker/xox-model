@@ -37,7 +37,7 @@ import type {
 } from './sandbox/backend.js'
 import { classifyToolObservation, type ToolObservationStatus } from './tool-observation-outcome.js'
 import { AGENT_TOOL_REGISTRY, toolCallToPlannerStep, type AgentToolRiskLevel } from './tool-catalog.js'
-import { buildToolManifests } from './tool-context-engine/tool-manifest.js'
+import { buildToolManifests } from './tool-surface-manifest.js'
 
 type SandboxExpectedOutput = NonNullable<SandboxRunCodeInput['expectedOutputs']>[number]
 
