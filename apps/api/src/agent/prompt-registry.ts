@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { toolObservationContinuationSystemPrompt } from '@agentic-os/core'
 
 const promptCache = new Map<string, string>()
 
@@ -21,7 +22,11 @@ export function memorySystemPrompt() {
 }
 
 export function toolObservationFinalizerSystemPrompt() {
-  return readPrompt('./prompts/tool-observation-finalizer.system.md')
+  return toolObservationContinuationSystemPrompt({
+    platformName: 'xox-model SaaS 平台',
+    agentName: 'Agent OS',
+    extraRules: ['你是 xox-model Agent OS，不要自称 DeepSeek、Qwen、OpenAI 或其他模型。'],
+  })
 }
 
 export function directAnswerSystemPrompt() {
