@@ -44,7 +44,6 @@ describe('Agent ADR architecture boundaries', () => {
       'agent/runtime/provider-failover-policy.ts',
       'agent/runtime/provider-probe.ts',
       'agent/runtime/provider-request-shaper.ts',
-      'agent/runtime/provider-tool-schema.ts',
       'agent/runtime/runtime-adapter.ts',
       'agent/runtime/tool-call-repair.ts',
       'agent/runtime/tool-call-stream-assembler.ts',
@@ -100,6 +99,8 @@ describe('Agent ADR architecture boundaries', () => {
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'provider-error-classifier.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'provider-model-profile.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'provider-model-ref.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'runtime', 'provider-payload-sanitizer.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'runtime', 'provider-tool-schema.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-argument-repair.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-name-normalizer.ts'))).toBe(false)
   })

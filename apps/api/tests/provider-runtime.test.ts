@@ -6,10 +6,10 @@ import { retryRuntimeInput, shouldRetryRuntimePlan } from '../src/agent/runtime/
 import { resolveProviderRuntimeCapability, resolveRuntimeThinkingLevel } from '../src/agent/runtime/provider-capability-registry.js'
 import { shapeOpenAICompatibleChatRequest } from '../src/agent/runtime/provider-request-shaper.js'
 import { providerToolObservationReplayMessages } from '../src/agent/runtime/provider-transcript-replay.js'
-import { normalizeProviderToolSchemas } from '../src/agent/runtime/provider-tool-schema.js'
 import {
   classifyProviderHttpError,
   extractBalancedJson,
+  normalizeProviderToolSchemas,
   resolveProviderModelProfile,
   resolveProviderModelRef,
 } from '@agentic-os/runtime-openai-compatible'

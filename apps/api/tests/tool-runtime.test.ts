@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 import type { AgentToolInventorySnapshot } from '@xox/contracts'
 import type { Settings } from '../src/core/settings.js'
 import { buildEffectiveToolInventorySnapshot } from '../src/agent/tool-runtime/effective-tool-inventory.js'
-import { sanitizeOpenAICompatibleRequestBody } from '../src/agent/runtime/provider-payload-sanitizer.js'
-import { resolveProviderModelProfile } from '@agentic-os/runtime-openai-compatible'
+import {
+  resolveProviderModelProfile,
+  sanitizeOpenAICompatibleRequestBody,
+} from '@agentic-os/runtime-openai-compatible'
 import { superviseRuntimeToolCalls } from '../src/agent/tool-runtime/tool-call-supervisor.js'
 import { evaluateToolLoopGuardrails } from '../src/agent/tool-runtime/tool-loop-guardrails.js'
 import { composeAgentWriteApprovalPolicy } from '../src/agent/tool-runtime/approval-policy-composer.js'
