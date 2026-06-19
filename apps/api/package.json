@@ -10,8 +10,8 @@
     "smoke:agent": "tsx src/agent/real-provider-smoke.ts"
   },
   "dependencies": {
-    "@agentic-os/contracts": "file:../../../agentic-os/packages/contracts",
-    "@agentic-os/core": "file:../../../agentic-os/packages/core",
+    "@agentic-os/contracts": "^0.1.0",
+    "@agentic-os/core": "^0.1.0",
     "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^11.1.0",
     "@openai/agents": "^0.11.4",
@@ -26,6 +26,7 @@
     "zod": "^4.1.13"
   },
   "devDependencies": {
+    "@agentic-os/testing": "^0.1.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^24.10.1",
     "tsx": "^4.20.6",

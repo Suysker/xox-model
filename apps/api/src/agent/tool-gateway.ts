@@ -9,6 +9,7 @@ import {
   buildToolContextPack,
   type ToolContextPack,
 } from './tool-context-engine/index.js'
+import { canonicalToolNamesForCapabilities } from './tool-context-engine/tool-reranker.js'
 import { buildEffectiveToolInventorySnapshot } from './tool-runtime/effective-tool-inventory.js'
 import {
   AGENT_TOOL_REGISTRY,
@@ -69,6 +70,12 @@ export type RuntimeToolCatalogProjection = {
 const ESSENTIAL_CAPABILITIES: AgentToolCapability[] = ['account', 'clarification', 'tooling']
 const ROUTABLE_CAPABILITIES: AgentToolCapability[] = ['data', 'draft', 'import_export', 'ledger', 'memory', 'navigation', 'sandbox', 'share', 'version']
 const ALL_CAPABILITIES = new Set<AgentToolCapability>([...ESSENTIAL_CAPABILITIES, ...ROUTABLE_CAPABILITIES])
+const OBLIGATION_CONTROL_TOOL_NAMES = new Set([
+  'tool_discover',
+  'rg',
+  'ask_user_clarification',
+  'account_forbidden',
+])
 
 function safeCapabilities(value: unknown) {
   const values = Array.isArray(value) ? value : typeof value === 'string' ? [value] : []
@@ -162,7 +169,15 @@ export function buildRuntimeToolCatalogProjection(input?: {
   const baseEntries = toolContext
     ? toolContext.toolNames.map((name) => byName.get(name)).filter((entry): entry is (typeof AGENT_TOOL_REGISTRY)[number] => Boolean(entry))
     : AGENT_TOOL_REGISTRY
-  const entries = [...baseEntries]
+  const strictObligationTools = input?.routerReason === 'runner-obligation-plan' && requiredToolNames.length > 0
+  const allowedObligationToolNames = new Set([
+    ...requiredToolNames,
+    ...canonicalToolNamesForCapabilities(selectedCapabilities),
+    ...OBLIGATION_CONTROL_TOOL_NAMES,
+  ])
+  const entries = strictObligationTools
+    ? baseEntries.filter((entry) => allowedObligationToolNames.has(entry.name))
+    : [...baseEntries]
   for (const name of requiredToolNames) {
     const entry = byName.get(name)
     if (!entry || entries.some((item) => item.name === entry.name)) continue

@@ -65,30 +65,49 @@ Exact versions should be pinned or ranged according to the release policy chosen
 
 ## Current State
 
-`xox-model` currently depends on Agentic OS packages through local file dependencies:
+`xox-model` originally depended on Agentic OS packages through local file dependencies:
 
 ```json
 "@agentic-os/contracts": "file:../../../agentic-os/packages/contracts",
 "@agentic-os/core": "file:../../../agentic-os/packages/core"
 ```
 
-Current integration is compatibility-only:
+On the integration branch, `apps/api/package.json` has been switched to versioned package references:
 
-- `apps/api/src/agent/agentic-os-adapter.ts` maps xox `RuntimePlanResult` into Agentic OS `RuntimeTurnOutput`.
-- The adapter reuses Agentic OS `TurnResolver`.
-- It does not yet run the xox agent through Agentic OS `AgentRunEngine`, `createAgentHostKit`, `ToolRuntime`, or `ActionRuntime`.
+```json
+"@agentic-os/contracts": "^0.1.0",
+"@agentic-os/core": "^0.1.0",
+"@agentic-os/testing": "^0.1.0"
+```
 
-This is a useful first boundary, but not yet a real kernel introduction.
+The current local development install still resolves those packages through junctions into `C:/Github/agentic-os` until the selected registry contains the matching packages.
 
-This is not the final dependency model. The replacement work should first prepare Agentic OS packages for versioned consumption, then switch xox dependencies to package versions.
+Current integration is no longer compatibility-only:
+
+- `apps/api/src/agent/agentic-os-adapter.ts` still maps xox `RuntimePlanResult` into Agentic OS `RuntimeTurnOutput`.
+- The normal xox agent kernel now enters `apps/api/src/agent/agentic-os/xox-agentic-os-host-kit.ts`.
+- The host kit calls Agentic OS `createAgentHostKit` and uses Agentic OS `AgentRunEngine` as the production harness loop.
+- xox still owns product/domain behavior, action graph projection, memory, sandbox, provider settings, and final response evidence policy.
+
+This is a real kernel introduction. Remaining package work is registry/release hardening, not code copying.
+
+This is not yet the final install model. The replacement work prepared Agentic OS packages for versioned consumption and switched xox dependency declarations to package versions, but the packages must still be published to a controlled registry before `package-lock.json` can be a pure registry lock.
 
 Current Agentic OS package state observed on 2026-06-19:
 
-- `@agentic-os/contracts`, `@agentic-os/core`, and `@agentic-os/testing` exist.
-- package versions are `0.0.0`.
-- packages are currently marked `private: true`.
+- `@agentic-os/contracts`, `@agentic-os/core`, `@agentic-os/testing`, `@agentic-os/runtime-openai-compatible`, and `@agentic-os/runtime-ai-sdk` exist in `C:/Github/agentic-os`.
+- package versions are `0.1.0`.
+- publishable packages are no longer marked `private: true`; the repository root remains private.
+- `main`, `types`, and `files` point at built `dist` artifacts.
+- `npm run check` passes in `C:/Github/agentic-os`.
 
-Therefore the first implementation task is release preparation in `C:/Github/agentic-os`, not xox source copying.
+Registry state observed on 2026-06-19:
+
+- public npm contains an unrelated `@agentic-os/core@0.1.0` from `https://github.com/wewei/agentic-os.git`;
+- public npm does not contain `@agentic-os/contracts` or `@agentic-os/testing`;
+- the local repository remote is `https://github.com/Suysker/agentic-os.git`.
+
+Therefore final package locking must use a controlled publishing route: either publish the Suysker Agentic OS packages to an owned/private registry under the chosen scope, or change the package scope before merge. Do not generate a fake registry lock against the public npm package.
 
 ## Integration Principles
 
@@ -143,12 +162,13 @@ Agentic OS must be consumable as real packages before xox cutover.
 
 Required Agentic OS package work:
 
-- choose first integration version, likely `0.1.0`;
+- choose first integration version, currently `0.1.0`;
 - remove `private: true` from publishable packages or configure the chosen private registry workflow;
 - verify package `main`, `types`, and `files` point to built artifacts;
 - run `npm run check` in Agentic OS;
 - produce package artifacts through `npm pack` or publish to the selected registry;
-- document the package version consumed by xox.
+- document the package version consumed by xox;
+- verify the selected registry resolves all required packages to the Suysker Agentic OS artifacts, not the unrelated public npm `@agentic-os/core`.
 
 Required xox dependency work:
 
@@ -157,6 +177,13 @@ Required xox dependency work:
 - add `@agentic-os/testing` as a dev/test dependency when contract helpers are used;
 - commit `package-lock.json` updates;
 - avoid importing from Agentic OS source paths.
+
+Current integration-branch status:
+
+- `apps/api/package.json` uses versioned `@agentic-os/*` references.
+- `package-lock.json` records the current development junctions at package version `0.1.0`.
+- A pure registry `package-lock.json` is intentionally blocked until the controlled registry contains `@agentic-os/contracts`, `@agentic-os/core`, and `@agentic-os/testing` from `Suysker/agentic-os`.
+- Do not run `npm install` against public npm for this branch until the scope ownership/registry route is resolved.
 
 ## Proposed Folder Shape
 
@@ -357,7 +384,8 @@ If a xox mature behavior looks generic, first reproduce it as an Agentic OS test
 The integration is not considered successful until:
 
 - Agentic OS is consumed as dependency, not copied.
-- Agentic OS is consumed through versioned `@agentic-os/*` packages, not permanent local `file:` refs.
+- Agentic OS is consumed through versioned `@agentic-os/*` package declarations, not permanent local `file:` refs.
+- Before merge, the selected registry must resolve all `@agentic-os/*` packages to the intended Agentic OS artifacts, and `package-lock.json` must no longer depend on development junctions.
 - The normal xox production agent kernel uses Agentic OS as the harness loop.
 - The old xox harness loop is removed or isolated so there is no long-term dual-harness maintenance.
 - `xox-model` business behavior is unchanged unless explicitly approved.

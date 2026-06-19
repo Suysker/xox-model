@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { validateRuntimeTurnOutputContract } from '@agentic-os/testing'
 import type { RuntimePlanResult } from '../src/agent/runtime/runtime-adapter.js'
 import {
   resolveRuntimePlanWithAgenticOs,
@@ -40,6 +41,13 @@ describe('xox Agentic OS compatibility adapter', () => {
           },
         },
       ],
+    })
+
+    const contract = validateRuntimeTurnOutputContract(output)
+    expect(contract.valid).toBe(true)
+    expect(contract.nextStep).toEqual({
+      type: 'tool_calls',
+      toolCalls: output.toolCalls,
     })
   })
 

@@ -227,7 +227,12 @@ export async function buildThreadState(
         db.selectFrom('agent_plan_steps').selectAll().where('run_id', '=', latestRun.id).orderBy('sequence_no', 'asc').execute(),
         db.selectFrom('agent_run_events').selectAll().where('run_id', '=', latestRun.id).orderBy('sequence_no', 'asc').execute(),
         db.selectFrom('agent_goals').selectAll().where('run_id', '=', latestRun.id).orderBy('created_at', 'asc').execute(),
-        db.selectFrom('agent_evaluations').selectAll().where('run_id', '=', latestRun.id).orderBy('iteration_no', 'asc').execute(),
+        db.selectFrom('agent_evaluations')
+          .selectAll()
+          .where('run_id', '=', latestRun.id)
+          .orderBy((eb) => eb.case().when('status', '=', 'pass').then(1).else(0).end(), 'asc')
+          .orderBy('iteration_no', 'asc')
+          .execute(),
       ])
     : [[], [], [], []] as [Row<'agent_plan_steps'>[], Row<'agent_run_events'>[], Row<'agent_goals'>[], Row<'agent_evaluations'>[]]
   const navigationEvents = planSteps

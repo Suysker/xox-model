@@ -1,7 +1,7 @@
 import type { AgentGoalStatus, AgentNavigationEvent, AgentPlannerSource } from '@xox/contracts'
 import type { Row } from '../db/schema.js'
 import type { PlannerContext } from './planning-context.js'
-import { executeAgentRun } from './agent-run-engine.js'
+import { executeXoxAgenticOsRun } from './agentic-os/xox-agentic-os-host-kit.js'
 import { executeDirectAnswerRun } from './direct-answer-runtime.js'
 import { resolveTurnIntake } from './turn-intake-resolver.js'
 
@@ -33,7 +33,7 @@ export async function executeAgentKernelRun(
       beforeStateWrite: options.beforeStateWrite,
     })
   }
-  return executeAgentRun({
+  return executeXoxAgenticOsRun({
     ...ctx,
     ...(resolution.goalFacts ? { initialGoalFacts: resolution.goalFacts } : {}),
   }, options)

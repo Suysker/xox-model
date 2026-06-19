@@ -207,7 +207,7 @@ export async function storePlannedActionGraph(
       },
     })
   }
-  if (pendingActionCount > 0) {
+  if (pendingActionCount > 0 && input.emitPlanReady !== false) {
     await addRunEvent(ctx.db, {
       threadId: ctx.threadId,
       runId: ctx.runId,

@@ -3,6 +3,7 @@ import type { Database, Row } from '../db/schema.js'
 import type { CurrentUser } from '../modules/auth.js'
 import { parseJson } from '../db/database.js'
 import { redactSecretLikeContent } from './memory.js'
+import type { AgentToolCapability } from './tool-catalog.js'
 
 type ResumeContextInput = {
   db: Kysely<Database>
@@ -17,6 +18,7 @@ export type ClarificationResumeContext = {
   resumedGoalId: string
   resumedRunId: string
   objective: string
+  satisfiedActionCapabilities: AgentToolCapability[]
 }
 
 type FindingLike = {
@@ -36,8 +38,33 @@ function pendingActionSummary(actions: Row<'agent_action_requests'>[]) {
   return `上一轮已有 ${pendingCount} 张待确认写入卡，继续保留，不要重复生成。`
 }
 
+function actionCapability(action: Row<'agent_action_requests'>): AgentToolCapability | null {
+  if (action.kind === 'workspace.update_draft' || action.kind === 'workspace.rename') return 'draft'
+  if (action.kind.startsWith('ledger.')) return 'ledger'
+  if (action.kind.startsWith('share.')) return 'share'
+  if (action.kind === 'workspace.import_bundle') return 'import_export'
+  if (
+    action.kind === 'workspace.save_snapshot' ||
+    action.kind === 'workspace.publish_release' ||
+    action.kind === 'workspace.promote_version' ||
+    action.kind === 'workspace.rollback_version' ||
+    action.kind === 'workspace.delete_version' ||
+    action.kind === 'workspace.reset_draft'
+  ) {
+    return 'version'
+  }
+  return null
+}
+
+function satisfiedActionCapabilities(actions: Row<'agent_action_requests'>[]): AgentToolCapability[] {
+  return [...new Set(actions
+    .filter((action) => action.status === 'executed' || action.status === 'pending')
+    .map(actionCapability)
+    .filter((capability): capability is AgentToolCapability => capability !== null))]
+}
+
 export async function buildClarificationResumeContext(input: ResumeContextInput): Promise<ClarificationResumeContext | null> {
-  const previousGoal = await input.db
+  let previousGoal = await input.db
     .selectFrom('agent_goals')
     .selectAll()
     .where('thread_id', '=', input.thread.id)
@@ -46,6 +73,18 @@ export async function buildClarificationResumeContext(input: ResumeContextInput)
     .where('run_id', '!=', input.runId)
     .where('status', '=', 'needs_clarification')
     .orderBy('updated_at', 'desc')
+    .executeTakeFirst()
+
+  previousGoal ??= await input.db
+    .selectFrom('agent_goals')
+    .innerJoin('agent_evaluations', 'agent_evaluations.goal_id', 'agent_goals.id')
+    .selectAll('agent_goals')
+    .where('agent_goals.thread_id', '=', input.thread.id)
+    .where('agent_goals.workspace_id', '=', input.workspace.id)
+    .where('agent_goals.user_id', '=', input.user.id)
+    .where('agent_goals.run_id', '!=', input.runId)
+    .where('agent_evaluations.status', '=', 'needs_clarification')
+    .orderBy('agent_evaluations.created_at', 'desc')
     .executeTakeFirst()
 
   if (!previousGoal) return null
@@ -97,5 +136,6 @@ export async function buildClarificationResumeContext(input: ResumeContextInput)
     resumedGoalId: previousGoal.id,
     resumedRunId: previousGoal.run_id,
     objective,
+    satisfiedActionCapabilities: satisfiedActionCapabilities(previousActions),
   }
 }
