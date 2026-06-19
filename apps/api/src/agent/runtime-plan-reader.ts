@@ -1,4 +1,5 @@
 import type { AgentPlannerSource } from '@xox/contracts'
+import { providerToolCallBoundaryObservations } from '@agentic-os/runtime-openai-compatible'
 import type { Settings } from '../core/settings.js'
 import { redactSecretLikeContent } from './memory.js'
 import type { ReadDraft } from './action-draft-builder.js'
@@ -10,39 +11,14 @@ export function configuredRuntimePlannerSource(settings: Settings): Extract<Agen
   return settings.llmProvider === 'openai' ? 'openai_agents' : 'openai_compatible_tool_calls'
 }
 
-function unique(values: string[]) {
-  return [...new Set(values.filter((value) => value.trim().length > 0))]
-}
-
 function providerToolCallBoundaryObservationReads(error?: RuntimePlanError | null): ReadDraft[] | null {
-  if (error?.kind !== 'provider_response_error') return null
-  const boundary = error.toolCallBoundary
-  const toolNames = unique(boundary?.toolNames ?? error.toolNames ?? [])
-  if (toolNames.length === 0) return null
+  const observations = providerToolCallBoundaryObservations(error)
+  if (observations.length === 0) return null
 
-  return toolNames.map((toolName, index) => {
-    const boundaryCode = boundary?.code ?? 'provider_response_error'
+  return observations.map((observation) => {
+    const toolName = observation.toolName
     const displayPreview = `Provider 返回了 ${toolName} 工具调用意图，但参数未形成可执行 observation。`
-    const modelContent = JSON.stringify({
-      observationType: 'provider_tool_call_boundary',
-      completed: false,
-      status: 'not_executed',
-      executionMode: 'not_executed',
-      synthetic: true,
-      toolName,
-      toolNames,
-      boundaryCode,
-      effectiveToolNames: boundary?.effectiveToolNames ?? [],
-      providerErrorKind: error.kind,
-      errorMessage: error.message ?? null,
-      manifestScoped: false,
-      exitCode: null,
-      outputText: '',
-      stdout: '',
-      stderr: '',
-      artifacts: [],
-      purpose: `Provider boundary prevented ${toolName} execution.`,
-    })
+    const modelContent = observation.modelContent
     const observationOutcome = classifyToolObservation({
       toolName,
       status: 'not_executed',
@@ -54,12 +30,8 @@ function providerToolCallBoundaryObservationReads(error?: RuntimePlanError | nul
       message: displayPreview,
       readKind: 'tool_observation',
       toolName,
-      toolCallId: `provider_boundary_${index + 1}_${toolName}`,
-      toolArguments: {
-        boundaryCode,
-        toolName,
-        toolNames,
-      },
+      toolCallId: observation.toolCallId,
+      toolArguments: observation.toolArguments,
       displayPreview,
       modelContent,
       observationStatus: 'not_executed',

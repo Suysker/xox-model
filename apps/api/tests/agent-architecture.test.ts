@@ -109,6 +109,14 @@ describe('Agent ADR architecture boundaries', () => {
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-stream-assembler.ts'))).toBe(false)
   })
 
+  it('keeps provider boundary observation payloads in Agentic OS instead of xox read mapping', () => {
+    const reader = source('agent/runtime-plan-reader.ts')
+    expect(reader).toContain('providerToolCallBoundaryObservations')
+    expect(reader).toContain("@agentic-os/runtime-openai-compatible")
+    expect(reader).not.toContain("observationType: 'provider_tool_call_boundary'")
+    expect(reader).not.toContain('"provider_tool_call_boundary"')
+  })
+
   it('routes provider planning through the xox context pack without an obsolete local context wrapper', () => {
     const planningCall = source('agent/runtime-planning-call.ts')
     expect(planningCall).toContain("from './context-pack.js'")
