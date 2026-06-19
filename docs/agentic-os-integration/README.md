@@ -97,10 +97,11 @@ Current integration is no longer compatibility-only:
 - xox `apps/api/src/agent/loop-obligation-ledger.ts` now consumes `@agentic-os/core` `projectObligationLedger()` for generic active/status counts and neutral obligation row projection.
 - xox `apps/api/src/agent/obligation-materializer.ts` now consumes `@agentic-os/core` `planObligationMaterialization()` for active obligation task filtering, stable de-duplication, and generic event payloads.
 - xox final review response now consumes `@agentic-os/core` `ledgerToReviewObligations()` for active ledger obligation to completion repair obligation projection.
+- xox `apps/api/src/agent/runtime/openai-compatible-chat-adapter.ts` now consumes `@agentic-os/runtime-openai-compatible` `detectProviderPlainTextToolCallArtifact()` and `recoverProviderPlainTextToolCalls()` for provider plain-text tool-call recovery; the local `provider-plain-text-tool-calls.ts` duplicate has been removed.
 - xox still owns provider final-answer claim extraction and financial/shareholder policy, including the xox adapter rule that unscoped entity/domain final-answer claims require shareholder domain evidence.
 - xox still owns response-evaluator finding to financial/domain obligation mapping, plus `goalFacts`, `requiredDataScopes`, and `requiredMetrics`.
 - xox still owns obligation materializer selection, `data_query_workspace` arguments, business read execution, and product run event persistence.
-- xox still owns provider runtime plain-text tool-call recovery in `apps/api/src/agent/runtime/provider-plain-text-tool-calls.ts`; it is runtime recovery, not final review policy.
+- xox still owns provider runtime retry/failover, stream events, provider capability profiles, and `ProviderToolCallParseError` wrapping around recovered tool calls.
 - Obsolete local harness helper files are intentionally removed: `agent-run-engine.ts`, `turn-resolver.ts`, `agent-action-runtime.ts`, `context-engine/index.ts`, and the former top-level `agentic-os-adapter.ts`.
 
 This is a real kernel introduction. Remaining package work is registry/release hardening, not code copying.

@@ -20,7 +20,7 @@ import {
 import {
   detectProviderPlainTextToolCallArtifact,
   recoverProviderPlainTextToolCalls,
-} from './provider-plain-text-tool-calls.js'
+} from '@agentic-os/runtime-openai-compatible'
 
 const SOURCE = 'openai_compatible_tool_calls' as const
 const STREAM_DELTA_LIMIT = 240
@@ -187,7 +187,7 @@ function validatePromotedPlainTextToolCalls(input: {
     )
   }
   const toolSteps = validateProviderToolCallsForExecution({
-    toolCalls: recovered.toolCalls,
+    toolCalls: recovered.openAiToolCalls,
     allowedToolNames: allowed,
     materializableToolNames: input.runtimeInput.materializableToolNames ?? [],
     options: {
@@ -207,7 +207,7 @@ function validatePromotedPlainTextToolCalls(input: {
     ...(input.message ?? {}),
     role: 'assistant',
     content: recovered.visibleText || null,
-    tool_calls: recovered.toolCalls,
+    tool_calls: recovered.openAiToolCalls,
   })
   return recovered.visibleText
     ? withProviderState({ source: SOURCE, steps: toolSteps, assistantText: recovered.visibleText }, providerMessage, input.artifact)

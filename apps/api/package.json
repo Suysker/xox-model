@@ -12,6 +12,7 @@
   "dependencies": {
     "@agentic-os/contracts": "^0.1.0",
     "@agentic-os/core": "^0.1.0",
+    "@agentic-os/runtime-openai-compatible": "^0.1.0",
     "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^11.1.0",
     "@openai/agents": "^0.11.4",
