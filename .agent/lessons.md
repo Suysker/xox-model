@@ -21,6 +21,7 @@
 
 ## Agent OS
 
+- Tool observation outcome classification is Agentic OS loop semantics, not xox product copy. Keep provider boundary, sandbox execution, action preview/result outcome branches in `@agentic-os/core`; xox `tool-observation-outcome.ts` should only adapt `@xox/contracts` types and must not grow a second classifier.
 - Agent write tools must produce a stored confirmation request before calling domain services. Direct model-to-database execution bypasses navigation, audit, and user review.
 - Agent commands that mutate business state should first emit a UI navigation event to the relevant page or panel. Silent background writes make the product feel uninspectable and are harder to audit.
 - Keep account-impacting actions outside the Agent tool surface. Login, logout, account deletion, and password changes should remain manual even if the Agent can explain where to do them.

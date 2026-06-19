@@ -1,6 +1,6 @@
 # xox-model Agentic OS Integration Plan
 
-Status: Draft (M66 provider boundary observation consumption)
+Status: Draft (M67 tool observation outcome classifier consumption)
 
 Date: 2026-06-19
 
@@ -39,6 +39,7 @@ Agentic OS should own reusable harness concerns:
 - provider runtime capability, thinking profile, request patch, replay policy, and transcript replay primitives;
 - provider tool-call stream assembly and frame damage primitives;
 - provider boundary failure observation payloads;
+- tool observation outcome classification for provider boundary, sandbox execution, action preview, and action result observations;
 - host profile and host kit composition.
 
 Agentic OS packages should be consumed as versioned `@agentic-os/*` packages:
@@ -111,6 +112,7 @@ Current integration is no longer compatibility-only:
 - xox provider runtime now consumes `@agentic-os/runtime-openai-compatible` `resolveProviderRuntimeProfile()`, `resolveProviderRuntimeCapability()`, `resolveRuntimeThinkingLevel()`, `replayPolicyPreservedMessageKeys()`, `sanitizeProviderReplayMessages()`, and `providerToolObservationReplayMessages()` for provider family capability, thinking normalization, request patching, replay policy, assistant field backfill, and observation replay transcript construction; local `provider-capability.ts`, `provider-capability-registry.ts`, `provider-families/*`, and `provider-transcript-replay.ts` have been removed.
 - xox provider runtime now consumes `@agentic-os/runtime-openai-compatible` `ProviderToolCallStreamAssembler` for streamed `delta.tool_calls` accumulation, ordered OpenAI-compatible tool call output, and provider-neutral frame damage facts; local `tool-call-stream-assembler.ts` has been removed.
 - xox runtime plan reader now consumes `@agentic-os/runtime-openai-compatible` `providerToolCallBoundaryObservations()` for provider boundary failure model payloads; xox keeps only the `ReadDraft` wrapper, Chinese display copy, and product status mapping.
+- xox tool observation outcome classification now consumes `@agentic-os/core` `classifyToolObservationOutcome()` and related helpers. `apps/api/src/agent/tool-observation-outcome.ts` remains only as a type-compatible adapter for `@xox/contracts`; provider boundary, sandbox execution, action preview, and action result outcome branches are no longer maintained in xox.
 - xox still owns provider final-answer claim extraction and financial/shareholder policy, including the xox adapter rule that unscoped entity/domain final-answer claims require shareholder domain evidence.
 - xox still owns response-evaluator finding to financial/domain obligation mapping, plus `goalFacts`, `requiredDataScopes`, and `requiredMetrics`.
 - xox still owns obligation materializer selection, `data_query_workspace` arguments, business read execution, and product run event persistence.
@@ -386,7 +388,7 @@ Fix in Agentic OS when the issue is generic harness behavior:
 - loop terminal-state ownership;
 - runtime output contract;
 - tool inventory/effective surface;
-- tool observation outcome;
+- tool observation outcome, except the generic classifier now owned by `@agentic-os/core`;
 - action lifecycle integrity;
 - context scope/redaction;
 - cancellation;
@@ -419,6 +421,7 @@ The integration is not considered successful until:
 - The normal xox production agent kernel uses Agentic OS as the harness loop.
 - The old xox harness loop is removed or isolated so there is no long-term dual-harness maintenance.
 - Obsolete local provider harness helpers, including `apps/api/src/agent/runtime/provider-error-classifier.ts`, `apps/api/src/agent/runtime/provider-tool-schema.ts`, `apps/api/src/agent/runtime/provider-payload-sanitizer.ts`, `apps/api/src/agent/runtime/provider-capability.ts`, `apps/api/src/agent/runtime/provider-capability-registry.ts`, `apps/api/src/agent/runtime/provider-transcript-replay.ts`, and `apps/api/src/agent/runtime/provider-families/*`, remain deleted after Agentic OS replacement.
+- `apps/api/src/agent/tool-observation-outcome.ts` remains a thin adapter that imports `@agentic-os/core`; it must not reintroduce local provider boundary, sandbox execution, or action observation outcome branches.
 - `xox-model` business behavior is unchanged unless explicitly approved.
 - `npm run build:api` passes.
 - `npm run test:api` passes.
