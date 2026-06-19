@@ -27,9 +27,11 @@ import {
 } from './runtime-conversation-log.js'
 import type { RuntimeToolCatalogProjection } from './tool-gateway.js'
 import {
-  providerToolObservationReplayMessages,
+  buildProviderToolObservationTurnMessages,
   resolveProviderRuntimeProfile,
 } from '@agentic-os/runtime-openai-compatible'
+
+const PLANNING_USER_CONTENT_MAX_CHARS = 64_000
 
 function plannerTokenBudget(message: string) {
   const structuredLineCount = message.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).length
@@ -133,24 +135,19 @@ function plannerRuntimeMessages(input: {
     provider: input.settings.openaiCompatibleProvider,
     model: input.settings.openaiCompatibleModel,
   })
-  const messages: RuntimeChatMessage[] = [
-    { role: 'system', content: plannerSystemPrompt() },
-    ...runtimeMessagesFromThreadConversationLog(threadConversationLogFromContext(input.context)),
-    {
-      role: 'user',
-      content: `上下文：${JSON.stringify(contextWithoutThreadConversationLog(input.context))}\n用户指令：${input.message}`,
-    },
-  ]
-  messages.push(...providerToolObservationReplayMessages({
+  return buildProviderToolObservationTurnMessages({
     profile: providerRuntime.profile,
     capability: providerRuntime.capability,
     thinkingLevel: providerRuntime.thinkingLevel,
+    systemPrompt: plannerSystemPrompt(),
+    priorMessages: runtimeMessagesFromThreadConversationLog(threadConversationLogFromContext(input.context)),
+    userContent: `上下文：${JSON.stringify(contextWithoutThreadConversationLog(input.context))}\n用户指令：${input.message}`,
     observations: input.priorObservations ?? [],
     suffix: 'planning_observation',
     maxObservations: 12,
+    maxUserContentChars: PLANNING_USER_CONTENT_MAX_CHARS,
     redact: redactSecretLikeContent,
-  }) as RuntimeChatMessage[])
-  return messages
+  }) as RuntimeChatMessage[]
 }
 
 function contextWithLoopObligationPlan(context: unknown, ctx: PlannerContext) {
