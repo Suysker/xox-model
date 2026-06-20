@@ -13,10 +13,12 @@ import { validateProviderToolCallsForExecution } from './tool-call-validator.js'
 import {
   classifyProviderHttpError,
   detectProviderPlainTextToolCallArtifact,
-  ProviderToolCallStreamAssembler,
+  OpenAICompatibleProviderStreamInterruptedError,
+  OpenAICompatibleProviderStreamTimeoutError,
+  parseOpenAICompatibleStreamResponse,
   providerRejectsToolChoice,
   recoverProviderPlainTextToolCalls,
-  type ProviderStreamingToolCall,
+  type OpenAICompatibleProviderStreamParseResult,
   type ProviderModelProfile,
   resolveProviderRuntimeCapability,
   resolveRuntimeThinkingLevel,
@@ -38,13 +40,6 @@ class ProviderTimeoutError extends Error {
     super(message)
     this.name = 'ProviderTimeoutError'
   }
-}
-
-function safeProviderStreamText(value: string, maxLength: number) {
-  return value
-    .replace(/sk-[A-Za-z0-9_-]{8,}/g, 'sk-***')
-    .replace(/Bearer\s+[A-Za-z0-9._~+/-]+/gi, 'Bearer ***')
-    .slice(0, maxLength)
 }
 
 function isProviderResponseParseError(error: unknown) {
@@ -263,31 +258,6 @@ function jsonPlanResult(
     : withProviderState({ source: SOURCE, steps: [] }, assistantMessage, artifact)
 }
 
-function sseDataFromRecord(record: string) {
-  const data = record
-    .split(/\r?\n/)
-    .map((line) => line.trimEnd())
-    .filter((line) => line.startsWith('data:'))
-    .map((line) => line.slice(5).trimStart())
-    .join('\n')
-  return data.trim().length > 0 ? data : null
-}
-
-async function readProviderStreamChunk(reader: ReadableStreamDefaultReader<Uint8Array>, timeoutMs: number) {
-  let timeout: ReturnType<typeof setTimeout> | null = null
-  try {
-    return await Promise.race([
-      reader.read(),
-      new Promise<never>((_, reject) => {
-        timeout = setTimeout(() => reject(new Error(`Provider stream timed out after ${timeoutMs}ms without completing`)), timeoutMs)
-        timeout.unref?.()
-      }),
-    ])
-  } finally {
-    if (timeout) clearTimeout(timeout)
-  }
-}
-
 export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
   readonly name = 'openai-compatible-chat'
 
@@ -296,88 +266,28 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
     input: RuntimePlanningInput,
     profile: ProviderModelProfile,
   ): Promise<RuntimePlanResult> {
-    const reader = response.body?.getReader()
-    if (!reader) return jsonPlanResult(await response.json(), input, profile)
+    if (!response.body) return jsonPlanResult(await response.json(), input, profile)
+    const requestTimeoutMs = effectiveProviderRequestTimeoutMs(input)
 
     await input.onStreamEvent?.({
       kind: 'stream_started',
       provider: input.settings.openaiCompatibleProvider,
       model: input.settings.openaiCompatibleModel,
       source: SOURCE,
-      requestTimeoutMs: effectiveProviderRequestTimeoutMs(input),
+      requestTimeoutMs,
     })
 
-    const decoder = new TextDecoder()
-    let buffer = ''
-    let content = ''
-    let reasoningContent = ''
-    let finishReason: string | undefined
-    const { capability } = providerRuntimeContext(input, profile)
-    const toolAssembler = new ProviderToolCallStreamAssembler()
-    const toolTraceState = new Map<number, { argumentLength: number; flushedAt: number; emittedName: boolean }>()
-    let contentTraceLength = 0
-    let contentTraceFlushedAt = 0
-    const requestTimeoutMs = effectiveProviderRequestTimeoutMs(input)
-    const deadline = Date.now() + requestTimeoutMs
+    const { capability, thinkingLevel } = providerRuntimeContext(input, profile)
+    let parsed: OpenAICompatibleProviderStreamParseResult
 
-    const emitContentTrace = async (force = false) => {
-      const delta = content.slice(contentTraceLength)
-      if (delta.length <= 0) return
-      const now = Date.now()
-      if (
-        !force &&
-        delta.length < CONTENT_TRACE_FLUSH_CHARS &&
-        now - contentTraceFlushedAt < STREAM_TRACE_FLUSH_INTERVAL_MS
-      ) {
-        return
-      }
-      contentTraceLength = content.length
-      contentTraceFlushedAt = now
-      await input.onStreamEvent?.({
-        kind: 'content_delta',
-        delta: safeProviderStreamText(delta, STREAM_DELTA_LIMIT),
-        preview: safeProviderStreamText(content, STREAM_PREVIEW_LIMIT),
-      })
-    }
-
-    const emitToolTrace = async (index: number, toolCall: ProviderStreamingToolCall, force = false) => {
-      const previous = toolTraceState.get(index) ?? { argumentLength: 0, flushedAt: 0, emittedName: false }
-      const argumentDelta = toolCall.arguments.slice(previous.argumentLength)
-      const now = Date.now()
-      const shouldEmitName = Boolean(toolCall.name) && !previous.emittedName
-      if (
-        !force &&
-        !shouldEmitName &&
-        argumentDelta.length < TOOL_TRACE_FLUSH_CHARS &&
-        now - previous.flushedAt < STREAM_TRACE_FLUSH_INTERVAL_MS
-      ) {
-        return
-      }
-      toolTraceState.set(index, {
-        argumentLength: toolCall.arguments.length,
-        flushedAt: now,
-        emittedName: previous.emittedName || Boolean(toolCall.name),
-      })
-      await input.onStreamEvent?.({
-        kind: 'tool_call_delta',
-        toolCallIndex: index,
-        ...(toolCall.name ? { toolName: toolCall.name } : {}),
-        ...(argumentDelta.length > 0 ? { argumentsDelta: safeProviderStreamText(argumentDelta, STREAM_DELTA_LIMIT) } : {}),
-        ...(toolCall.arguments.length > 0
-          ? { argumentsPreview: safeProviderStreamText(toolCall.arguments, STREAM_PREVIEW_LIMIT) }
-          : {}),
-      })
-    }
-
-    const emitToolFrameDamage = async (error: ProviderToolCallParseError) => {
+    const emitToolFrameDamage = async (
+      error: ProviderToolCallParseError,
+      parsedResult: OpenAICompatibleProviderStreamParseResult,
+    ) => {
       const boundary = error.boundaryViolation()
       if (!boundary) return
       const toolNameSet = new Set(error.toolNames)
-      for (const frame of toolAssembler.toFrames({
-        provider: input.settings.openaiCompatibleProvider,
-        model: input.settings.openaiCompatibleModel,
-        ...(finishReason ? { finishReason } : {}),
-      })) {
+      for (const frame of parsedResult.frames) {
         const frameToolName = frame.name ?? frame.providerCallId ?? frame.id
         if (toolNameSet.size > 0 && !toolNameSet.has(frameToolName)) continue
         await input.onStreamEvent?.({
@@ -398,10 +308,11 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
       message: string
       boundaryCode: ToolCallBoundaryViolationCode
       toolName?: string
+      toolNames?: string[]
     }) => {
       const toolNames = inputError.toolName
         ? [inputError.toolName]
-        : toolAssembler.toolNames()
+        : inputError.toolNames ?? []
       return new ProviderToolCallParseError(
         inputError.message,
         toolNames,
@@ -411,98 +322,53 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
       )
     }
 
-    const handleRecord = async (record: string) => {
-      const data = sseDataFromRecord(record)
-      if (!data || data === '[DONE]') return
-      const parsed = JSON.parse(data) as any
-      const choices = Array.isArray(parsed?.choices) ? parsed.choices : []
-      for (const choice of choices) {
-        if (typeof choice?.finish_reason === 'string' && choice.finish_reason.length > 0) {
-          finishReason = choice.finish_reason
-        }
-        const delta = choice?.delta
-        if (!delta || typeof delta !== 'object') continue
-        if (typeof delta.content === 'string' && delta.content.length > 0) {
-          content += delta.content
-          await emitContentTrace()
-        }
-        reasoningContent += reasoningTextFromObject(delta, capability.reasoningDeltaKeys)
-
-        if (!Array.isArray(delta.tool_calls)) continue
-        for (const toolDelta of delta.tool_calls) {
-          const { index, toolCall } = toolAssembler.append(toolDelta)
-          await emitToolTrace(index, toolCall)
-        }
+    try {
+      parsed = await parseOpenAICompatibleStreamResponse({
+        stream: response.body,
+        provider: input.settings.openaiCompatibleProvider,
+        model: input.settings.openaiCompatibleModel,
+        profile,
+        thinkingLevel,
+        timeoutMs: requestTimeoutMs,
+        deltaLimit: STREAM_DELTA_LIMIT,
+        previewLimit: STREAM_PREVIEW_LIMIT,
+        contentFlushChars: CONTENT_TRACE_FLUSH_CHARS,
+        toolFlushChars: TOOL_TRACE_FLUSH_CHARS,
+        flushIntervalMs: STREAM_TRACE_FLUSH_INTERVAL_MS,
+        onEvent: (event) => input.onStreamEvent?.(event),
+      })
+    } catch (error) {
+      if (error instanceof OpenAICompatibleProviderStreamTimeoutError) {
+        throw new ProviderTimeoutError(error.message, error.toolNames)
       }
+      if (error instanceof OpenAICompatibleProviderStreamInterruptedError) {
+        throw providerToolCallParseError({
+          message: error.message,
+          boundaryCode: error.boundaryCode,
+          toolNames: error.toolNames,
+        })
+      }
+      throw error
     }
 
-    while (true) {
-      const remainingMs = deadline - Date.now()
-      if (remainingMs <= 0) throw new ProviderTimeoutError(`Provider stream timed out after ${requestTimeoutMs}ms`, toolAssembler.toolNames())
-      let chunk: Awaited<ReturnType<typeof readProviderStreamChunk>>
-      try {
-        chunk = await readProviderStreamChunk(reader, remainingMs)
-      } catch (error) {
-        if (error instanceof Error && error.message.includes('timed out')) {
-          throw new ProviderTimeoutError(`Provider stream timed out after ${requestTimeoutMs}ms`, toolAssembler.toolNames())
-        }
-        if (toolAssembler.count() > 0) {
-          const streamError = providerToolCallParseError({
-            message: error instanceof Error
-              ? `Provider stream interrupted while assembling tool calls: ${error.message}`
-              : 'Provider stream interrupted while assembling tool calls.',
-            boundaryCode: 'tool_call_stream_interrupted',
-          })
-          await emitToolFrameDamage(streamError)
-          throw streamError
-        }
-        throw error
-      }
-      const { done, value } = chunk
-      if (value) buffer += decoder.decode(value, { stream: true })
-      if (done) {
-        buffer += decoder.decode()
-        break
-      }
-      const records = buffer.split(/\r?\n\r?\n/)
-      buffer = records.pop() ?? ''
-      for (const record of records) await handleRecord(record)
-    }
-
-    const trailing = buffer.trim()
-    if (trailing.length > 0) await handleRecord(trailing)
-    await emitContentTrace(true)
-    for (const [index, toolCall] of toolAssembler.entries()) await emitToolTrace(index, toolCall, true)
-
-    await input.onStreamEvent?.({
-      kind: 'stream_completed',
-      contentLength: content.length,
-      toolCallCount: toolAssembler.count(),
-    })
-
-    const damagedFrame = toolAssembler.toFrames({
-      provider: input.settings.openaiCompatibleProvider,
-      model: input.settings.openaiCompatibleModel,
-      ...(finishReason ? { finishReason } : {}),
-    }).find((frame) => frame.damage)
+    const damagedFrame = parsed.frames.find((frame) => frame.damage)
     if (damagedFrame?.damage) {
       const frameError = providerToolCallParseError({
         message: damagedFrame.damage.message,
         boundaryCode: damagedFrame.damage.kind,
         ...(damagedFrame.name ? { toolName: damagedFrame.name } : {}),
       })
-      await emitToolFrameDamage(frameError)
       throw frameError
     }
 
-    const normalizedToolCalls = toolAssembler.toProviderToolCalls()
+    const normalizedToolCalls = parsed.toolCalls
     const assistantMessage = providerAssistantMessage(input, profile, {
       role: 'assistant',
-      content: content.trim() || null,
+      content: parsed.content.trim() || null,
       tool_calls: normalizedToolCalls,
-      ...(reasoningContent ? Object.fromEntries(capability.reasoningDeltaKeys.slice(0, 1).map((key) => [key, reasoningContent])) : {}),
+      ...(parsed.reasoningText ? Object.fromEntries(capability.reasoningDeltaKeys.slice(0, 1).map((key) => [key, parsed.reasoningText])) : {}),
     })
-    const artifact = providerArtifact(input, profile, reasoningContent)
+    const artifact = providerArtifact(input, profile, parsed.reasoningText)
     let toolSteps: AgentToolCallStep[]
     try {
       toolSteps = validateProviderToolCallsForExecution({
@@ -524,7 +390,7 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
       })
     } catch (error) {
       if (error instanceof ProviderToolCallParseError) {
-        await emitToolFrameDamage(error)
+        await emitToolFrameDamage(error, parsed)
         throw error
       }
       const toolNames = normalizedToolCalls
@@ -534,11 +400,11 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
         error instanceof Error ? error.message : String(error),
         [...new Set(toolNames)],
       )
-      await emitToolFrameDamage(wrapped)
+      await emitToolFrameDamage(wrapped, parsed)
       throw wrapped
     }
     if (toolSteps.length > 0) return withProviderState({ source: SOURCE, steps: toolSteps }, assistantMessage, artifact)
-    const assistantText = content.trim()
+    const assistantText = parsed.content.trim()
     const promoted = assistantText
       ? validatePromotedPlainTextToolCalls({
         text: assistantText,
@@ -547,7 +413,7 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
         artifact,
         message: {
           role: 'assistant',
-          ...(reasoningContent ? Object.fromEntries(capability.reasoningDeltaKeys.slice(0, 1).map((key) => [key, reasoningContent])) : {}),
+          ...(parsed.reasoningText ? Object.fromEntries(capability.reasoningDeltaKeys.slice(0, 1).map((key) => [key, parsed.reasoningText])) : {}),
         },
       })
       : null

@@ -144,6 +144,18 @@ describe('Agent ADR architecture boundaries', () => {
     expect(reader).not.toContain('"provider_tool_call_boundary"')
   })
 
+  it('keeps OpenAI-compatible stream parsing in Agentic OS runtime', () => {
+    const adapter = source('agent/runtime/openai-compatible-chat-adapter.ts')
+    expect(adapter).toContain('parseOpenAICompatibleStreamResponse')
+    expect(adapter).toContain("@agentic-os/runtime-openai-compatible")
+    expect(adapter).not.toContain('response.body?.getReader')
+    expect(adapter).not.toContain('ReadableStreamDefaultReader')
+    expect(adapter).not.toContain('sseDataFromRecord')
+    expect(adapter).not.toContain('readProviderStreamChunk')
+    expect(adapter).not.toContain('new ProviderToolCallStreamAssembler')
+    expect(adapter).not.toContain('buffer.split(/\\r?\\n\\r?\\n/')
+  })
+
   it('keeps tool observation outcome classification in Agentic OS core', () => {
     const classifier = source('agent/tool-observation-outcome.ts')
     expect(classifier).toContain("@agentic-os/core")
