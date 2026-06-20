@@ -12,13 +12,13 @@ import type { PlannerContext } from './planning-context.js'
 import {
   buildPlannedItemFromRuntimeStep,
   isActionDraft,
+  readDraftsFromRuntimeResult,
   type ActionDraftBuilderHandlers,
   type PlannedItem,
   type ReadDraft,
   type RuntimePlannerStep,
 } from './action-draft-builder.js'
-import type { RuntimePlanResult } from './runtime/runtime-adapter.js'
-import { configuredRuntimePlannerSource, readDraftsFromRuntimeResult } from './runtime-plan-reader.js'
+import { configuredRuntimePlannerSource, type RuntimePlanResult } from './runtime/runtime-adapter.js'
 import { extractWorkspaceBundleArtifact } from './workspace-bundle-artifact.js'
 import { redactSecretLikeContent } from './memory.js'
 import { addRunEvent } from './run-events.js'

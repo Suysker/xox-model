@@ -130,6 +130,7 @@ describe('Agent ADR architecture boundaries', () => {
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-stream-assembler.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-runtime-turn-output.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime-conversation-log.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'runtime-plan-reader.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'adapter-router.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-validator.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-repair.ts'))).toBe(false)
@@ -162,12 +163,15 @@ describe('Agent ADR architecture boundaries', () => {
     expect(discovery).not.toContain('tool-context-engine')
   })
 
-  it('keeps provider boundary observation payloads in Agentic OS instead of xox read mapping', () => {
-    const reader = source('agent/runtime-plan-reader.ts')
-    expect(reader).toContain('providerToolCallBoundaryObservations')
-    expect(reader).toContain("@agentic-os/runtime-openai-compatible")
-    expect(reader).not.toContain("observationType: 'provider_tool_call_boundary'")
-    expect(reader).not.toContain('"provider_tool_call_boundary"')
+  it('deletes the runtime plan reader facade while keeping provider boundary payloads in Agentic OS', () => {
+    expect(existsSync(join(srcRoot, 'agent', 'runtime-plan-reader.ts'))).toBe(false)
+    const draftBuilder = source('agent/action-draft-builder.ts')
+    const runtimeAdapter = source('agent/runtime/runtime-adapter.ts')
+    expect(draftBuilder).toContain('providerToolCallBoundaryObservations')
+    expect(draftBuilder).toContain("@agentic-os/runtime-openai-compatible")
+    expect(draftBuilder).not.toContain("observationType: 'provider_tool_call_boundary'")
+    expect(draftBuilder).not.toContain('"provider_tool_call_boundary"')
+    expect(runtimeAdapter).toContain('configuredRuntimePlannerSource')
   })
 
   it('keeps OpenAI-compatible stream parsing in Agentic OS runtime', () => {

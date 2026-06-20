@@ -72,6 +72,7 @@ import { executeAgentActionRequest } from '../approval-executor.js'
 import {
   buildPlannedItemFromRuntimeStep,
   isActionDraft,
+  readDraftsFromRuntimeResult,
   type PlannedItem,
   type PlannedItemResult,
 } from '../action-draft-builder.js'
@@ -102,11 +103,10 @@ import {
   responseEvaluationSummary,
 } from '../response-evaluator.js'
 import { callRuntimePlanner } from '../runtime-planning-call.js'
-import type { RuntimePlanResult } from '../runtime/runtime-adapter.js'
 import {
   configuredRuntimePlannerSource,
-  readDraftsFromRuntimeResult,
-} from '../runtime-plan-reader.js'
+  type RuntimePlanResult,
+} from '../runtime/runtime-adapter.js'
 import {
   mergeAgentGoalFacts,
   readRuntimeGoalFacts,

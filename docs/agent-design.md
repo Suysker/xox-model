@@ -238,7 +238,7 @@ agent/routes.ts
 - `planning-session.ts` 负责一次用户消息内的多段拆分、workspace bundle artifact 替换、多次 runtime planning 调用聚合和 provider source 合并；planner 只提供单次 runtime 调用能力，并注入 runtime intent handler registry。
 - `runtime-planning-call.ts` 负责单次 provider planning call：构造 Context Pack、请求 Tool Catalog Gateway、调用 Runtime Adapter、接入 provider stream trace；planner 不再直接 import `context-pack.ts`、`tool-gateway.ts`、`runtime/adapter-router.ts` 或 `runtime-trace-events.ts`。
 - `runtime-intent-handlers.ts` 持有 provider tool_call intent 到只读/data/action draft builder 的 handler registry；planner 只把该 registry 交给 `planning-session.ts`，不再直接 import 各业务 draft builder。
-- `runtime-plan-reader.ts` 负责把 provider `RuntimePlanResult` 中的 assistant text、空响应和 provider 错误转成只读 `ReadDraft`，并提供 provider-neutral planner source 判定；planner 不再拼认证失败、网络失败或普通 assistant 回复文案。
+- `runtime-plan-reader.ts` 已删除；`runtime/runtime-adapter.ts` 提供 provider-neutral planner source 判定，`action-draft-builder.ts` 负责把 provider `RuntimePlanResult` 中的 assistant text、空响应和 provider 错误转成只读 `ReadDraft`；planner 不再拼认证失败、网络失败或普通 assistant 回复文案。
 - `agent/routes.ts` 负责 HTTP routes、SSE 和 DTO 序列化；run 创建在 `run-submission.ts`，queue/recovery/cancel 和 worker lease 回写在 `run-worker.ts`，不再保留 `modules/agent.ts` 作为 Agent API 边界。
 - 确认卡创建、编辑、确认、取消、执行状态更新、assistant message、run event 和审计已下沉到 `apps/api/src/agent/approval-executor.ts`；route 只负责认证、HTTP DTO 序列化和 thread publish。Action graph step 的写入留在 `action-graph-store.ts`，避免 Approval Executor 混入 timeline 持久化职责。
 - 已确认 action 的业务执行已下沉到 `apps/api/src/agent/tool-executor.ts`；Approval Executor 先做 policy，再把当前 workspace/user 和 action payload 交给 executor 调用 workspace / ledger / share 模块。
@@ -988,7 +988,7 @@ OpenAI Agents SDK
   - `runtime-adapter.ts` 暴露 provider-neutral `requestTimeoutMs` 字段，具体 provider adapter 只负责执行 HTTP/stream timeout，不决定业务复杂度。
   - `openai-compatible-chat-adapter.ts` 把超时归类为 `provider_timeout`，不同于认证、HTTP、网络和响应格式错误；如果超时前已流出 tool name，重试继续沿用这个 provider-native 选择，并切到单工具非流式请求。
   - `runtime-trace-events.ts` 在 `provider_stream_started` 中记录脱敏的 `requestTimeoutMs`，便于从技术日志判断是否走了复杂任务预算。
-  - `runtime-plan-reader.ts` 用“模型服务响应超时”解释超时，不再误报为 base URL/网络不可达。
+  - `action-draft-builder.ts` 用“模型服务响应超时”解释 runtime 失败，不再误报为 base URL/网络不可达。
   - 依赖方向保持为 `Agentic OS host kit -> Runtime Planning Call -> Runtime Adapter -> Runtime Trace`；Tool Catalog Gateway 仍只投影工具，不承担 timeout 或业务意图判断。
 - `provider_stream_completed` 只记录内容长度和 tool call 数量。
 - 不保存 provider 原始 SSE 行、完整 prompt、API key、HTTP headers、完整 tool arguments 或 provider 原始 JSON。
@@ -1106,7 +1106,7 @@ API startup / recovery
 - `memory.ts`。
 - `runtime/openai-agents-adapter.ts`，`LLM_PROVIDER=openai` 时通过 OpenAI Agents SDK 的 `Agent / Runner / tool / OpenAIProvider` 收集 tool call plan，并规范化为内部 `RuntimePlanResult`。
 - `runtime/openai-compatible-chat-adapter.ts` 和 `adapter-router.ts`，OpenAI-compatible `tool_calls` 不再写在 route module 内，也不与 DeepSeek 绑定。
-- `runtime-plan-reader.ts`，负责把 provider `RuntimePlanResult` 的 assistant text、空结果和 provider error 转成只读 planned item，并统一 planner source 判定；planner 只消费这个边界。
+- `runtime-plan-reader.ts` 已删除；`action-draft-builder.ts` 负责把 provider `RuntimePlanResult` 的 assistant text、空结果和 provider error 转成只读 planned item，`runtime/runtime-adapter.ts` 统一 planner source 判定；planner 只消费这两个已有边界。
 - `runtime-trace-events.ts`，负责 provider-neutral stream event 的脱敏、截断和 `provider_stream_*` run event 持久化；runtime adapter 不写库，planner 不拼 trace payload。
 - `tool-coverage.ts`，把资本、收入、成员、成本、员工、月份模板和工作区 bundle 导入导出等手动可编辑能力注册为 Agent 覆盖矩阵，并把账号动作列为明确手动项。
 - `config-patch.ts`，集中处理 `workspace_patch_config` 的 dot/array path 解析、旧值读取、写入和模型克隆，通用草稿修改不再在 route/planner 文件里手写路径遍历。

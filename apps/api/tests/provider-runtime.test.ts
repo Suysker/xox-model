@@ -27,7 +27,7 @@ import {
   shouldRetryProviderRuntimeResult,
   type ProviderReplayObservation,
 } from '@agentic-os/runtime-openai-compatible'
-import { readDraftsFromRuntimeResult } from '../src/agent/runtime-plan-reader.js'
+import { readDraftsFromRuntimeResult } from '../src/agent/action-draft-builder.js'
 import { OpenAICompatibleChatAdapter } from '../src/agent/runtime/openai-compatible-chat-adapter.js'
 
 function settings(provider: string, model: string): Settings {

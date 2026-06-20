@@ -143,6 +143,13 @@ export interface RuntimeAdapter {
   plan(input: RuntimePlanningInput): Promise<RuntimePlanResult | null>
 }
 
+export function configuredRuntimePlannerSource(
+  settings: Settings,
+): Extract<AgentPlannerSource, 'openai_agents' | 'openai_compatible_tool_calls'> | null {
+  if (settings.llmProvider === 'rules') return null
+  return settings.llmProvider === 'openai' ? 'openai_agents' : 'openai_compatible_tool_calls'
+}
+
 const openAIAgentsAdapter = new OpenAIAgentsAdapter()
 const openAICompatibleChatAdapter = new OpenAICompatibleChatAdapter()
 
