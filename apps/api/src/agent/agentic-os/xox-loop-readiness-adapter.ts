@@ -1,4 +1,5 @@
 import type { AgentEvaluationFinding, AgentGoalContract, AgentGoalFacts, AgentToolObservationOutcome } from '@xox/contracts'
+import { hydrateModelConfig, projectModel } from '@xox/domain'
 import {
   classifyToolObservationOutcome,
   decideAgentReadiness,
@@ -10,9 +11,10 @@ import type { AgentToolCapability } from '../tool-catalog.js'
 import type { Kysely } from 'kysely'
 import type { Database, Row } from '../../db/schema.js'
 import { parseJson } from '../../db/database.js'
-import { collectAgentObservation } from '../observation-collector.js'
 import { addEvaluationResult, updateGoalStatus } from '../goal-contract.js'
 import { goalFactsFromRunEvent, mergeAgentGoalFacts } from '../runtime-goal-facts.js'
+import { getWorkspaceDraft, listVersions } from '../../modules/workspace.js'
+import { listPeriods } from '../../modules/ledger.js'
 
 const XOX_READINESS_DECISION_COPY = {
   policyBlocker: (messages) => messages.join('；'),
@@ -96,6 +98,87 @@ function goalFactsFromRow(goal: Row<'agent_goals'>): AgentGoalFacts {
 
 function runtimeGoalFacts(runEvents: Row<'agent_run_events'>[]) {
   return mergeAgentGoalFacts(...runEvents.map(goalFactsFromRunEvent))
+}
+
+type AgentDomainObservation = {
+  draft: {
+    workspaceName: string
+    revision: number
+    teamMemberCount: number
+    employeeCount: number
+    shareholderCount: number
+    monthCount: number
+    startMonth: number
+    totalRevenue: number
+    totalCost: number
+    totalProfit: number
+  }
+  ledger: {
+    periodCount: number
+  }
+  versions: {
+    count: number
+    releaseCount: number
+  }
+  shares: {
+    activeCount: number
+  }
+  audit: {
+    executedActionCount: number
+  }
+}
+
+async function collectAgentObservation(input: {
+  db: Kysely<Database>
+  workspace: Row<'workspaces'>
+}): Promise<AgentDomainObservation> {
+  const [currentWorkspace, draft, periods, versions, shares, audits] = await Promise.all([
+    input.db.selectFrom('workspaces').select(['id', 'name']).where('id', '=', input.workspace.id).executeTakeFirst(),
+    getWorkspaceDraft(input.db, input.workspace),
+    listPeriods(input.db, input.workspace),
+    listVersions(input.db, input.workspace),
+    input.db
+      .selectFrom('workspace_version_shares')
+      .select('id')
+      .where('workspace_id', '=', input.workspace.id)
+      .where('revoked_at', 'is', null)
+      .execute(),
+    input.db
+      .selectFrom('audit_logs')
+      .select('id')
+      .where('workspace_id', '=', input.workspace.id)
+      .where('action', '=', 'agent.action_executed')
+      .execute(),
+  ])
+  const config = hydrateModelConfig(parseJson<unknown>(draft.config_json, null))
+  const scenario = projectModel(config).scenarios.find((item) => item.key === 'base')
+  return {
+    draft: {
+      workspaceName: currentWorkspace?.name ?? input.workspace.name,
+      revision: draft.revision,
+      teamMemberCount: config.teamMembers.length,
+      employeeCount: config.employees.length,
+      shareholderCount: config.shareholders.length,
+      monthCount: config.months.length,
+      startMonth: config.planning.startMonth,
+      totalRevenue: scenario?.grossSales ?? 0,
+      totalCost: scenario?.totalCost ?? 0,
+      totalProfit: scenario?.totalProfit ?? 0,
+    },
+    ledger: {
+      periodCount: periods.length,
+    },
+    versions: {
+      count: versions.length,
+      releaseCount: versions.filter((version) => version.kind === 'release').length,
+    },
+    shares: {
+      activeCount: shares.length,
+    },
+    audit: {
+      executedActionCount: audits.length,
+    },
+  }
 }
 
 const TOOL_OBSERVATION_OUTCOMES = new Set<AgentToolObservationOutcome>([
@@ -562,7 +645,7 @@ export async function evaluateAgentGoal(input: {
   const [planSteps, actions, observation, runEvents] = await Promise.all([
     input.db.selectFrom('agent_plan_steps').selectAll().where('run_id', '=', input.goal.run_id).orderBy('sequence_no', 'asc').execute(),
     input.db.selectFrom('agent_action_requests').selectAll().where('run_id', '=', input.goal.run_id).orderBy('created_at', 'asc').execute(),
-    collectAgentObservation({ db: input.db, workspace: input.workspace, runId: input.goal.run_id }),
+    collectAgentObservation({ db: input.db, workspace: input.workspace }),
     input.db.selectFrom('agent_run_events').selectAll().where('run_id', '=', input.goal.run_id).orderBy('sequence_no', 'asc').execute(),
   ])
 

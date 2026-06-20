@@ -145,10 +145,12 @@ describe('Agent ADR architecture boundaries', () => {
 
   it('keeps loop readiness status priority in Agentic OS core', () => {
     expect(existsSync(join(srcRoot, 'agent', 'loop-readiness-check.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'observation-collector.ts'))).toBe(false)
 
     const hostKit = source('agent/agentic-os/xox-agentic-os-host-kit.ts')
     expect(hostKit).toContain("from './xox-loop-readiness-adapter.js'")
     expect(hostKit).not.toContain("from '../loop-readiness-check.js'")
+    expect(hostKit).not.toContain("from '../observation-collector.js'")
 
     const approvalExecutor = source('agent/approval-executor.ts')
     expect(approvalExecutor).toContain("from './agentic-os/xox-loop-readiness-adapter.js'")
@@ -157,6 +159,7 @@ describe('Agent ADR architecture boundaries', () => {
     const adapter = source('agent/agentic-os/xox-loop-readiness-adapter.ts')
     expect(adapter).toContain("@agentic-os/core")
     expect(adapter).toContain('decideAgentReadiness')
+    expect(adapter).toContain('function collectAgentObservation')
     expect(adapter).not.toContain('policyFindings.some')
     expect(adapter).not.toContain("let status:")
     expect(adapter).not.toContain("status = 'blocked'")
