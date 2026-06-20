@@ -1,6 +1,9 @@
+import { createRuntimePlanRouter } from '@agentic-os/core'
 import type { AgentPlannerSource, AgentToolInventorySnapshot } from '@xox/contracts'
 import type { Settings } from '../../core/settings.js'
 import type { AgentToolCallStep, ChatTool } from '../tool-catalog.js'
+import { OpenAIAgentsAdapter } from './openai-agents-adapter.js'
+import { OpenAICompatibleChatAdapter } from './openai-compatible-chat-adapter.js'
 
 export type RuntimePlannerSource = Extract<AgentPlannerSource, 'openai_agents' | 'openai_compatible_tool_calls'>
 
@@ -139,3 +142,22 @@ export interface RuntimeAdapter {
   readonly name: string
   plan(input: RuntimePlanningInput): Promise<RuntimePlanResult | null>
 }
+
+const openAIAgentsAdapter = new OpenAIAgentsAdapter()
+const openAICompatibleChatAdapter = new OpenAICompatibleChatAdapter()
+
+export const planWithRuntimeAdapter = createRuntimePlanRouter<RuntimePlanningInput, RuntimePlanResult | null>({
+  routes: [
+    {
+      routeId: 'rules',
+      when: (input) => input.settings.llmProvider === 'rules',
+      plan: () => null,
+    },
+    {
+      routeId: 'openai',
+      when: (input) => input.settings.llmProvider === 'openai',
+      plan: (input) => openAIAgentsAdapter.plan(input),
+    },
+  ],
+  fallback: (input) => openAICompatibleChatAdapter.plan(input),
+})

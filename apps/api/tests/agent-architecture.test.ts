@@ -37,7 +37,6 @@ describe('Agent ADR architecture boundaries', () => {
 
   it('keeps runtime adapters provider-only and free of DB, routes, approvals, and domain execution', () => {
     const runtimeFiles = [
-      'agent/runtime/adapter-router.ts',
       'agent/runtime/high-volume-tool-policy.ts',
       'agent/runtime/openai-agents-adapter.ts',
       'agent/runtime/openai-compatible-chat-adapter.ts',
@@ -108,6 +107,7 @@ describe('Agent ADR architecture boundaries', () => {
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-stream-assembler.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-runtime-turn-output.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime-conversation-log.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'runtime', 'adapter-router.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-validator.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'tool-runtime', 'approval-policy-composer.ts'))).toBe(false)
 
@@ -352,6 +352,14 @@ describe('Agent ADR architecture boundaries', () => {
     expect(continuation).toContain("@agentic-os/core")
     expect(continuation).toContain('runtimeMessagesFromConversationLog')
     expect(existsSync(join(srcRoot, 'agent', 'runtime-conversation-log.ts'))).toBe(false)
+  })
+
+  it('keeps runtime adapter routing in Agentic OS core', () => {
+    const adapter = source('agent/runtime/runtime-adapter.ts')
+    expect(adapter).toContain("@agentic-os/core")
+    expect(adapter).toContain('createRuntimePlanRouter')
+    expect(adapter).toContain('planWithRuntimeAdapter')
+    expect(existsSync(join(srcRoot, 'agent', 'runtime', 'adapter-router.ts'))).toBe(false)
   })
 
   it('keeps provider probing runtime mechanics in Agentic OS runtime', () => {

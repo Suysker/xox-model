@@ -9,8 +9,7 @@ import { toolObservationFinalizerSystemPrompt } from './prompt-registry.js'
 import { addRunEvent } from './run-events.js'
 import { addRuntimeStreamRunEvent } from './runtime-trace-events.js'
 import { buildThreadConversationLog } from './context-pack.js'
-import { planWithRuntimeAdapter } from './runtime/adapter-router.js'
-import type { RuntimeChatMessage } from './runtime/runtime-adapter.js'
+import { planWithRuntimeAdapter, type RuntimeChatMessage } from './runtime/runtime-adapter.js'
 import {
   buildProviderToolObservationContinuationMessages,
   resolveProviderRuntimeProfile,

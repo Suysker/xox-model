@@ -2,13 +2,12 @@ import { buildAgentContextPack } from './context-pack.js'
 import { redactSecretLikeContent } from './memory.js'
 import type { PlannerContext } from './planning-context.js'
 import { addRuntimeStreamRunEvent } from './runtime-trace-events.js'
-import { planWithRuntimeAdapter } from './runtime/adapter-router.js'
 import {
   retryRuntimeInput,
   retryRuntimeMessage,
   shouldRetryRuntimePlan,
 } from './runtime/provider-failover-policy.js'
-import type { RuntimeChatMessage, RuntimePlanningInput, RuntimePlanResult } from './runtime/runtime-adapter.js'
+import { planWithRuntimeAdapter, type RuntimeChatMessage, type RuntimePlanningInput, type RuntimePlanResult } from './runtime/runtime-adapter.js'
 import type { Settings } from '../core/settings.js'
 import {
   HIGH_VOLUME_STRUCTURED_MAX_TOKENS,

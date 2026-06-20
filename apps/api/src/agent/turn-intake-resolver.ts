@@ -6,7 +6,7 @@ import type { CurrentUser } from '../modules/auth.js'
 import { buildAgentAmbientContext } from './ambient-context.js'
 import { redactSecretLikeContent } from './memory.js'
 import { turnLaneSystemPrompt } from './prompt-registry.js'
-import { planWithRuntimeAdapter } from './runtime/adapter-router.js'
+import { planWithRuntimeAdapter } from './runtime/runtime-adapter.js'
 import type { ChatTool, AgentToolCallStep } from './tool-catalog.js'
 import { sanitizeAgentGoalFacts } from './runtime-goal-facts.js'
 
