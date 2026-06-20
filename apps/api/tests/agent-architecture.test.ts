@@ -275,10 +275,15 @@ describe('Agent ADR architecture boundaries', () => {
     expect(gateway).toContain("from './tool-surface-manifest.js'")
     expect(gateway).not.toContain('tool-context-engine')
 
-    const discovery = source('agent/tool-discovery-tool.ts')
-    expect(discovery).toContain("@agentic-os/core")
-    expect(discovery).toContain('createToolSearchIndex')
-    expect(discovery).not.toContain('tool-context-engine')
+    expect(existsSync(join(srcRoot, 'agent', 'tool-discovery-tool.ts'))).toBe(false)
+    const handlers = source('agent/runtime-intent-handlers.ts')
+    expect(handlers).toContain("@agentic-os/core")
+    expect(handlers).toContain('buildToolSurfaceDiscoveryObservation')
+    expect(handlers).toContain('buildToolSurfaceManifestSearchObservation')
+    expect(handlers).toContain("from './tool-surface-manifest.js'")
+    expect(handlers).not.toContain('createToolSearchIndex')
+    expect(handlers).not.toContain('function searchDocument')
+    expect(handlers).not.toContain('tool-context-engine')
   })
 
   it('deletes the runtime plan reader facade while keeping provider boundary payloads in Agentic OS', () => {
