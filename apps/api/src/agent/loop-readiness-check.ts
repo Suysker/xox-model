@@ -1,4 +1,5 @@
 import type { AgentEvaluationFinding, AgentEvaluationResult, AgentGoalContract, AgentGoalFacts, AgentToolObservationOutcome } from '@xox/contracts'
+import { classifyToolObservationOutcome, isRepairableProviderBoundaryCode, type ToolObservationStatus } from '@agentic-os/core'
 import type { AgentToolCapability } from './tool-catalog.js'
 import type { Kysely } from 'kysely'
 import type { Database, Row } from '../db/schema.js'
@@ -6,7 +7,6 @@ import { parseJson } from '../db/database.js'
 import { collectAgentObservation } from './observation-collector.js'
 import { addEvaluationResult, updateGoalStatus } from './goal-contract.js'
 import { goalFactsFromRunEvent, mergeAgentGoalFacts } from './runtime-goal-facts.js'
-import { classifyToolObservation, isRepairableProviderBoundaryCode, type ToolObservationStatus } from './tool-observation-outcome.js'
 
 function finding(input: {
   id: string
@@ -136,7 +136,7 @@ function planStepSandboxOutcome(step: Row<'agent_plan_steps'>): AgentToolObserva
         : step.status === 'cancelled'
           ? 'cancelled'
           : 'failed'
-  return classifyToolObservation({
+  return classifyToolObservationOutcome({
     toolName: 'sandbox_run_code',
     status: observationStatus,
     modelContent: JSON.stringify({

@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto'
+import { classifyToolObservationOutcome, type ToolObservationStatus } from '@agentic-os/core'
 import { projectModel, type ModelConfig, type ScenarioResult } from '@xox/domain'
 import type {
   SandboxArtifactKind,
@@ -35,7 +36,6 @@ import type {
   SandboxToolRuntimeResponse,
   SandboxToolSdkEntry,
 } from './sandbox/backend.js'
-import { classifyToolObservation, type ToolObservationStatus } from './tool-observation-outcome.js'
 import { AGENT_TOOL_REGISTRY, toolCallToPlannerStep, type AgentToolRiskLevel } from './tool-catalog.js'
 import { buildToolManifests } from './tool-surface-manifest.js'
 
@@ -924,7 +924,7 @@ export async function planSandboxRunCode(
     modelContent,
     displayPreview: preview,
     observationStatus,
-    observationOutcome: classifyToolObservation({
+    observationOutcome: classifyToolObservationOutcome({
       toolName: 'sandbox_run_code',
       status: observationStatus,
       modelContent,

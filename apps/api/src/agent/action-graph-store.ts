@@ -5,6 +5,7 @@ import type {
   AgentRunRecord as OsRunRecord,
   JsonObject as OsJsonObject,
 } from '@agentic-os/contracts'
+import { classifyToolObservationOutcome } from '@agentic-os/core'
 import {
   materializeAgentServerActionGraph,
   type AgentServerActionGraphEventDraft,
@@ -41,7 +42,6 @@ import {
   type AgentToolObservation,
 } from './tool-observation-continuation.js'
 import { resolveActionAuthority, type AgentAutomationLevel } from './tool-policy.js'
-import { classifyToolObservation } from './tool-observation-outcome.js'
 import {
   createXoxObservationBridge,
   type XoxObservationBridge,
@@ -228,7 +228,7 @@ function observationFromRead(item: ReadDraft, sequenceHint: number): AgentToolOb
   }
   return {
     ...observation,
-    outcome: item.observationOutcome ?? classifyToolObservation(observation),
+    outcome: item.observationOutcome ?? classifyToolObservationOutcome(observation),
   }
 }
 

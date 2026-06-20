@@ -1,10 +1,10 @@
 import type { AgentPlannerSource } from '@xox/contracts'
+import { classifyToolObservationOutcome } from '@agentic-os/core'
 import { providerToolCallBoundaryObservations } from '@agentic-os/runtime-openai-compatible'
 import type { Settings } from '../core/settings.js'
 import { redactSecretLikeContent } from './memory.js'
 import type { ReadDraft } from './action-draft-builder.js'
 import type { RuntimePlanError, RuntimePlanResult } from './runtime/runtime-adapter.js'
-import { classifyToolObservation } from './tool-observation-outcome.js'
 
 export function configuredRuntimePlannerSource(settings: Settings): Extract<AgentPlannerSource, 'openai_agents' | 'openai_compatible_tool_calls'> | null {
   if (settings.llmProvider === 'rules') return null
@@ -19,7 +19,7 @@ function providerToolCallBoundaryObservationReads(error?: RuntimePlanError | nul
     const toolName = observation.toolName
     const displayPreview = `Provider 返回了 ${toolName} 工具调用意图，但参数未形成可执行 observation。`
     const modelContent = observation.modelContent
-    const observationOutcome = classifyToolObservation({
+    const observationOutcome = classifyToolObservationOutcome({
       toolName,
       status: 'not_executed',
       modelContent,

@@ -4,11 +4,11 @@ import type {
   JsonObject as OsJsonObject,
 } from '@agentic-os/contracts'
 import {
+  classifyToolObservationOutcome,
   createHostObservationBridge,
   type HostObservationBridge,
 } from '@agentic-os/core'
 import type { AgentToolObservation } from '../tool-observation-continuation.js'
-import { classifyToolObservation } from '../tool-observation-outcome.js'
 
 export type XoxObservationBridge = HostObservationBridge<AgentToolObservation>
 
@@ -27,7 +27,7 @@ export function xoxObservationContent(observation: AgentToolObservation): OsJson
 }
 
 export function xoxObservationOutcome(observation: AgentToolObservation): OsToolObservationOutcome {
-  return classifyToolObservation(observation) as OsToolObservationOutcome
+  return classifyToolObservationOutcome(observation) as OsToolObservationOutcome
 }
 
 export function agenticOsObservationFromXox(

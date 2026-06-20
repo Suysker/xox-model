@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { classifyToolObservation, isRepairableToolObservation } from '../src/agent/tool-observation-outcome.js'
+import { classifyToolObservationOutcome, isRepairableToolObservation } from '@agentic-os/core'
 
 describe('tool observation outcome', () => {
   it('classifies provider argument boundaries as repairable observations', () => {
@@ -8,7 +8,7 @@ describe('tool observation outcome', () => {
       boundaryCode: 'tool_call_arguments_truncated',
     })
 
-    expect(classifyToolObservation({
+    expect(classifyToolObservationOutcome({
       toolName: 'workspace_configure_operating_model',
       status: 'not_executed',
       modelContent,
@@ -22,7 +22,7 @@ describe('tool observation outcome', () => {
       boundaryCode: 'tool_call_not_in_effective_inventory',
     })
 
-    expect(classifyToolObservation({
+    expect(classifyToolObservationOutcome({
       toolName: 'workspace_delete_everything',
       status: 'not_executed',
       modelContent,
@@ -61,7 +61,7 @@ describe('tool observation outcome', () => {
       artifacts: [],
     })
 
-    expect(classifyToolObservation({
+    expect(classifyToolObservationOutcome({
       toolName: 'sandbox_run_code',
       status: 'completed',
       modelContent,

@@ -1,5 +1,5 @@
 import type { AgentGoalContract, AgentGoalFacts } from '@xox/contracts'
-import { evaluateFinalAnswerHygiene } from '@agentic-os/core'
+import { classifyToolObservationOutcome, evaluateFinalAnswerHygiene } from '@agentic-os/core'
 import type { Row } from '../db/schema.js'
 import { parseJson } from '../db/database.js'
 import type { AgentEvidenceAuthority, AgentEvidenceItem, AgentFinalAnswerClaim } from './evidence-ledger.js'
@@ -7,7 +7,6 @@ import { buildEvidenceRequirements, isExecutedSandboxEvidenceFacts } from './evi
 import type { AgentToolObservation } from './tool-observation-continuation.js'
 import { mergeAgentGoalFacts } from './runtime-goal-facts.js'
 import { objectHasKey } from './structured-evidence-utils.js'
-import { classifyToolObservation } from './tool-observation-outcome.js'
 
 export type ResponseEvaluationStatus =
   | 'pass'
@@ -53,7 +52,7 @@ function goalFactsFromRow(goal: Row<'agent_goals'>): AgentGoalFacts {
 }
 
 function isCompletedObservation(observation: AgentToolObservation) {
-  return observation.status === 'completed' && classifyToolObservation(observation) === 'completed_valid'
+  return observation.status === 'completed' && classifyToolObservationOutcome(observation) === 'completed_valid'
 }
 
 function hasCompletedSandboxEvidence(evidence: AgentEvidenceItem[]) {

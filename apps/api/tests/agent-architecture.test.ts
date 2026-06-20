@@ -11,6 +11,25 @@ function source(path: string) {
   return readFileSync(join(srcRoot, path), 'utf8')
 }
 
+function sourceFilesUnder(path: string) {
+  const root = join(srcRoot, path)
+  const files: string[] = []
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const fullPath = join(dir, entry.name)
+      if (entry.isDirectory()) {
+        walk(fullPath)
+        continue
+      }
+      if (entry.isFile() && entry.name.endsWith('.ts')) {
+        files.push(relative(srcRoot, fullPath).replaceAll('\\', '/'))
+      }
+    }
+  }
+  walk(root)
+  return files
+}
+
 function expectNoImports(path: string, forbidden: RegExp[]) {
   const content = source(path)
   for (const pattern of forbidden) {
@@ -192,13 +211,12 @@ describe('Agent ADR architecture boundaries', () => {
     expect(hostKit).not.toContain('function xoxStepToAgentToolCall')
   })
 
-  it('keeps tool observation outcome classification in Agentic OS core', () => {
-    const classifier = source('agent/tool-observation-outcome.ts')
-    expect(classifier).toContain("@agentic-os/core")
-    expect(classifier).toContain('classifyToolObservationOutcome')
-    expect(classifier).not.toContain("observationType === 'provider_tool_call_boundary'")
-    expect(classifier).not.toContain("observationType === 'sandbox_execution'")
-    expect(classifier).not.toContain('tool_call_arguments_truncated')
+  it('deletes host-owned tool observation outcome classification', () => {
+    expect(existsSync(join(srcRoot, 'agent', 'tool-observation-outcome.ts'))).toBe(false)
+    const agentFiles = sourceFilesUnder('agent')
+    for (const file of agentFiles) {
+      expect(source(file), `${file} must consume @agentic-os/core directly`).not.toContain('tool-observation-outcome')
+    }
   })
 
   it('keeps action observation envelopes in Agentic OS core', () => {
