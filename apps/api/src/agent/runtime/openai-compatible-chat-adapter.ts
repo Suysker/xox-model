@@ -11,13 +11,13 @@ import {
 } from './tool-call-repair.js'
 import { validateProviderToolCallsForExecution } from './tool-call-validator.js'
 import {
-  classifyProviderHttpError,
   detectProviderPlainTextToolCallArtifact,
+  OpenAICompatibleChatTransportTimeoutError,
   OpenAICompatibleProviderStreamInterruptedError,
   OpenAICompatibleProviderStreamTimeoutError,
   parseOpenAICompatibleStreamResponse,
-  providerRejectsToolChoice,
   recoverProviderPlainTextToolCalls,
+  requestOpenAICompatibleChatCompletion,
   type OpenAICompatibleProviderStreamParseResult,
   type ProviderModelProfile,
   resolveProviderRuntimeCapability,
@@ -56,7 +56,7 @@ function providerToolNamesFromError(error: unknown) {
 }
 
 function isProviderTimeoutError(error: unknown) {
-  return error instanceof ProviderTimeoutError
+  return error instanceof ProviderTimeoutError || error instanceof OpenAICompatibleChatTransportTimeoutError
 }
 
 function effectiveProviderRequestTimeoutMs(input: RuntimePlanningInput) {
@@ -432,77 +432,39 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
       }
     }
 
-    let providerTimedOut = false
-    let timeout: ReturnType<typeof setTimeout> | null = null
-    const abortController = new AbortController()
-    const forwardAbort = () => abortController.abort(input.abortSignal?.reason)
-    if (input.abortSignal?.aborted) {
-      forwardAbort()
-    } else if (input.abortSignal) {
-      input.abortSignal.addEventListener('abort', forwardAbort, { once: true })
-    }
-
     try {
       const requestTimeoutMs = effectiveProviderRequestTimeoutMs(input)
-      timeout = setTimeout(() => {
-        providerTimedOut = true
-        abortController.abort(new Error(`Provider request timed out after ${requestTimeoutMs}ms`))
-      }, requestTimeoutMs + 1_000)
-      timeout.unref?.()
-      const endpoint = `${input.settings.openaiCompatibleBaseUrl.replace(/\/$/, '')}/chat/completions`
-      const shape = (omitToolChoice = false) => shapeOpenAICompatibleChatRequest(input, {
-        omitToolChoice,
-        ...(input.thinkingLevel !== undefined ? { thinkingLevel: input.thinkingLevel } : {}),
+      const transport = await requestOpenAICompatibleChatCompletion({
+        baseUrl: input.settings.openaiCompatibleBaseUrl,
+        apiKey: input.settings.openaiCompatibleApiKey,
+        timeoutMs: requestTimeoutMs,
+        abortGraceMs: 1_000,
+        ...(input.abortSignal !== undefined ? { abortSignal: input.abortSignal } : {}),
+        shapeRequest: ({ omitToolChoice }) => shapeOpenAICompatibleChatRequest(input, {
+          ...(omitToolChoice !== undefined ? { omitToolChoice } : {}),
+          ...(input.thinkingLevel !== undefined ? { thinkingLevel: input.thinkingLevel } : {}),
+        }),
       })
-      const init = (omitToolChoice = false): RequestInit => {
-        const requestShape = shape(omitToolChoice)
-        return {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${input.settings.openaiCompatibleApiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(requestShape.body),
-          signal: abortController.signal,
-        }
-      }
-      let requestShape = shape(false)
-      let response = await fetch(endpoint, init(false))
-
-      if (!response.ok) {
-        let providerMessage = await response.text().catch(() => '')
-        if (providerRejectsToolChoice(response.status, providerMessage) && input.tools.length > 0 && !abortController.signal.aborted) {
-          requestShape = shape(true)
-          response = await fetch(endpoint, init(true))
-          if (response.ok) {
-            const contentType = response.headers.get('content-type') ?? ''
-            if (contentType.toLowerCase().includes('text/event-stream')) return await this.planFromStream(response, input, requestShape.profile)
-            return jsonPlanResult(await response.json(), input, requestShape.profile)
-          }
-          providerMessage = await response.text().catch(() => '')
-        }
-        const classified = classifyProviderHttpError(response.status, providerMessage || response.statusText)
+      if (transport.kind === 'http_error') {
         return {
           source: SOURCE,
           steps: [],
-          error: classified,
+          error: transport.error,
         }
       }
-      const contentType = response.headers.get('content-type') ?? ''
-      if (contentType.toLowerCase().includes('text/event-stream')) return await this.planFromStream(response, input, requestShape.profile)
-      return jsonPlanResult(await response.json(), input, requestShape.profile)
+      if (transport.contentType.toLowerCase().includes('text/event-stream')) {
+        return await this.planFromStream(transport.response as unknown as Response, input, transport.requestShape.profile)
+      }
+      return jsonPlanResult(await transport.response.json(), input, transport.requestShape.profile)
     } catch (error) {
-      const requestTimeoutMs = effectiveProviderRequestTimeoutMs(input)
-      const message = providerTimedOut
-        ? `Provider request timed out after ${requestTimeoutMs}ms`
-        : error instanceof Error ? error.message : String(error)
+      const message = error instanceof Error ? error.message : String(error)
       const toolNames = providerToolNamesFromError(error)
       const toolCallBoundary = error instanceof ProviderToolCallParseError ? error.boundaryViolation() : undefined
       return {
         source: SOURCE,
         steps: [],
         error: {
-          kind: providerTimedOut || isProviderTimeoutError(error)
+          kind: isProviderTimeoutError(error)
             ? 'provider_timeout'
             : isProviderResponseParseError(error)
               ? 'provider_response_error'
@@ -512,9 +474,6 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
           ...(toolCallBoundary ? { toolCallBoundary } : {}),
         },
       }
-    } finally {
-      if (timeout) clearTimeout(timeout)
-      if (input.abortSignal) input.abortSignal.removeEventListener('abort', forwardAbort)
     }
   }
 }
