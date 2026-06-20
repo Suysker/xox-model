@@ -1,3 +1,5 @@
+import { AgentServerSignalBus, type AgentServerSignal } from '@agentic-os/server'
+
 export type AgentThreadEventReason =
   | 'thread_started'
   | 'plan_ready'
@@ -18,40 +20,24 @@ export type AgentThreadEventSignal = {
 
 type AgentThreadEventListener = (event: AgentThreadEventSignal) => void
 
-export class AgentThreadEventBroker {
-  private sequence = 0
-  private readonly listeners = new Map<string, Set<AgentThreadEventListener>>()
+const threadSignalBus = new AgentServerSignalBus<AgentThreadEventReason>()
 
-  subscribe(threadId: string, listener: AgentThreadEventListener) {
-    const listeners = this.listeners.get(threadId) ?? new Set<AgentThreadEventListener>()
-    listeners.add(listener)
-    this.listeners.set(threadId, listeners)
-
-    return () => {
-      listeners.delete(listener)
-      if (listeners.size === 0) this.listeners.delete(threadId)
-    }
-  }
-
-  publish(threadId: string, reason: AgentThreadEventReason) {
-    this.sequence += 1
-    const event = { threadId, sequence: this.sequence, reason }
-    const listeners = this.listeners.get(threadId)
-    if (!listeners) return event
-    for (const listener of [...listeners]) {
-      try {
-        listener(event)
-      } catch {
-        listeners.delete(listener)
-      }
-    }
-    if (listeners.size === 0) this.listeners.delete(threadId)
-    return event
-  }
-
-  listenerCount(threadId: string) {
-    return this.listeners.get(threadId)?.size ?? 0
+function toThreadSignal(signal: AgentServerSignal<AgentThreadEventReason>): AgentThreadEventSignal {
+  return {
+    threadId: signal.topicId,
+    sequence: signal.sequence,
+    reason: signal.reason,
   }
 }
 
-export const agentThreadEvents = new AgentThreadEventBroker()
+export const agentThreadEvents = {
+  subscribe(threadId: string, listener: AgentThreadEventListener) {
+    return threadSignalBus.subscribe(threadId, (signal) => listener(toThreadSignal(signal)))
+  },
+  publish(threadId: string, reason: AgentThreadEventReason) {
+    return toThreadSignal(threadSignalBus.publish(threadId, reason))
+  },
+  listenerCount(threadId: string) {
+    return threadSignalBus.listenerCount(threadId)
+  },
+}
