@@ -31,19 +31,24 @@ import type {
   RuntimeTurnInput as OsRuntimeTurnInput,
 } from '@agentic-os/contracts'
 import {
+  createAgentHostLoopCoordinator,
   createAgentHostKit,
+  hasNonActionHostObservation,
   inferToolAuthorityClass,
   isActionResultToolObservation,
   isActionToolObservation,
-  isClarificationToolObservation,
   isCompletedValidToolObservation,
-  isProviderBoundaryToolObservation,
+  isFinalizableHostBusinessObservation,
   isRepairableToolObservation,
   isSandboxToolObservation,
-  isToolDiscoveryObservation,
-  isToolSupervisorFailureObservation,
   ledgerToReviewObligations,
   parseToolObservationModelFacts,
+  sandboxExecutionModeFromFacts,
+  sandboxExecutionStatusFromFacts,
+  selectCompletedReadObservation,
+  selectReadinessObservation,
+  selectSandboxFinalizerObservation,
+  type AgentHostLoopCoordinator,
   type AgentActionPort,
   type AgentCompletionPort,
   type AgentContextPort,
@@ -124,7 +129,6 @@ import {
   continueModelAfterToolObservations,
   type AgentToolObservation,
 } from '../tool-observation-continuation.js'
-import { classifyToolObservation } from '../tool-observation-outcome.js'
 import { runtimeIntentHandlers } from '../runtime-intent-handlers.js'
 import { runPrerequisiteObservations } from '../prerequisite-observations.js'
 import { evaluateAgentGoal } from '../loop-readiness-check.js'
@@ -139,7 +143,6 @@ import {
 } from '../loop-obligation-ledger.js'
 import {
   materializeLoopObligations,
-  type ObligationMaterializationCache,
 } from '../obligation-materializer.js'
 import { extractWorkspaceBundleArtifact } from '../workspace-bundle-artifact.js'
 
@@ -166,12 +169,8 @@ type XoxAgenticOsRunState = {
   planRows: Row<'agent_plan_steps'>[]
   xoxObservations: AgentToolObservation[]
   observationBridge: XoxObservationBridge
-  readinessEvaluatedToolCallIds: Set<string>
-  sandboxFinalizedToolCallIds: Set<string>
-  ledgerAppliedObservationIds: Set<string>
+  loopCoordinator: AgentHostLoopCoordinator<AgentToolObservation>
   obligationLedger: AgentLoopObligationLedger
-  materializedObligationTasks: ObligationMaterializationCache
-  finalReviewIteration: number
   lastToolSelection: OsToolSelectionHint | null
   finishedResult: OsRunResult | null
 }
@@ -256,51 +255,22 @@ function applyStoredGraph(state: XoxAgenticOsRunState, graph: StoredActionGraph)
   }
 }
 
-function sandboxExecutionMode(
-  facts: Record<string, unknown> | null,
-): NonNullable<OsSandboxExecutionResult['executionMode']> | null {
-  const value = facts?.executionMode
-  return value === 'executed' || value === 'not_executed'
-    ? value
-    : null
-}
-
-function sandboxExecutionStatus(
-  facts: Record<string, unknown> | null,
-  observation: AgentToolObservation,
-): NonNullable<OsSandboxExecutionResult['status']> | null {
-  const status = facts?.status
-  if (
-    status === 'completed' ||
-    status === 'blocked' ||
-    status === 'failed' ||
-    status === 'timeout' ||
-    status === 'cancelled'
-  ) {
-    return status
-  }
-  if (observation.status === 'completed') return 'completed'
-  if (observation.status === 'cancelled') return 'cancelled'
-  if (observation.status === 'not_executed') return 'blocked'
-  if (observation.status === 'failed') return 'failed'
-  return null
-}
-
 function applyNewObservationsToLedger(
   state: XoxAgenticOsRunState,
   observations: AgentToolObservation[],
   iteration: number,
 ): void {
-  for (const observation of observations) {
-    const key = state.observationBridge.hostKey(observation)
-    if (state.ledgerAppliedObservationIds.has(key)) continue
-    state.ledgerAppliedObservationIds.add(key)
-    applyObservationToLedger({
-      ledger: state.obligationLedger,
-      observation,
-      iteration,
-    })
-  }
+  state.loopCoordinator.applyNewObservations({
+    observations,
+    iteration,
+    apply: ({ observation, iteration: appliedIteration }) => {
+      applyObservationToLedger({
+        ledger: state.obligationLedger,
+        observation,
+        iteration: appliedIteration,
+      })
+    },
+  })
 }
 
 function agenticOsRiskLevel(riskLevel: AgentToolRiskLevel): OsToolRiskLevel {
@@ -688,49 +658,10 @@ function completedActionAssistantText(
   return lastActionObservation?.displayPreview?.trim() || null
 }
 
-function lastSandboxObservation(observations: AgentToolObservation[]): AgentToolObservation | null {
-  return observations.filter(isSandboxToolObservation).at(-1) ?? null
-}
-
-function sandboxObservationForFinalizer(
-  state: XoxAgenticOsRunState,
-  observations: AgentToolObservation[],
-): AgentToolObservation | null {
-  const observation = lastSandboxObservation(observations)
-  if (!observation) return null
-  if (!isCompletedValidToolObservation(observation)) return null
-  if (state.sandboxFinalizedToolCallIds.has(observation.toolCallId)) return null
-  return observation
-}
-
-function shouldRunReadinessForRepairableObservation(observations: AgentToolObservation[]): AgentToolObservation | null {
-  const observation = lastSandboxObservation(observations)
-  if (!observation) return null
-  return isRepairableToolObservation(observation) ? observation : null
-}
-
-function hasNonActionObservation(observations: AgentToolObservation[]): boolean {
-  return observations.some((observation) => !isActionResultToolObservation(observation))
-}
-
-function isRunnerOwnedObservation(observation: AgentToolObservation): boolean {
-  return observation.lane === 'runner_evidence' || observation.lane === 'runner_obligation'
-}
-
 function isFinalizableBusinessObservation(observation: AgentToolObservation): boolean {
-  if (observation.displayPreview.trim().length === 0) return false
-  if (
-    isActionToolObservation(observation) ||
-    isProviderBoundaryToolObservation(observation) ||
-    isSandboxToolObservation(observation) ||
-    isToolSupervisorFailureObservation(observation) ||
-    isToolDiscoveryObservation(observation) ||
-    isClarificationToolObservation(observation)
-  ) {
-    return false
-  }
-  if (observation.toolName === 'data_query_workspace') return observation.status === 'completed'
-  return observation.status === 'failed' && classifyToolObservation(observation) === 'failed_terminal'
+  return isFinalizableHostBusinessObservation(observation, {
+    readToolName: 'data_query_workspace',
+  })
 }
 
 function hasFinalAnswerSupportingObservation(
@@ -878,26 +809,19 @@ function completedReadObservationAssistantText(
 ): { text: string; observations: AgentToolObservation[] } | null {
   if (state.actionRows.some((row) => row.status === 'pending')) return null
   const requiresWriteCapability = stateRequiresWriteCapability(state)
-  const readObservations = observations.filter((observation) => {
-    if (isFinalizableBusinessObservation(observation)) {
-      return observation.toolName !== 'data_query_workspace' || !requiresWriteCapability
-    }
-    if (requiresWriteCapability) return false
-    if (observation.status !== 'completed') return false
-    if (observation.displayPreview.trim().length === 0) return false
-    return !isRunnerOwnedObservation(observation) &&
-      !isActionToolObservation(observation) &&
-      !isToolSupervisorFailureObservation(observation) &&
-      !isToolDiscoveryObservation(observation) &&
-      !isClarificationToolObservation(observation)
+  const selected = selectCompletedReadObservation({
+    observations,
+    requiresWriteCapability,
+    readToolName: 'data_query_workspace',
+    isFinalizableBusinessObservation,
   })
-  const lastReadObservation = readObservations.at(-1)
-  if (!lastReadObservation) return null
+  if (!selected) return null
+  const lastReadObservation = selected.observation
   return {
     text: lastReadObservation.toolName === 'data_query_workspace' || isFinalizableBusinessObservation(lastReadObservation)
       ? readableObservationText(lastReadObservation)
       : lastReadObservation.displayPreview.trim(),
-    observations: readObservations,
+    observations: selected.observations,
   }
 }
 
@@ -1040,11 +964,8 @@ async function addReadinessEvaluation(input: {
   ctx: XoxAgenticOsPlannerContext
   state: XoxAgenticOsRunState
   iteration: number
-  observation: AgentToolObservation
 }): Promise<ReturnType<typeof serializeEvaluation> | null> {
   if (!input.state.goal) return null
-  if (input.state.readinessEvaluatedToolCallIds.has(input.observation.toolCallId)) return null
-  input.state.readinessEvaluatedToolCallIds.add(input.observation.toolCallId)
   return recordGoalEvaluation({
     ctx: input.ctx,
     state: input.state,
@@ -1263,34 +1184,35 @@ function createXoxAgenticOsHost(
 
   const runtime: OsRuntimeAdapter = {
     runTurn: async (input) => {
-      const xoxObservations = state.observationBridge.combine(state.xoxObservations, input.observations)
+      const xoxObservations = state.loopCoordinator.combineObservations(input.observations)
       applyNewObservationsToLedger(state, xoxObservations, input.iteration)
 
       const completedActionText = completedActionAssistantText(state, xoxObservations)
       let readinessEvaluation: ReturnType<typeof serializeEvaluation> | null = null
-      const repairableObservation = shouldRunReadinessForRepairableObservation(xoxObservations)
-      const latestObservation = xoxObservations.at(-1) ?? null
-      if (repairableObservation || latestObservation) {
-        const observation = repairableObservation ?? latestObservation!
+      const readinessObservation = selectReadinessObservation(xoxObservations)
+      if (
+        readinessObservation &&
+        state.loopCoordinator.claimObservation({
+          namespace: 'readiness_evaluation',
+          observation: readinessObservation,
+        })
+      ) {
         if (
-          !repairableObservation &&
+          !isRepairableToolObservation(readinessObservation) &&
           stateRequiresWriteCapability(state) &&
-          state.actionRows.length === 0 &&
-          !state.readinessEvaluatedToolCallIds.has(observation.toolCallId)
+          state.actionRows.length === 0
         ) {
-          state.readinessEvaluatedToolCallIds.add(observation.toolCallId)
           readinessEvaluation = await addPendingWriteReadinessEvaluation({ ctx, state, iteration: input.iteration })
         } else {
           readinessEvaluation = await addReadinessEvaluation({
             ctx,
             state,
             iteration: input.iteration,
-            observation,
           })
         }
       }
       if (completedActionText && readinessEvaluation?.status !== 'continue') {
-        if (hasNonActionObservation(xoxObservations)) {
+        if (hasNonActionHostObservation(xoxObservations)) {
           const continuation = await continueModelAfterToolObservations({
             db: ctx.db,
             settings: ctx.settings,
@@ -1314,9 +1236,14 @@ function createXoxAgenticOsHost(
           assistantText: completedActionText,
         }
       }
-      const sandboxFinalizerObservation = sandboxObservationForFinalizer(state, xoxObservations)
+      const sandboxFinalizerObservation = selectSandboxFinalizerObservation({
+        observations: xoxObservations,
+        claim: (observation) => state.loopCoordinator.claimObservation({
+          namespace: 'sandbox_finalizer',
+          observation,
+        }),
+      })
       if (sandboxFinalizerObservation) {
-        state.sandboxFinalizedToolCallIds.add(sandboxFinalizerObservation.toolCallId)
         await addRunEvent(ctx.db, {
           threadId: ctx.thread.id,
           runId: ctx.runId,
@@ -1621,9 +1548,9 @@ function createXoxAgenticOsHost(
         manifestScoped: facts?.manifestScoped === true,
       }
       if (osObservation.outcome !== undefined) result.outcome = osObservation.outcome
-      const executionMode = sandboxExecutionMode(facts)
+      const executionMode = sandboxExecutionModeFromFacts(facts)
       if (executionMode !== null) result.executionMode = executionMode
-      const status = sandboxExecutionStatus(facts, xoxObservation)
+      const status = sandboxExecutionStatusFromFacts(facts, xoxObservation)
       if (status !== null) result.status = status
       const actionRequests = graph.actionRows.map((row) => osActionRequest(row, input.toolCall.toolCallId))
       if (actionRequests.length > 0) result.actionRequests = actionRequests
@@ -1640,10 +1567,9 @@ function createXoxAgenticOsHost(
           repairable: false,
         }
       }
-      state.finalReviewIteration += 1
-      const reviewIteration = state.finalReviewIteration
-      const reviewObservations = state.observationBridge.combine(state.xoxObservations, input.observations)
-      state.observationBridge.mergeInto(state.xoxObservations, reviewObservations)
+      const reviewIteration = state.loopCoordinator.nextFinalReviewIteration()
+      const reviewObservations = state.loopCoordinator.combineObservations(input.observations)
+      state.loopCoordinator.mergeHostObservations(reviewObservations)
       applyNewObservationsToLedger(state, reviewObservations, reviewIteration)
       const evidence = buildEvidenceLedger({
         threadId: ctx.thread.id,
@@ -1838,7 +1764,7 @@ function createXoxAgenticOsHost(
           ctx,
           ledger: state.obligationLedger,
           plannerSource: state.plannerSource,
-          taskCache: state.materializedObligationTasks,
+          taskCache: state.loopCoordinator.materializationTaskCache,
         })
         if (materialized) {
           applyStoredGraph(state, materialized)
@@ -2093,6 +2019,8 @@ export async function executeXoxAgenticOsRun(
     automationLevel: ctx.automationLevel,
     goalFacts: initialGoalFacts,
   })
+  const xoxObservations: AgentToolObservation[] = []
+  const observationBridge = createXoxObservationBridge()
   const state: XoxAgenticOsRunState = {
     plannerSource: configuredRuntimePlannerSource(ctx.settings) ?? 'rules',
     goal,
@@ -2100,14 +2028,13 @@ export async function executeXoxAgenticOsRun(
     navigationEvents: [],
     actionRows: [],
     planRows: [],
-    xoxObservations: [],
-    observationBridge: createXoxObservationBridge(),
-    readinessEvaluatedToolCallIds: new Set(),
-    sandboxFinalizedToolCallIds: new Set(),
-    ledgerAppliedObservationIds: new Set(),
+    xoxObservations,
+    observationBridge,
+    loopCoordinator: createAgentHostLoopCoordinator({
+      observationBridge,
+      hostObservations: xoxObservations,
+    }),
     obligationLedger: initializeObligationLedger({ runId: ctx.runId }),
-    materializedObligationTasks: new Set(),
-    finalReviewIteration: 0,
     lastToolSelection: null,
     finishedResult: null,
   }
