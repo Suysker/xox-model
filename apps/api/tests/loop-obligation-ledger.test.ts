@@ -8,6 +8,7 @@ import {
   canAttemptFinalAnswer,
   initializeObligationLedger,
   ledgerToObligationPlan,
+  runtimeBoundaryMissingObservationRepair,
   serializeObligationLedger,
   serializeObligationLedgerForResponseEvent,
 } from '../src/agent/loop-obligation-ledger.js'
@@ -363,6 +364,77 @@ describe('Agent loop obligation ledger', () => {
       toolNames: ['data_query_workspace'],
       requiredDataScopes: ['entity_summary'],
       requiredMetrics: ['shareholderNames', 'shareholderInvestments'],
+    })
+  })
+
+  it('projects runtime-boundary missing observations through Agentic OS without mutating the ledger', () => {
+    const ledger = initializeObligationLedger({ runId: 'run_1' })
+    const repair = runtimeBoundaryMissingObservationRepair({
+      ledger,
+      objective: '计算贷款后的股东 ROI',
+      toolNames: ['sandbox_run_code'],
+    })
+
+    expect(ledger.obligations).toEqual([])
+    expect(repair).toMatchObject({
+      toolNames: ['sandbox_run_code'],
+      requiredGoalFacts: { requiresSandboxComputation: true },
+      evaluation: {
+        status: 'needs_calculation',
+        findings: [expect.objectContaining({ code: 'response.sandbox_evidence_missing' })],
+      },
+      obligationLedger: {
+        openCount: 1,
+        obligations: [
+          expect.objectContaining({
+            id: 'runtime_boundary_sandbox_calculation',
+            kind: 'sandbox_calculation',
+            source: 'response_evaluator',
+            toolNames: ['sandbox_run_code'],
+          }),
+        ],
+      },
+      obligationPlan: {
+        requiredToolNames: ['sandbox_run_code'],
+        selectedCapabilities: ['sandbox'],
+        goalFacts: { requiresSandboxComputation: true },
+        modelContext: {
+          obligations: [
+            expect.objectContaining({
+              id: 'runtime_boundary_sandbox_calculation',
+              kind: 'sandbox_calculation',
+              toolNames: ['sandbox_run_code'],
+            }),
+          ],
+        },
+      },
+    })
+  })
+
+  it('does not duplicate runtime-boundary repair obligations that already exist in the ledger', () => {
+    const ledger = initializeObligationLedger({ runId: 'run_1' })
+    applyResponseEvaluationToLedger({
+      ledger,
+      evaluation: evaluation({
+        requiredEvidence: [
+          { authority: 'sandbox', subject: 'calculation', reason: '需要可复核计算。' },
+        ],
+      }),
+      iteration: 1,
+    })
+
+    const repair = runtimeBoundaryMissingObservationRepair({
+      ledger,
+      objective: '计算贷款后的股东 ROI',
+      toolNames: ['sandbox_run_code'],
+    })
+
+    expect(repair?.obligationLedger.obligations).toHaveLength(1)
+    expect(repair?.obligationPlan.obligations).toHaveLength(1)
+    expect(repair?.obligationPlan.obligations[0]).toMatchObject({
+      id: 'loop_obligation_1_sandbox_calculation',
+      kind: 'sandbox_calculation',
+      toolNames: ['sandbox_run_code'],
     })
   })
 })

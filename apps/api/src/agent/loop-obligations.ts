@@ -1,6 +1,7 @@
 import type { AgentGoalFacts } from '@xox/contracts'
 import type {
   AgentLoopObligationLedger as OsAgentLoopObligationLedger,
+  AgentLoopObligationPlan as OsAgentLoopObligationPlan,
   JsonObject,
   JsonValue,
 } from '@agentic-os/contracts'
@@ -239,6 +240,18 @@ export function planLoopObligations(input: {
     objective: input.objective,
   })
   if (!osPlan) return null
+  return xoxPlanFromOsPlan({
+    objective: input.objective,
+    obligations: input.obligations,
+    osPlan,
+  })
+}
+
+export function xoxPlanFromOsPlan(input: {
+  objective: string
+  obligations: AgentLoopObligation[]
+  osPlan: OsAgentLoopObligationPlan
+}): AgentLoopObligationPlan {
   const goalFacts = mergeGoalFacts(input.obligations.map((obligation) => obligation.goalFacts))
   const sourceById = new Map(input.obligations.map((obligation) => [obligation.id, obligation]))
 
@@ -246,13 +259,13 @@ export function planLoopObligations(input: {
     schemaVersion: 'xox.loop_obligation_plan.v1',
     objective: input.objective,
     obligations: input.obligations,
-    requiredToolNames: osPlan.requiredToolNames,
-    selectedCapabilities: osPlan.selectedCapabilities as AgentToolCapability[],
+    requiredToolNames: input.osPlan.requiredToolNames,
+    selectedCapabilities: input.osPlan.selectedCapabilities as AgentToolCapability[],
     requiredActionCapabilities: [],
     goalFacts,
     modelContext: {
-      purpose: osPlan.modelContext.purpose,
-      obligations: osPlan.modelContext.obligations.map((obligation) => {
+      purpose: input.osPlan.modelContext.purpose,
+      obligations: input.osPlan.modelContext.obligations.map((obligation) => {
         const source = sourceById.get(obligation.obligationId)
         const requiredDataScopes = metadataStringArray(obligation.metadata, 'requiredDataScopes') ?? source?.requiredDataScopes
         const requiredMetrics = metadataStringArray(obligation.metadata, 'requiredMetrics') ?? source?.requiredMetrics
@@ -265,7 +278,7 @@ export function planLoopObligations(input: {
           ...(requiredMetrics ? { requiredMetrics } : {}),
         }
       }),
-      instruction: osPlan.modelContext.instruction,
+      instruction: input.osPlan.modelContext.instruction,
     },
   }
 }

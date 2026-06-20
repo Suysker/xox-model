@@ -138,6 +138,7 @@ import {
   initializeObligationLedger,
   ledgerToObligationPlan,
   osLedgerFromXoxLedger,
+  runtimeBoundaryMissingObservationRepair,
   serializeObligationLedgerForResponseEvent,
   type AgentLoopObligationLedger,
 } from '../loop-obligation-ledger.js'
@@ -1259,7 +1260,12 @@ function createXoxAgenticOsHost(
           ...(result.error.toolCallBoundary?.toolNames ?? []),
           ...(result.error.toolNames ?? []),
         ].filter((toolName, index, values) => toolName && values.indexOf(toolName) === index)
-        if (boundaryToolNames.includes('sandbox_run_code')) {
+        const missingObservationRepair = runtimeBoundaryMissingObservationRepair({
+          ledger: state.obligationLedger,
+          objective: state.objective,
+          toolNames: boundaryToolNames,
+        })
+        if (missingObservationRepair) {
           await addRunEvent(ctx.db, {
             threadId: ctx.thread.id,
             runId: ctx.runId,
@@ -1268,9 +1274,9 @@ function createXoxAgenticOsHost(
             message: 'Provider 已产生 sandbox_run_code 工具调用意图，但没有形成对应工具 observation；最终回答前必须补齐 sandbox evidence 或失败关闭。',
             status: 'running',
             data: {
-              toolNames: ['sandbox_run_code'],
+              toolNames: missingObservationRepair.toolNames,
               reason: 'provider_tool_call_without_observation_after_retry',
-              requiredGoalFacts: { requiresSandboxComputation: true },
+              requiredGoalFacts: missingObservationRepair.requiredGoalFacts,
               harness: 'agentic-os',
             },
           })
@@ -1283,72 +1289,18 @@ function createXoxAgenticOsHost(
             status: 'running',
             data: {
               goalId: state.goal?.id ?? null,
-              evaluationStatus: 'needs_calculation',
-              confidence: 0.96,
+              evaluationStatus: missingObservationRepair.evaluation.status,
+              confidence: missingObservationRepair.evaluation.confidence,
               evidenceCount: 0,
               evidence: [],
-              findings: [{
-                severity: 'fail',
-                code: 'response.sandbox_evidence_missing',
-                evidenceIds: [],
-                message: 'Provider 已产生 sandbox_run_code 工具意图，但本轮没有形成可执行 sandbox observation。',
-              }],
-              requiredEvidence: [{
-                authority: 'sandbox',
-                subject: 'calculation',
-                reason: '最终回答依赖派生计算，但本轮还没有完成的 sandbox_run_code evidence。',
-              }],
+              findings: missingObservationRepair.evaluation.findings,
+              requiredEvidence: missingObservationRepair.evaluation.requiredEvidence,
               finalAnswerClaims: [],
               claimReviewStatus: null,
               claimReviewReason: null,
-              obligationLedger: {
-                schemaVersion: 'xox.loop_obligation_ledger.v1',
-                runId: ctx.runId,
-                openCount: 1,
-                satisfiedCount: 0,
-                invalidCount: 0,
-                blockedCount: 0,
-                obligations: [{
-                  id: 'runtime_boundary_sandbox_calculation',
-                  kind: 'sandbox_calculation',
-                  status: 'open',
-                  source: 'response_evaluator',
-                  reason: 'Provider 已产生 sandbox_run_code 工具意图，但本轮没有形成可执行 sandbox observation。',
-                  toolNames: ['sandbox_run_code'],
-                  evidenceIds: [],
-                  invalidReasons: [],
-                }],
-              },
-              obligationPlan: {
-                schemaVersion: 'xox.loop_obligation_plan.v1',
-                objective: state.objective,
-                obligations: [{
-                  id: 'runtime_boundary_sandbox_calculation',
-                  kind: 'sandbox_calculation',
-                  reason: 'Provider 已产生 sandbox_run_code 工具意图，但本轮没有形成可执行 sandbox observation。',
-                  findingCodes: ['response.sandbox_evidence_missing'],
-                  authority: 'sandbox',
-                  subject: 'calculation',
-                  toolNames: ['sandbox_run_code'],
-                  capabilities: ['sandbox'],
-                  goalFacts: { requiresSandboxComputation: true },
-                }],
-                requiredToolNames: ['sandbox_run_code'],
-                selectedCapabilities: ['sandbox'],
-                requiredActionCapabilities: [],
-                goalFacts: { requiresSandboxComputation: true },
-                modelContext: {
-                  purpose: 'satisfy_runner_obligations',
-                  obligations: [{
-                    id: 'runtime_boundary_sandbox_calculation',
-                    kind: 'sandbox_calculation',
-                    reason: 'Provider 已产生 sandbox_run_code 工具意图，但本轮没有形成可执行 sandbox observation。',
-                    toolNames: ['sandbox_run_code'],
-                  }],
-                  instruction: 'Continue the same user objective. Satisfy the listed runner-owned obligations through tool observations before producing a final answer.',
-                },
-              },
-              nextPlannerBrief: '继续调用 sandbox_run_code，用当前工作区事实完成可复核计算，再生成最终回答。',
+              obligationLedger: missingObservationRepair.obligationLedger,
+              obligationPlan: missingObservationRepair.obligationPlan,
+              nextPlannerBrief: missingObservationRepair.nextPlannerBrief,
               harness: 'agentic-os',
             },
           })

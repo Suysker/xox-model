@@ -175,6 +175,17 @@ describe('Agent ADR architecture boundaries', () => {
     expect(ledger).toContain('projectObligationLedgerWithAdditionalObligations')
   })
 
+  it('keeps runtime-boundary missing-observation repair projection out of the host kit', () => {
+    const hostKit = source('agent/agentic-os/xox-agentic-os-host-kit.ts')
+    expect(hostKit).toContain('runtimeBoundaryMissingObservationRepair')
+    expect(hostKit).not.toContain('runtime_boundary_sandbox_calculation')
+    expect(hostKit).not.toContain('response.sandbox_evidence_missing')
+    expect(hostKit).not.toContain('Provider 已产生 sandbox_run_code 工具意图')
+
+    const ledger = source('agent/loop-obligation-ledger.ts')
+    expect(ledger).toContain('projectObligationStateWithAdditionalObligations')
+  })
+
   it('keeps the tool executor independent from provider SDKs and runtime adapters', () => {
     expectNoImports('agent/tool-executor.ts', [
       /@openai\/agents/,

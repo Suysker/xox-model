@@ -1,6 +1,6 @@
 # xox-model Agentic OS Integration Plan
 
-Status: Draft (M115 final review obligation projection extraction)
+Status: Draft (M116 runtime boundary missing-observation repair)
 
 Date: 2026-06-19
 
@@ -110,6 +110,7 @@ Current integration is no longer compatibility-only:
 - xox `apps/api/src/agent/obligation-materializer.ts` now consumes `@agentic-os/core` `planObligationMaterialization()` for active obligation task filtering, stable de-duplication, and generic event payloads.
 - xox final review response now consumes `@agentic-os/core` `ledgerToReviewObligations()` for active ledger obligation to completion repair obligation projection.
 - xox final review response event now consumes `@agentic-os/core` `projectObligationLedgerWithAdditionalObligations()` for non-mutating additional obligation merge, runner identity de-duplication, and status counts. `xox-agentic-os-host-kit.ts` no longer owns this runner event projection.
+- xox runtime-boundary missing-observation repair now consumes `@agentic-os/core` `projectObligationStateWithAdditionalObligations()` for non-mutating additional repair obligation ledger + plan projection. `xox-agentic-os-host-kit.ts` no longer owns the `runtime_boundary_sandbox_calculation` object graph.
 - xox `apps/api/src/agent/runtime/openai-compatible-chat-adapter.ts` now consumes `@agentic-os/runtime-openai-compatible` `detectProviderPlainTextToolCallArtifact()` and `recoverProviderPlainTextToolCalls()` for provider plain-text tool-call recovery; the local `provider-plain-text-tool-calls.ts` duplicate has been removed.
 - xox provider runtime now consumes `@agentic-os/runtime-openai-compatible` `extractBalancedJson()`, `parseToolArgumentsWithRepair()`, `repairToolName()`, and `normalizeProviderToolCallsForExecution()` for provider-frame JSON extraction, bounded streamed argument repair, inventory-bound tool-name repair, effective-inventory/deferred boundary validation, and normalized provider tool-call output; local `balanced-json.ts`, `tool-call-argument-repair.ts`, `tool-call-name-normalizer.ts`, and `tool-call-repair.ts` duplicates/facades have been removed. The remaining normalized provider call -> xox planner-step mapping is private inside `openai-compatible-chat-adapter.ts` because it depends on xox `toolCallToPlannerStep()`.
 - xox provider runtime now consumes `@agentic-os/runtime-openai-compatible` `classifyProviderHttpError()`, `safeProviderErrorMessage()`, `providerRejectsToolChoice()`, and `runOpenAICompatibleRuntimePlanningRecovery()` for provider HTTP taxonomy, safe error redaction, `tool_choice` rejection detection, deferred materialization retry, recoverable same-turn retry, retry request shaping, retry patch application, and missing-observation evidence recovery; local `provider-error-classifier.ts`, `provider-failover-policy.ts`, and `high-volume-tool-policy.ts` have been removed. xox keeps high-volume tool budgets, tool catalog materialization, evidence requirement persistence, and Chinese retry run-event copy only as private host callbacks in the real `runtime-planning-call.ts` boundary.
