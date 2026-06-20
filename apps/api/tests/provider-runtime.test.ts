@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { Settings } from '../src/core/settings.js'
 import type { ChatTool } from '../src/agent/tool-catalog.js'
-import type { RuntimePlanningInput, RuntimePlanResult } from '../src/agent/runtime/runtime-adapter.js'
+import {
+  planWithRuntimeAdapter,
+  type RuntimePlanningInput,
+  type RuntimePlanResult,
+} from '../src/agent/runtime/runtime-adapter.js'
 import {
   applyProviderRuntimeRetryPatch,
   buildProviderRuntimeRetryPatch,
@@ -23,7 +27,6 @@ import {
   type ProviderReplayObservation,
 } from '@agentic-os/runtime-openai-compatible'
 import { readDraftsFromRuntimeResult } from '../src/agent/action-draft-builder.js'
-import { OpenAICompatibleChatAdapter } from '../src/agent/runtime/openai-compatible-chat-adapter.js'
 
 const XOX_HIGH_VOLUME_STRUCTURED_TOOL_NAMES = [
   'workspace_configure_operating_model',
@@ -687,7 +690,7 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
     })) as typeof fetch
 
     try {
-      const result = await new OpenAICompatibleChatAdapter().plan(runtimeInput('deepseek', 'deepseek-v4-pro'))
+      const result = await planWithRuntimeAdapter(runtimeInput('deepseek', 'deepseek-v4-pro'))
       expect(result?.assistantText).toBe('我先查询当前工作区数据，再给出回本结论。')
       expect(result?.steps).toHaveLength(1)
       expect(result?.steps[0]).toEqual(expect.objectContaining({
@@ -731,7 +734,7 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
     })) as typeof fetch
 
     try {
-      const result = await new OpenAICompatibleChatAdapter().plan(runtimeInput('deepseek', 'deepseek-v4-pro'))
+      const result = await planWithRuntimeAdapter(runtimeInput('deepseek', 'deepseek-v4-pro'))
       expect(result?.steps).toHaveLength(1)
       expect(result?.assistantText).toBeUndefined()
       expect(result?.providerArtifact).toMatchObject({
@@ -776,7 +779,7 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
     })) as typeof fetch
 
     try {
-      const result = await new OpenAICompatibleChatAdapter().plan(runtimeInput('deepseek', 'deepseek-v4-pro', [
+      const result = await planWithRuntimeAdapter(runtimeInput('deepseek', 'deepseek-v4-pro', [
         tool('sandbox_run_code'),
       ]))
       expect(result?.error).toBeUndefined()
@@ -826,7 +829,7 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
     })) as typeof fetch
 
     try {
-      const result = await new OpenAICompatibleChatAdapter().plan(runtimeInput('deepseek', 'deepseek-v4-pro', []))
+      const result = await planWithRuntimeAdapter(runtimeInput('deepseek', 'deepseek-v4-pro', []))
       expect(result?.steps).toHaveLength(0)
       expect(result?.assistantText).toBeUndefined()
       expect(result?.error).toMatchObject({
@@ -865,7 +868,7 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
     })) as typeof fetch
 
     try {
-      const result = await new OpenAICompatibleChatAdapter().plan(runtimeInput('deepseek', 'deepseek-v4-pro', []))
+      const result = await planWithRuntimeAdapter(runtimeInput('deepseek', 'deepseek-v4-pro', []))
       expect(result?.steps).toHaveLength(0)
       expect(result?.assistantText).toBeUndefined()
       expect(result?.error).toMatchObject({
@@ -909,7 +912,7 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
     })) as typeof fetch
 
     try {
-      const result = await new OpenAICompatibleChatAdapter().plan(runtimeInput('deepseek', 'deepseek-v4-pro'))
+      const result = await planWithRuntimeAdapter(runtimeInput('deepseek', 'deepseek-v4-pro'))
       expect(result?.error).toBeUndefined()
       expect(result?.steps).toHaveLength(1)
       expect(result?.steps[0]).toEqual(expect.objectContaining({
@@ -953,7 +956,7 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
 
     try {
       const streamEvents: any[] = []
-      const result = await new OpenAICompatibleChatAdapter().plan({
+      const result = await planWithRuntimeAdapter({
         ...runtimeInput('deepseek', 'deepseek-v4-pro', [tool('sandbox_run_code')]),
         stream: true,
         onStreamEvent: (event) => {
@@ -1041,7 +1044,7 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
     })) as typeof fetch
 
     try {
-      const result = await new OpenAICompatibleChatAdapter().plan(runtimeInput('deepseek', 'deepseek-v4-pro', [
+      const result = await planWithRuntimeAdapter(runtimeInput('deepseek', 'deepseek-v4-pro', [
         tool('workspace_patch_config'),
       ]))
       expect(result?.steps).toHaveLength(0)
@@ -1088,7 +1091,7 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
     })) as typeof fetch
 
     try {
-      const result = await new OpenAICompatibleChatAdapter().plan(runtimeInput('deepseek', 'deepseek-v4-pro', [
+      const result = await planWithRuntimeAdapter(runtimeInput('deepseek', 'deepseek-v4-pro', [
         tool('unmapped_runtime_tool'),
       ]))
       expect(result?.steps).toHaveLength(0)
