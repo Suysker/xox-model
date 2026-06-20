@@ -1,9 +1,13 @@
+import type {
+  ClarificationResumeScaffoldCopy,
+} from '@agentic-os/core'
+import { buildClarificationResumeScaffold } from '@agentic-os/core'
 import type { Kysely } from 'kysely'
-import type { Database, Row } from '../db/schema.js'
-import type { CurrentUser } from '../modules/auth.js'
-import { parseJson } from '../db/database.js'
-import { redactSecretLikeContent } from './memory.js'
-import type { AgentToolCapability } from './tool-catalog.js'
+import { parseJson } from '../../db/database.js'
+import type { Database, Row } from '../../db/schema.js'
+import type { CurrentUser } from '../../modules/auth.js'
+import { redactSecretLikeContent } from '../memory.js'
+import type { AgentToolCapability } from '../tool-catalog.js'
 
 type ResumeContextInput = {
   db: Kysely<Database>
@@ -14,7 +18,7 @@ type ResumeContextInput = {
   message: string
 }
 
-export type ClarificationResumeContext = {
+export type XoxClarificationResumeContext = {
   resumedGoalId: string
   resumedRunId: string
   objective: string
@@ -25,6 +29,22 @@ type FindingLike = {
   message?: string
 }
 
+const XOX_CLARIFICATION_RESUME_COPY = {
+  heading: '继续上一轮等待澄清的 Agent 目标。',
+  userSupplement: (message) => `用户本轮补充：${message}`,
+  previousQuestion: (question) => `上一轮澄清问题：${question}`,
+  openFindings: (findings) =>
+    `本轮只补齐上一轮仍未满足的事实或执行结果：${findings.join('；')}。`,
+  noOpenFindings: '本轮补齐上一轮澄清问题依赖的业务动作。',
+  pendingActions: (count) =>
+    `上一轮已有 ${count} 张待确认写入卡，继续保留，不要重复生成。`,
+  noPendingActions: '上一轮没有已保留的待确认写入卡。',
+  historyInstruction:
+    '同一线程历史里有原始目标和上一轮模型输出，只用于解析指代；不要重复已有确认卡。',
+  continuationInstruction:
+    '所有写入仍必须生成可编辑确认卡；如果补充后仍缺少必要信息，继续调用 ask_user_clarification。',
+} satisfies ClarificationResumeScaffoldCopy
+
 function clarificationQuestion(step: Row<'agent_plan_steps'> | undefined) {
   if (!step) return null
   const args = parseJson<any>(step.tool_arguments_json, null)
@@ -32,10 +52,8 @@ function clarificationQuestion(step: Row<'agent_plan_steps'> | undefined) {
   return step.description.trim() || null
 }
 
-function pendingActionSummary(actions: Row<'agent_action_requests'>[]) {
-  const pendingCount = actions.filter((action) => action.status === 'pending').length
-  if (pendingCount <= 0) return '上一轮没有已保留的待确认写入卡。'
-  return `上一轮已有 ${pendingCount} 张待确认写入卡，继续保留，不要重复生成。`
+function pendingActionCount(actions: Row<'agent_action_requests'>[]) {
+  return actions.filter((action) => action.status === 'pending').length
 }
 
 function actionCapability(action: Row<'agent_action_requests'>): AgentToolCapability | null {
@@ -63,7 +81,9 @@ function satisfiedActionCapabilities(actions: Row<'agent_action_requests'>[]): A
     .filter((capability): capability is AgentToolCapability => capability !== null))]
 }
 
-export async function buildClarificationResumeContext(input: ResumeContextInput): Promise<ClarificationResumeContext | null> {
+export async function buildXoxClarificationResumeContext(
+  input: ResumeContextInput,
+): Promise<XoxClarificationResumeContext | null> {
   let previousGoal = await input.db
     .selectFrom('agent_goals')
     .selectAll()
@@ -114,28 +134,19 @@ export async function buildClarificationResumeContext(input: ResumeContextInput)
   const findings = latestEvaluation
     ? parseJson<FindingLike[]>(latestEvaluation.unsatisfied_json, [])
     : []
-  const question = clarificationQuestion(latestClarificationStep)
-  const openFindings = findings
-    .map((finding) => typeof finding.message === 'string' ? finding.message.trim() : '')
-    .filter((message) => message.length > 0)
-  const missingLine = openFindings.length > 0
-    ? `本轮只补齐上一轮仍未满足的事实或执行结果：${openFindings.join('；')}。`
-    : '本轮补齐上一轮澄清问题依赖的业务动作。'
-
-  const objective = [
-    '继续上一轮等待澄清的 Agent 目标。',
-    `用户本轮补充：${redactSecretLikeContent(input.message).trim()}`,
-    question ? `上一轮澄清问题：${redactSecretLikeContent(question)}` : null,
-    missingLine,
-    pendingActionSummary(previousActions),
-    '同一线程历史里有原始目标和上一轮模型输出，只用于解析指代；不要重复已有确认卡。',
-    '所有写入仍必须生成可编辑确认卡；如果补充后仍缺少必要信息，继续调用 ask_user_clarification。',
-  ].filter((line): line is string => Boolean(line && line.trim())).join('\n')
+  const scaffold = buildClarificationResumeScaffold({
+    userMessage: input.message,
+    clarificationQuestion: clarificationQuestion(latestClarificationStep),
+    openFindingMessages: findings.map((finding) => finding.message),
+    pendingActionCount: pendingActionCount(previousActions),
+    redactor: redactSecretLikeContent,
+    copy: XOX_CLARIFICATION_RESUME_COPY,
+  })
 
   return {
     resumedGoalId: previousGoal.id,
     resumedRunId: previousGoal.run_id,
-    objective,
+    objective: scaffold.objective,
     satisfiedActionCapabilities: satisfiedActionCapabilities(previousActions),
   }
 }

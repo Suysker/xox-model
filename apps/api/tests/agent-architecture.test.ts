@@ -130,6 +130,19 @@ describe('Agent ADR architecture boundaries', () => {
     expect(adapter).not.toContain('if (!assistantText)')
   })
 
+  it('keeps clarification resume scaffold in Agentic OS core', () => {
+    expect(existsSync(join(srcRoot, 'agent', 'clarification-resume.ts'))).toBe(false)
+    const hostKit = source('agent/agentic-os/xox-agentic-os-host-kit.ts')
+    expect(hostKit).toContain("from './xox-clarification-resume-adapter.js'")
+    expect(hostKit).not.toContain("from '../clarification-resume.js'")
+
+    const adapter = source('agent/agentic-os/xox-clarification-resume-adapter.ts')
+    expect(adapter).toContain("@agentic-os/core")
+    expect(adapter).toContain('buildClarificationResumeScaffold')
+    expect(adapter).not.toContain('const objective = [')
+    expect(adapter).not.toContain(".join('\\n')")
+  })
+
   it('keeps the tool executor independent from provider SDKs and runtime adapters', () => {
     expectNoImports('agent/tool-executor.ts', [
       /@openai\/agents/,
@@ -166,6 +179,7 @@ describe('Agent ADR architecture boundaries', () => {
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'high-volume-tool-policy.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'openai-agents-adapter.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'direct-answer-runtime.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'clarification-resume.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'tool-runtime', 'approval-policy-composer.ts'))).toBe(false)
 
     const obsoleteToolContextDir = join(srcRoot, 'agent', 'tool-context-engine')

@@ -80,7 +80,7 @@ import {
   storePlannedActionGraph,
   type StoredActionGraph,
 } from '../action-graph-store.js'
-import { buildClarificationResumeContext } from '../clarification-resume.js'
+import { buildXoxClarificationResumeContext } from './xox-clarification-resume-adapter.js'
 import {
   buildEvidenceLedger,
   isExecutedSandboxEvidenceFacts,
@@ -836,7 +836,7 @@ function goalContractFacts(goal: Row<'agent_goals'>) {
 
 function goalFactsForRun(
   initialFacts: AgentGoalFacts | null | undefined,
-  resumeContext: Awaited<ReturnType<typeof buildClarificationResumeContext>>,
+  resumeContext: Awaited<ReturnType<typeof buildXoxClarificationResumeContext>>,
 ): AgentGoalFacts | null {
   if (!initialFacts) return null
   if (!resumeContext || resumeContext.satisfiedActionCapabilities.length === 0) return initialFacts
@@ -2000,7 +2000,7 @@ export async function executeXoxAgenticOsRun(
   ctx: XoxAgenticOsPlannerContext,
   options: { beforeStateWrite: () => Promise<boolean> },
 ): Promise<AgenticOsKernelRunResult | null> {
-  const resumeContext = await buildClarificationResumeContext({
+  const resumeContext = await buildXoxClarificationResumeContext({
     db: ctx.db,
     workspace: ctx.workspace,
     user: ctx.user,
