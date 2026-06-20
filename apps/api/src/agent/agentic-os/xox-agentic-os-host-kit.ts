@@ -43,6 +43,7 @@ import {
   isSandboxToolObservation,
   ledgerToReviewObligations,
   parseToolObservationModelFacts,
+  runtimePlannerResultToTurnOutput,
   sandboxExecutionModeFromFacts,
   sandboxExecutionStatusFromFacts,
   selectCompletedReadObservation,
@@ -63,7 +64,6 @@ import type { Row } from '../../db/schema.js'
 import { newId } from '../../core/security.js'
 import { utcNow } from '../../core/time.js'
 import type { PlannerContext } from '../planning-context.js'
-import { runtimePlanResultToAgenticOsTurnOutput } from './xox-runtime-turn-output.js'
 import {
   createXoxObservationBridge,
   type XoxObservationBridge,
@@ -1402,7 +1402,10 @@ function createXoxAgenticOsHost(
           })
         }
       }
-      return runtimePlanResultToAgenticOsTurnOutput(result)
+      return runtimePlannerResultToTurnOutput(result, {
+        unknownToolNamePrefix: 'xox_unknown_tool_',
+        unknownToolCallIdPrefix: 'xox_step_',
+      })
     },
   }
 

@@ -107,6 +107,7 @@ describe('Agent ADR architecture boundaries', () => {
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-argument-repair.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-name-normalizer.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-stream-assembler.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-runtime-turn-output.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'tool-runtime', 'approval-policy-composer.ts'))).toBe(false)
 
     const obsoleteToolContextDir = join(srcRoot, 'agent', 'tool-context-engine')
@@ -179,6 +180,15 @@ describe('Agent ADR architecture boundaries', () => {
     expect(adapter).not.toContain('function validatePromotedPlainTextToolCalls')
     expect(adapter).not.toContain('recoverProviderPlainTextToolCalls')
     expect(adapter).not.toContain('detectProviderPlainTextToolCallArtifact')
+  })
+
+  it('keeps runtime result to canonical turn output bridging in Agentic OS core', () => {
+    const hostKit = source('agent/agentic-os/xox-agentic-os-host-kit.ts')
+    expect(hostKit).toContain("@agentic-os/core")
+    expect(hostKit).toContain('runtimePlannerResultToTurnOutput')
+    expect(hostKit).not.toContain('runtimePlanResultToAgenticOsTurnOutput')
+    expect(hostKit).not.toContain('new TurnResolver')
+    expect(hostKit).not.toContain('function xoxStepToAgentToolCall')
   })
 
   it('keeps tool observation outcome classification in Agentic OS core', () => {
