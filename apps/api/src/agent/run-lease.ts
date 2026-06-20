@@ -1,18 +1,15 @@
 import type { Kysely } from 'kysely'
+import {
+  AgentServerRunLeaseLostError,
+  agentServerRunLeaseExpiresAt,
+  assertAgentServerRunLease,
+  startAgentServerRunLeaseHeartbeat,
+} from '@agentic-os/server'
 import type { Settings } from '../core/settings.js'
 import { utcNow } from '../core/time.js'
 import type { Database, Row } from '../db/schema.js'
 
-export class AgentRunLeaseLostError extends Error {
-  constructor(runId: string) {
-    super(`Agent run lease lost: ${runId}`)
-    this.name = 'AgentRunLeaseLostError'
-  }
-}
-
-function leaseExpiresAt(settings: Settings, now = Date.now()) {
-  return new Date(now + settings.agentRunLeaseTtlMs).toISOString()
-}
+export { AgentServerRunLeaseLostError as AgentRunLeaseLostError }
 
 export async function claimAgentRunLease(
   db: Kysely<Database>,
@@ -24,7 +21,7 @@ export async function claimAgentRunLease(
     .updateTable('agent_runs')
     .set({
       worker_id: settings.agentWorkerId,
-      lease_expires_at: leaseExpiresAt(settings),
+      lease_expires_at: agentServerRunLeaseExpiresAt(settings.agentRunLeaseTtlMs),
       heartbeat_at: now,
     })
     .where('id', '=', runId)
@@ -58,7 +55,7 @@ export async function refreshAgentRunLease(
   await db
     .updateTable('agent_runs')
     .set({
-      lease_expires_at: leaseExpiresAt(settings),
+      lease_expires_at: agentServerRunLeaseExpiresAt(settings.agentRunLeaseTtlMs),
       heartbeat_at: now,
     })
     .where('id', '=', runId)
@@ -79,9 +76,10 @@ export async function assertAgentRunLease(
   settings: Settings,
   runId: string,
 ) {
-  if (!(await refreshAgentRunLease(db, settings, runId))) {
-    throw new AgentRunLeaseLostError(runId)
-  }
+  await assertAgentServerRunLease({
+    runId,
+    refresh: () => refreshAgentRunLease(db, settings, runId),
+  })
 }
 
 export async function claimRecoverableAgentRuns(
@@ -117,10 +115,9 @@ export function startAgentRunLeaseHeartbeat(
   settings: Settings,
   runId: string,
 ) {
-  const intervalMs = Math.max(250, Math.floor(settings.agentRunLeaseTtlMs / 3))
-  const timer = setInterval(() => {
-    void refreshAgentRunLease(db, settings, runId).catch(() => undefined)
-  }, intervalMs)
-  timer.unref?.()
-  return () => clearInterval(timer)
+  return startAgentServerRunLeaseHeartbeat({
+    runId,
+    leaseTtlMs: settings.agentRunLeaseTtlMs,
+    refresh: () => refreshAgentRunLease(db, settings, runId),
+  })
 }
