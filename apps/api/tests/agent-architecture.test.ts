@@ -176,10 +176,19 @@ describe('Agent ADR architecture boundaries', () => {
     expect(runtimeAdapter).toContain('configuredRuntimePlannerSource')
   })
 
-  it('keeps OpenAI-compatible stream parsing in Agentic OS runtime', () => {
+  it('keeps OpenAI-compatible runtime turn execution in Agentic OS runtime', () => {
     const adapter = source('agent/runtime/openai-compatible-chat-adapter.ts')
-    expect(adapter).toContain('parseOpenAICompatibleStreamResponse')
+    expect(adapter).toContain('runOpenAICompatibleRuntimeTurn')
     expect(adapter).toContain("@agentic-os/runtime-openai-compatible")
+    expect(adapter).not.toContain('requestOpenAICompatibleChatCompletion')
+    expect(adapter).not.toContain('shapeOpenAICompatibleChatRequest')
+    expect(adapter).not.toContain('parseOpenAICompatibleStreamResponse')
+    expect(adapter).not.toContain('normalizeOpenAICompatibleJsonTurnResult')
+    expect(adapter).not.toContain('normalizeOpenAICompatibleStreamTurnResult')
+    expect(adapter).not.toContain('normalizeProviderToolCallsForExecution')
+    expect(adapter).not.toContain('OpenAICompatibleProviderStreamTimeoutError')
+    expect(adapter).not.toContain('OpenAICompatibleProviderStreamInterruptedError')
+    expect(adapter).not.toContain('OpenAICompatibleChatTransportTimeoutError')
     expect(adapter).not.toContain('response.body?.getReader')
     expect(adapter).not.toContain('ReadableStreamDefaultReader')
     expect(adapter).not.toContain('sseDataFromRecord')
@@ -190,8 +199,7 @@ describe('Agent ADR architecture boundaries', () => {
 
   it('keeps OpenAI-compatible chat transport in Agentic OS runtime', () => {
     const adapter = source('agent/runtime/openai-compatible-chat-adapter.ts')
-    expect(adapter).toContain('requestOpenAICompatibleChatCompletion')
-    expect(adapter).toContain('shapeOpenAICompatibleChatRequest')
+    expect(adapter).toContain('runOpenAICompatibleRuntimeTurn')
     expect(adapter).toContain("@agentic-os/runtime-openai-compatible")
     expect(adapter).not.toContain('new AbortController')
     expect(adapter).not.toContain('fetch(')
@@ -202,8 +210,7 @@ describe('Agent ADR architecture boundaries', () => {
 
   it('keeps OpenAI-compatible provider turn normalization in Agentic OS runtime', () => {
     const adapter = source('agent/runtime/openai-compatible-chat-adapter.ts')
-    expect(adapter).toContain('normalizeOpenAICompatibleJsonTurnResult')
-    expect(adapter).toContain('normalizeOpenAICompatibleStreamTurnResult')
+    expect(adapter).toContain('runOpenAICompatibleRuntimeTurn')
     expect(adapter).toContain("@agentic-os/runtime-openai-compatible")
     expect(adapter).not.toContain('function textContentFromMessage')
     expect(adapter).not.toContain('function reasoningTextFromObject')
@@ -357,9 +364,10 @@ describe('Agent ADR architecture boundaries', () => {
     const adapter = source('agent/runtime/openai-compatible-chat-adapter.ts')
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-repair.ts'))).toBe(false)
     expect(adapter).toContain("@agentic-os/runtime-openai-compatible")
-    expect(adapter).toContain('normalizeProviderToolCallsForExecution')
+    expect(adapter).toContain('runOpenAICompatibleRuntimeTurn')
     expect(adapter).toContain('plannerStepsFromProviderToolCalls')
     expect(adapter).toContain('toolCallToPlannerStep')
+    expect(adapter).not.toContain('normalizeProviderToolCallsForExecution')
     expect(adapter).not.toContain('extractBalancedJson')
     expect(adapter).not.toContain('parseToolArgumentsWithRepair')
     expect(adapter).not.toContain('argumentBoundaryCode')

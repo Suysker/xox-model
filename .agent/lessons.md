@@ -21,6 +21,7 @@
 
 ## Agent OS
 
+- OpenAI-compatible runtime turn execution is Agentic OS CPU work, not xox host framework work. xox may keep settings/prompt mapping, stream event source bridging, legacy `RuntimePlanResult` projection, and `toolCallToPlannerStep` business conversion, but request shaping, transport, stream parsing, turn normalization, provider tool-call normalization, argument repair, provider artifact/replay message, and timeout/boundary errors must stay in `@agentic-os/runtime-openai-compatible`.
 - Tool observation outcome classification is Agentic OS loop semantics, not xox product copy. Keep provider boundary, sandbox execution, action preview/result outcome branches in `@agentic-os/core`; xox `tool-observation-outcome.ts` should only adapt `@xox/contracts` types and must not grow a second classifier.
 - Action observation envelope generation is Agentic OS loop semantics, not xox JSON plumbing. Keep `action_preview` / `action_result` model-readable payload construction in `@agentic-os/core`; xox should only provide localized display copy, action row mapping, details parsing, business result summaries, and explicit policy outcomes.
 - Tool observation model-content parsing and role checks are Agentic OS loop semantics. Use `@agentic-os/core` helpers for action/sandbox/provider boundary/tool supervisor/tool discovery/clarification observations; xox may format business `scope` payloads but must not reintroduce direct `JSON.parse(observation.modelContent)` loop-role branches in the host kit or guardrails.
