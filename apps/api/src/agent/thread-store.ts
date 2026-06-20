@@ -20,9 +20,7 @@ import { utcNow } from '../core/time.js'
 import { coerceAgentActionKind, normalizeAgentAutomationLevel } from './tool-policy.js'
 import { serializeRunEvent } from './run-events.js'
 import { normalizeGoalStatus, serializeEvaluation, serializeGoal } from './goal-contract.js'
-import { buildAgentAgUiEvents } from './ag-ui-projection.js'
-import { buildAgentTranscriptItems } from './agent-transcript-projector.js'
-import { buildAgentTimelineItems, buildAgentTranscriptNodes } from './agent-timeline-projector.js'
+import { buildXoxThreadStateView } from './agentic-os/xox-thread-state-view.js'
 
 export type AgentThreadUser = {
   id: string
@@ -239,10 +237,16 @@ export async function buildThreadState(
     .map((step) => (step.navigation_json ? parseJson<AgentNavigationEvent | null>(step.navigation_json, null) : null))
     .filter((event): event is AgentNavigationEvent => Boolean(event))
 
-  const baseState = {
+  return buildXoxThreadStateView({
+    workspace,
+    user,
     thread: await buildThreadSummary(db, thread),
     messages: messages.map(serializeMessage),
     runs: runs.map(serializeRun),
+    runInputs: runs.map((run) => ({
+      runId: run.id,
+      userMessage: run.input_message,
+    })),
     planner: latestRun ? plannerSource(latestRun.planner_source) : null,
     goals: (goals as Row<'agent_goals'>[]).map(serializeGoal) as AgentGoalRecord[],
     evaluations: (evaluations as Row<'agent_evaluations'>[]).map(serializeEvaluation) as AgentEvaluationResult[],
@@ -250,15 +254,7 @@ export async function buildThreadState(
     runEvents: runEvents.map(serializeRunEvent),
     planSteps: planSteps.map(serializePlanStep),
     actionRequests: actions.map(serializeAction),
-  }
-
-  return {
-    ...baseState,
-    agUiEvents: buildAgentAgUiEvents(baseState),
-    transcriptItems: buildAgentTranscriptItems(baseState),
-    timelineItems: buildAgentTimelineItems(baseState),
-    transcriptNodes: buildAgentTranscriptNodes(baseState),
-  }
+  })
 }
 
 export async function touchThreadAfterRun(
