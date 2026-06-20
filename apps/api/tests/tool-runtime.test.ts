@@ -1,14 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentToolInventorySnapshot } from '@xox/contracts'
 import type { Settings } from '../src/core/settings.js'
-import { buildEffectiveToolInventorySnapshot } from '../src/agent/tool-runtime/effective-tool-inventory.js'
+import { buildRuntimeToolCatalogProjection } from '../src/agent/tool-gateway.js'
 import {
   resolveProviderModelProfile,
   sanitizeOpenAICompatibleRequestBody,
 } from '@agentic-os/runtime-openai-compatible'
 import { superviseRuntimeToolCalls } from '../src/agent/tool-runtime/tool-call-supervisor.js'
-import { evaluateToolLoopGuardrails } from '../src/agent/tool-runtime/tool-loop-guardrails.js'
-import { composeAgentWriteApprovalPolicy } from '@agentic-os/core'
+import { composeAgentWriteApprovalPolicy, evaluateToolLoopGuardrails } from '@agentic-os/core'
 import type { PlannerContext } from '../src/agent/planning-context.js'
 import type { AgentToolObservation } from '../src/agent/tool-observation-continuation.js'
 
@@ -36,34 +35,24 @@ function settings(provider = 'deepseek', model = 'deepseek-v4-pro'): Settings {
 
 describe('Tool Runtime Maturity Layer', () => {
   it('builds effective tool inventory snapshots with authority classes and provenance', () => {
-    const snapshot = buildEffectiveToolInventorySnapshot({
+    const projection = buildRuntimeToolCatalogProjection({
       userId: 'user_1',
       workspaceId: 'workspace_1',
       automationLevel: 'high',
       settings: settings(),
-      strategy: 'progressive_tool_discovery',
-      selectedCapabilities: ['data', 'draft'],
-      snapshotId: 'snapshot_1',
-      createdAt: '2026-05-30T00:00:00.000Z',
-      toolCapabilities: [
-        { name: 'data_query_workspace', capability: 'data', riskLevel: 'read', confirmationMode: 'never', navigationTarget: null },
-        { name: 'sandbox_run_code', capability: 'sandbox', riskLevel: 'read', confirmationMode: 'never', navigationTarget: null },
-        { name: 'workspace_patch_config', capability: 'draft', riskLevel: 'medium', confirmationMode: 'always', navigationTarget: 'inputs' },
-        { name: 'account_forbidden', capability: 'account', riskLevel: 'read', confirmationMode: 'never', navigationTarget: null },
-        { name: 'memory_remember', capability: 'memory', riskLevel: 'low', confirmationMode: 'never', navigationTarget: null },
-      ],
+      strategy: 'full_registry',
       routerReason: 'model-selected data and draft for test',
     })
+    const snapshot = projection.inventorySnapshot
 
     expect(snapshot).toMatchObject({
-      snapshotId: 'snapshot_1',
-      source: 'progressive_tool_discovery',
+      source: 'full_registry',
       freshness: 'fresh',
       provider: 'deepseek',
       model: 'deepseek-v4-pro',
       automationLevel: 'high',
-      capabilities: ['data', 'sandbox', 'draft', 'account', 'memory'],
     })
+    expect(snapshot.capabilities).toEqual(expect.arrayContaining(['data', 'sandbox', 'draft', 'account', 'memory']))
     expect(Object.fromEntries(snapshot.tools.map((tool) => [tool.name, tool.authorityClass]))).toMatchObject({
       data_query_workspace: 'read',
       sandbox_run_code: 'sandbox_compute',
@@ -185,11 +174,12 @@ describe('Tool Runtime Maturity Layer', () => {
       modelContent: '{}',
       status: 'failed',
     }
+    const failedAgain: AgentToolObservation = { ...failed, toolCallId: 'call_2' }
 
     expect(evaluateToolLoopGuardrails({
       iteration: 2,
       priorObservations: [failed],
-      newObservations: [{ ...failed, toolCallId: 'call_2' }],
+      newObservations: [failedAgain],
       planRows: [],
       actionRows: [],
     })).toEqual([
@@ -208,17 +198,19 @@ describe('Tool Runtime Maturity Layer', () => {
   })
 
   it('does not treat a final assistant candidate after observations as no progress', () => {
+    const completed: AgentToolObservation = {
+      title: '查询工作区数据',
+      toolName: 'data_query_workspace',
+      toolCallId: 'call_data',
+      toolArguments: { question: 'roi' },
+      displayPreview: '已读取数据。',
+      modelContent: '{"roi":1.2}',
+      status: 'completed',
+    }
+
     expect(evaluateToolLoopGuardrails({
       iteration: 2,
-      priorObservations: [{
-        title: '查询工作区数据',
-        toolName: 'data_query_workspace',
-        toolCallId: 'call_data',
-        toolArguments: { question: 'roi' },
-        displayPreview: '已读取数据。',
-        modelContent: '{"roi":1.2}',
-        status: 'completed',
-      }],
+      priorObservations: [completed],
       newObservations: [],
       planRows: [],
       actionRows: [],

@@ -11,6 +11,10 @@ function source(path: string) {
   return readFileSync(join(srcRoot, path), 'utf8')
 }
 
+function testSource(path: string) {
+  return readFileSync(join(testDir, path), 'utf8')
+}
+
 function sourceFilesUnder(path: string) {
   const root = join(srcRoot, path)
   const files: string[] = []
@@ -272,25 +276,21 @@ describe('Agent ADR architecture boundaries', () => {
     expect(hostKit).toContain('isSandboxToolObservation')
     expect(hostKit).not.toContain('JSON.parse(observation.modelContent)')
 
-    const guardrails = source('agent/tool-runtime/tool-loop-guardrails.ts')
-    expect(guardrails).toContain("@agentic-os/core")
-    expect(guardrails).toContain('evaluateToolLoopGuardrails')
-    expect(guardrails).not.toContain('JSON.parse(observation.modelContent)')
-    expect(guardrails).not.toContain('function repeatedFailure')
-    expect(guardrails).not.toContain('function noProgress')
-    expect(guardrails).not.toContain('function executedWriteReapplied')
-    expect(guardrails).not.toContain('function stableJson')
+    expect(existsSync(join(srcRoot, 'agent', 'tool-runtime', 'tool-loop-guardrails.ts'))).toBe(false)
+    const runtimeTests = testSource('tool-runtime.test.ts')
+    expect(runtimeTests).toContain("@agentic-os/core")
+    expect(runtimeTests).toContain('evaluateToolLoopGuardrails')
   })
 
   it('keeps tool inventory metadata in Agentic OS packages', () => {
-    const inventory = source('agent/tool-runtime/effective-tool-inventory.ts')
-    expect(inventory).toContain("@agentic-os/core")
-    expect(inventory).toContain('inferToolAuthorityClass')
-    expect(inventory).toContain("@agentic-os/runtime-openai-compatible")
-    expect(inventory).toContain('providerCompatibilityFlags')
-    expect(inventory).not.toContain('function authorityClassForTool')
-    expect(inventory).not.toContain('function providerCompatibilityFlags')
-    expect(inventory).not.toContain("tool.capability === 'sandbox'")
+    expect(existsSync(join(srcRoot, 'agent', 'tool-runtime', 'effective-tool-inventory.ts'))).toBe(false)
+    const gateway = source('agent/tool-gateway.ts')
+    expect(gateway).toContain("@agentic-os/runtime-openai-compatible")
+    expect(gateway).toContain('buildOpenAICompatibleEffectiveToolInventorySnapshot')
+    expect(gateway).not.toContain('inferToolAuthorityClass')
+    expect(gateway).not.toContain('providerCompatibilityFlags')
+    expect(gateway).not.toContain('resolveProviderModelProfile')
+    expect(gateway).not.toContain("tool.capability === 'sandbox'")
 
     const hostKit = source('agent/agentic-os/xox-agentic-os-host-kit.ts')
     expect(hostKit).toContain('inferToolAuthorityClass')

@@ -1,6 +1,12 @@
 import type { Kysely } from 'kysely'
-import type { AgentGoalFacts } from '@xox/contracts'
+import type { AgentGoalFacts, AgentToolInventorySnapshot } from '@xox/contracts'
+import {
+  buildOpenAICompatibleEffectiveToolInventorySnapshot,
+  type OpenAICompatibleEffectiveToolInventoryToolInput,
+} from '@agentic-os/runtime-openai-compatible'
 import type { Settings } from '../core/settings.js'
+import { newId } from '../core/security.js'
+import { utcNow } from '../core/time.js'
 import type { Database } from '../db/schema.js'
 import { redactSecretLikeContent } from './memory.js'
 import { addRunEvent } from './run-events.js'
@@ -10,11 +16,13 @@ import {
   canonicalToolNamesForCapabilities,
   type ToolContextPack,
 } from './tool-surface-manifest.js'
-import { buildEffectiveToolInventorySnapshot } from './tool-runtime/effective-tool-inventory.js'
 import {
   AGENT_TOOL_REGISTRY,
+  isHarnessManagedObservationToolName,
+  isManualBoundaryNoticeToolName,
   type AgentToolCapability,
   type AgentToolMetadata,
+  type AgentToolNavigationTarget,
   type ChatTool,
 } from './tool-catalog.js'
 import type { AgentLoopObligationPlan } from './loop-obligations.js'
@@ -50,7 +58,7 @@ export type RuntimeToolCatalogProjection = {
   selectedCapabilities: AgentToolCapability[]
   requiredActionCapabilities: AgentToolCapability[]
   goalFacts: AgentGoalFacts
-  inventorySnapshot: ReturnType<typeof buildEffectiveToolInventorySnapshot>
+  inventorySnapshot: AgentToolInventorySnapshot
   effectiveCatalog: ToolContextPack['effectiveCatalog']
   visibleTools: ToolContextPack['visibleTools']
   visibleToolNames: ToolContextPack['visibleToolNames']
@@ -108,6 +116,20 @@ function toolMetadataFromManifest(manifest: ToolContextPack['effectiveCatalog'][
   }
 }
 
+function agenticOsInventoryToolInput(
+  tool: AgentToolMetadata,
+): OpenAICompatibleEffectiveToolInventoryToolInput<'xox', AgentToolNavigationTarget> {
+  return {
+    name: tool.name,
+    capability: tool.capability,
+    riskLevel: tool.riskLevel,
+    confirmationMode: tool.confirmationMode,
+    navigationTarget: tool.navigationTarget,
+    manualBoundaryNotice: isManualBoundaryNoticeToolName(tool.name),
+    harnessManagedObservation: isHarnessManagedObservationToolName(tool.name),
+  }
+}
+
 export function materializedToolInventorySnapshot(
   projection: RuntimeToolCatalogProjection,
   toolNames: readonly string[],
@@ -121,16 +143,18 @@ export function materializedToolInventorySnapshot(
     .map((name) => metadataByName.get(name))
     .filter((metadata): metadata is AgentToolMetadata => Boolean(metadata))
 
-  return buildEffectiveToolInventorySnapshot({
+  return buildOpenAICompatibleEffectiveToolInventorySnapshot({
+    snapshotId: newId(),
     userId: projection.inventorySnapshot.userId,
     workspaceId: projection.inventorySnapshot.workspaceId,
     automationLevel: projection.inventorySnapshot.automationLevel,
     provider: projection.inventorySnapshot.provider,
     model: projection.inventorySnapshot.model,
-    strategy: projection.strategy,
-    toolCapabilities,
-    selectedCapabilities: projection.selectedCapabilities,
+    source: projection.strategy,
+    tools: toolCapabilities.map(agenticOsInventoryToolInput),
+    provenance: 'xox',
     ...(projection.routerReason ? { routerReason: projection.routerReason } : {}),
+    createdAt: utcNow(),
   })
 }
 
@@ -189,15 +213,18 @@ export function buildRuntimeToolCatalogProjection(input?: {
 
   const toolCapabilities = entries.map(toolMetadata)
   const settings = input?.settings
-  const inventorySnapshot = buildEffectiveToolInventorySnapshot({
+  const inventorySnapshot = buildOpenAICompatibleEffectiveToolInventorySnapshot({
+    snapshotId: newId(),
     userId: input?.userId ?? 'unknown_user',
     workspaceId: input?.workspaceId ?? 'unknown_workspace',
     automationLevel: input?.automationLevel ?? 'manual',
-    ...(settings ? { settings } : { provider: 'unknown', model: 'unknown' }),
-    strategy,
-    toolCapabilities,
-    selectedCapabilities,
+    provider: settings?.openaiCompatibleProvider ?? 'unknown',
+    model: settings?.openaiCompatibleModel ?? 'unknown',
+    source: strategy,
+    tools: toolCapabilities.map(agenticOsInventoryToolInput),
+    provenance: 'xox',
     ...(input?.routerReason ? { routerReason: redactSecretLikeContent(input.routerReason).slice(0, 300) } : {}),
+    createdAt: utcNow(),
   })
 
   return {
