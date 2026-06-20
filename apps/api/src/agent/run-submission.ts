@@ -1,5 +1,5 @@
 import type { Kysely } from 'kysely'
-import type { AgentNavigationEvent, AgentPlanStep, AgentActionRequest, AgentSendResponse, AgentThreadState } from '@xox/contracts'
+import type { AgentSendResponse, AgentThreadState } from '@xox/contracts'
 import type { Database, Row } from '../db/schema.js'
 import type { Settings } from '../core/settings.js'
 import { newId } from '../core/security.js'
@@ -18,9 +18,7 @@ import {
 } from './thread-store.js'
 import { completeAgentRun, createAgentRunController, scheduleAgentRunQueueDrain } from './run-worker.js'
 import { normalizeAgentAutomationLevel, type AgentAutomationLevel } from './tool-policy.js'
-import { buildAgentAgUiEvents } from './ag-ui-projection.js'
-import { buildAgentTranscriptItems } from './agent-transcript-projector.js'
-import { buildAgentTimelineItems, buildAgentTranscriptNodes } from './agent-timeline-projector.js'
+import { buildSubmittedRunResponse } from './agentic-os/xox-run-submission-view.js'
 
 export type SubmitAgentMessageRunInput = {
   db: Kysely<Database>
@@ -82,32 +80,22 @@ export async function submitAgentMessageRun(input: SubmitAgentMessageRunInput): 
       scheduleAgentRunQueueDrain(input.db, input.settings)
       const messages = [serializeMessage(userMessage)]
       const runEvents = [serializeRunEvent(queuedEvent)]
-      const projection = {
-        thread: { id: thread.id },
-        messages,
-        goals: [],
-        evaluations: [],
-        navigationEvents: [] as AgentNavigationEvent[],
-        runEvents,
-        planSteps: [] as AgentPlanStep[],
-        actionRequests: [] as AgentActionRequest[],
-      }
-      return {
+      return buildSubmittedRunResponse({
+        workspace: input.workspace,
+        user: input.user,
         threadId: thread.id,
         runId,
-        status: 'running' as const,
+        createdAt: now,
+        userMessage: input.message,
+        status: 'running',
         planner: null,
         automationLevel,
         messages,
-        navigationEvents: projection.navigationEvents,
+        navigationEvents: [],
         runEvents,
-        agUiEvents: buildAgentAgUiEvents(projection),
-        transcriptItems: buildAgentTranscriptItems(projection),
-        timelineItems: buildAgentTimelineItems(projection),
-        transcriptNodes: buildAgentTranscriptNodes(projection),
-        planSteps: projection.planSteps,
-        actionRequests: projection.actionRequests,
-      }
+        planSteps: [],
+        actionRequests: [],
+      })
     }
 
     const controller = createAgentRunController(input.db, input.settings, runId)
@@ -131,32 +119,23 @@ export async function submitAgentMessageRun(input: SubmitAgentMessageRunInput): 
     ]
     const planSteps = completed.planRows.map(serializePlanStep)
     const actionRequests = completed.actionRows.map(serializeAction)
-    const projection = {
-      thread: { id: thread.id },
-      messages,
-      goals: [],
-      evaluations: [],
-      navigationEvents: completed.navigationEvents,
-      runEvents,
-      planSteps,
-      actionRequests,
-    }
-    return {
+    return buildSubmittedRunResponse({
+      workspace: input.workspace,
+      user: input.user,
       threadId: thread.id,
       runId,
-      status: 'completed' as const,
+      createdAt: now,
+      userMessage: input.message,
+      status: 'completed',
       planner: completed.plannerSource,
       automationLevel,
       messages,
       navigationEvents: completed.navigationEvents,
       runEvents,
-      agUiEvents: buildAgentAgUiEvents(projection),
-      transcriptItems: buildAgentTranscriptItems(projection),
-      timelineItems: buildAgentTimelineItems(projection),
-      transcriptNodes: buildAgentTranscriptNodes(projection),
       planSteps,
       actionRequests,
-    }
+      assistantText: completed.assistantMessage?.content,
+    })
   } catch (error) {
     await failSubmittedAgentRun(input.db, runId, thread)
     throw error
