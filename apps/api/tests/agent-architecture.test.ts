@@ -167,6 +167,20 @@ describe('Agent ADR architecture boundaries', () => {
     expect(adapter).not.toContain('providerRejectsToolChoice')
   })
 
+  it('keeps OpenAI-compatible provider turn normalization in Agentic OS runtime', () => {
+    const adapter = source('agent/runtime/openai-compatible-chat-adapter.ts')
+    expect(adapter).toContain('normalizeOpenAICompatibleJsonTurnResult')
+    expect(adapter).toContain('normalizeOpenAICompatibleStreamTurnResult')
+    expect(adapter).toContain("@agentic-os/runtime-openai-compatible")
+    expect(adapter).not.toContain('function textContentFromMessage')
+    expect(adapter).not.toContain('function reasoningTextFromObject')
+    expect(adapter).not.toContain('function providerAssistantMessage')
+    expect(adapter).not.toContain('function providerArtifact')
+    expect(adapter).not.toContain('function validatePromotedPlainTextToolCalls')
+    expect(adapter).not.toContain('recoverProviderPlainTextToolCalls')
+    expect(adapter).not.toContain('detectProviderPlainTextToolCallArtifact')
+  })
+
   it('keeps tool observation outcome classification in Agentic OS core', () => {
     const classifier = source('agent/tool-observation-outcome.ts')
     expect(classifier).toContain("@agentic-os/core")
