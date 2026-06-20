@@ -5,7 +5,7 @@ import type {
   ToolCallBoundaryViolationCode,
 } from './runtime-adapter.js'
 import type { AgentToolCallStep } from '../tool-catalog.js'
-import { shapeOpenAICompatibleChatRequest } from './provider-request-shaper.js'
+import { plannerSystemPrompt } from '../prompt-registry.js'
 import {
   ProviderToolCallParseError,
   plannerStepsFromProviderToolCalls,
@@ -25,6 +25,7 @@ import {
   resolveProviderRuntimeCapability,
   resolveRuntimeThinkingLevel,
   safeProviderErrorMessage,
+  shapeOpenAICompatibleChatRequest as shapeProviderOpenAICompatibleChatRequest,
 } from '@agentic-os/runtime-openai-compatible'
 
 const SOURCE = 'openai_compatible_tool_calls' as const
@@ -67,6 +68,28 @@ function effectiveProviderRequestTimeoutMs(input: RuntimePlanningInput) {
 
 function allowedToolNames(input: RuntimePlanningInput) {
   return input.tools.map((tool) => tool.function.name)
+}
+
+function shapeOpenAICompatibleRuntimeRequest(
+  input: RuntimePlanningInput,
+  options: {
+    omitToolChoice?: boolean
+    thinkingLevel?: string
+  } = {},
+) {
+  const requestedThinkingLevel = options.thinkingLevel ?? input.thinkingLevel
+  return shapeProviderOpenAICompatibleChatRequest({
+    provider: input.settings.openaiCompatibleProvider,
+    model: input.settings.openaiCompatibleModel,
+    systemPrompt: input.systemPrompt ?? plannerSystemPrompt(),
+    userContent: `上下文：${JSON.stringify(input.context)}\n用户指令：${input.message}`,
+    tools: input.tools,
+    stream: input.stream ?? true,
+    ...(input.messages !== undefined ? { messages: input.messages } : {}),
+    ...(input.maxTokens !== undefined ? { maxTokens: input.maxTokens } : {}),
+    ...(requestedThinkingLevel !== undefined ? { thinkingLevel: requestedThinkingLevel } : {}),
+    ...(options.omitToolChoice !== undefined ? { omitToolChoice: options.omitToolChoice } : {}),
+  })
 }
 
 function argumentRepairPolicy(profile: ProviderModelProfile) {
@@ -321,7 +344,7 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
         timeoutMs: requestTimeoutMs,
         abortGraceMs: 1_000,
         ...(input.abortSignal !== undefined ? { abortSignal: input.abortSignal } : {}),
-        shapeRequest: ({ omitToolChoice }) => shapeOpenAICompatibleChatRequest(input, {
+        shapeRequest: ({ omitToolChoice }) => shapeOpenAICompatibleRuntimeRequest(input, {
           ...(omitToolChoice !== undefined ? { omitToolChoice } : {}),
           ...(input.thinkingLevel !== undefined ? { thinkingLevel: input.thinkingLevel } : {}),
         }),

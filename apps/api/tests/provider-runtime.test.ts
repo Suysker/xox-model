@@ -7,7 +7,6 @@ import {
   HIGH_VOLUME_STRUCTURED_TIMEOUT_MS,
   HIGH_VOLUME_STRUCTURED_TOOL_NAMES,
 } from '../src/agent/runtime/high-volume-tool-policy.js'
-import { shapeOpenAICompatibleChatRequest } from '../src/agent/runtime/provider-request-shaper.js'
 import {
   applyProviderRuntimeRetryPatch,
   buildProviderRuntimeRetryPatch,
@@ -20,6 +19,7 @@ import {
   resolveRuntimeThinkingLevel,
   resolveProviderModelProfile,
   resolveProviderModelRef,
+  shapeOpenAICompatibleChatRequest as shapeProviderOpenAICompatibleChatRequest,
   shouldRetryProviderRuntimeResult,
   type ProviderReplayObservation,
 } from '@agentic-os/runtime-openai-compatible'
@@ -78,6 +78,25 @@ function runtimeInput(provider: string, model: string, tools: ChatTool[] = [tool
     tools,
     stream: false,
   }
+}
+
+function shapeProviderRequest(input: {
+  provider: string
+  model: string
+  tools?: ChatTool[]
+  messages?: RuntimePlanningInput['messages']
+  thinkingLevel?: string
+}) {
+  return shapeProviderOpenAICompatibleChatRequest({
+    provider: input.provider,
+    model: input.model,
+    systemPrompt: 'test-system',
+    userContent: 'test-user',
+    tools: input.tools ?? [tool()],
+    stream: false,
+    ...(input.messages !== undefined ? { messages: input.messages } : {}),
+    ...(input.thinkingLevel !== undefined ? { thinkingLevel: input.thinkingLevel } : {}),
+  }).body
 }
 
 function applyAgenticOsRuntimeRetry(
@@ -162,41 +181,39 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
   })
 
   it('shapes OpenAI-compatible requests from profile facts instead of global tool_choice rules', () => {
-    const generic = shapeOpenAICompatibleChatRequest(runtimeInput('qwen', 'qwen3.5-plus')).body
+    const generic = shapeProviderRequest({ provider: 'qwen', model: 'qwen3.5-plus' })
     expect(generic.model).toBe('qwen3.5-plus')
     expect(generic.tool_choice).toBe('auto')
     expect(generic.tools).toBeTruthy()
 
-    const reasoner = shapeOpenAICompatibleChatRequest(runtimeInput('deepseek', 'deepseek-reasoner')).body
+    const reasoner = shapeProviderRequest({ provider: 'deepseek', model: 'deepseek-reasoner' })
     expect(reasoner.tool_choice).toBeUndefined()
 
-    const vllmRequired = shapeOpenAICompatibleChatRequest(runtimeInput('vllm', 'qwen-tool-required')).body
+    const vllmRequired = shapeProviderRequest({ provider: 'vllm', model: 'qwen-tool-required' })
     expect(vllmRequired.tool_choice).toBe('required')
 
-    const deepSeekDefault = shapeOpenAICompatibleChatRequest(
-      runtimeInput('deepseek', 'deepseek-v4-pro'),
-    ).body
+    const deepSeekDefault = shapeProviderRequest({ provider: 'deepseek', model: 'deepseek-v4-pro' })
     expect(deepSeekDefault).toMatchObject({
       thinking: { type: 'enabled' },
       reasoning_effort: 'high',
     })
 
-    const deepSeekProbe = shapeOpenAICompatibleChatRequest(
-      runtimeInput('deepseek', 'deepseek-v4-pro'),
-      { thinkingLevel: 'off' },
-    ).body
+    const deepSeekProbe = shapeProviderRequest({
+      provider: 'deepseek',
+      model: 'deepseek-v4-pro',
+      thinkingLevel: 'off',
+    })
     expect(deepSeekProbe).toMatchObject({ thinking: { type: 'disabled' } })
     expect(deepSeekProbe.reasoning_effort).toBeUndefined()
 
-    const qwenDefault = shapeOpenAICompatibleChatRequest(
-      runtimeInput('qwen', 'qwen3.5-plus'),
-    ).body
+    const qwenDefault = shapeProviderRequest({ provider: 'qwen', model: 'qwen3.5-plus' })
     expect(qwenDefault).toMatchObject({ enable_thinking: true })
 
-    const qwenProbe = shapeOpenAICompatibleChatRequest(
-      runtimeInput('qwen', 'qwen3.5-plus'),
-      { thinkingLevel: 'off' },
-    ).body
+    const qwenProbe = shapeProviderRequest({
+      provider: 'qwen',
+      model: 'qwen3.5-plus',
+      thinkingLevel: 'off',
+    })
     expect(qwenProbe).toMatchObject({ enable_thinking: false })
   })
 
@@ -220,13 +237,15 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
       name: 'data_query_workspace',
     })
 
-    const shaped = shapeOpenAICompatibleChatRequest({
-      ...runtimeInput('deepseek', 'deepseek-v4-pro', []),
+    const shaped = shapeProviderRequest({
+      provider: 'deepseek',
+      model: 'deepseek-v4-pro',
+      tools: [],
       messages: [
         { role: 'system', content: 'test' },
         ...replay,
       ],
-    }).body
+    })
     expect((shaped.messages as any[])[1]?.reasoning_content).toBe('')
 
     const genericReplay = providerToolObservationReplayMessages({

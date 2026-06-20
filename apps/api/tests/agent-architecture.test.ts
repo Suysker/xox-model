@@ -64,7 +64,6 @@ describe('Agent ADR architecture boundaries', () => {
       'agent/runtime/openai-agents-adapter.ts',
       'agent/runtime/openai-compatible-chat-adapter.ts',
       'agent/runtime/provider-probe.ts',
-      'agent/runtime/provider-request-shaper.ts',
       'agent/runtime/runtime-adapter.ts',
       'agent/runtime/tool-call-repair.ts',
     ]
@@ -78,6 +77,7 @@ describe('Agent ADR architecture boundaries', () => {
     ]
     for (const file of runtimeFiles) expectNoImports(file, forbidden)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'provider-failover-policy.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'runtime', 'provider-request-shaper.ts'))).toBe(false)
   })
 
   it('keeps routes as transport glue instead of a planner/runtime/executor owner', () => {
@@ -184,6 +184,7 @@ describe('Agent ADR architecture boundaries', () => {
   it('keeps OpenAI-compatible chat transport in Agentic OS runtime', () => {
     const adapter = source('agent/runtime/openai-compatible-chat-adapter.ts')
     expect(adapter).toContain('requestOpenAICompatibleChatCompletion')
+    expect(adapter).toContain('shapeOpenAICompatibleChatRequest')
     expect(adapter).toContain("@agentic-os/runtime-openai-compatible")
     expect(adapter).not.toContain('new AbortController')
     expect(adapter).not.toContain('fetch(')
