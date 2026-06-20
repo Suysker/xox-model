@@ -601,4 +601,34 @@ describe('Agent ADR architecture boundaries', () => {
     ]
     for (const file of memoryFiles) expectNoImports(file, forbidden)
   })
+
+  it('keeps sandbox runtime in Agentic OS instead of a host-owned runtime subtree', () => {
+    const sandboxRuntimeDir = join(srcRoot, 'agent', 'sandbox')
+    if (existsSync(sandboxRuntimeDir)) {
+      expect(sourceFilesUnder('agent/sandbox')).toEqual([])
+    }
+
+    for (const file of [
+      'backend.ts',
+      'backend-registry.ts',
+      'sandbox-broker.ts',
+      'sandbox-policy.ts',
+      'result-parser.ts',
+      'backends/local-script-backend.ts',
+      'backends/docker-backend.ts',
+      'backends/process-runner.ts',
+      'backends/staged-sandbox-io.ts',
+      'backends/tool-rpc-files.ts',
+    ]) {
+      expect(existsSync(join(sandboxRuntimeDir, file))).toBe(false)
+    }
+
+    const service = source('agent/sandbox-service.ts')
+    expect(service).toContain("@agentic-os/sandbox")
+    expect(service).not.toContain("from './sandbox/")
+
+    const sandboxTest = testSource('sandbox-tool.test.ts')
+    expect(sandboxTest).toContain("@agentic-os/sandbox")
+    expect(sandboxTest).not.toContain("../src/agent/sandbox/")
+  })
 })

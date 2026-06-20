@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { SandboxBroker } from '@agentic-os/sandbox'
 import { createProductDefaultModel, projectModel } from '@xox/domain'
 import type { SandboxManifest, SandboxRunCodeInput } from '@xox/contracts'
 import { buildRuntimeToolCatalogProjection } from '../src/agent/tool-gateway.js'
@@ -10,7 +11,6 @@ import {
   sandboxFileAdapters,
 } from '../src/agent/sandbox-file-adapters.js'
 import { sandboxInternalsForTests } from '../src/agent/sandbox-service.js'
-import { SandboxBroker } from '../src/agent/sandbox/sandbox-broker.js'
 
 function bytes(value: string) {
   return Buffer.from(value, 'utf8')

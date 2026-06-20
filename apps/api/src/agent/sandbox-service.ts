@@ -28,14 +28,14 @@ import {
 } from './action-draft-builder.js'
 import type { AgentActionDraft } from './approval-executor.js'
 import type { PlannerContext } from './planning-context.js'
-import { SandboxBroker } from './sandbox/sandbox-broker.js'
 import type {
   SandboxDataBundle,
   SandboxToolDocument,
   SandboxToolRuntimeRequest,
   SandboxToolRuntimeResponse,
   SandboxToolSdkEntry,
-} from './sandbox/backend.js'
+} from '@agentic-os/sandbox'
+import { SandboxBroker } from '@agentic-os/sandbox'
 import { AGENT_TOOL_REGISTRY, toolCallToPlannerStep, type AgentToolRiskLevel } from './tool-catalog.js'
 import { buildToolManifests } from './tool-surface-manifest.js'
 
