@@ -110,7 +110,7 @@ export async function submitAgentMessageRun(input: SubmitAgentMessageRunInput): 
       }
     }
 
-    const controller = createAgentRunController(runId)
+    const controller = createAgentRunController(input.db, input.settings, runId)
     const completed = await completeAgentRun({
       db: input.db,
       settings: input.settings,

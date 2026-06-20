@@ -1,4 +1,5 @@
 import type { Kysely } from 'kysely'
+import { createAgentServerRunScheduler, type AgentServerRunScheduler } from '@agentic-os/server'
 import type { Database, Row } from '../db/schema.js'
 import type { Settings } from '../core/settings.js'
 import { utcNow } from '../core/time.js'
@@ -19,32 +20,29 @@ import { agentThreadEvents } from './thread-events.js'
 import { addMessage, touchThreadAfterRun } from './thread-store.js'
 import { normalizeAgentAutomationLevel } from './tool-policy.js'
 
-const activeRunControllers = new Map<string, AbortController>()
-
-export function createAgentRunController(runId: string) {
-  const controller = new AbortController()
-  activeRunControllers.set(runId, controller)
-  return controller
-}
-
-type AgentRunQueueState = {
-  draining: boolean
-  scheduled: boolean
-  stopped: boolean
-  interval: NodeJS.Timeout | null
-}
-
-const agentRunQueueStates = new WeakMap<Kysely<Database>, AgentRunQueueState>()
+const agentRunSchedulers = new WeakMap<Kysely<Database>, AgentServerRunScheduler>()
 
 export type CompletedAgentRun = AgentKernelRunResult
 
-function getAgentRunQueueState(db: Kysely<Database>) {
-  let state = agentRunQueueStates.get(db)
-  if (!state) {
-    state = { draining: false, scheduled: false, stopped: false, interval: null }
-    agentRunQueueStates.set(db, state)
+function getExistingAgentRunScheduler(db: Kysely<Database>) {
+  return agentRunSchedulers.get(db)
+}
+
+function getAgentRunScheduler(db: Kysely<Database>, settings: Settings) {
+  let scheduler = agentRunSchedulers.get(db)
+  if (!scheduler) {
+    scheduler = createAgentServerRunScheduler({
+      pollIntervalMs: settings.agentRunWorkerPollMs,
+    })
+    agentRunSchedulers.set(db, scheduler)
   }
-  return state
+  return scheduler
+}
+
+export function createAgentRunController(db: Kysely<Database>, settings: Settings, runId: string) {
+  const controller = getAgentRunScheduler(db, settings).claimRunController(runId)
+  if (!controller) throw new Error(`Agent run is already active: ${runId}`)
+  return controller
 }
 
 export function safeRunErrorMessage(error: unknown) {
@@ -108,7 +106,7 @@ export async function cancelRunningAgentRun(
   message: string,
   addAssistantMessage: boolean,
 ) {
-  activeRunControllers.get(runId)?.abort()
+  getExistingAgentRunScheduler(db)?.cancelRun(runId, message)
   const now = utcNow()
   await db
     .updateTable('agent_action_requests')
@@ -204,7 +202,7 @@ export async function completeAgentRun(ctx: PlannerContext & { thread: Row<'agen
     throw error
   } finally {
     stopHeartbeat?.()
-    activeRunControllers.delete(ctx.runId)
+    getExistingAgentRunScheduler(ctx.db)?.releaseRunController(ctx.runId)
   }
 }
 
@@ -242,87 +240,68 @@ async function recoverRunMessage(db: Kysely<Database>, run: Row<'agent_runs'>) {
 }
 
 export async function recoverRunningAgentRuns(db: Kysely<Database>, settings: Settings) {
-  const queueState = getAgentRunQueueState(db)
-  if (queueState.draining || queueState.stopped) return 0
-  queueState.draining = true
-  let started = 0
-  try {
-    const runs = await claimRecoverableAgentRuns(db, settings)
+  const scheduler = getAgentRunScheduler(db, settings)
+  return scheduler.runExclusiveDrain({
+    skipped: () => 0,
+    drain: async () => {
+      let started = 0
+      const runs = await claimRecoverableAgentRuns(db, settings)
 
-    for (const run of runs) {
-      if (activeRunControllers.has(run.id)) continue
-      const thread = await db.selectFrom('agent_threads').selectAll().where('id', '=', run.thread_id).executeTakeFirst()
-      if (!thread) {
-        await db.updateTable('agent_runs').set({ status: 'failed', goal_status: 'failed', completed_at: utcNow(), lease_expires_at: null }).where('id', '=', run.id).execute()
-        continue
+      for (const run of runs) {
+        if (scheduler.isRunActive(run.id)) continue
+        const thread = await db.selectFrom('agent_threads').selectAll().where('id', '=', run.thread_id).executeTakeFirst()
+        if (!thread) {
+          await db.updateTable('agent_runs').set({ status: 'failed', goal_status: 'failed', completed_at: utcNow(), lease_expires_at: null }).where('id', '=', run.id).execute()
+          continue
+        }
+        const [workspace, user, planStepCount, actionCount] = await Promise.all([
+          db.selectFrom('workspaces').selectAll().where('id', '=', thread.workspace_id).executeTakeFirst(),
+          db.selectFrom('users').selectAll().where('id', '=', run.user_id).executeTakeFirst(),
+          countRunRows(db, 'agent_plan_steps', run.id),
+          countRunRows(db, 'agent_action_requests', run.id),
+        ])
+        if (!workspace || !user || thread.user_id !== run.user_id) {
+          await failInterruptedAgentRun(db, thread, run.id, 'Agent run 无法恢复：用户或工作区已不存在。')
+          continue
+        }
+        if (planStepCount > 0 || actionCount > 0) {
+          await failInterruptedAgentRun(db, thread, run.id, 'Agent run 在服务重启时已有部分运行产物，系统已取消未执行确认卡以避免重复执行。请重新发送这条指令。')
+          continue
+        }
+        const message = await recoverRunMessage(db, run)
+        if (!message) {
+          await failInterruptedAgentRun(db, thread, run.id, 'Agent run 无法恢复：缺少原始用户指令。请重新发送这条指令。')
+          continue
+        }
+        agentThreadEvents.publish(thread.id, 'thread_restored')
+        const controller = scheduler.claimRunController(run.id)
+        if (!controller) continue
+        void completeAgentRun({
+          db,
+          settings,
+          user,
+          workspace,
+          thread,
+          threadId: thread.id,
+          runId: run.id,
+          message,
+          automationLevel: normalizeAgentAutomationLevel(run.automation_level),
+          abortSignal: controller.signal,
+        }).catch(() => undefined)
+        started += 1
       }
-      const [workspace, user, planStepCount, actionCount] = await Promise.all([
-        db.selectFrom('workspaces').selectAll().where('id', '=', thread.workspace_id).executeTakeFirst(),
-        db.selectFrom('users').selectAll().where('id', '=', run.user_id).executeTakeFirst(),
-        countRunRows(db, 'agent_plan_steps', run.id),
-        countRunRows(db, 'agent_action_requests', run.id),
-      ])
-      if (!workspace || !user || thread.user_id !== run.user_id) {
-        await failInterruptedAgentRun(db, thread, run.id, 'Agent run 无法恢复：用户或工作区已不存在。')
-        continue
-      }
-      if (planStepCount > 0 || actionCount > 0) {
-        await failInterruptedAgentRun(db, thread, run.id, 'Agent run 在服务重启时已有部分运行产物，系统已取消未执行确认卡以避免重复执行。请重新发送这条指令。')
-        continue
-      }
-      const message = await recoverRunMessage(db, run)
-      if (!message) {
-        await failInterruptedAgentRun(db, thread, run.id, 'Agent run 无法恢复：缺少原始用户指令。请重新发送这条指令。')
-        continue
-      }
-      agentThreadEvents.publish(thread.id, 'thread_restored')
-      const controller = createAgentRunController(run.id)
-      void completeAgentRun({
-        db,
-        settings,
-        user,
-        workspace,
-        thread,
-        threadId: thread.id,
-        runId: run.id,
-        message,
-        automationLevel: normalizeAgentAutomationLevel(run.automation_level),
-        abortSignal: controller.signal,
-      }).catch(() => undefined)
-      started += 1
-    }
-    return started
-  } finally {
-    queueState.draining = false
-  }
+      return started
+    },
+  })
 }
 
 export function scheduleAgentRunQueueDrain(db: Kysely<Database>, settings: Settings) {
-  const queueState = getAgentRunQueueState(db)
-  if (queueState.scheduled || queueState.stopped) return
-  queueState.scheduled = true
-  const timer = setTimeout(() => {
-    queueState.scheduled = false
-    void recoverRunningAgentRuns(db, settings).catch(() => undefined)
-  }, 0)
-  timer.unref?.()
+  getAgentRunScheduler(db, settings).scheduleDrain(() => recoverRunningAgentRuns(db, settings))
 }
 
 export function startAgentRunQueueWorker(db: Kysely<Database>, settings: Settings) {
-  const queueState = getAgentRunQueueState(db)
-  queueState.stopped = false
-  if (queueState.interval) return () => undefined
-
-  scheduleAgentRunQueueDrain(db, settings)
-  queueState.interval = setInterval(() => {
-    void recoverRunningAgentRuns(db, settings).catch(() => undefined)
-  }, settings.agentRunWorkerPollMs)
-  queueState.interval.unref?.()
-
-  return () => {
-    queueState.stopped = true
-    queueState.scheduled = false
-    if (queueState.interval) clearInterval(queueState.interval)
-    queueState.interval = null
-  }
+  return getAgentRunScheduler(db, settings).start(
+    () => recoverRunningAgentRuns(db, settings),
+    settings.agentRunWorkerPollMs,
+  )
 }
