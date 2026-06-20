@@ -2,8 +2,8 @@ import type { AgentGoalStatus, AgentNavigationEvent, AgentPlannerSource } from '
 import type { Row } from '../db/schema.js'
 import type { PlannerContext } from './planning-context.js'
 import { executeXoxAgenticOsRun } from './agentic-os/xox-agentic-os-host-kit.js'
+import { executeXoxDirectAnswerLane } from './agentic-os/xox-direct-answer-adapter.js'
 import { resolveXoxAgentTurnIntake } from './agentic-os/xox-turn-intake-adapter.js'
-import { executeDirectAnswerRun } from './direct-answer-runtime.js'
 import { sanitizeAgentGoalFacts } from './runtime-goal-facts.js'
 
 export type AgentKernelRunResult = {
@@ -21,7 +21,7 @@ export async function executeAgentKernelRun(
 ): Promise<AgentKernelRunResult | null> {
   const resolution = await resolveXoxAgentTurnIntake(ctx)
   if (resolution.lane === 'direct_answer') {
-    return executeDirectAnswerRun(ctx, {
+    return executeXoxDirectAnswerLane(ctx, {
       resolution,
       beforeStateWrite: options.beforeStateWrite,
     })

@@ -116,6 +116,20 @@ describe('Agent ADR architecture boundaries', () => {
     expect(intakeAdapter).not.toContain("reasonCode: 'provider_unavailable'")
   })
 
+  it('keeps direct answer lane state machine in Agentic OS core', () => {
+    expect(existsSync(join(srcRoot, 'agent', 'direct-answer-runtime.ts'))).toBe(false)
+    const kernel = source('agent/agent-kernel.ts')
+    expect(kernel).toContain("from './agentic-os/xox-direct-answer-adapter.js'")
+    expect(kernel).not.toContain("from './direct-answer-runtime.js'")
+
+    const adapter = source('agent/agentic-os/xox-direct-answer-adapter.ts')
+    expect(adapter).toContain("@agentic-os/core")
+    expect(adapter).toContain('runDirectAnswerLane')
+    expect(adapter).not.toContain('function usableAssistantText')
+    expect(adapter).not.toContain('result?.steps.length === 0')
+    expect(adapter).not.toContain('if (!assistantText)')
+  })
+
   it('keeps the tool executor independent from provider SDKs and runtime adapters', () => {
     expectNoImports('agent/tool-executor.ts', [
       /@openai\/agents/,
@@ -151,6 +165,7 @@ describe('Agent ADR architecture boundaries', () => {
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-repair.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'high-volume-tool-policy.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'openai-agents-adapter.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'direct-answer-runtime.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'tool-runtime', 'approval-policy-composer.ts'))).toBe(false)
 
     const obsoleteToolContextDir = join(srcRoot, 'agent', 'tool-context-engine')
