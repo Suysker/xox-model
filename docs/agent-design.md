@@ -197,10 +197,10 @@ apps/web Agent OS
 
 provider adapter 层。所有 provider 必须输出统一的内部 plan/event，不允许直接写库。
 
-- `openai-agents-adapter.ts`
 - `openai-compatible-chat-adapter.ts`
 - `rules` 本地/CI no-op 路径
 - `runtime-adapter.ts`
+- `openai-agents-adapter.ts` 已删除；`LLM_PROVIDER=openai` 的 OpenAI Agents SDK route 由 `runtime-adapter.ts` 直接调用 `@agentic-os/runtime-openai-agents`
 
 当前代码边界是目标架构中的一段可验证运行切片：
 
@@ -211,13 +211,12 @@ agent/routes.ts
       -> enqueue / recover / cancel run
   -> planner.ts
       -> build tenant/workspace planning context
-      -> runtime/adapter-router.ts
-          -> runtime/openai-agents-adapter.ts
+      -> runtime/runtime-adapter.ts
+          -> @agentic-os/runtime-openai-agents
               -> OpenAI Agents SDK Agent / Runner / tools
           -> runtime/openai-compatible-chat-adapter.ts
               -> OpenAI-compatible Chat Completions tools/tool_calls
-          -> runtime/runtime-adapter.ts
-              -> provider-neutral plan result
+          -> provider-neutral plan result
       -> normalize runtime steps into read steps / action request drafts
   -> approval-executor.ts
       -> persist editable confirmation cards
@@ -1104,8 +1103,8 @@ API startup / recovery
 - `tool-catalog.ts`。
 - `tool-gateway.ts`，负责 runtime tool projection 和 `tool_catalog_ready` run event；当前使用模型选择的 capability router 生成 task-relevant tool projection，不使用后端关键词/正则路由。
 - `memory.ts`。
-- `runtime/openai-agents-adapter.ts`，`LLM_PROVIDER=openai` 时通过 OpenAI Agents SDK 的 `Agent / Runner / tool / OpenAIProvider` 收集 tool call plan，并规范化为内部 `RuntimePlanResult`。
-- `runtime/openai-compatible-chat-adapter.ts` 和 `adapter-router.ts`，OpenAI-compatible `tool_calls` 不再写在 route module 内，也不与 DeepSeek 绑定。
+- `runtime/runtime-adapter.ts`，`LLM_PROVIDER=openai` 时直接调用 `@agentic-os/runtime-openai-agents` 的 `runOpenAIAgentsTurn()`；OpenAI Agents SDK 的 `Agent / Runner / tool / OpenAIProvider` lifecycle 由 Agentic OS runtime package 拥有，xox 只保留 provider settings、prompt compatibility、tool metadata fill、canonical tool call -> `AgentToolCallStep` 和 localized stream event mapping。
+- `runtime/openai-compatible-chat-adapter.ts` 和 `runtime/runtime-adapter.ts`，OpenAI-compatible `tool_calls` 不再写在 route module 内，也不与 DeepSeek 绑定；`adapter-router.ts` 和 `openai-agents-adapter.ts` 均已删除。
 - `runtime-plan-reader.ts` 已删除；`action-draft-builder.ts` 负责把 provider `RuntimePlanResult` 的 assistant text、空结果和 provider error 转成只读 planned item，`runtime/runtime-adapter.ts` 统一 planner source 判定；planner 只消费这两个已有边界。
 - `runtime-trace-events.ts`，负责 provider-neutral stream event 的脱敏、截断和 `provider_stream_*` run event 持久化；runtime adapter 不写库，planner 不拼 trace payload。
 - `tool-coverage.ts`，把资本、收入、成员、成本、员工、月份模板和工作区 bundle 导入导出等手动可编辑能力注册为 Agent 覆盖矩阵，并把账号动作列为明确手动项。

@@ -138,14 +138,14 @@
 - [x] Lean Agent Kernel façade 已落到 `apps/api/src/agent/agent-kernel.ts`：单次 run 的 provider planning、action graph store、assistant message 和 memory compaction 由 kernel 协调；`run-worker.ts` 只负责 lease、queue、恢复、取消和最终状态写入
 - [x] Agent ADR 架构守护测试已加入 `apps/api/tests/agent-architecture.test.ts`，锁定旧 `modules/agent.ts` 不复活、runtime adapters 不读 DB/领域模块、routes 不直接拥有 planner/runtime/executor、tool executor 不依赖 provider SDK
 - [x] Agent planner 已从 `modules/agent.ts` 抽到 `apps/api/src/agent/planner.ts`，并继续下沉为 `planning-session / action-draft-builder / action-graph-store` 等边界；`runtime-plan-reader.ts` 已删除，planner source 判定回到 `runtime/runtime-adapter.ts`；routes 不再直接调用 planner，run lifecycle 通过 `run-submission.ts` / `run-worker.ts` 进入 planner
-- [x] OpenAI-compatible Chat Completions provider 调用已从 `modules/agent.ts` 抽到 `apps/api/src/agent/runtime/openai-compatible-chat-adapter.ts`，通过 `adapter-router.ts` 输出统一 runtime plan result
+- [x] OpenAI-compatible Chat Completions provider 调用已从 `modules/agent.ts` 抽到 `apps/api/src/agent/runtime/openai-compatible-chat-adapter.ts`，通过 `runtime/runtime-adapter.ts` 和 Agentic OS `createRuntimePlanRouter()` 输出统一 runtime plan result；本地 `adapter-router.ts` 已删除
 - [x] Approval Executor 已从 `modules/agent.ts` 抽到 `apps/api/src/agent/approval-executor.ts`，统一处理确认卡创建、编辑、确认、取消、执行状态、assistant message、run event 和审计；routes 只做 HTTP 编排与 thread publish，plan step 持久化由 `action-graph-store.ts` 负责
 - [x] Server tool execution 已从 Approval Executor 抽到 `apps/api/src/agent/tool-executor.ts`，确认执行时先走 tool policy，再由 executor 调用 workspace / ledger / share 领域服务；provider/runtime 仍不能直接写业务数据
 - [x] `packages/contracts` 的 planner source 已改为 `openai_agents / openai_compatible_tool_calls / rules`，不再把 DeepSeek planner source 作为唯一主语义，也不再接受 assistant JSON 文本冒充 tool call
 - [x] 常规 Agent 请求不会用本地正则/规则替模型生成业务动作；API 测试覆盖“provider 有 key 但只返回 assistant 文本”和“provider 被选择但无 key”两种情况，均不生成确认卡；`rules` 只保留为本地/CI no-op 生命周期路径，不能生成业务确认卡
 - [x] Data agent 只读问答必须由模型调用 `data_query_workspace`，API 测试和真实 smoke 覆盖“3 月计划收入和计划成本是多少”这类问题；该路径不生成确认卡、不写业务数据，并打开对应分析页面
 - [x] Data Agent 只读回答生成已从 `modules/agent.ts` 抽到 `apps/api/src/agent/data-agent.ts`，只读取当前 workspace projection / ledger period summary，返回回答和导航事件，不创建确认卡、不写业务数据
-- [x] `LLM_PROVIDER=openai` 时可通过 OpenAI Agents SDK adapter 跑通只读 tool call 和确认卡写入预览；API 测试用本地 fake OpenAI Chat Completions server 验证 SDK `Agent / Runner / tool / OpenAIProvider` 路径，并覆盖 SDK runner lifecycle / function tool execute 映射到 `provider_stream_*` run events
+- [x] `LLM_PROVIDER=openai` 时可通过 `@agentic-os/runtime-openai-agents` 跑通只读 tool call 和确认卡写入预览；xox `openai-agents-adapter.ts` 已删除，`runtime/runtime-adapter.ts` 直接调用 `runOpenAIAgentsTurn()` 并只保留 settings、prompt、tool metadata、planner-step 和 localized stream event mapping；API 测试用本地 fake OpenAI Chat Completions server 验证 SDK `Agent / Runner / tool / OpenAIProvider` 路径，并覆盖 SDK runner lifecycle / function tool execute 映射到 `provider_stream_*` run events
 - [x] `LLM_PROVIDER=deepseek` 或 `LLM_PROVIDER=openai-compatible` 时可用 OpenAI-compatible Chat Completions `tool_calls` 跑通真实模型 10+ 方向 smoke test，并已沉淀为 `npm.cmd run smoke:agent`
 - [x] 代码和文档不引入 Claude Agent SDK adapter；Claude Code 只作为交互模式参考
 - [x] Agent 可写模型字段矩阵已注册在 `apps/api/src/agent/tool-coverage.ts`，覆盖资本规划、收入引擎、团队成员、成本结构、运营员工、月份模板、工作区 bundle 导入导出等主要手动输入路径；账号动作列为明确手动项

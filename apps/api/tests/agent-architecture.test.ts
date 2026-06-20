@@ -60,7 +60,6 @@ describe('Agent ADR architecture boundaries', () => {
 
   it('keeps runtime adapters provider-only and free of DB, routes, approvals, and domain execution', () => {
     const runtimeFiles = [
-      'agent/runtime/openai-agents-adapter.ts',
       'agent/runtime/openai-compatible-chat-adapter.ts',
       'agent/runtime/runtime-adapter.ts',
     ]
@@ -73,6 +72,7 @@ describe('Agent ADR architecture boundaries', () => {
       /thread-store/,
     ]
     for (const file of runtimeFiles) expectNoImports(file, forbidden)
+    expect(existsSync(join(srcRoot, 'agent', 'runtime', 'openai-agents-adapter.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'provider-failover-policy.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'provider-request-shaper.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'provider-probe.ts'))).toBe(false)
@@ -135,6 +135,7 @@ describe('Agent ADR architecture boundaries', () => {
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-validator.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-repair.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'high-volume-tool-policy.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'runtime', 'openai-agents-adapter.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'tool-runtime', 'approval-policy-composer.ts'))).toBe(false)
 
     const obsoleteToolContextDir = join(srcRoot, 'agent', 'tool-context-engine')
@@ -384,8 +385,12 @@ describe('Agent ADR architecture boundaries', () => {
     const adapter = source('agent/runtime/runtime-adapter.ts')
     expect(adapter).toContain("@agentic-os/core")
     expect(adapter).toContain('createRuntimePlanRouter')
+    expect(adapter).toContain("@agentic-os/runtime-openai-agents")
+    expect(adapter).toContain('runOpenAIAgentsTurn')
     expect(adapter).toContain('planWithRuntimeAdapter')
+    expect(adapter).not.toContain("from './openai-agents-adapter.js'")
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'adapter-router.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'runtime', 'openai-agents-adapter.ts'))).toBe(false)
   })
 
   it('keeps provider probing runtime mechanics in Agentic OS runtime', () => {

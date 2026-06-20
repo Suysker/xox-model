@@ -1,8 +1,24 @@
-import { createRuntimePlanRouter } from '@agentic-os/core'
+import type {
+  AgentToolCall,
+  JsonObject,
+  RuntimeToolDescriptor,
+} from '@agentic-os/contracts'
+import { createRuntimePlanRouter, inferToolAuthorityClass } from '@agentic-os/core'
+import {
+  runOpenAIAgentsTurn,
+  type OpenAIAgentsRuntimeEvent,
+} from '@agentic-os/runtime-openai-agents'
 import type { AgentPlannerSource, AgentToolInventorySnapshot } from '@xox/contracts'
 import type { Settings } from '../../core/settings.js'
-import type { AgentToolCallStep, ChatTool } from '../tool-catalog.js'
-import { OpenAIAgentsAdapter } from './openai-agents-adapter.js'
+import { plannerSystemPrompt } from '../prompt-registry.js'
+import {
+  AGENT_TOOL_REGISTRY,
+  isHarnessManagedObservationToolName,
+  isManualBoundaryNoticeToolName,
+  toolCallToPlannerStep,
+  type AgentToolCallStep,
+  type ChatTool,
+} from '../tool-catalog.js'
 import { OpenAICompatibleChatAdapter } from './openai-compatible-chat-adapter.js'
 
 export type RuntimePlannerSource = Extract<AgentPlannerSource, 'openai_agents' | 'openai_compatible_tool_calls'>
@@ -143,6 +159,158 @@ export interface RuntimeAdapter {
   plan(input: RuntimePlanningInput): Promise<RuntimePlanResult | null>
 }
 
+const OPENAI_AGENTS_SOURCE = 'openai_agents' as const
+const toolRegistryByName = new Map(AGENT_TOOL_REGISTRY.map((entry) => [entry.name, entry]))
+
+function promptFromOpenAIAgentsMessages(input: RuntimePlanningInput) {
+  if (!input.messages || input.messages.length === 0) {
+    return `上下文：${JSON.stringify(input.context)}\n用户指令：${input.message}`
+  }
+  return input.messages
+    .map((message) => {
+      if (message.role === 'assistant' && message.tool_calls && message.tool_calls.length > 0) {
+        return `assistant tool_calls: ${JSON.stringify(message.tool_calls)}`
+      }
+      if (message.role === 'tool') return `tool ${message.name ?? message.tool_call_id}: ${message.content}`
+      return `${message.role}: ${message.content ?? ''}`
+    })
+    .join('\n')
+}
+
+function openAIAgentsRuntimeToolDescriptor(tool: ChatTool): RuntimeToolDescriptor {
+  const name = tool.function.name
+  const metadata = toolRegistryByName.get(name)
+  const riskLevel = metadata?.riskLevel ?? 'read'
+  const confirmationMode = metadata?.confirmationMode ?? 'never'
+  const capability = metadata?.capability ?? 'tooling'
+  return {
+    name,
+    title: name,
+    description: tool.function.description,
+    inputJsonSchema: toJsonObject(tool.function.parameters),
+    capability,
+    riskLevel,
+    confirmationMode,
+    authorityClass: inferToolAuthorityClass({
+      capability,
+      riskLevel,
+      confirmationMode,
+      manualBoundaryNotice: isManualBoundaryNoticeToolName(name),
+      harnessManagedObservation: isHarnessManagedObservationToolName(name),
+    }),
+    navigationTarget: metadata?.navigationTarget ?? null,
+  }
+}
+
+function plannerStepsFromOpenAIAgentsToolCalls(toolCalls: AgentToolCall[] | undefined): AgentToolCallStep[] {
+  const steps: AgentToolCallStep[] = []
+  for (const [index, call] of (toolCalls ?? []).entries()) {
+    const step = toolCallToPlannerStep(call.name, call.input)
+    if (!step) continue
+    step.providerToolName = call.name
+    step.providerToolArguments = call.input
+    step.providerToolCallIndex = index
+    step.providerToolCallId = call.toolCallId
+    steps.push(step)
+  }
+  return steps
+}
+
+async function emitOpenAIAgentsRuntimeEvent(input: RuntimePlanningInput, event: OpenAIAgentsRuntimeEvent) {
+  if (!input.onStreamEvent) return
+  if (event.kind === 'run_started') {
+    await input.onStreamEvent({
+      kind: 'stream_started',
+      provider: event.provider,
+      model: event.model,
+      source: OPENAI_AGENTS_SOURCE,
+    })
+    return
+  }
+  if (event.kind === 'tool_call') {
+    await input.onStreamEvent({
+      kind: 'tool_call_delta',
+      toolCallIndex: event.toolCallIndex,
+      toolName: event.toolName,
+      argumentsPreview: event.argumentsPreview,
+    })
+    return
+  }
+  await input.onStreamEvent({
+    kind: 'stream_completed',
+    contentLength: event.contentLength,
+    toolCallCount: event.toolCallCount,
+    source: OPENAI_AGENTS_SOURCE,
+  })
+}
+
+function toJsonObject(value: unknown): JsonObject {
+  if (value === undefined || value === null) return {}
+  if (typeof value !== 'object' || Array.isArray(value)) return {}
+  return JSON.parse(JSON.stringify(value)) as JsonObject
+}
+
+function safeOpenAIAgentsRuntimeErrorMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error)
+  return message
+    .replace(/sk-[A-Za-z0-9_-]{8,}/g, 'sk-***')
+    .slice(0, 300)
+}
+
+async function planWithOpenAIAgentsRuntime(input: RuntimePlanningInput): Promise<RuntimePlanResult | null> {
+  if (!input.settings.openaiApiKey) {
+    return {
+      source: OPENAI_AGENTS_SOURCE,
+      steps: [],
+      error: { kind: 'missing_api_key' },
+    }
+  }
+
+  try {
+    const output = await runOpenAIAgentsTurn({
+      userMessage: input.message,
+      context: input.context,
+      tools: input.tools.map(openAIAgentsRuntimeToolDescriptor),
+      ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
+    }, {
+      apiKey: input.settings.openaiApiKey,
+      ...(input.settings.openaiBaseUrl ? { baseURL: input.settings.openaiBaseUrl } : {}),
+      model: input.settings.openaiModel,
+      agentName: 'XOX Agent Planner',
+      instructions: input.systemPrompt ?? plannerSystemPrompt(),
+      buildPrompt: () => promptFromOpenAIAgentsMessages(input),
+      onEvent: (event) => emitOpenAIAgentsRuntimeEvent(input, event),
+    })
+    if (output.error) {
+      return {
+        source: OPENAI_AGENTS_SOURCE,
+        steps: [],
+        error: {
+          kind: 'provider_network_error',
+          message: safeOpenAIAgentsRuntimeErrorMessage(output.error),
+        },
+      }
+    }
+
+    const steps = plannerStepsFromOpenAIAgentsToolCalls(output.toolCalls)
+
+    return steps.length > 0
+      ? { source: OPENAI_AGENTS_SOURCE, steps }
+      : output.assistantText?.trim()
+        ? { source: OPENAI_AGENTS_SOURCE, steps: [], assistantText: output.assistantText.trim() }
+        : { source: OPENAI_AGENTS_SOURCE, steps: [] }
+  } catch (error) {
+    return {
+      source: OPENAI_AGENTS_SOURCE,
+      steps: [],
+      error: {
+        kind: 'provider_network_error',
+        message: safeOpenAIAgentsRuntimeErrorMessage(error),
+      },
+    }
+  }
+}
+
 export function configuredRuntimePlannerSource(
   settings: Settings,
 ): Extract<AgentPlannerSource, 'openai_agents' | 'openai_compatible_tool_calls'> | null {
@@ -150,7 +318,6 @@ export function configuredRuntimePlannerSource(
   return settings.llmProvider === 'openai' ? 'openai_agents' : 'openai_compatible_tool_calls'
 }
 
-const openAIAgentsAdapter = new OpenAIAgentsAdapter()
 const openAICompatibleChatAdapter = new OpenAICompatibleChatAdapter()
 
 export const planWithRuntimeAdapter = createRuntimePlanRouter<RuntimePlanningInput, RuntimePlanResult | null>({
@@ -163,7 +330,7 @@ export const planWithRuntimeAdapter = createRuntimePlanRouter<RuntimePlanningInp
     {
       routeId: 'openai',
       when: (input) => input.settings.llmProvider === 'openai',
-      plan: (input) => openAIAgentsAdapter.plan(input),
+      plan: (input) => planWithOpenAIAgentsRuntime(input),
     },
   ],
   fallback: (input) => openAICompatibleChatAdapter.plan(input),
