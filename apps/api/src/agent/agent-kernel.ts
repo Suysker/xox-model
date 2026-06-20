@@ -2,8 +2,9 @@ import type { AgentGoalStatus, AgentNavigationEvent, AgentPlannerSource } from '
 import type { Row } from '../db/schema.js'
 import type { PlannerContext } from './planning-context.js'
 import { executeXoxAgenticOsRun } from './agentic-os/xox-agentic-os-host-kit.js'
+import { resolveXoxAgentTurnIntake } from './agentic-os/xox-turn-intake-adapter.js'
 import { executeDirectAnswerRun } from './direct-answer-runtime.js'
-import { resolveTurnIntake } from './turn-intake-resolver.js'
+import { sanitizeAgentGoalFacts } from './runtime-goal-facts.js'
 
 export type AgentKernelRunResult = {
   plannerSource: AgentPlannerSource
@@ -18,15 +19,7 @@ export async function executeAgentKernelRun(
   ctx: PlannerContext & { thread: Row<'agent_threads'> },
   options: { beforeStateWrite: () => Promise<boolean> },
 ): Promise<AgentKernelRunResult | null> {
-  const resolution = await resolveTurnIntake({
-    db: ctx.db,
-    settings: ctx.settings,
-    workspace: ctx.workspace,
-    user: ctx.user,
-    thread: ctx.thread,
-    message: ctx.message,
-    ...(ctx.abortSignal ? { abortSignal: ctx.abortSignal } : {}),
-  })
+  const resolution = await resolveXoxAgentTurnIntake(ctx)
   if (resolution.lane === 'direct_answer') {
     return executeDirectAnswerRun(ctx, {
       resolution,
@@ -35,6 +28,6 @@ export async function executeAgentKernelRun(
   }
   return executeXoxAgenticOsRun({
     ...ctx,
-    ...(resolution.goalFacts ? { initialGoalFacts: resolution.goalFacts } : {}),
+    ...(resolution.goalFacts ? { initialGoalFacts: sanitizeAgentGoalFacts(resolution.goalFacts) } : {}),
   }, options)
 }

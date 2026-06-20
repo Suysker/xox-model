@@ -101,6 +101,21 @@ describe('Agent ADR architecture boundaries', () => {
     ])
   })
 
+  it('keeps turn intake protocol in Agentic OS core', () => {
+    expect(existsSync(join(srcRoot, 'agent', 'turn-intake-resolver.ts'))).toBe(false)
+    const kernel = source('agent/agent-kernel.ts')
+    expect(kernel).toContain("from './agentic-os/xox-turn-intake-adapter.js'")
+    expect(kernel).not.toContain('planWithRuntimeAdapter')
+    expect(kernel).not.toContain("name: 'turn_lane_resolve'")
+    const intakeAdapter = source('agent/agentic-os/xox-turn-intake-adapter.ts')
+    expect(intakeAdapter).toContain("@agentic-os/core")
+    expect(intakeAdapter).toContain('resolveAgentTurnIntake')
+    expect(intakeAdapter).toContain('AGENT_TURN_LANE_RESOLUTION_TOOL_SCHEMA')
+    expect(intakeAdapter).not.toContain("name: 'turn_lane_resolve'")
+    expect(intakeAdapter).not.toContain("enum: ['direct_answer', 'agent_goal']")
+    expect(intakeAdapter).not.toContain("reasonCode: 'provider_unavailable'")
+  })
+
   it('keeps the tool executor independent from provider SDKs and runtime adapters', () => {
     expectNoImports('agent/tool-executor.ts', [
       /@openai\/agents/,

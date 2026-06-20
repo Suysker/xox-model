@@ -1,4 +1,5 @@
-import type { AgentGoalStatus, AgentNavigationEvent, AgentPlannerSource, AgentTurnLaneResolution } from '@xox/contracts'
+import type { AgentGoalStatus, AgentNavigationEvent, AgentPlannerSource } from '@xox/contracts'
+import type { AgentTurnLaneResolution } from '@agentic-os/contracts'
 import type { Row } from '../db/schema.js'
 import type { PlannerContext } from './planning-context.js'
 import { buildAgentAmbientContext } from './ambient-context.js'
