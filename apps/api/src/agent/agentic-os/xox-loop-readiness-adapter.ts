@@ -1,12 +1,29 @@
-import type { AgentEvaluationFinding, AgentEvaluationResult, AgentGoalContract, AgentGoalFacts, AgentToolObservationOutcome } from '@xox/contracts'
-import { classifyToolObservationOutcome, isRepairableProviderBoundaryCode, type ToolObservationStatus } from '@agentic-os/core'
-import type { AgentToolCapability } from './tool-catalog.js'
+import type { AgentEvaluationFinding, AgentGoalContract, AgentGoalFacts, AgentToolObservationOutcome } from '@xox/contracts'
+import {
+  classifyToolObservationOutcome,
+  decideAgentReadiness,
+  isRepairableProviderBoundaryCode,
+  type AgentReadinessDecisionCopy,
+  type ToolObservationStatus,
+} from '@agentic-os/core'
+import type { AgentToolCapability } from '../tool-catalog.js'
 import type { Kysely } from 'kysely'
-import type { Database, Row } from '../db/schema.js'
-import { parseJson } from '../db/database.js'
-import { collectAgentObservation } from './observation-collector.js'
-import { addEvaluationResult, updateGoalStatus } from './goal-contract.js'
-import { goalFactsFromRunEvent, mergeAgentGoalFacts } from './runtime-goal-facts.js'
+import type { Database, Row } from '../../db/schema.js'
+import { parseJson } from '../../db/database.js'
+import { collectAgentObservation } from '../observation-collector.js'
+import { addEvaluationResult, updateGoalStatus } from '../goal-contract.js'
+import { goalFactsFromRunEvent, mergeAgentGoalFacts } from '../runtime-goal-facts.js'
+
+const XOX_READINESS_DECISION_COPY = {
+  policyBlocker: (messages) => messages.join('；'),
+  failedGraphBlocker: '运行图存在失败动作。',
+  waitForClarification: '等待用户补充当前澄清问题，不要继续猜测或生成依赖缺失信息的写入动作。',
+  continueIndependentFindings: (messages) =>
+    `继续完成不依赖该澄清的缺失动作或事实：${messages.join('；')}`,
+  continueBlockingFindings: (messages) =>
+    `继续完成目标，只修复这些未满足事实或执行结果：${messages.join('；')}`,
+  waitForConfirmation: '等待用户处理当前确认卡。不要继续规划依赖这些写入结果的后续动作。',
+} satisfies AgentReadinessDecisionCopy
 
 function finding(input: {
   id: string
@@ -676,64 +693,45 @@ export async function evaluateAgentGoal(input: {
   const missingFields = clarificationMissingFields(planSteps)
   const independentBlockingFindings = blockingFindings.filter((item) => !findingBlockedByClarification(item, missingFields))
 
-  let status: AgentEvaluationResult['status'] = 'pass'
-  let nextPlannerBrief: string | null = null
-  let blocker: string | null = null
-  let confidence = 0.92
-
-  if (policyFindings.some((item) => item.severity === 'blocking')) {
-    status = 'blocked'
-    blocker = policyFindings.map((item) => item.message).join('；')
-    confidence = 0.99
-  } else if (failedActions.length > 0 || terminalFailedSteps.length > 0) {
-    status = 'failed'
-    blocker = '运行图存在失败动作。'
-    confidence = 0.95
-  } else if (clarificationSteps.length > 0 && independentBlockingFindings.length === 0) {
-    status = 'needs_clarification'
-    nextPlannerBrief = '等待用户补充当前澄清问题，不要继续猜测或生成依赖缺失信息的写入动作。'
-    confidence = 0.96
-  } else if (blockingFindings.length > 0) {
-    status = 'continue'
-    const targetFindings = clarificationSteps.length > 0 ? independentBlockingFindings : blockingFindings
-    nextPlannerBrief = clarificationSteps.length > 0
-      ? `继续完成不依赖该澄清的缺失动作或事实：${targetFindings.map((item) => item.message).join('；')}`
-      : `继续完成目标，只修复这些未满足事实或执行结果：${targetFindings.map((item) => item.message).join('；')}`
-    confidence = 0.86
-  } else if (pendingActions.length > 0) {
-    status = 'needs_confirmation'
-    nextPlannerBrief = '等待用户处理当前确认卡。不要继续规划依赖这些写入结果的后续动作。'
-    confidence = 0.98
-  }
+  const decision = decideAgentReadiness({
+    policyFindings,
+    failedActionCount: failedActions.length,
+    terminalFailedStepCount: terminalFailedSteps.length,
+    hasClarificationRequest: clarificationSteps.length > 0,
+    blockingFindings,
+    independentBlockingFindings,
+    pendingActionCount: pendingActions.length,
+    copy: XOX_READINESS_DECISION_COPY,
+  })
 
   const row = await addEvaluationResult(input.db, input.goal, {
     iteration: input.iteration,
-    status,
-    confidence,
+    status: decision.status,
+    confidence: decision.confidence,
     satisfiedCriteria: [...satisfied],
     unsatisfiedCriteria: unsatisfied,
     policyFindings,
-    nextPlannerBrief,
+    nextPlannerBrief: decision.nextPlannerBrief,
     userQuestion: null,
-    blocker,
+    blocker: decision.blocker,
   })
 
   const goalStatus =
-    status === 'pass'
+    decision.status === 'pass'
       ? input.allowComplete === false
         ? 'evaluating'
         : 'completed'
-      : status === 'needs_confirmation'
+      : decision.status === 'needs_confirmation'
         ? 'waiting_for_confirmation'
-        : status === 'needs_clarification'
+        : decision.status === 'needs_clarification'
           ? 'needs_clarification'
-        : status === 'continue'
+        : decision.status === 'continue'
           ? 'repairing'
-          : status === 'blocked'
+          : decision.status === 'blocked'
             ? 'blocked'
-            : status === 'failed'
+            : decision.status === 'failed'
               ? 'failed'
               : 'planning'
-  await updateGoalStatus(input.db, input.goal, goalStatus, { blockedReason: blocker })
+  await updateGoalStatus(input.db, input.goal, goalStatus, { blockedReason: decision.blocker })
   return row
 }

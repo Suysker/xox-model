@@ -131,7 +131,7 @@ import {
 } from '../tool-observation-continuation.js'
 import { runtimeIntentHandlers } from '../runtime-intent-handlers.js'
 import { runPrerequisiteObservations } from '../prerequisite-observations.js'
-import { evaluateAgentGoal } from '../loop-readiness-check.js'
+import { evaluateAgentGoal } from './xox-loop-readiness-adapter.js'
 import {
   applyObservationToLedger,
   applyResponseEvaluationToLedger,

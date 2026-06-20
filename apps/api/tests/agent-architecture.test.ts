@@ -143,6 +143,26 @@ describe('Agent ADR architecture boundaries', () => {
     expect(adapter).not.toContain(".join('\\n')")
   })
 
+  it('keeps loop readiness status priority in Agentic OS core', () => {
+    expect(existsSync(join(srcRoot, 'agent', 'loop-readiness-check.ts'))).toBe(false)
+
+    const hostKit = source('agent/agentic-os/xox-agentic-os-host-kit.ts')
+    expect(hostKit).toContain("from './xox-loop-readiness-adapter.js'")
+    expect(hostKit).not.toContain("from '../loop-readiness-check.js'")
+
+    const approvalExecutor = source('agent/approval-executor.ts')
+    expect(approvalExecutor).toContain("from './agentic-os/xox-loop-readiness-adapter.js'")
+    expect(approvalExecutor).not.toContain("from './loop-readiness-check.js'")
+
+    const adapter = source('agent/agentic-os/xox-loop-readiness-adapter.ts')
+    expect(adapter).toContain("@agentic-os/core")
+    expect(adapter).toContain('decideAgentReadiness')
+    expect(adapter).not.toContain('policyFindings.some')
+    expect(adapter).not.toContain("let status:")
+    expect(adapter).not.toContain("status = 'blocked'")
+    expect(adapter).not.toContain("status = 'needs_confirmation'")
+  })
+
   it('keeps the tool executor independent from provider SDKs and runtime adapters', () => {
     expectNoImports('agent/tool-executor.ts', [
       /@openai\/agents/,
