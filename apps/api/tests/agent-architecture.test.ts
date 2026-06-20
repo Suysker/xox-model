@@ -178,6 +178,27 @@ describe('Agent ADR architecture boundaries', () => {
     expect(actionGraph).not.toContain('if (pendingActionCount > 0 && input.emitPlanReady')
   })
 
+  it('keeps host observation bridging in Agentic OS core', () => {
+    const observationAdapter = source('agent/agentic-os/xox-observation-adapter.ts')
+    expect(observationAdapter).toContain("@agentic-os/core")
+    expect(observationAdapter).toContain('createHostObservationBridge')
+    expect(observationAdapter).toContain('createXoxObservationBridge')
+
+    const hostKit = source('agent/agentic-os/xox-agentic-os-host-kit.ts')
+    expect(hostKit).toContain('createXoxObservationBridge')
+    expect(hostKit).not.toContain('osObservationById')
+    expect(hostKit).not.toContain('function rememberObservationMapping')
+    expect(hostKit).not.toContain('function xoxObservationFromOs')
+    expect(hostKit).not.toContain('function combinedXoxObservations')
+    expect(hostKit).not.toContain('function mergeXoxObservationsIntoState')
+
+    const actionGraph = source('agent/action-graph-store.ts')
+    expect(actionGraph).toContain('createXoxObservationBridge')
+    expect(actionGraph).not.toContain('const observationsById = new Map')
+    expect(actionGraph).not.toContain('function rememberObservation')
+    expect(actionGraph).not.toContain('function fallbackObservationFromOs')
+  })
+
   it('keeps tool observation loop semantics in Agentic OS core', () => {
     const hostKit = source('agent/agentic-os/xox-agentic-os-host-kit.ts')
     expect(hostKit).toContain('parseToolObservationModelFacts')

@@ -1,6 +1,6 @@
 # xox-model Agentic OS Integration Plan
 
-Status: Draft (M75 tool loop guardrails consumption)
+Status: Draft (M80 host observation bridge consumption)
 
 Date: 2026-06-19
 
@@ -40,6 +40,7 @@ Agentic OS should own reusable harness concerns:
 - provider tool-call stream assembly and frame damage primitives;
 - provider boundary failure observation payloads;
 - provider observation turn message assembly for protocol-native assistant/tool replay in planning, repair, and continuation turns;
+- host observation bridge for canonical `AgentObservation` to host observation DTO mapping, fallback recovery, and stable merge/dedupe;
 - tool observation outcome classification for provider boundary, sandbox execution, action preview, and action result observations;
 - tool observation facts parsing and role helpers for action, sandbox, provider boundary, tool supervisor failure, discovery, and clarification observations;
 - action observation envelope builders for action preview, executed result, failed result, and policy-blocked result observations;
@@ -125,6 +126,7 @@ Current integration is no longer compatibility-only:
 - xox tool loop progress guardrails now consume `@agentic-os/core` `evaluateToolLoopGuardrails()`. Local guardrail algorithm branches for repeated failures, no-progress turns, and executed-write reapply have been removed; `apps/api/src/agent/tool-runtime/tool-loop-guardrails.ts` is now only a Row/DTO adapter. Local `approval-policy-composer.ts` has also been removed in favor of core `composeAgentWriteApprovalPolicy()`.
 - xox tool-call supervision and runtime event payloads now consume `@agentic-os/core` `runToolCallSupervisor()`. Agentic OS owns the sequential runner, started/completed callback order, inventory-miss fail-closed path, empty-result failure path, observation summary, and event payload facts. `apps/api/src/agent/tool-runtime/tool-call-supervisor.ts` now only maps xox planner steps/results, adapts failure copy, and persists product run events; the obsolete local `tool-runtime/tool-execution-events.ts` adapter has been deleted.
 - xox action graph materialization now consumes `@agentic-os/server` `materializeAgentServerActionGraph()`. Agentic OS owns sequence cursor traversal, action/read/status/assistant/observation-only item materialization, stored action observation collection, summary, and provider-neutral event drafts. `apps/api/src/agent/action-graph-store.ts` now maps xox `PlannedItem` values into server planned items and remains responsible only for Kysely row mapping, action automation settling, navigation/product run-event copy, and `@xox/contracts` compatibility.
+- xox host observation bridge now consumes `@agentic-os/core` `createHostObservationBridge()`. Agentic OS owns canonical observation id/tool-call id mapping, host fallback hook invocation, and stable merge/dedupe; `apps/api/src/agent/agentic-os/xox-observation-adapter.ts` keeps only xox `AgentToolObservation` projection, legacy embedded `xoxObservation` recovery, product display copy fallback, and host key policy. `xox-agentic-os-host-kit.ts` and `action-graph-store.ts` no longer keep local observation maps or fallback bridge helpers.
 - xox still owns provider final-answer claim extraction and financial/shareholder policy, including the xox adapter rule that unscoped entity/domain final-answer claims require shareholder domain evidence.
 - xox still owns response-evaluator finding to financial/domain obligation mapping, plus `goalFacts`, `requiredDataScopes`, and `requiredMetrics`.
 - xox still owns obligation materializer selection, `data_query_workspace` arguments, business read execution, and product run event persistence.

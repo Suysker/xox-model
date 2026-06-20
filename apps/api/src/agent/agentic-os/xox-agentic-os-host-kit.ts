@@ -60,9 +60,8 @@ import { utcNow } from '../../core/time.js'
 import type { PlannerContext } from '../planning-context.js'
 import { runtimePlanResultToAgenticOsTurnOutput } from './xox-runtime-turn-output.js'
 import {
-  agenticOsObservationFromXox,
-  xoxObservationContent,
-  xoxObservationOutcome,
+  createXoxObservationBridge,
+  type XoxObservationBridge,
 } from './xox-observation-adapter.js'
 import { executeAgentActionRequest } from '../approval-executor.js'
 import {
@@ -166,7 +165,7 @@ type XoxAgenticOsRunState = {
   actionRows: Row<'agent_action_requests'>[]
   planRows: Row<'agent_plan_steps'>[]
   xoxObservations: AgentToolObservation[]
-  osObservationById: Map<string, AgentToolObservation>
+  observationBridge: XoxObservationBridge
   readinessEvaluatedToolCallIds: Set<string>
   sandboxFinalizedToolCallIds: Set<string>
   ledgerAppliedObservationIds: Set<string>
@@ -287,94 +286,13 @@ function sandboxExecutionStatus(
   return null
 }
 
-function rememberObservationMapping(
-  state: XoxAgenticOsRunState,
-  osObservation: OsObservation,
-  xoxObservation: AgentToolObservation,
-): void {
-  state.osObservationById.set(osObservation.observationId, xoxObservation)
-  state.osObservationById.set(osObservation.toolCallId, xoxObservation)
-}
-
-function xoxObservationFromOs(
-  state: XoxAgenticOsRunState,
-  observation: OsObservation,
-): AgentToolObservation {
-  const mapped = state.osObservationById.get(observation.observationId) ??
-    state.osObservationById.get(observation.toolCallId)
-  if (mapped) return mapped
-
-  const content = observation.content
-  if (content && typeof content === 'object' && !Array.isArray(content)) {
-    const maybeXox = (content as Record<string, unknown>).xoxObservation
-    if (maybeXox && typeof maybeXox === 'object' && !Array.isArray(maybeXox)) {
-      return maybeXox as AgentToolObservation
-    }
-  }
-
-  const fallback: AgentToolObservation = {
-    title: observation.toolName,
-    toolName: observation.toolName,
-    toolCallId: observation.toolCallId,
-    toolArguments: {},
-    displayPreview: JSON.stringify(observation.content),
-    modelContent: JSON.stringify(observation.content),
-    status: observation.status === 'ok' ? 'completed' : 'failed',
-  }
-  if (observation.outcome !== undefined) fallback.outcome = observation.outcome
-  return fallback
-}
-
-function observationKey(observation: AgentToolObservation): string {
-  return [
-    observation.toolCallId || observation.toolName,
-    observation.status,
-    observation.outcome ?? '',
-    observation.modelContent,
-  ].join(':')
-}
-
-function combinedXoxObservations(
-  state: XoxAgenticOsRunState,
-  observations: OsObservation[],
-): AgentToolObservation[] {
-  const combined: AgentToolObservation[] = []
-  const seen = new Set<string>()
-  for (const observation of state.xoxObservations) {
-    const key = observationKey(observation)
-    if (seen.has(key)) continue
-    seen.add(key)
-    combined.push(observation)
-  }
-  for (const observation of observations.map((item) => xoxObservationFromOs(state, item))) {
-    const key = observationKey(observation)
-    if (seen.has(key)) continue
-    seen.add(key)
-    combined.push(observation)
-  }
-  return combined
-}
-
-function mergeXoxObservationsIntoState(
-  state: XoxAgenticOsRunState,
-  observations: AgentToolObservation[],
-): void {
-  const existing = new Set(state.xoxObservations.map(observationKey))
-  for (const observation of observations) {
-    const key = observationKey(observation)
-    if (existing.has(key)) continue
-    existing.add(key)
-    state.xoxObservations.push(observation)
-  }
-}
-
 function applyNewObservationsToLedger(
   state: XoxAgenticOsRunState,
   observations: AgentToolObservation[],
   iteration: number,
 ): void {
   for (const observation of observations) {
-    const key = observationKey(observation)
+    const key = state.observationBridge.hostKey(observation)
     if (state.ledgerAppliedObservationIds.has(key)) continue
     state.ledgerAppliedObservationIds.add(key)
     applyObservationToLedger({
@@ -456,8 +374,7 @@ function agenticOsToolDefinition(
       }
       const graph = await storeSingleToolStep(ctx, state, step)
       const observation = graph.observations.at(-1) ?? fallbackToolObservation(step)
-      const osObservation = agenticOsObservationFromXox(observation, state.xoxObservations.length)
-      rememberObservationMapping(state, osObservation, observation)
+      const osObservation = state.observationBridge.toCanonical(observation, state.xoxObservations.length)
       const handlerResult: OsToolHandlerResult = {
         content: osObservation.content,
       }
@@ -698,20 +615,6 @@ function osAudit(input: {
   return audit
 }
 
-function osObservationForAction(
-  observation: AgentToolObservation,
-  action: Row<'agent_action_requests'>,
-): OsObservation {
-  return {
-    observationId: observation.toolCallId,
-    toolCallId: observation.toolCallId,
-    toolName: action.kind,
-    status: observation.status === 'completed' ? 'ok' : 'error',
-    outcome: xoxObservationOutcome(observation),
-    content: xoxObservationContent(observation),
-  }
-}
-
 function agenticSelectionToXoxLoopPlan(
   state: XoxAgenticOsRunState,
 ): PlannerContext['loopObligationPlan'] | undefined {
@@ -755,7 +658,7 @@ function runtimePlannerContext(
   state: XoxAgenticOsRunState,
   input: OsRuntimeTurnInput,
 ): PlannerContext & { thread: Row<'agent_threads'> } {
-  const xoxObservations = combinedXoxObservations(state, input.observations)
+  const xoxObservations = state.observationBridge.combine(state.xoxObservations, input.observations)
   const loopObligationPlan = agenticSelectionToXoxLoopPlan(state)
   const nextContext: PlannerContext & { thread: Row<'agent_threads'> } = {
     ...ctx,
@@ -1360,7 +1263,7 @@ function createXoxAgenticOsHost(
 
   const runtime: OsRuntimeAdapter = {
     runTurn: async (input) => {
-      const xoxObservations = combinedXoxObservations(state, input.observations)
+      const xoxObservations = state.observationBridge.combine(state.xoxObservations, input.observations)
       applyNewObservationsToLedger(state, xoxObservations, input.iteration)
 
       const completedActionText = completedActionAssistantText(state, xoxObservations)
@@ -1642,8 +1545,7 @@ function createXoxAgenticOsHost(
       replaceActionRow(state, updated)
       const xoxObservation = actionExecutionObservation({ action: updated, result })
       state.xoxObservations.push(xoxObservation)
-      const observation = osObservationForAction(xoxObservation, updated)
-      rememberObservationMapping(state, observation, xoxObservation)
+      const observation = state.observationBridge.toCanonical(xoxObservation, state.xoxObservations.length - 1)
       return {
         actionRequest: osActionRequest(updated, input.actionRequest.toolCallId),
         observation,
@@ -1712,8 +1614,7 @@ function createXoxAgenticOsHost(
 
       const graph = await storeSingleToolStep(ctx, state, step)
       const xoxObservation = graph.observations.at(-1) ?? fallbackToolObservation(step)
-      const osObservation = agenticOsObservationFromXox(xoxObservation, state.xoxObservations.length)
-      rememberObservationMapping(state, osObservation, xoxObservation)
+      const osObservation = state.observationBridge.toCanonical(xoxObservation, state.xoxObservations.length)
       const facts = parseToolObservationModelFacts(xoxObservation)
       const result: OsSandboxExecutionResult = {
         content: osObservation.content,
@@ -1741,8 +1642,8 @@ function createXoxAgenticOsHost(
       }
       state.finalReviewIteration += 1
       const reviewIteration = state.finalReviewIteration
-      const reviewObservations = combinedXoxObservations(state, input.observations)
-      mergeXoxObservationsIntoState(state, reviewObservations)
+      const reviewObservations = state.observationBridge.combine(state.xoxObservations, input.observations)
+      state.observationBridge.mergeInto(state.xoxObservations, reviewObservations)
       applyNewObservationsToLedger(state, reviewObservations, reviewIteration)
       const evidence = buildEvidenceLedger({
         threadId: ctx.thread.id,
@@ -2200,7 +2101,7 @@ export async function executeXoxAgenticOsRun(
     actionRows: [],
     planRows: [],
     xoxObservations: [],
-    osObservationById: new Map(),
+    observationBridge: createXoxObservationBridge(),
     readinessEvaluatedToolCallIds: new Set(),
     sandboxFinalizedToolCallIds: new Set(),
     ledgerAppliedObservationIds: new Set(),
@@ -2251,9 +2152,7 @@ export async function executeXoxAgenticOsRun(
   if (initialPrerequisites) applyStoredGraph(state, initialPrerequisites)
 
   const initialOsObservations = state.xoxObservations.map((observation, index) => {
-    const osObservation = agenticOsObservationFromXox(observation, index)
-    rememberObservationMapping(state, osObservation, observation)
-    return osObservation
+    return state.observationBridge.toCanonical(observation, index)
   })
   const run = await ctx.db
     .selectFrom('agent_runs')

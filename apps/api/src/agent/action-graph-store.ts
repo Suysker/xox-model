@@ -2,7 +2,6 @@ import type { Kysely } from 'kysely'
 import type {
   AgentActionRequest as OsActionRequest,
   AgentActionStatus as OsActionStatus,
-  AgentObservation as OsObservation,
   AgentRunRecord as OsRunRecord,
   JsonObject as OsJsonObject,
 } from '@agentic-os/contracts'
@@ -43,7 +42,10 @@ import {
 } from './tool-observation-continuation.js'
 import { resolveActionAuthority, type AgentAutomationLevel } from './tool-policy.js'
 import { classifyToolObservation } from './tool-observation-outcome.js'
-import { agenticOsObservationFromXox } from './agentic-os/xox-observation-adapter.js'
+import {
+  createXoxObservationBridge,
+  type XoxObservationBridge,
+} from './agentic-os/xox-observation-adapter.js'
 
 type ActionGraphContext = {
   db: Kysely<Database>
@@ -325,33 +327,6 @@ async function settleStoredAction(
   }
 }
 
-function rememberObservation(
-  observationsById: Map<string, AgentToolObservation>,
-  osObservation: OsObservation,
-  xoxObservation: AgentToolObservation,
-): void {
-  observationsById.set(osObservation.observationId, xoxObservation)
-  observationsById.set(osObservation.toolCallId, xoxObservation)
-}
-
-function fallbackObservationFromOs(observation: OsObservation): AgentToolObservation {
-  const preview = typeof observation.content === 'string'
-    ? observation.content
-    : JSON.stringify(observation.content)
-  const fallback: AgentToolObservation = {
-    title: observation.toolName,
-    toolName: observation.toolName,
-    toolCallId: observation.toolCallId,
-    toolArguments: {},
-    displayPreview: preview,
-    modelContent: preview,
-    status: observation.status === 'ok' ? 'completed' : 'failed',
-    synthetic: true,
-  }
-  if (observation.outcome !== undefined) fallback.outcome = observation.outcome
-  return fallback
-}
-
 function itemInput(toolArguments: Record<string, unknown> | null | undefined): OsJsonObject | undefined {
   return toolArguments ? osJsonObject(toolArguments) : undefined
 }
@@ -359,7 +334,7 @@ function itemInput(toolArguments: Record<string, unknown> | null | undefined): O
 function readPlannedItem(
   item: ReadDraft,
   index: number,
-  observationsById: Map<string, AgentToolObservation>,
+  observationBridge: XoxObservationBridge,
 ): AgentServerActionGraphPlannedItem {
   if ('readKind' in item && item.readKind === 'assistant_message') {
     return {
@@ -377,8 +352,7 @@ function readPlannedItem(
   const observation = observationFromRead(item, index + 1)
 
   if (observation) {
-    const osObservation = agenticOsObservationFromXox(observation, index)
-    rememberObservation(observationsById, osObservation, observation)
+    const osObservation = observationBridge.toCanonical(observation, index)
     if (isRunnerOwnedObservationLane(item.observationLane)) {
       return {
         type: 'observation_only',
@@ -419,9 +393,9 @@ function materializerItemFromPlannedItem(
   item: PlannedItem,
   index: number,
   actionDrafts: Map<string, AgentActionDraft>,
-  observationsById: Map<string, AgentToolObservation>,
+  observationBridge: XoxObservationBridge,
 ): AgentServerActionGraphPlannedItem {
-  if (!isActionDraft(item)) return readPlannedItem(item, index, observationsById)
+  if (!isActionDraft(item)) return readPlannedItem(item, index, observationBridge)
 
   const actionRequest = osActionRequestFromDraft(ctx, item, index)
   actionDrafts.set(actionRequest.actionRequestId, item)
@@ -517,7 +491,7 @@ export async function storePlannedActionGraph(
   const actionRows: Row<'agent_action_requests'>[] = []
   const planRows: Row<'agent_plan_steps'>[] = []
   const actionDrafts = new Map<string, AgentActionDraft>()
-  const observationsById = new Map<string, AgentToolObservation>()
+  const observationBridge = createXoxObservationBridge()
 
   const store: AgentServerActionGraphStore = {
     loadMaxPlanSequence: async () => {
@@ -537,8 +511,7 @@ export async function storePlannedActionGraph(
       const settled = await settleStoredAction(ctx, { draft, action: createdAction })
       actionRows.push(settled.action)
       navigationEvents.push(draft.navigation)
-      const osObservation = agenticOsObservationFromXox(settled.observation, observationsById.size)
-      rememberObservation(observationsById, osObservation, settled.observation)
+      const osObservation = observationBridge.toCanonical(settled.observation, actionRows.length - 1)
       return {
         actionRequest: osActionRequestFromRow(settled.action, actionInput.actionRequest),
         observation: osObservation,
@@ -565,7 +538,7 @@ export async function storePlannedActionGraph(
   }
 
   const items = input.items.map((item, index) =>
-    materializerItemFromPlannedItem(ctx, item, index, actionDrafts, observationsById)
+    materializerItemFromPlannedItem(ctx, item, index, actionDrafts, observationBridge)
   )
   const materialized = await materializeAgentServerActionGraph({
     store,
@@ -586,9 +559,7 @@ export async function storePlannedActionGraph(
   return {
     assistantText: materialized.assistantText,
     observations: materialized.observations.map((observation) =>
-      observationsById.get(observation.observationId) ??
-      observationsById.get(observation.toolCallId) ??
-      fallbackObservationFromOs(observation)
+      observationBridge.fromCanonical(observation)
     ),
     navigationEvents,
     actionRows,
