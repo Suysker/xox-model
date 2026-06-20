@@ -63,7 +63,6 @@ describe('Agent ADR architecture boundaries', () => {
       'agent/runtime/high-volume-tool-policy.ts',
       'agent/runtime/openai-agents-adapter.ts',
       'agent/runtime/openai-compatible-chat-adapter.ts',
-      'agent/runtime/provider-probe.ts',
       'agent/runtime/runtime-adapter.ts',
       'agent/runtime/tool-call-repair.ts',
     ]
@@ -78,6 +77,7 @@ describe('Agent ADR architecture boundaries', () => {
     for (const file of runtimeFiles) expectNoImports(file, forbidden)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'provider-failover-policy.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'provider-request-shaper.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'runtime', 'provider-probe.ts'))).toBe(false)
   })
 
   it('keeps routes as transport glue instead of a planner/runtime/executor owner', () => {
@@ -382,16 +382,16 @@ describe('Agent ADR architecture boundaries', () => {
   })
 
   it('keeps provider probing runtime mechanics in Agentic OS runtime', () => {
-    const probe = source('agent/runtime/provider-probe.ts')
-    expect(probe).toContain("@agentic-os/runtime-openai-compatible")
-    expect(probe).toContain('probeProviderOpenAICompatibleProvider')
-    expect(probe).not.toContain('fetch(')
-    expect(probe).not.toContain('AbortController')
-    expect(probe).not.toContain('classifyProviderHttpError')
-    expect(probe).not.toContain('safeProviderErrorMessage')
-    expect(probe).not.toContain('shapeOpenAICompatibleChatRequest')
-    expect(probe).not.toContain('response.json')
-    expect(probe).not.toContain('choices?.')
+    const settings = source('agent/provider-settings.ts')
+    expect(settings).toContain("@agentic-os/runtime-openai-compatible")
+    expect(settings).toContain('probeProviderOpenAICompatibleProvider')
+    expect(settings).not.toContain('fetch(')
+    expect(settings).not.toContain('AbortController')
+    expect(settings).not.toContain('classifyProviderHttpError')
+    expect(settings).not.toContain('safeProviderErrorMessage')
+    expect(settings).not.toContain('shapeOpenAICompatibleChatRequest')
+    expect(settings).not.toContain('response.json')
+    expect(settings).not.toContain('choices?.')
   })
 
   it('routes provider planning through the xox context pack without an obsolete local context wrapper', () => {
