@@ -9,7 +9,6 @@ import type { Row } from '../../db/schema.js'
 import type { PlannerContext } from '../planning-context.js'
 import { buildAgentAmbientContext } from '../ambient-context.js'
 import { directAnswerSystemPrompt } from '../prompt-registry.js'
-import { addRuntimeStreamRunEvent } from '../runtime-trace-events.js'
 import {
   configuredRuntimePlannerSource,
   planWithRuntimeAdapter,
@@ -18,7 +17,7 @@ import {
   type RuntimePlanResult,
 } from '../runtime/runtime-adapter.js'
 import { redactSecretLikeContent } from '../memory.js'
-import { addRunEvent } from '../run-events.js'
+import { addRunEvent, addRuntimeStreamRunEvent } from '../run-events.js'
 import { addMessage } from '../thread-store.js'
 import { storePlannedActionGraph } from '../action-graph-store.js'
 import { readDraftFromRuntimeResult } from '../action-draft-builder.js'

@@ -541,6 +541,19 @@ describe('Agent ADR architecture boundaries', () => {
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'openai-agents-adapter.ts'))).toBe(false)
   })
 
+  it('keeps provider runtime stream trace projection in Agentic OS server', () => {
+    expect(existsSync(join(srcRoot, 'agent', 'runtime-trace-events.ts'))).toBe(false)
+
+    for (const file of sourceFilesUnder('agent')) {
+      expect(source(file), `${file} must not import the deleted runtime trace wrapper`).not.toContain('runtime-trace-events')
+    }
+
+    const runEvents = source('agent/run-events.ts')
+    expect(runEvents).toContain("@agentic-os/server")
+    expect(runEvents).toContain('addAgentServerRuntimeStreamRunEvent')
+    expect(runEvents).not.toContain('runtimeStreamEventPayload')
+  })
+
   it('keeps provider probing runtime mechanics in Agentic OS runtime', () => {
     const settings = source('agent/provider-settings.ts')
     expect(settings).toContain("@agentic-os/runtime-openai-compatible")

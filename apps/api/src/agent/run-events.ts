@@ -1,14 +1,18 @@
 import type { Kysely } from 'kysely'
 import type { AgentRunEvent, AgentRunEventStatus, AgentRuntimeChannel } from '@xox/contracts'
 import {
+  addAgentServerRuntimeStreamRunEvent,
   createAgentServerSequencedRunEventAppender,
   isAgentServerSqliteUniqueConstraintError,
+  type AgentServerRuntimeStreamRunEventCopyInput,
 } from '@agentic-os/server'
 import type { Database, Row } from '../db/schema.js'
 import { jsonString, parseJson } from '../db/database.js'
 import { newId } from '../core/security.js'
 import { utcNow } from '../core/time.js'
 import { agentThreadEvents } from './thread-events.js'
+import { redactSecretLikeContent } from './memory.js'
+import type { RuntimeStreamEvent } from './runtime/runtime-adapter.js'
 
 const runEventAppender = createAgentServerSequencedRunEventAppender({
   maxSequenceRetries: 5,
@@ -149,4 +153,65 @@ export async function addRunEvent(
 export async function listSerializedRunEvents(db: Kysely<Database>, runId: string): Promise<AgentRunEvent[]> {
   const rows = await db.selectFrom('agent_run_events').selectAll().where('run_id', '=', runId).orderBy('sequence_no', 'asc').execute()
   return rows.map(serializeRunEvent)
+}
+
+function safeProviderStreamValue(value: string, maxLength: number) {
+  return redactSecretLikeContent(value).slice(0, maxLength)
+}
+
+function xoxRuntimeStreamCopy(input: AgentServerRuntimeStreamRunEventCopyInput) {
+  const { event, data } = input
+  if (event.kind === 'stream_started') {
+    return {
+      title: 'Provider 流已打开',
+      message: `正在接收 ${data.provider} / ${data.model} 的流式输出。`,
+    }
+  }
+  if (event.kind === 'content_delta') {
+    const delta = typeof data.delta === 'string' && data.delta.trim().length > 0 ? data.delta : '正在输出回答内容。'
+    return {
+      title: '模型输出片段',
+      message: delta,
+    }
+  }
+  if (event.kind === 'tool_call_delta') {
+    const toolName = typeof data.toolName === 'string' && data.toolName.length > 0 ? data.toolName : 'unknown_tool'
+    const preview = typeof data.argumentsPreview === 'string' ? data.argumentsPreview : ''
+    return {
+      title: '工具调用片段',
+      message: `${toolName}: ${preview}`,
+    }
+  }
+  if (event.kind === 'tool_call_repaired') {
+    return {
+      title: '工具调用参数已修复',
+      message: `${data.toolName} 的流式参数包含 provider 污染片段，已在有界范围内提取完整 JSON。`,
+    }
+  }
+  if (event.kind === 'tool_call_damage') {
+    const toolName = typeof data.toolName === 'string' && data.toolName.length > 0 ? data.toolName : 'unknown_tool'
+    return {
+      title: '工具调用帧不可执行',
+      message: `${toolName}: ${data.message}`,
+    }
+  }
+  return {
+    title: 'Provider 流已结束',
+    message: `模型流已结束，累计内容 ${event.contentLength} 字符，工具调用 ${event.toolCallCount} 个。`,
+  }
+}
+
+export async function addRuntimeStreamRunEvent(
+  ctx: { db: Kysely<Database>; threadId: string; runId: string; phase?: 'planning' | 'final_answer' },
+  event: RuntimeStreamEvent,
+) {
+  await addAgentServerRuntimeStreamRunEvent({
+    threadId: ctx.threadId,
+    runId: ctx.runId,
+    event,
+    ...(ctx.phase ? { phase: ctx.phase } : {}),
+    redact: safeProviderStreamValue,
+    copy: xoxRuntimeStreamCopy,
+    appendRunEvent: (draft) => addRunEvent(ctx.db, draft),
+  })
 }
