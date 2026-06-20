@@ -9,6 +9,7 @@ import {
   initializeObligationLedger,
   ledgerToObligationPlan,
   serializeObligationLedger,
+  serializeObligationLedgerForResponseEvent,
 } from '../src/agent/loop-obligation-ledger.js'
 
 function evaluation(overrides: Partial<ResponseEvaluation> = {}): ResponseEvaluation {
@@ -302,6 +303,66 @@ describe('Agent loop obligation ledger', () => {
     expect(serializeObligationLedger(ledger)).toMatchObject({
       openCount: 0,
       satisfiedCount: 1,
+    })
+  })
+
+  it('projects response-event obligations through Agentic OS without mutating the ledger', () => {
+    const ledger = initializeObligationLedger({ runId: 'run_1' })
+    const projection = serializeObligationLedgerForResponseEvent({
+      ledger,
+      evaluation: evaluation({
+        requiredEvidence: [
+          { authority: 'sandbox', subject: 'calculation', reason: '需要修复沙箱计算。' },
+        ],
+        findings: [{
+          severity: 'fail',
+          code: 'response.sandbox_evidence_invalid',
+          evidenceIds: ['run_1:evidence:sandbox'],
+          message: '沙箱结果无效。',
+        }],
+      }),
+    })
+
+    expect(ledger.obligations).toEqual([])
+    expect(projection).toMatchObject({
+      openCount: 0,
+      invalidCount: 1,
+      obligations: [
+        expect.objectContaining({
+          kind: 'sandbox_calculation',
+          status: 'invalid',
+          source: 'response_evaluator',
+          toolNames: ['sandbox_run_code'],
+          invalidReasons: ['response_evaluation_invalid'],
+        }),
+      ],
+    })
+  })
+
+  it('does not duplicate response-event obligations that already exist in the ledger', () => {
+    const ledger = initializeObligationLedger({ runId: 'run_1' })
+    const response = evaluation({
+      requiredEvidence: [
+        { authority: 'domain_read', subject: 'shareholder', reason: '需要有序股东事实。' },
+      ],
+    })
+    applyResponseEvaluationToLedger({
+      ledger,
+      evaluation: response,
+      iteration: 1,
+    })
+
+    const projection = serializeObligationLedgerForResponseEvent({
+      ledger,
+      evaluation: response,
+    })
+
+    expect(projection.obligations).toHaveLength(1)
+    expect(projection.obligations[0]).toMatchObject({
+      kind: 'domain_fact',
+      toolNames: ['data_query_workspace'],
+      requiredDataScopes: ['entity_summary'],
+      requiredMetrics: ['shareholderNames', 'shareholderInvestments'],
     })
   })
 })

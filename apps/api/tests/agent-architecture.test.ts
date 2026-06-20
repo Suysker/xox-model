@@ -163,6 +163,18 @@ describe('Agent ADR architecture boundaries', () => {
     expect(adapter).not.toContain("status = 'needs_confirmation'")
   })
 
+  it('keeps final review obligation projection merge in Agentic OS core', () => {
+    const hostKit = source('agent/agentic-os/xox-agentic-os-host-kit.ts')
+    expect(hostKit).toContain('serializeObligationLedgerForResponseEvent')
+    expect(hostKit).not.toContain('function responseEvaluationObligationLedger')
+    expect(hostKit).not.toContain('function responseEventObligationLedger')
+    expect(hostKit).not.toContain('projection.openCount = projection.obligations.filter')
+
+    const ledger = source('agent/loop-obligation-ledger.ts')
+    expect(ledger).toContain("@agentic-os/core")
+    expect(ledger).toContain('projectObligationLedgerWithAdditionalObligations')
+  })
+
   it('keeps the tool executor independent from provider SDKs and runtime adapters', () => {
     expectNoImports('agent/tool-executor.ts', [
       /@openai\/agents/,

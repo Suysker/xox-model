@@ -138,7 +138,7 @@ import {
   initializeObligationLedger,
   ledgerToObligationPlan,
   osLedgerFromXoxLedger,
-  serializeObligationLedger,
+  serializeObligationLedgerForResponseEvent,
   type AgentLoopObligationLedger,
 } from '../loop-obligation-ledger.js'
 import {
@@ -898,54 +898,6 @@ function loopReadinessSummary(evaluation: ReturnType<typeof serializeEvaluation>
   return 'Loop Readiness Check 需要补充信息。'
 }
 
-function responseEvaluationObligationLedger(
-  evaluation: ReturnType<typeof evaluateAssistantResponse>,
-) {
-  return {
-    obligations: evaluation.requiredEvidence.map((requirement, index) => {
-      const sandboxInvalid = requirement.authority === 'sandbox' &&
-        evaluation.findings.some((finding) => finding.code === 'response.sandbox_evidence_invalid')
-      return {
-        id: `response_evidence_${index + 1}`,
-        kind: requirement.authority === 'sandbox' ? 'sandbox_calculation' : 'domain_fact',
-        status: sandboxInvalid ? 'invalid' : 'open',
-        reason: requirement.reason,
-        toolNames: requirement.authority === 'sandbox' ? ['sandbox_run_code'] : ['data_query_workspace'],
-        ...(requirement.subject ? { subject: requirement.subject } : {}),
-      }
-    }),
-  }
-}
-
-function responseEventObligationLedger(
-  state: XoxAgenticOsRunState,
-  evaluation: ReturnType<typeof evaluateAssistantResponse>,
-) {
-  const projection = serializeObligationLedger(state.obligationLedger)
-  const fallback = responseEvaluationObligationLedger(evaluation)
-  const existing = new Set(projection.obligations.map((obligation) =>
-    `${obligation.kind}:${obligation.toolNames.join(',')}`))
-  for (const obligation of fallback.obligations) {
-    const key = `${obligation.kind}:${obligation.toolNames.join(',')}`
-    if (existing.has(key)) continue
-    projection.obligations.push({
-      id: obligation.id,
-      kind: obligation.kind as 'sandbox_calculation' | 'domain_fact',
-      status: obligation.status as 'open' | 'invalid',
-      source: 'response_evaluator',
-      reason: obligation.reason,
-      toolNames: obligation.toolNames,
-      evidenceIds: [],
-      invalidReasons: obligation.status === 'invalid' ? ['response_evaluation_invalid'] : [],
-    })
-  }
-  projection.openCount = projection.obligations.filter((obligation) => obligation.status === 'open').length
-  projection.invalidCount = projection.obligations.filter((obligation) => obligation.status === 'invalid').length
-  projection.satisfiedCount = projection.obligations.filter((obligation) => obligation.status === 'satisfied').length
-  projection.blockedCount = projection.obligations.filter((obligation) => obligation.status === 'blocked').length
-  return projection
-}
-
 function osEvidenceFromXoxEvidence(evidence: ReturnType<typeof buildEvidenceLedger>): OsAgentEvidence[] {
   return evidence.map((item) => ({
     kind: item.authority,
@@ -1686,7 +1638,10 @@ function createXoxAgenticOsHost(
         ledger: state.obligationLedger,
         objective: state.objective,
       })
-      let responseEventLedger = responseEventObligationLedger(state, evaluation)
+      let responseEventLedger = serializeObligationLedgerForResponseEvent({
+        ledger: state.obligationLedger,
+        evaluation,
+      })
       await addRunEvent(ctx.db, {
         threadId: ctx.thread.id,
         runId: ctx.runId,
@@ -1776,7 +1731,10 @@ function createXoxAgenticOsHost(
             ledger: state.obligationLedger,
             objective: state.objective,
           })
-          responseEventLedger = responseEventObligationLedger(state, evaluation)
+          responseEventLedger = serializeObligationLedgerForResponseEvent({
+            ledger: state.obligationLedger,
+            evaluation,
+          })
         }
       }
       const latestReadinessStatus = await latestGoalEvaluationStatus(ctx, state)

@@ -1,11 +1,16 @@
 import type { AgentToolObservation } from './tool-observation-continuation.js'
 import type {
   AgentLoopObligationLedger as OsAgentLoopObligationLedger,
+  AgentLoopObligationLedgerProjection as OsAgentLoopObligationLedgerProjection,
   AgentLoopObligationSource as OsAgentLoopObligationSource,
   JsonObject,
   JsonValue,
 } from '@agentic-os/contracts'
-import { projectObligationLedger } from '@agentic-os/core'
+import {
+  projectObligationLedger,
+  projectObligationLedgerWithAdditionalObligations,
+  type AdditionalObligationProjectionInput,
+} from '@agentic-os/core'
 import { isExecutedSandboxEvidenceFacts } from './evidence-ledger.js'
 import type { ResponseEvaluation } from './response-evaluator.js'
 import { objectHasKey } from './structured-evidence-utils.js'
@@ -16,6 +21,7 @@ import {
   planLoopObligations,
   userSafeObligationFailureSummary,
   type AgentLoopObligation,
+  type AgentLoopObligationKind,
   type AgentLoopObligationPlan,
 } from './loop-obligations.js'
 
@@ -333,4 +339,107 @@ export function serializeObligationLedger(ledger: AgentLoopObligationLedger): Ag
       invalidReasons: projection.obligations[index]?.invalidReasons ?? obligation.invalidReasons,
     })),
   }
+}
+
+function xoxSourceFromOsSource(source: OsAgentLoopObligationSource): AgentLoopObligationSource {
+  if (source === 'goal_contract') return 'goal_contract'
+  if (source === 'policy') return 'policy'
+  if (source === 'human_interrupt') return 'human_interrupt'
+  if (source === 'completion_evaluator') return 'response_evaluator'
+  return 'provider_tool_intent'
+}
+
+function metadataStringArray(metadata: JsonObject | undefined, key: string): string[] | undefined {
+  const value = metadata?.[key]
+  if (!Array.isArray(value)) return undefined
+  const values = value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+  return values.length > 0 ? values : undefined
+}
+
+function xoxKindFromOsMetadata(
+  metadata: JsonObject | undefined,
+  fallback: AgentLoopObligationKind,
+): AgentLoopObligationKind {
+  const value = metadata?.xoxKind
+  return value === 'assistant_final_answer' || value === 'sandbox_calculation' || value === 'domain_fact'
+    ? value
+    : fallback
+}
+
+function responseEvaluationObligationStatus(input: {
+  obligation: AgentLoopObligation
+  evaluation: ResponseEvaluation
+}) {
+  const sandboxInvalid = input.obligation.kind === 'sandbox_calculation' &&
+    input.evaluation.findings.some((finding) => finding.code === 'response.sandbox_evidence_invalid')
+  return sandboxInvalid ? 'invalid' as const : 'open' as const
+}
+
+function additionalObligationsFromResponseEvaluation(
+  evaluation: ResponseEvaluation,
+): AdditionalObligationProjectionInput[] {
+  return loopObligationsFromResponseEvaluation(evaluation).map((obligation) => {
+    const status = responseEvaluationObligationStatus({ obligation, evaluation })
+    return {
+      obligationId: obligation.id,
+      kind: osKindForXoxObligation(obligation.kind),
+      status,
+      source: 'completion_evaluator',
+      reason: obligation.reason,
+      toolNames: obligation.toolNames,
+      capabilities: obligation.capabilities,
+      metadata: osMetadataFromXoxObligation(obligation),
+      evidenceIds: [],
+      invalidReasons: status === 'invalid' ? ['response_evaluation_invalid'] : [],
+    }
+  })
+}
+
+function xoxProjectionFromOsProjection(input: {
+  ledger: AgentLoopObligationLedger
+  projection: OsAgentLoopObligationLedgerProjection
+}): AgentLoopObligationLedgerProjection {
+  const originalById = new Map(input.ledger.obligations.map((obligation) => [obligation.id, obligation]))
+  return {
+    schemaVersion: input.ledger.schemaVersion,
+    runId: input.ledger.runId,
+    openCount: input.projection.openCount,
+    satisfiedCount: input.projection.satisfiedCount,
+    invalidCount: input.projection.invalidCount,
+    blockedCount: input.projection.blockedCount,
+    obligations: input.projection.obligations.map((obligation) => {
+      const original = originalById.get(obligation.obligationId)
+      const fallbackKind = obligation.kind === 'assistant_final_answer' ? 'assistant_final_answer' : 'domain_fact'
+      const requiredDataScopes = original?.requiredDataScopes ??
+        metadataStringArray(obligation.metadata, 'requiredDataScopes')
+      const requiredMetrics = original?.requiredMetrics ??
+        metadataStringArray(obligation.metadata, 'requiredMetrics')
+      return {
+        id: obligation.obligationId,
+        kind: original?.kind ?? xoxKindFromOsMetadata(obligation.metadata, fallbackKind),
+        status: obligation.status,
+        source: original?.source ?? xoxSourceFromOsSource(obligation.source),
+        reason: obligation.reason,
+        toolNames: obligation.toolNames,
+        ...(requiredDataScopes ? { requiredDataScopes } : {}),
+        ...(requiredMetrics ? { requiredMetrics } : {}),
+        evidenceIds: obligation.evidenceIds,
+        invalidReasons: obligation.invalidReasons,
+      }
+    }),
+  }
+}
+
+export function serializeObligationLedgerForResponseEvent(input: {
+  ledger: AgentLoopObligationLedger
+  evaluation: ResponseEvaluation
+}): AgentLoopObligationLedgerProjection {
+  const projection = projectObligationLedgerWithAdditionalObligations({
+    ledger: osLedgerFromXoxLedger(input.ledger),
+    obligations: additionalObligationsFromResponseEvaluation(input.evaluation),
+  })
+  return xoxProjectionFromOsProjection({
+    ledger: input.ledger,
+    projection,
+  })
 }
