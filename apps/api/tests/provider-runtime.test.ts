@@ -3,11 +3,6 @@ import type { Settings } from '../src/core/settings.js'
 import type { ChatTool } from '../src/agent/tool-catalog.js'
 import type { RuntimePlanningInput, RuntimePlanResult } from '../src/agent/runtime/runtime-adapter.js'
 import {
-  HIGH_VOLUME_STRUCTURED_MAX_TOKENS,
-  HIGH_VOLUME_STRUCTURED_TIMEOUT_MS,
-  HIGH_VOLUME_STRUCTURED_TOOL_NAMES,
-} from '../src/agent/runtime/high-volume-tool-policy.js'
-import {
   applyProviderRuntimeRetryPatch,
   buildProviderRuntimeRetryPatch,
   classifyProviderHttpError,
@@ -29,6 +24,13 @@ import {
 } from '@agentic-os/runtime-openai-compatible'
 import { readDraftsFromRuntimeResult } from '../src/agent/action-draft-builder.js'
 import { OpenAICompatibleChatAdapter } from '../src/agent/runtime/openai-compatible-chat-adapter.js'
+
+const XOX_HIGH_VOLUME_STRUCTURED_TOOL_NAMES = [
+  'workspace_configure_operating_model',
+  'sandbox_run_code',
+] as const
+const XOX_HIGH_VOLUME_STRUCTURED_MAX_TOKENS = 48_000
+const XOX_HIGH_VOLUME_STRUCTURED_TIMEOUT_MS = 360_000
 
 function settings(provider: string, model: string): Settings {
   return {
@@ -105,9 +107,9 @@ function applyAgenticOsRuntimeRetry(
     availableToolNames: input.tools.map((item) => item.function.name),
     baselineMaxTokens: input.maxTokens ?? 1600,
     baselineRequestTimeoutMs: input.requestTimeoutMs ?? input.settings.agentProviderRequestTimeoutMs,
-    highVolumeToolNames: HIGH_VOLUME_STRUCTURED_TOOL_NAMES,
-    highVolumeRetryMaxTokens: HIGH_VOLUME_STRUCTURED_MAX_TOKENS,
-    highVolumeRetryTimeoutMs: HIGH_VOLUME_STRUCTURED_TIMEOUT_MS,
+    highVolumeToolNames: XOX_HIGH_VOLUME_STRUCTURED_TOOL_NAMES,
+    highVolumeRetryMaxTokens: XOX_HIGH_VOLUME_STRUCTURED_MAX_TOKENS,
+    highVolumeRetryTimeoutMs: XOX_HIGH_VOLUME_STRUCTURED_TIMEOUT_MS,
     ...(result?.error ? { error: result.error } : {}),
   })
   return applyProviderRuntimeRetryPatch(

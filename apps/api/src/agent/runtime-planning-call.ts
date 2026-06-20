@@ -4,13 +4,6 @@ import type { PlannerContext } from './planning-context.js'
 import { addRuntimeStreamRunEvent } from './runtime-trace-events.js'
 import { planWithRuntimeAdapter, type RuntimeChatMessage, type RuntimePlanningInput, type RuntimePlanError, type RuntimePlanResult } from './runtime/runtime-adapter.js'
 import type { Settings } from '../core/settings.js'
-import {
-  HIGH_VOLUME_STRUCTURED_TOOL_NAMES,
-  HIGH_VOLUME_STRUCTURED_MAX_TOKENS,
-  HIGH_VOLUME_STRUCTURED_TIMEOUT_MS,
-  highVolumeStructuredToolName,
-  hasHighVolumeStructuredTool,
-} from './runtime/high-volume-tool-policy.js'
 import { addRunEvent } from './run-events.js'
 import { plannerSystemPrompt } from './prompt-registry.js'
 import type { AgentToolObservation } from './tool-observation-continuation.js'
@@ -31,10 +24,25 @@ import {
 } from '@agentic-os/runtime-openai-compatible'
 
 const PLANNING_USER_CONTENT_MAX_CHARS = 64_000
+const XOX_HIGH_VOLUME_STRUCTURED_TOOL_NAMES = [
+  'workspace_configure_operating_model',
+  'sandbox_run_code',
+] as const
+const XOX_HIGH_VOLUME_STRUCTURED_MAX_TOKENS = 48_000
+const XOX_HIGH_VOLUME_STRUCTURED_TIMEOUT_MS = 360_000
 
 function plannerTokenBudget(message: string) {
   const structuredLineCount = message.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).length
   return message.length >= 600 || structuredLineCount >= 8 ? 6000 : 1600
+}
+
+function highVolumeStructuredToolName(tools: RuntimePlanningInput['tools']) {
+  const toolNames = new Set(tools.map((tool) => tool.function.name))
+  return XOX_HIGH_VOLUME_STRUCTURED_TOOL_NAMES.find((name) => toolNames.has(name)) ?? null
+}
+
+function hasHighVolumeStructuredTool(tools: RuntimePlanningInput['tools']) {
+  return highVolumeStructuredToolName(tools) !== null
 }
 
 function hasRuntimeTool(tools: RuntimePlanningInput['tools'], toolName: string) {
@@ -95,7 +103,7 @@ function runtimeMaxTokens(input: {
   priorObservationCount: number
   loopObligationPlan?: PlannerContext['loopObligationPlan']
 }) {
-  return isHighVolumeStructuredPlanning(input) ? HIGH_VOLUME_STRUCTURED_MAX_TOKENS : plannerTokenBudget(input.message)
+  return isHighVolumeStructuredPlanning(input) ? XOX_HIGH_VOLUME_STRUCTURED_MAX_TOKENS : plannerTokenBudget(input.message)
 }
 
 function plannerRequestTimeoutMs(input: {
@@ -120,7 +128,7 @@ function runtimeRequestTimeoutMs(input: {
   toolCount: number
   stableLongToolMode: boolean
 }) {
-  if (input.stableLongToolMode) return Math.max(input.baseTimeoutMs, HIGH_VOLUME_STRUCTURED_TIMEOUT_MS)
+  if (input.stableLongToolMode) return Math.max(input.baseTimeoutMs, XOX_HIGH_VOLUME_STRUCTURED_TIMEOUT_MS)
   return plannerRequestTimeoutMs(input)
 }
 
@@ -416,9 +424,9 @@ export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePl
       availableToolNames: runtimeInput.tools.map((tool) => tool.function.name),
       baselineMaxTokens: runtimeInput.maxTokens ?? 1600,
       baselineRequestTimeoutMs: runtimeInput.requestTimeoutMs ?? runtimeInput.settings.agentProviderRequestTimeoutMs,
-      highVolumeToolNames: HIGH_VOLUME_STRUCTURED_TOOL_NAMES,
-      highVolumeRetryMaxTokens: HIGH_VOLUME_STRUCTURED_MAX_TOKENS,
-      highVolumeRetryTimeoutMs: HIGH_VOLUME_STRUCTURED_TIMEOUT_MS,
+      highVolumeToolNames: XOX_HIGH_VOLUME_STRUCTURED_TOOL_NAMES,
+      highVolumeRetryMaxTokens: XOX_HIGH_VOLUME_STRUCTURED_MAX_TOKENS,
+      highVolumeRetryTimeoutMs: XOX_HIGH_VOLUME_STRUCTURED_TIMEOUT_MS,
       ...(first?.error ? { error: first.error } : {}),
     })
     const retryInput = applyProviderRuntimeRetryPatch(
