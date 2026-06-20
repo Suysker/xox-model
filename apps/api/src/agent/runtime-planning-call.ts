@@ -2,7 +2,7 @@ import { buildAgentContextPack } from './context-pack.js'
 import { redactSecretLikeContent } from './memory.js'
 import type { PlannerContext } from './planning-context.js'
 import { addRuntimeStreamRunEvent } from './runtime-trace-events.js'
-import { planWithRuntimeAdapter, type RuntimeChatMessage, type RuntimePlanningInput, type RuntimePlanError, type RuntimePlanResult } from './runtime/runtime-adapter.js'
+import { planWithRuntimeAdapter, type RuntimeChatMessage, type RuntimePlanningInput, type RuntimePlanResult } from './runtime/runtime-adapter.js'
 import type { Settings } from '../core/settings.js'
 import { addRunEvent } from './run-events.js'
 import { plannerSystemPrompt } from './prompt-registry.js'
@@ -15,12 +15,11 @@ import {
 } from '@agentic-os/core'
 import type { RuntimeToolCatalogProjection } from './tool-gateway.js'
 import {
-  applyProviderRuntimeRetryPatch,
-  buildProviderRuntimeRetryPatch,
   buildProviderToolObservationTurnMessages,
   isRecoverableProviderHttpRuntimeError,
   resolveProviderRuntimeProfile,
-  shouldRetryProviderRuntimeResult,
+  runOpenAICompatibleRuntimePlanningRecovery,
+  type ProviderRuntimeRetryError,
 } from '@agentic-os/runtime-openai-compatible'
 
 const PLANNING_USER_CONTENT_MAX_CHARS = 64_000
@@ -176,7 +175,7 @@ async function addNonStreamPlanningPreface(ctx: PlannerContext, result: RuntimeP
   })
 }
 
-function providerRetryEventMessage(error?: RuntimePlanError) {
+function providerRetryEventMessage(error?: ProviderRuntimeRetryError) {
   if (error?.kind === 'provider_response_error') {
     if (error.toolCallBoundary?.code === 'tool_call_arguments_truncated') {
       return '模型服务返回的流式工具调用参数不完整，正在改用非流式请求对同一轮规划重试一次。'
@@ -214,36 +213,16 @@ function attachMaterializedToolInventory(
   }
 }
 
-function deferredToolNamesFromBoundary(result: RuntimePlanResult | null | undefined) {
-  if (result?.error?.kind !== 'provider_response_error') return []
-  if (result.error.toolCallBoundary?.code !== 'tool_call_registered_but_deferred') return []
-  return result.error.toolCallBoundary.toolNames
+function runtimeObservedProviderToolNames(result: RuntimePlanResult | null | undefined) {
+  return (result?.steps ?? [])
+    .map((step) => step.providerToolName)
+    .filter((name): name is string => typeof name === 'string' && name.length > 0)
 }
 
-function observedToolNames(result: RuntimePlanResult | null | undefined) {
-  return new Set(
-    (result?.steps ?? [])
-      .map((step) => step.providerToolName)
-      .filter((name): name is string => typeof name === 'string' && name.length > 0),
-  )
-}
-
-function missingObservationToolNames(
-  first: RuntimePlanResult | null | undefined,
-  retry: RuntimePlanResult | null | undefined,
-) {
-  const attempted = [...new Set(first?.error?.toolNames ?? [])]
-  if (attempted.length === 0) return []
-  const observed = observedToolNames(retry)
-  return attempted.filter((name) => !observed.has(name))
-}
-
-function missingObservationBoundaryResult(
-  first: RuntimePlanResult | null | undefined,
-  retry: RuntimePlanResult | null | undefined,
+function providerBoundaryResultForMissingObservation(
+  first: RuntimePlanResult,
 ): RuntimePlanResult | null {
   if (first?.error?.kind !== 'provider_response_error') return null
-  if (missingObservationToolNames(first, retry).length === 0) return null
   return {
     source: first.source,
     steps: [],
@@ -261,10 +240,8 @@ function requiredFactsForToolEvidence(toolNames: readonly string[]) {
 
 async function addToolEvidenceRequirement(
   ctx: PlannerContext,
-  first: RuntimePlanResult | null | undefined,
-  retry: RuntimePlanResult | null | undefined,
+  toolNames: readonly string[],
 ) {
-  const toolNames = missingObservationToolNames(first, retry)
   if (toolNames.length === 0) return
   const requiredGoalFacts = requiredFactsForToolEvidence(toolNames)
   await addRunEvent(ctx.db, {
@@ -392,73 +369,69 @@ export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePl
     })
   }
 
-  const first = await planWithRuntimeAdapter(runtimeInput)
-  const deferredToolNames = deferredToolNamesFromBoundary(first)
-  if (deferredToolNames.length > 0 && !ctx.abortSignal?.aborted) {
-    const materializedInput = runtimeInputWithMaterializedTools(runtimeInput, toolCatalog, deferredToolNames)
-    if (materializedInput) {
-      await addRunEvent(ctx.db, {
-        threadId: ctx.threadId,
-        runId: ctx.runId,
-        type: 'tool_catalog_materializing',
-        title: '工具目录扩展',
-        message: '模型选择了已注册但尚未物化的工具，正在扩展本轮工具目录并重新规划。',
-        status: 'running',
-        data: {
-          toolNames: deferredToolNames,
-          previousVisibleToolNames: toolCatalog.visibleToolNames,
-          nextVisibleToolNames: materializedInput.tools.map((tool) => tool.function.name),
-        },
-      })
-      const materialized = attachMaterializedToolInventory(
-        await planWithRuntimeAdapter(materializedInput),
-        toolCatalog,
-        materializedInput.tools,
-      )
-      await addNonStreamPlanningPreface(ctx, materialized)
-      return materialized
-    }
-  }
-  if (shouldRetryProviderRuntimeResult(first) && !ctx.abortSignal?.aborted) {
-    const retryPatch = buildProviderRuntimeRetryPatch({
-      availableToolNames: runtimeInput.tools.map((tool) => tool.function.name),
-      baselineMaxTokens: runtimeInput.maxTokens ?? 1600,
-      baselineRequestTimeoutMs: runtimeInput.requestTimeoutMs ?? runtimeInput.settings.agentProviderRequestTimeoutMs,
-      highVolumeToolNames: XOX_HIGH_VOLUME_STRUCTURED_TOOL_NAMES,
-      highVolumeRetryMaxTokens: XOX_HIGH_VOLUME_STRUCTURED_MAX_TOKENS,
-      highVolumeRetryTimeoutMs: XOX_HIGH_VOLUME_STRUCTURED_TIMEOUT_MS,
-      ...(first?.error ? { error: first.error } : {}),
-    })
-    const retryInput = applyProviderRuntimeRetryPatch(
-      runtimeInput,
-      retryPatch,
-      { getToolName: (tool) => tool.function.name },
-    )
-    await addRunEvent(ctx.db, {
-      threadId: ctx.threadId,
-      runId: ctx.runId,
-      type: 'provider_retrying',
-      title: '模型服务请求重试',
-      message: providerRetryEventMessage(first?.error),
-      status: 'running',
-      data: {
-        provider: ctx.settings.openaiCompatibleProvider,
-        errorKind: first?.error?.kind,
-        retryStream: retryInput.stream ?? true,
-        retryTool: retryInput.tools.length === 1 ? retryInput.tools[0]?.function.name ?? null : null,
-        requestTimeoutMs: retryInput.requestTimeoutMs ?? ctx.settings.agentProviderRequestTimeoutMs,
-      },
-    })
-    const retry = attachToolInventory(await planWithRuntimeAdapter(retryInput), toolCatalog)
-    await addToolEvidenceRequirement(ctx, first, retry)
-    const boundaryResult = missingObservationBoundaryResult(first, retry)
-    if (boundaryResult) {
-      return attachToolInventory(boundaryResult, toolCatalog)
-    }
-    await addNonStreamPlanningPreface(ctx, retry)
-    return retry
-  }
-  const result = attachToolInventory(first, toolCatalog)
+  const result = await runOpenAICompatibleRuntimePlanningRecovery<RuntimePlanningInput, RuntimePlanResult>({
+    input: runtimeInput,
+    plan: (input) => planWithRuntimeAdapter(input),
+    getToolName: (tool) => tool.function.name,
+    baselineMaxTokens: runtimeInput.maxTokens ?? 1600,
+    baselineRequestTimeoutMs: runtimeInput.requestTimeoutMs ?? runtimeInput.settings.agentProviderRequestTimeoutMs,
+    highVolumeToolNames: XOX_HIGH_VOLUME_STRUCTURED_TOOL_NAMES,
+    highVolumeRetryMaxTokens: XOX_HIGH_VOLUME_STRUCTURED_MAX_TOKENS,
+    highVolumeRetryTimeoutMs: XOX_HIGH_VOLUME_STRUCTURED_TIMEOUT_MS,
+    ...(ctx.abortSignal ? { abortSignal: ctx.abortSignal } : {}),
+    materializeDeferredTools: (input, toolNames) => runtimeInputWithMaterializedTools(input, toolCatalog, toolNames),
+    observedToolNames: runtimeObservedProviderToolNames,
+    boundaryResultForMissingObservation: ({ first }) => providerBoundaryResultForMissingObservation(first),
+    decorateResult: (result, phase, input) => {
+      if (phase === 'materialized') {
+        return attachMaterializedToolInventory(result, toolCatalog, input.tools)
+      }
+      return attachToolInventory(result, toolCatalog)
+    },
+    onEvent: async (event) => {
+      if (event.kind === 'deferred_tools_materializing') {
+        await addRunEvent(ctx.db, {
+          threadId: ctx.threadId,
+          runId: ctx.runId,
+          type: 'tool_catalog_materializing',
+          title: '工具目录扩展',
+          message: '模型选择了已注册但尚未物化的工具，正在扩展本轮工具目录并重新规划。',
+          status: 'running',
+          data: {
+            toolNames: event.toolNames,
+            previousVisibleToolNames: toolCatalog.visibleToolNames,
+            nextVisibleToolNames: event.nextInput.tools.map((tool) => tool.function.name),
+          },
+        })
+        return
+      }
+
+      if (event.kind === 'provider_retrying') {
+        await addRunEvent(ctx.db, {
+          threadId: ctx.threadId,
+          runId: ctx.runId,
+          type: 'provider_retrying',
+          title: '模型服务请求重试',
+          message: providerRetryEventMessage(event.error),
+          status: 'running',
+          data: {
+            provider: ctx.settings.openaiCompatibleProvider,
+            errorKind: event.error?.kind,
+            retryStream: event.retryInput.stream ?? true,
+            retryTool: event.retryInput.tools.length === 1
+              ? event.retryInput.tools[0]?.function.name ?? null
+              : null,
+            requestTimeoutMs: event.retryInput.requestTimeoutMs ?? ctx.settings.agentProviderRequestTimeoutMs,
+          },
+        })
+        return
+      }
+
+      if (event.kind === 'runtime_evidence_required') {
+        await addToolEvidenceRequirement(ctx, event.toolNames)
+      }
+    },
+  })
   await addNonStreamPlanningPreface(ctx, result)
   return result
 }

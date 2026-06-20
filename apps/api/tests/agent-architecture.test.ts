@@ -360,6 +360,17 @@ describe('Agent ADR architecture boundaries', () => {
     expect(planningCall).not.toContain('tool_calls')
   })
 
+  it('keeps runtime planning recovery orchestration in Agentic OS runtime', () => {
+    const planningCall = source('agent/runtime-planning-call.ts')
+    expect(planningCall).toContain("@agentic-os/runtime-openai-compatible")
+    expect(planningCall).toContain('runOpenAICompatibleRuntimePlanningRecovery')
+    expect(planningCall).not.toContain('shouldRetryProviderRuntimeResult')
+    expect(planningCall).not.toContain('buildProviderRuntimeRetryPatch')
+    expect(planningCall).not.toContain('applyProviderRuntimeRetryPatch')
+    expect(planningCall).not.toContain('deferredToolNamesFromBoundary')
+    expect(planningCall).not.toContain('missingObservationToolNames')
+  })
+
   it('deletes the provider tool-call repair facade and keeps normalization in Agentic OS runtime', () => {
     const adapter = source('agent/runtime/openai-compatible-chat-adapter.ts')
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-repair.ts'))).toBe(false)
