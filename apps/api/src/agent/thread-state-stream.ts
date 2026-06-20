@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Kysely } from 'kysely'
-import type { AgentThreadEvent } from '@xox/contracts'
+import { openAgentServerSignalStateStream } from '@agentic-os/server'
+import type { AgentThreadEvent, AgentThreadState } from '@xox/contracts'
 import type { Database, Row } from '../db/schema.js'
 import type { CurrentUser } from '../modules/auth.js'
 import { buildThreadState } from './thread-store.js'
@@ -28,20 +29,6 @@ function writeSseComment(response: ServerResponse, comment: string) {
   response.write(`: ${comment}\n\n`)
 }
 
-async function writeAgentThreadStateEvent(
-  input: Omit<AgentThreadStateStreamInput, 'request' | 'heartbeatMs'> & { signal: AgentThreadEventSignal },
-) {
-  const state = await buildThreadState(input.db, input.workspace, input.user, input.threadId)
-  const event: AgentThreadEvent = {
-    type: 'thread_state',
-    threadId: input.threadId,
-    sequence: input.signal.sequence,
-    reason: input.signal.reason,
-    state,
-  }
-  writeSseEvent(input.response, 'thread_state', event)
-}
-
 export function openAgentThreadStateStream(input: AgentThreadStateStreamInput) {
   input.response.writeHead(200, {
     'Content-Type': 'text/event-stream; charset=utf-8',
@@ -51,27 +38,45 @@ export function openAgentThreadStateStream(input: AgentThreadStateStreamInput) {
   })
   input.response.flushHeaders?.()
 
-  let closed = false
-  let unsubscribe: () => void = () => undefined
   let heartbeat: NodeJS.Timeout | null = null
-  const close = () => {
-    if (closed) return
-    closed = true
+
+  const stopHeartbeat = () => {
     if (heartbeat) clearInterval(heartbeat)
-    unsubscribe()
-  }
-  const sendState = (signal: AgentThreadEventSignal) => {
-    void writeAgentThreadStateEvent({ ...input, signal }).catch((error) => {
-      writeSseEvent(input.response, 'error', { message: safeRunErrorMessage(error) })
-      close()
-    })
+    heartbeat = null
   }
 
-  unsubscribe = agentThreadEvents.subscribe(input.threadId, sendState)
+  const stateStream = openAgentServerSignalStateStream<AgentThreadEventSignal, AgentThreadState>({
+    initialSignal: {
+      threadId: input.threadId,
+      sequence: 0,
+      reason: 'thread_restored',
+    },
+    subscribe: (listener) => agentThreadEvents.subscribe(input.threadId, listener),
+    loadState: () => buildThreadState(input.db, input.workspace, input.user, input.threadId),
+    emitState: ({ signal, state }) => {
+      const event: AgentThreadEvent = {
+        type: 'thread_state',
+        threadId: input.threadId,
+        sequence: signal.sequence,
+        reason: signal.reason,
+        state,
+      }
+      writeSseEvent(input.response, 'thread_state', event)
+    },
+    emitError: ({ error }) => {
+      writeSseEvent(input.response, 'error', { message: safeRunErrorMessage(error) })
+      stopHeartbeat()
+    },
+  })
+
+  const close = () => {
+    stopHeartbeat()
+    stateStream.close()
+  }
+
   heartbeat = setInterval(() => writeSseComment(input.response, 'heartbeat'), input.heartbeatMs ?? 15_000)
   heartbeat.unref?.()
 
   input.request.on('close', close)
   input.request.on('aborted', close)
-  sendState({ threadId: input.threadId, sequence: 0, reason: 'thread_restored' })
 }
