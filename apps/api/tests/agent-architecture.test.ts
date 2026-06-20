@@ -64,7 +64,6 @@ describe('Agent ADR architecture boundaries', () => {
       'agent/runtime/openai-agents-adapter.ts',
       'agent/runtime/openai-compatible-chat-adapter.ts',
       'agent/runtime/runtime-adapter.ts',
-      'agent/runtime/tool-call-repair.ts',
     ]
     const forbidden = [
       /['"]\.\.\/\.\.\/db\//,
@@ -78,6 +77,7 @@ describe('Agent ADR architecture boundaries', () => {
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'provider-failover-policy.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'provider-request-shaper.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'provider-probe.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-repair.ts'))).toBe(false)
   })
 
   it('keeps routes as transport glue instead of a planner/runtime/executor owner', () => {
@@ -132,6 +132,7 @@ describe('Agent ADR architecture boundaries', () => {
     expect(existsSync(join(srcRoot, 'agent', 'runtime-conversation-log.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'adapter-router.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-validator.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-repair.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'tool-runtime', 'approval-policy-composer.ts'))).toBe(false)
 
     const obsoleteToolContextDir = join(srcRoot, 'agent', 'tool-context-engine')
@@ -346,17 +347,18 @@ describe('Agent ADR architecture boundaries', () => {
     expect(planningCall).not.toContain('tool_calls')
   })
 
-  it('keeps provider tool-call normalization in Agentic OS runtime', () => {
-    const repair = source('agent/runtime/tool-call-repair.ts')
+  it('deletes the provider tool-call repair facade and keeps normalization in Agentic OS runtime', () => {
     const adapter = source('agent/runtime/openai-compatible-chat-adapter.ts')
-    expect(repair).toContain("@agentic-os/runtime-openai-compatible")
-    expect(repair).toContain('normalizeProviderToolCallsForExecution')
-    expect(repair).not.toContain('extractBalancedJson')
-    expect(repair).not.toContain('parseToolArgumentsWithRepair')
-    expect(repair).not.toContain('argumentBoundaryCode')
-    expect(repair).not.toContain('outside the current effective tool inventory')
-    expect(repair).not.toContain('before the tool schema was materialized')
+    expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-repair.ts'))).toBe(false)
+    expect(adapter).toContain("@agentic-os/runtime-openai-compatible")
+    expect(adapter).toContain('normalizeProviderToolCallsForExecution')
     expect(adapter).toContain('plannerStepsFromProviderToolCalls')
+    expect(adapter).toContain('toolCallToPlannerStep')
+    expect(adapter).not.toContain('extractBalancedJson')
+    expect(adapter).not.toContain('parseToolArgumentsWithRepair')
+    expect(adapter).not.toContain('argumentBoundaryCode')
+    expect(adapter).not.toContain('outside the current effective tool inventory')
+    expect(adapter).not.toContain('before the tool schema was materialized')
     expect(adapter).not.toContain('validateProviderToolCallsForExecution')
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-validator.ts'))).toBe(false)
   })

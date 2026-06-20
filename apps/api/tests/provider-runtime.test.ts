@@ -12,8 +12,12 @@ import {
   buildProviderRuntimeRetryPatch,
   classifyProviderHttpError,
   extractBalancedJson,
+  normalizeProviderToolCallsForExecution,
+  parseToolArguments,
+  ProviderToolCallBoundaryError,
   normalizeProviderToolSchemas,
   providerToolObservationReplayMessages as buildProviderToolObservationReplayMessages,
+  repairToolName,
   resolveProviderRuntimeCapability,
   resolveProviderRuntimeProfile,
   resolveRuntimeThinkingLevel,
@@ -25,12 +29,6 @@ import {
 } from '@agentic-os/runtime-openai-compatible'
 import { readDraftsFromRuntimeResult } from '../src/agent/runtime-plan-reader.js'
 import { OpenAICompatibleChatAdapter } from '../src/agent/runtime/openai-compatible-chat-adapter.js'
-import {
-  parseToolArguments,
-  plannerStepsFromProviderToolCalls,
-  ProviderToolCallParseError,
-  repairToolName,
-} from '../src/agent/runtime/tool-call-repair.js'
 
 function settings(provider: string, model: string): Settings {
   return {
@@ -421,7 +419,7 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
     ).toThrow(SyntaxError)
     expect(parseToolArguments(['not', 'object'])).toEqual({})
 
-    const steps = plannerStepsFromProviderToolCalls({
+    const calls = normalizeProviderToolCallsForExecution({
       allowedToolNames: ['ledger_create_member_income'],
       toolCalls: [{
         id: 'call_0_ledger_create_member_income',
@@ -431,17 +429,21 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
         },
       }],
     })
-    expect(steps).toEqual([
+    expect(calls).toEqual([
       expect.objectContaining({
-        intent: 'ledger.create_member_income',
-        monthLabel: '3月',
-        memberName: '成员 A',
-        offlineUnits: 1,
+        toolName: 'ledger_create_member_income',
+        arguments: {
+          monthLabel: '3月',
+          memberName: '成员 A',
+          offlineUnits: 1,
+        },
+        providerToolCallIndex: 0,
+        providerToolCallId: 'call_0_ledger_create_member_income',
       }),
     ])
 
     try {
-      plannerStepsFromProviderToolCalls({
+      normalizeProviderToolCallsForExecution({
         allowedToolNames: ['workspace_rename', 'workspace_configure_operating_model'],
         toolCalls: [
           {
@@ -464,17 +466,17 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
       })
       throw new Error('Expected malformed second tool call to fail')
     } catch (error) {
-      expect(error).toBeInstanceOf(ProviderToolCallParseError)
-      expect((error as ProviderToolCallParseError).failedToolName).toBe('workspace_configure_operating_model')
-      expect((error as ProviderToolCallParseError).toolNames[0]).toBe('workspace_configure_operating_model')
-      expect((error as ProviderToolCallParseError).boundaryViolation()).toMatchObject({
+      expect(error).toBeInstanceOf(ProviderToolCallBoundaryError)
+      expect((error as ProviderToolCallBoundaryError).failedToolName).toBe('workspace_configure_operating_model')
+      expect((error as ProviderToolCallBoundaryError).toolNames[0]).toBe('workspace_configure_operating_model')
+      expect((error as ProviderToolCallBoundaryError).boundaryViolation()).toMatchObject({
         code: 'tool_call_arguments_truncated',
         toolName: 'workspace_configure_operating_model',
       })
     }
 
     try {
-      plannerStepsFromProviderToolCalls({
+      normalizeProviderToolCallsForExecution({
         allowedToolNames: ['workspace_patch_config'],
         toolCalls: [{
           id: 'call_0_data_query_workspace',
@@ -487,8 +489,8 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
       })
       throw new Error('Expected unavailable tool call to fail')
     } catch (error) {
-      expect(error).toBeInstanceOf(ProviderToolCallParseError)
-      expect((error as ProviderToolCallParseError).boundaryViolation()).toMatchObject({
+      expect(error).toBeInstanceOf(ProviderToolCallBoundaryError)
+      expect((error as ProviderToolCallBoundaryError).boundaryViolation()).toMatchObject({
         code: 'tool_call_not_in_effective_inventory',
         toolName: 'data_query_workspace',
         toolNames: ['data_query_workspace'],
@@ -497,7 +499,7 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
     }
 
     try {
-      plannerStepsFromProviderToolCalls({
+      normalizeProviderToolCallsForExecution({
         allowedToolNames: ['data_query_workspace'],
         materializableToolNames: ['workspace_patch_config'],
         toolCalls: [{
@@ -511,8 +513,8 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
       })
       throw new Error('Expected deferred registered tool call to request materialization')
     } catch (error) {
-      expect(error).toBeInstanceOf(ProviderToolCallParseError)
-      expect((error as ProviderToolCallParseError).boundaryViolation()).toMatchObject({
+      expect(error).toBeInstanceOf(ProviderToolCallBoundaryError)
+      expect((error as ProviderToolCallBoundaryError).boundaryViolation()).toMatchObject({
         code: 'tool_call_registered_but_deferred',
         toolName: 'workspace_patch_config',
         toolNames: ['workspace_patch_config'],
@@ -1050,6 +1052,53 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
           toolName: 'data_query_workspace',
           toolNames: ['data_query_workspace'],
           effectiveToolNames: ['workspace_patch_config'],
+        },
+      })
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('fails closed when a normalized provider tool has no xox planner handler', async () => {
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      id: 'chatcmpl_unhandled_tool',
+      object: 'chat.completion',
+      choices: [{
+        index: 0,
+        finish_reason: 'tool_calls',
+        message: {
+          role: 'assistant',
+          content: null,
+          tool_calls: [{
+            id: 'call_unmapped_runtime_tool',
+            type: 'function',
+            function: {
+              name: 'unmapped_runtime_tool',
+              arguments: JSON.stringify({ value: true }),
+            },
+          }],
+        },
+      }],
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })) as typeof fetch
+
+    try {
+      const result = await new OpenAICompatibleChatAdapter().plan(runtimeInput('deepseek', 'deepseek-v4-pro', [
+        tool('unmapped_runtime_tool'),
+      ]))
+      expect(result?.steps).toHaveLength(0)
+      expect(result?.assistantText).toBeUndefined()
+      expect(result?.error).toMatchObject({
+        kind: 'provider_response_error',
+        toolNames: ['unmapped_runtime_tool'],
+        toolCallBoundary: {
+          code: 'tool_call_without_registered_handler',
+          toolName: 'unmapped_runtime_tool',
+          toolNames: ['unmapped_runtime_tool'],
+          effectiveToolNames: ['unmapped_runtime_tool'],
         },
       })
     } finally {
