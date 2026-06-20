@@ -3,7 +3,9 @@ import {
   actionExecutionObservation,
   actionFailureObservation,
   actionPreviewObservation,
+  toolSupervisorFailureObservation,
 } from '../src/agent/tool-observation-continuation.js'
+import { toolSupervisorFailureReadDraft } from '../src/agent/action-draft-builder.js'
 import type { Row } from '../src/db/schema.js'
 
 function action(overrides: Partial<Row<'agent_action_requests'>> = {}): Row<'agent_action_requests'> {
@@ -106,6 +108,53 @@ describe('xox action observations through Agentic OS envelopes', () => {
       completed: false,
       reason: 'manual approval required',
       error: null,
+    })
+  })
+
+  it('keeps tool supervisor failure envelopes in Agentic OS core adapters', () => {
+    const step = {
+      intent: 'data.queryWorkspace',
+      providerToolName: 'data_query_workspace',
+      providerToolCallId: 'call_data',
+      providerToolArguments: { scope: 'workspace_summary' },
+    }
+
+    const read = toolSupervisorFailureReadDraft(step)
+    const observation = toolSupervisorFailureObservation(step)
+
+    expect(read).toMatchObject({
+      title: '工具未生成业务结果',
+      message: '工具 data_query_workspace 没有生成可执行动作或可观察结果。',
+      readKind: 'tool_observation',
+      toolName: 'data_query_workspace',
+      toolCallId: 'call_data',
+      toolArguments: { scope: 'workspace_summary' },
+      displayPreview: '工具没有生成业务结果。',
+      observationStatus: 'failed',
+      observationOutcome: 'failed_terminal',
+      status: 'failed',
+    })
+    expect(modelContent(read as { modelContent: string })).toMatchObject({
+      observationType: 'tool_supervisor_failure',
+      toolName: 'data_query_workspace',
+      toolCallId: 'call_data',
+      message: 'Tool data_query_workspace did not produce an action or observation.',
+    })
+
+    expect(observation).toMatchObject({
+      title: '工具未生成业务结果',
+      toolName: 'data_query_workspace',
+      toolCallId: 'call_data',
+      toolArguments: { scope: 'workspace_summary' },
+      displayPreview: '工具 data_query_workspace 没有生成可执行动作或可观察结果。',
+      status: 'failed',
+      outcome: 'failed_terminal',
+    })
+    expect(modelContent(observation)).toMatchObject({
+      observationType: 'tool_supervisor_failure',
+      toolName: 'data_query_workspace',
+      toolCallId: 'call_data',
+      message: 'Tool data_query_workspace did not produce an action or observation.',
     })
   })
 })

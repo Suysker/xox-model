@@ -407,6 +407,25 @@ describe('Agent ADR architecture boundaries', () => {
     expect(existsSync(join(srcRoot, 'agent', 'tool-runtime', 'tool-execution-events.ts'))).toBe(false)
   })
 
+  it('keeps tool supervisor failure envelopes out of the host kit', () => {
+    const hostKit = source('agent/agentic-os/xox-agentic-os-host-kit.ts')
+    expect(hostKit).toContain('toolSupervisorFailureReadDraft')
+    expect(hostKit).toContain('toolSupervisorFailureObservation')
+    expect(hostKit).not.toContain('function fallbackToolObservation')
+    expect(hostKit).not.toContain("observationType: 'tool_supervisor_failure'")
+    expect(hostKit).not.toContain('Tool did not produce a business result.')
+
+    const draftBuilder = source('agent/action-draft-builder.ts')
+    expect(draftBuilder).toContain("@agentic-os/core")
+    expect(draftBuilder).toContain('buildToolSupervisorEmptyResultFailureObservation')
+    expect(draftBuilder).not.toContain('did not produce an action or observation')
+
+    const continuation = source('agent/tool-observation-continuation.ts')
+    expect(continuation).toContain("@agentic-os/core")
+    expect(continuation).toContain('buildToolSupervisorEmptyResultFailureObservation')
+    expect(continuation).not.toContain('did not produce an action or observation')
+  })
+
   it('keeps the tool observation continuation prompt in Agentic OS core', () => {
     const registry = source('agent/prompt-registry.ts')
     expect(registry).toContain("@agentic-os/core")

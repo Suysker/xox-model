@@ -4,7 +4,10 @@ import type {
   AgentToolObservationLane,
   AgentToolObservationOutcome,
 } from '@xox/contracts'
-import { classifyToolObservationOutcome } from '@agentic-os/core'
+import {
+  buildToolSupervisorEmptyResultFailureObservation,
+  classifyToolObservationOutcome,
+} from '@agentic-os/core'
 import { providerToolCallBoundaryObservations } from '@agentic-os/runtime-openai-compatible'
 import type { AgentActionDraft } from './approval-executor.js'
 import { redactSecretLikeContent } from './memory.js'
@@ -50,6 +53,35 @@ export function accountForbiddenRead(): ReadDraft {
     message: '账号登录、退出、注销、删除账号和改密等动作不能由 Agent 自动执行，请在账号入口手动操作。',
     readKind: 'tool_observation',
     status: 'info',
+  }
+}
+
+type ToolSupervisorFailureStep = Pick<
+  RuntimePlannerStep,
+  'intent' | 'providerToolName' | 'providerToolCallId' | 'providerToolArguments'
+>
+
+export function toolSupervisorFailureReadDraft(step: ToolSupervisorFailureStep): ReadDraft {
+  const toolName = step.providerToolName ?? step.intent ?? 'unknown_tool'
+  const toolCallId = step.providerToolCallId ?? `fallback_${toolName}`
+  const failure = buildToolSupervisorEmptyResultFailureObservation({
+    title: '工具未生成业务结果',
+    toolName,
+    toolCallId,
+    toolArguments: step.providerToolArguments ?? {},
+  })
+  return {
+    title: failure.title,
+    message: `工具 ${toolName} 没有生成可执行动作或可观察结果。`,
+    readKind: 'tool_observation',
+    toolName: failure.toolName,
+    toolCallId: failure.toolCallId ?? toolCallId,
+    toolArguments: failure.toolArguments,
+    displayPreview: '工具没有生成业务结果。',
+    modelContent: failure.modelContent,
+    observationStatus: failure.observationStatus,
+    observationOutcome: failure.observationOutcome,
+    status: failure.status,
   }
 }
 

@@ -73,6 +73,7 @@ import {
   buildPlannedItemFromRuntimeStep,
   isActionDraft,
   readDraftsFromRuntimeResult,
+  toolSupervisorFailureReadDraft,
   type PlannedItem,
   type PlannedItemResult,
 } from '../action-draft-builder.js'
@@ -127,6 +128,7 @@ import {
 import {
   actionExecutionObservation,
   continueModelAfterToolObservations,
+  toolSupervisorFailureObservation,
   type AgentToolObservation,
 } from '../tool-observation-continuation.js'
 import { runtimeIntentHandlers } from '../runtime-intent-handlers.js'
@@ -344,7 +346,7 @@ function agenticOsToolDefinition(
         }
       }
       const graph = await storeSingleToolStep(ctx, state, step)
-      const observation = graph.observations.at(-1) ?? fallbackToolObservation(step)
+      const observation = graph.observations.at(-1) ?? toolSupervisorFailureObservation(step)
       const osObservation = state.observationBridge.toCanonical(observation, state.xoxObservations.length)
       const handlerResult: OsToolHandlerResult = {
         content: osObservation.content,
@@ -463,24 +465,6 @@ function flattenPlannedItems(result: PlannedItemResult): PlannedItem[] {
   return Array.isArray(result) ? result : [result]
 }
 
-function fallbackToolObservation(step: AgentToolCallStep): AgentToolObservation {
-  const toolName = step.providerToolName ?? step.intent ?? 'unknown_tool'
-  return {
-    title: '工具未生成业务结果',
-    toolName,
-    toolCallId: step.providerToolCallId ?? `fallback_${toolName}`,
-    toolArguments: step.providerToolArguments ?? {},
-    displayPreview: `工具 ${toolName} 没有生成可执行动作或可观察结果。`,
-    modelContent: JSON.stringify({
-      observationType: 'tool_supervisor_failure',
-      toolName,
-      message: 'Tool did not produce a business result.',
-    }),
-    status: 'failed',
-    outcome: 'failed_terminal',
-  }
-}
-
 async function storeSingleToolStep(
   ctx: PlannerContext & { thread: Row<'agent_threads'> },
   state: XoxAgenticOsRunState,
@@ -489,22 +473,7 @@ async function storeSingleToolStep(
 ): Promise<StoredActionGraph> {
   const result = await buildPlannedItemFromRuntimeStep(ctx, step, runtimeIntentHandlers)
   const items = flattenPlannedItems(result)
-  const fallbackItem: PlannedItem = {
-    title: '工具未生成业务结果',
-    message: `工具 ${step.providerToolName ?? step.intent ?? 'unknown_tool'} 没有生成可执行动作或可观察结果。`,
-    readKind: 'tool_observation',
-    toolName: step.providerToolName ?? step.intent ?? 'unknown_tool',
-    toolCallId: step.providerToolCallId ?? `fallback_${step.providerToolName ?? step.intent ?? 'unknown_tool'}`,
-    toolArguments: step.providerToolArguments ?? {},
-    displayPreview: '工具没有生成业务结果。',
-    modelContent: JSON.stringify({
-      observationType: 'tool_supervisor_failure',
-      toolName: step.providerToolName ?? step.intent ?? null,
-    }),
-    observationStatus: 'failed',
-    observationOutcome: 'failed_terminal',
-    status: 'failed',
-  }
+  const fallbackItem = toolSupervisorFailureReadDraft(step)
   const graph = await storePlannedActionGraph(
     options.forceManualApproval ? { ...ctx, automationLevel: 'manual' } : ctx,
     {
@@ -1447,7 +1416,7 @@ function createXoxAgenticOsHost(
       }
 
       const graph = await storeSingleToolStep(ctx, state, step)
-      const xoxObservation = graph.observations.at(-1) ?? fallbackToolObservation(step)
+      const xoxObservation = graph.observations.at(-1) ?? toolSupervisorFailureObservation(step)
       const osObservation = state.observationBridge.toCanonical(xoxObservation, state.xoxObservations.length)
       const facts = parseToolObservationModelFacts(xoxObservation)
       const result: OsSandboxExecutionResult = {

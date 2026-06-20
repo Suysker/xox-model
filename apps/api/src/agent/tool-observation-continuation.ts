@@ -17,9 +17,11 @@ import {
 import {
   buildActionPreviewObservation,
   buildActionResultObservation,
+  buildToolSupervisorEmptyResultFailureObservation,
   runtimeMessagesFromConversationLog,
 } from '@agentic-os/core'
 import type { AgentToolObservationLane, AgentToolObservationOutcome } from '@xox/contracts'
+import type { AgentToolCallStep } from './tool-catalog.js'
 
 export type AgentToolObservation = {
   title: string
@@ -160,6 +162,31 @@ export function actionPreviewObservation(input: {
     toolCallId: `action_preview_${input.action.id}`,
     toolArguments: {},
   }) as AgentToolObservation
+}
+
+export function toolSupervisorFailureObservation(step: Pick<
+  AgentToolCallStep,
+  'intent' | 'providerToolName' | 'providerToolCallId' | 'providerToolArguments'
+>): AgentToolObservation {
+  const toolName = step.providerToolName ?? step.intent ?? 'unknown_tool'
+  const toolCallId = step.providerToolCallId ?? `fallback_${toolName}`
+  const displayPreview = `工具 ${toolName} 没有生成可执行动作或可观察结果。`
+  const failure = buildToolSupervisorEmptyResultFailureObservation({
+    title: '工具未生成业务结果',
+    toolName,
+    toolCallId,
+    toolArguments: step.providerToolArguments ?? {},
+  })
+  return {
+    title: failure.title,
+    toolName: failure.toolName,
+    toolCallId: failure.toolCallId ?? toolCallId,
+    toolArguments: failure.toolArguments,
+    displayPreview,
+    modelContent: failure.modelContent,
+    status: failure.observationStatus,
+    outcome: failure.observationOutcome,
+  }
 }
 
 export type ToolObservationContinuationContext = {
