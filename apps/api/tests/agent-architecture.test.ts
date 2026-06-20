@@ -287,6 +287,19 @@ describe('Agent ADR architecture boundaries', () => {
     expect(repair).not.toContain('before the tool schema was materialized')
   })
 
+  it('keeps provider probing runtime mechanics in Agentic OS runtime', () => {
+    const probe = source('agent/runtime/provider-probe.ts')
+    expect(probe).toContain("@agentic-os/runtime-openai-compatible")
+    expect(probe).toContain('probeProviderOpenAICompatibleProvider')
+    expect(probe).not.toContain('fetch(')
+    expect(probe).not.toContain('AbortController')
+    expect(probe).not.toContain('classifyProviderHttpError')
+    expect(probe).not.toContain('safeProviderErrorMessage')
+    expect(probe).not.toContain('shapeOpenAICompatibleChatRequest')
+    expect(probe).not.toContain('response.json')
+    expect(probe).not.toContain('choices?.')
+  })
+
   it('routes provider planning through the xox context pack without an obsolete local context wrapper', () => {
     const planningCall = source('agent/runtime-planning-call.ts')
     expect(planningCall).toContain("from './context-pack.js'")
