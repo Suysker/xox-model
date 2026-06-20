@@ -6,9 +6,12 @@ import {
   resolveProviderModelProfile,
   sanitizeOpenAICompatibleRequestBody,
 } from '@agentic-os/runtime-openai-compatible'
-import { superviseRuntimeToolCalls } from '../src/agent/tool-runtime/tool-call-supervisor.js'
-import { composeAgentWriteApprovalPolicy, evaluateToolLoopGuardrails } from '@agentic-os/core'
-import type { PlannerContext } from '../src/agent/planning-context.js'
+import {
+  composeAgentWriteApprovalPolicy,
+  evaluateToolLoopGuardrails,
+  runToolCallSupervisor,
+  type ToolSupervisorStepLike,
+} from '@agentic-os/core'
 import type { AgentToolObservation } from '../src/agent/tool-observation-continuation.js'
 
 function settings(provider = 'deepseek', model = 'deepseek-v4-pro'): Settings {
@@ -123,14 +126,16 @@ describe('Tool Runtime Maturity Layer', () => {
       }],
       createdAt: '2026-05-30T00:00:00.000Z',
     }
-    const ctx = {
+    const supervised = await runToolCallSupervisor<ToolSupervisorStepLike, {
+      title: string
+      message: string
+      status?: string
+      observationStatus?: 'completed' | 'failed'
+      modelContent?: string
+    }, AgentToolInventorySnapshot['tools'][number], AgentToolInventorySnapshot>({
       runId: 'run_1',
-      threadId: 'thread_1',
-    } as PlannerContext
-
-    const supervised = await superviseRuntimeToolCalls(ctx, {
+      inventoryTools: inventory.tools,
       inventorySnapshot: inventory,
-      emitRunEvents: false,
       steps: [
         {
           intent: 'data.query_workspace',
@@ -145,14 +150,31 @@ describe('Tool Runtime Maturity Layer', () => {
           providerToolArguments: { patches: [] },
         },
       ],
-      handlers: {
-        'data.query_workspace': async () => ({
+      executeToolCall: ({ call }) => {
+        if (call.toolName !== 'data_query_workspace') return []
+        return {
           title: '查询工作区数据',
           message: '回本周期未出现。',
-          readKind: 'tool_observation',
           status: 'info',
-        }),
+          observationStatus: 'completed' as const,
+        }
       },
+      createFailureItem: (failure) => ({
+        title: failure.title,
+        message: failure.message,
+        status: failure.status,
+        observationStatus: failure.observationStatus,
+        modelContent: failure.modelContent,
+      }),
+      toProducedItem: (item) => ({
+        kind: 'observation',
+        title: item.title,
+        message: item.message,
+        preview: item.message,
+        ...(item.status ? { status: item.status } : {}),
+        ...(item.observationStatus ? { observationStatus: item.observationStatus } : {}),
+        ...(item.modelContent ? { modelContent: item.modelContent } : {}),
+      }),
     })
 
     expect(supervised.items).toHaveLength(2)
@@ -161,7 +183,7 @@ describe('Tool Runtime Maturity Layer', () => {
       expect.objectContaining({ toolName: 'workspace_patch_config', status: 'failed', authorityClass: 'manual_only' }),
     ])
     const secondItem = supervised.items[1]
-    expect(secondItem && 'readKind' in secondItem ? secondItem.status : null).toBe('failed')
+    expect(secondItem?.status).toBe('failed')
   })
 
   it('detects repeated failures and no-progress loops as guardrail findings', () => {
