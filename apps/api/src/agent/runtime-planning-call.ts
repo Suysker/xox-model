@@ -2,14 +2,10 @@ import { buildAgentContextPack } from './context-pack.js'
 import { redactSecretLikeContent } from './memory.js'
 import type { PlannerContext } from './planning-context.js'
 import { addRuntimeStreamRunEvent } from './runtime-trace-events.js'
-import {
-  retryRuntimeInput,
-  retryRuntimeMessage,
-  shouldRetryRuntimePlan,
-} from './runtime/provider-failover-policy.js'
-import { planWithRuntimeAdapter, type RuntimeChatMessage, type RuntimePlanningInput, type RuntimePlanResult } from './runtime/runtime-adapter.js'
+import { planWithRuntimeAdapter, type RuntimeChatMessage, type RuntimePlanningInput, type RuntimePlanError, type RuntimePlanResult } from './runtime/runtime-adapter.js'
 import type { Settings } from '../core/settings.js'
 import {
+  HIGH_VOLUME_STRUCTURED_TOOL_NAMES,
   HIGH_VOLUME_STRUCTURED_MAX_TOKENS,
   HIGH_VOLUME_STRUCTURED_TIMEOUT_MS,
   highVolumeStructuredToolName,
@@ -26,8 +22,12 @@ import {
 } from '@agentic-os/core'
 import type { RuntimeToolCatalogProjection } from './tool-gateway.js'
 import {
+  applyProviderRuntimeRetryPatch,
+  buildProviderRuntimeRetryPatch,
   buildProviderToolObservationTurnMessages,
+  isRecoverableProviderHttpRuntimeError,
   resolveProviderRuntimeProfile,
+  shouldRetryProviderRuntimeResult,
 } from '@agentic-os/runtime-openai-compatible'
 
 const PLANNING_USER_CONTENT_MAX_CHARS = 64_000
@@ -166,6 +166,25 @@ async function addNonStreamPlanningPreface(ctx: PlannerContext, result: RuntimeP
     delta: text,
     preview: text,
   })
+}
+
+function providerRetryEventMessage(error?: RuntimePlanError) {
+  if (error?.kind === 'provider_response_error') {
+    if (error.toolCallBoundary?.code === 'tool_call_arguments_truncated') {
+      return '模型服务返回的流式工具调用参数不完整，正在改用非流式请求对同一轮规划重试一次。'
+    }
+    if (error.toolCallBoundary?.code === 'tool_call_stream_interrupted') {
+      return '模型服务的工具调用流中断，正在改用非流式请求对同一轮规划重试一次。'
+    }
+    return '模型服务返回的流式工具调用不可解析，正在改用非流式请求对同一轮规划重试一次。'
+  }
+  if (error?.kind === 'provider_timeout') {
+    return '模型服务响应超时，正在用更稳的同轮规划请求重试一次。'
+  }
+  if (isRecoverableProviderHttpRuntimeError(error)) {
+    return '模型服务返回临时服务错误，正在对同一轮规划重试一次。'
+  }
+  return '模型服务连接中断，正在对同一轮规划重试一次。'
 }
 
 function attachToolInventory(result: RuntimePlanResult | null, toolCatalog: RuntimeToolCatalogProjection): RuntimePlanResult | null {
@@ -392,14 +411,27 @@ export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePl
       return materialized
     }
   }
-  if (shouldRetryRuntimePlan(first) && !ctx.abortSignal?.aborted) {
-    const retryInput = retryRuntimeInput(runtimeInput, first)
+  if (shouldRetryProviderRuntimeResult(first) && !ctx.abortSignal?.aborted) {
+    const retryPatch = buildProviderRuntimeRetryPatch({
+      availableToolNames: runtimeInput.tools.map((tool) => tool.function.name),
+      baselineMaxTokens: runtimeInput.maxTokens ?? 1600,
+      baselineRequestTimeoutMs: runtimeInput.requestTimeoutMs ?? runtimeInput.settings.agentProviderRequestTimeoutMs,
+      highVolumeToolNames: HIGH_VOLUME_STRUCTURED_TOOL_NAMES,
+      highVolumeRetryMaxTokens: HIGH_VOLUME_STRUCTURED_MAX_TOKENS,
+      highVolumeRetryTimeoutMs: HIGH_VOLUME_STRUCTURED_TIMEOUT_MS,
+      ...(first?.error ? { error: first.error } : {}),
+    })
+    const retryInput = applyProviderRuntimeRetryPatch(
+      runtimeInput,
+      retryPatch,
+      { getToolName: (tool) => tool.function.name },
+    )
     await addRunEvent(ctx.db, {
       threadId: ctx.threadId,
       runId: ctx.runId,
       type: 'provider_retrying',
       title: '模型服务请求重试',
-      message: retryRuntimeMessage(first?.error),
+      message: providerRetryEventMessage(first?.error),
       status: 'running',
       data: {
         provider: ctx.settings.openaiCompatibleProvider,

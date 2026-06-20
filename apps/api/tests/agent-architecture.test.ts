@@ -63,7 +63,6 @@ describe('Agent ADR architecture boundaries', () => {
       'agent/runtime/high-volume-tool-policy.ts',
       'agent/runtime/openai-agents-adapter.ts',
       'agent/runtime/openai-compatible-chat-adapter.ts',
-      'agent/runtime/provider-failover-policy.ts',
       'agent/runtime/provider-probe.ts',
       'agent/runtime/provider-request-shaper.ts',
       'agent/runtime/runtime-adapter.ts',
@@ -78,6 +77,7 @@ describe('Agent ADR architecture boundaries', () => {
       /thread-store/,
     ]
     for (const file of runtimeFiles) expectNoImports(file, forbidden)
+    expect(existsSync(join(srcRoot, 'agent', 'runtime', 'provider-failover-policy.ts'))).toBe(false)
   })
 
   it('keeps routes as transport glue instead of a planner/runtime/executor owner', () => {

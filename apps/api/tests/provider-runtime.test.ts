@@ -2,9 +2,15 @@ import { describe, expect, it } from 'vitest'
 import type { Settings } from '../src/core/settings.js'
 import type { ChatTool } from '../src/agent/tool-catalog.js'
 import type { RuntimePlanningInput, RuntimePlanResult } from '../src/agent/runtime/runtime-adapter.js'
-import { retryRuntimeInput, shouldRetryRuntimePlan } from '../src/agent/runtime/provider-failover-policy.js'
+import {
+  HIGH_VOLUME_STRUCTURED_MAX_TOKENS,
+  HIGH_VOLUME_STRUCTURED_TIMEOUT_MS,
+  HIGH_VOLUME_STRUCTURED_TOOL_NAMES,
+} from '../src/agent/runtime/high-volume-tool-policy.js'
 import { shapeOpenAICompatibleChatRequest } from '../src/agent/runtime/provider-request-shaper.js'
 import {
+  applyProviderRuntimeRetryPatch,
+  buildProviderRuntimeRetryPatch,
   classifyProviderHttpError,
   extractBalancedJson,
   normalizeProviderToolSchemas,
@@ -14,6 +20,7 @@ import {
   resolveRuntimeThinkingLevel,
   resolveProviderModelProfile,
   resolveProviderModelRef,
+  shouldRetryProviderRuntimeResult,
   type ProviderReplayObservation,
 } from '@agentic-os/runtime-openai-compatible'
 import { readDraftsFromRuntimeResult } from '../src/agent/runtime-plan-reader.js'
@@ -71,6 +78,26 @@ function runtimeInput(provider: string, model: string, tools: ChatTool[] = [tool
     tools,
     stream: false,
   }
+}
+
+function applyAgenticOsRuntimeRetry(
+  input: RuntimePlanningInput,
+  result: RuntimePlanResult | null | undefined,
+): RuntimePlanningInput {
+  const patch = buildProviderRuntimeRetryPatch({
+    availableToolNames: input.tools.map((item) => item.function.name),
+    baselineMaxTokens: input.maxTokens ?? 1600,
+    baselineRequestTimeoutMs: input.requestTimeoutMs ?? input.settings.agentProviderRequestTimeoutMs,
+    highVolumeToolNames: HIGH_VOLUME_STRUCTURED_TOOL_NAMES,
+    highVolumeRetryMaxTokens: HIGH_VOLUME_STRUCTURED_MAX_TOKENS,
+    highVolumeRetryTimeoutMs: HIGH_VOLUME_STRUCTURED_TIMEOUT_MS,
+    ...(result?.error ? { error: result.error } : {}),
+  })
+  return applyProviderRuntimeRetryPatch(
+    input,
+    patch,
+    { getToolName: (item) => item.function.name },
+  )
 }
 
 function providerToolObservationReplayMessages(input: {
@@ -527,10 +554,10 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
       steps: [],
       error: { kind: 'provider_http_error', statusCode: 401, classification: 'auth' },
     }
-    expect(shouldRetryRuntimePlan(serverFailure)).toBe(true)
-    expect(shouldRetryRuntimePlan(authFailure)).toBe(false)
+    expect(shouldRetryProviderRuntimeResult(serverFailure)).toBe(true)
+    expect(shouldRetryProviderRuntimeResult(authFailure)).toBe(false)
 
-    const retry = retryRuntimeInput(runtimeInput('qwen', 'qwen3.5-plus', [
+    const retry = applyAgenticOsRuntimeRetry(runtimeInput('qwen', 'qwen3.5-plus', [
       tool('ledger_create_member_income'),
       tool('workspace_publish_release'),
     ]), {
@@ -545,7 +572,7 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
     expect(retry.tools.map((item) => item.function.name)).toEqual(['workspace_publish_release'])
     expect(retry.requestTimeoutMs).toBeGreaterThanOrEqual(240_000)
 
-    const operatingRetry = retryRuntimeInput(runtimeInput('deepseek', 'deepseek-v4-pro', [
+    const operatingRetry = applyAgenticOsRuntimeRetry(runtimeInput('deepseek', 'deepseek-v4-pro', [
       tool('workspace_configure_operating_model'),
       tool('workspace_rename'),
     ]), {
@@ -561,7 +588,7 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
     expect(operatingRetry.maxTokens).toBeGreaterThanOrEqual(48_000)
     expect(operatingRetry.requestTimeoutMs).toBeGreaterThanOrEqual(360_000)
 
-    const sandboxRetry = retryRuntimeInput(runtimeInput('deepseek', 'deepseek-v4-pro', [
+    const sandboxRetry = applyAgenticOsRuntimeRetry(runtimeInput('deepseek', 'deepseek-v4-pro', [
       tool('sandbox_run_code'),
       tool('data_query_workspace'),
     ]), {
@@ -577,7 +604,7 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
     expect(sandboxRetry.maxTokens).toBeGreaterThanOrEqual(48_000)
     expect(sandboxRetry.requestTimeoutMs).toBeGreaterThanOrEqual(360_000)
 
-    expect(shouldRetryRuntimePlan({
+    const outsideInventoryBoundary: RuntimePlanResult = {
       source: 'openai_compatible_tool_calls',
       steps: [],
       error: {
@@ -590,9 +617,10 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
         },
         toolNames: ['data_query_workspace'],
       },
-    })).toBe(false)
+    }
+    expect(shouldRetryProviderRuntimeResult(outsideInventoryBoundary)).toBe(false)
 
-    expect(shouldRetryRuntimePlan({
+    const truncatedArgumentsBoundary: RuntimePlanResult = {
       source: 'openai_compatible_tool_calls',
       steps: [],
       error: {
@@ -605,7 +633,8 @@ describe('OpenClaw-inspired provider runtime compatibility layer', () => {
         },
         toolNames: ['sandbox_run_code'],
       },
-    })).toBe(true)
+    }
+    expect(shouldRetryProviderRuntimeResult(truncatedArgumentsBoundary)).toBe(true)
   })
 
   it('preserves provider-authored preface text on non-stream tool-call responses', async () => {
