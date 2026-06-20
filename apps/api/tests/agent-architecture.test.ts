@@ -186,6 +186,21 @@ describe('Agent ADR architecture boundaries', () => {
     expect(ledger).toContain('projectObligationStateWithAdditionalObligations')
   })
 
+  it('keeps structured evidence key matching in Agentic OS core', () => {
+    expect(existsSync(join(srcRoot, 'agent', 'structured-evidence-utils.ts'))).toBe(false)
+    for (const file of [
+      'agent/evidence-ledger.ts',
+      'agent/loop-obligation-ledger.ts',
+      'agent/response-evaluator.ts',
+    ]) {
+      const content = source(file)
+      expect(content).toContain("@agentic-os/core")
+      expect(content).toContain('evidenceFactsContainKey')
+      expect(content).not.toContain('structured-evidence-utils')
+      expect(content).not.toContain('function objectHasKey')
+    }
+  })
+
   it('keeps the tool executor independent from provider SDKs and runtime adapters', () => {
     expectNoImports('agent/tool-executor.ts', [
       /@openai\/agents/,

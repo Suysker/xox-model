@@ -8,6 +8,7 @@ import type {
   JsonValue,
 } from '@agentic-os/contracts'
 import {
+  evidenceFactsContainKey,
   projectObligationLedger,
   projectObligationStateWithAdditionalObligations,
   projectObligationLedgerWithAdditionalObligations,
@@ -15,7 +16,6 @@ import {
 } from '@agentic-os/core'
 import { isExecutedSandboxEvidenceFacts } from './evidence-ledger.js'
 import type { ResponseEvaluation } from './response-evaluator.js'
-import { objectHasKey } from './structured-evidence-utils.js'
 import {
   loopObligationsFromResponseEvaluation,
   osKindForXoxObligation,
@@ -233,7 +233,7 @@ function applyDomainObservation(input: {
     return
   }
   if (input.obligation.subject === 'shareholder') {
-    if (objectHasKey(facts, 'firstShareholder') || objectHasKey(facts, 'shareholders')) {
+    if (evidenceFactsContainKey(facts, 'firstShareholder') || evidenceFactsContainKey(facts, 'shareholders')) {
       recordSatisfied(input)
       return
     }

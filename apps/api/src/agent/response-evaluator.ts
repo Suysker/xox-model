@@ -1,12 +1,15 @@
 import type { AgentGoalContract, AgentGoalFacts } from '@xox/contracts'
-import { classifyToolObservationOutcome, evaluateFinalAnswerHygiene } from '@agentic-os/core'
+import {
+  classifyToolObservationOutcome,
+  evaluateFinalAnswerHygiene,
+  evidenceFactsContainKey,
+} from '@agentic-os/core'
 import type { Row } from '../db/schema.js'
 import { parseJson } from '../db/database.js'
 import type { AgentEvidenceAuthority, AgentEvidenceItem, AgentFinalAnswerClaim } from './evidence-ledger.js'
 import { buildEvidenceRequirements, isExecutedSandboxEvidenceFacts } from './evidence-ledger.js'
 import type { AgentToolObservation } from './tool-observation-continuation.js'
 import { mergeAgentGoalFacts } from './runtime-goal-facts.js'
-import { objectHasKey } from './structured-evidence-utils.js'
 
 export type ResponseEvaluationStatus =
   | 'pass'
@@ -77,7 +80,7 @@ function hasOrderedShareholderDomainEvidence(evidence: AgentEvidenceItem[]) {
     item.authority === 'domain_read' &&
     item.validity === 'valid' &&
     item.source === 'data_query_workspace' &&
-    (objectHasKey(item.facts, 'firstShareholder') || objectHasKey(item.facts, 'shareholders')))
+    (evidenceFactsContainKey(item.facts, 'firstShareholder') || evidenceFactsContainKey(item.facts, 'shareholders')))
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

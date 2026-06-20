@@ -1,8 +1,10 @@
 import type { AgentGoalFacts } from '@xox/contracts'
 import type { AgentFinalAnswerClaim as OsAgentFinalAnswerClaim } from '@agentic-os/contracts'
-import { evidenceRequirementsFromFinalAnswerClaims } from '@agentic-os/core'
+import {
+  evidenceFactsContainKey,
+  evidenceRequirementsFromFinalAnswerClaims,
+} from '@agentic-os/core'
 import type { AgentToolObservation } from './tool-observation-continuation.js'
-import { objectHasKey } from './structured-evidence-utils.js'
 
 export type AgentEvidenceAuthority = 'ambient' | 'domain_read' | 'sandbox' | 'action' | 'memory'
 export type AgentEvidenceValidity = 'valid' | 'invalid'
@@ -170,7 +172,7 @@ function evidenceSubject(facts: Record<string, unknown>, authority: AgentEvidenc
   }
   const scope = typeof facts.scope === 'string' ? facts.scope : null
   if (scope === 'team_summary') return { type: 'member', label: 'team summary' }
-  if (scope === 'entity_summary' && objectHasKey(facts, 'shareholders')) return { type: 'shareholder', label: 'entity summary' }
+  if (scope === 'entity_summary' && evidenceFactsContainKey(facts, 'shareholders')) return { type: 'shareholder', label: 'entity summary' }
   if (scope === 'entity_summary') return { type: 'workspace', label: 'entity summary' }
   if (scope === 'ledger_history') return { type: 'ledger_entry', label: 'ledger history' }
   return { type: 'forecast', label: scope ?? 'workspace facts' }
@@ -332,7 +334,7 @@ function claimSubject(claim: AgentFinalAnswerClaim): OsAgentFinalAnswerClaim['su
 }
 
 export function evidenceContainsKey(items: AgentEvidenceItem[], key: string) {
-  return items.some((item) => objectHasKey(item.facts, key))
+  return items.some((item) => evidenceFactsContainKey(item.facts, key))
 }
 
 export function evidenceForModel(items: AgentEvidenceItem[]) {
