@@ -1,14 +1,28 @@
-import { Agent, OpenAIProvider, Runner, tool } from '@openai/agents'
+import type {
+  AgentToolCall,
+  JsonObject,
+  RuntimeToolDescriptor,
+} from '@agentic-os/contracts'
+import {
+  inferToolAuthorityClass,
+} from '@agentic-os/core'
+import {
+  runOpenAIAgentsTurn,
+  type OpenAIAgentsRuntimeEvent,
+} from '@agentic-os/runtime-openai-agents'
 import { plannerSystemPrompt } from '../prompt-registry.js'
-import { toolCallToPlannerStep, type AgentToolCallStep, type ChatTool } from '../tool-catalog.js'
+import {
+  AGENT_TOOL_REGISTRY,
+  isHarnessManagedObservationToolName,
+  isManualBoundaryNoticeToolName,
+  toolCallToPlannerStep,
+  type AgentToolCallStep,
+  type ChatTool,
+} from '../tool-catalog.js'
 import type { RuntimeAdapter, RuntimePlanningInput, RuntimePlanResult } from './runtime-adapter.js'
 
 const SOURCE = 'openai_agents' as const
-const TOOL_ARGUMENT_PREVIEW_LIMIT = 700
-
-function previewToolArguments(args: Record<string, unknown>) {
-  return JSON.stringify(args).slice(0, TOOL_ARGUMENT_PREVIEW_LIMIT)
-}
+const toolRegistryByName = new Map(AGENT_TOOL_REGISTRY.map((entry) => [entry.name, entry]))
 
 function promptFromMessages(input: RuntimePlanningInput) {
   if (!input.messages || input.messages.length === 0) {
@@ -25,33 +39,83 @@ function promptFromMessages(input: RuntimePlanningInput) {
     .join('\n')
 }
 
-function buildPlannerTools(tools: ChatTool[], collectedSteps: AgentToolCallStep[], runtimeInput: RuntimePlanningInput) {
-  return tools.map((descriptor) => {
-    const name = descriptor.function.name
-    return tool({
-      name,
-      description: descriptor.function.description,
-      parameters: descriptor.function.parameters as any,
-      strict: false,
-      execute: async (args) => {
-        const toolInput = args && typeof args === 'object' ? args as Record<string, unknown> : {}
-        const step = toolCallToPlannerStep(name, toolInput)
-        if (step) {
-          step.providerToolName = name
-          step.providerToolArguments = toolInput
-          step.providerToolCallIndex = collectedSteps.length
-          collectedSteps.push(step)
-        }
-        await runtimeInput.onStreamEvent?.({
-          kind: 'tool_call_delta',
-          toolCallIndex: step ? collectedSteps.length - 1 : collectedSteps.length,
-          toolName: name,
-          argumentsPreview: previewToolArguments(toolInput),
-        })
-        return JSON.stringify({ planned: Boolean(step), tool: name })
-      },
+function toRuntimeToolDescriptor(tool: ChatTool): RuntimeToolDescriptor {
+  const name = tool.function.name
+  const metadata = toolRegistryByName.get(name)
+  const riskLevel = metadata?.riskLevel ?? 'read'
+  const confirmationMode = metadata?.confirmationMode ?? 'never'
+  const capability = metadata?.capability ?? 'tooling'
+  return {
+    name,
+    title: name,
+    description: tool.function.description,
+    inputJsonSchema: toJsonObject(tool.function.parameters),
+    capability,
+    riskLevel,
+    confirmationMode,
+    authorityClass: inferToolAuthorityClass({
+      capability,
+      riskLevel,
+      confirmationMode,
+      manualBoundaryNotice: isManualBoundaryNoticeToolName(name),
+      harnessManagedObservation: isHarnessManagedObservationToolName(name),
+    }),
+    navigationTarget: metadata?.navigationTarget ?? null,
+  }
+}
+
+function plannerStepsFromRuntimeToolCalls(toolCalls: AgentToolCall[] | undefined): AgentToolCallStep[] {
+  const steps: AgentToolCallStep[] = []
+  for (const [index, call] of (toolCalls ?? []).entries()) {
+    const step = toolCallToPlannerStep(call.name, call.input)
+    if (!step) continue
+    step.providerToolName = call.name
+    step.providerToolArguments = call.input
+    step.providerToolCallIndex = index
+    step.providerToolCallId = call.toolCallId
+    steps.push(step)
+  }
+  return steps
+}
+
+async function emitRuntimeEvent(input: RuntimePlanningInput, event: OpenAIAgentsRuntimeEvent) {
+  if (!input.onStreamEvent) return
+  if (event.kind === 'run_started') {
+    await input.onStreamEvent({
+      kind: 'stream_started',
+      provider: event.provider,
+      model: event.model,
+      source: SOURCE,
     })
+    return
+  }
+  if (event.kind === 'tool_call') {
+    await input.onStreamEvent({
+      kind: 'tool_call_delta',
+      toolCallIndex: event.toolCallIndex,
+      toolName: event.toolName,
+      argumentsPreview: event.argumentsPreview,
+    })
+    return
+  }
+  await input.onStreamEvent({
+    kind: 'stream_completed',
+    contentLength: event.contentLength,
+    toolCallCount: event.toolCallCount,
+    source: SOURCE,
   })
+}
+
+function toJsonObject(value: unknown): JsonObject {
+  if (value === undefined || value === null) return {}
+  if (typeof value !== 'object' || Array.isArray(value)) return {}
+  return JSON.parse(JSON.stringify(value)) as JsonObject
+}
+
+function safeRuntimeErrorMessage(error: string) {
+  return error
+    .replace(/sk-[A-Za-z0-9_-]{8,}/g, 'sk-***')
+    .slice(0, 300)
 }
 
 export class OpenAIAgentsAdapter implements RuntimeAdapter {
@@ -66,57 +130,38 @@ export class OpenAIAgentsAdapter implements RuntimeAdapter {
       }
     }
 
-    const collectedSteps: AgentToolCallStep[] = []
-    let modelProvider: OpenAIProvider | null = null
     try {
-      modelProvider = new OpenAIProvider({
+      const output = await runOpenAIAgentsTurn({
+        userMessage: input.message,
+        context: input.context,
+        tools: input.tools.map(toRuntimeToolDescriptor),
+        ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
+      }, {
         apiKey: input.settings.openaiApiKey,
-        baseURL: input.settings.openaiBaseUrl,
-        useResponses: false,
-      })
-      const planner = new Agent({
-        name: 'XOX Agent Planner',
+        ...(input.settings.openaiBaseUrl ? { baseURL: input.settings.openaiBaseUrl } : {}),
+        model: input.settings.openaiModel,
+        agentName: 'XOX Agent Planner',
         instructions: input.systemPrompt ?? plannerSystemPrompt(),
-        model: input.settings.openaiModel,
-        tools: buildPlannerTools(input.tools, collectedSteps, input),
-        toolUseBehavior: () => ({
-          isFinalOutput: true,
-          isInterrupted: undefined,
-          finalOutput: JSON.stringify({ plannedSteps: collectedSteps.length }),
-        }),
+        buildPrompt: () => promptFromMessages(input),
+        onEvent: (event) => emitRuntimeEvent(input, event),
       })
-      const runner = new Runner({
-        modelProvider,
-        tracingDisabled: true,
-        traceIncludeSensitiveData: false,
-      })
+      if (output.error) {
+        return {
+          source: SOURCE,
+          steps: [],
+          error: {
+            kind: 'provider_network_error',
+            message: safeRuntimeErrorMessage(output.error),
+          },
+        }
+      }
 
-      await input.onStreamEvent?.({
-        kind: 'stream_started',
-        provider: 'openai',
-        model: input.settings.openaiModel,
-        source: SOURCE,
-      })
-      const result = await runner.run(
-        planner,
-        promptFromMessages(input),
-        {
-          maxTurns: 2,
-          toolExecution: { maxFunctionToolConcurrency: 1 },
-          ...(input.abortSignal ? { signal: input.abortSignal } : {}),
-        },
-      )
-      await input.onStreamEvent?.({
-        kind: 'stream_completed',
-        contentLength: typeof (result as any)?.finalOutput === 'string' ? (result as any).finalOutput.length : 0,
-        toolCallCount: collectedSteps.length,
-        source: SOURCE,
-      })
+      const steps = plannerStepsFromRuntimeToolCalls(output.toolCalls)
 
-      return collectedSteps.length > 0
-        ? { source: SOURCE, steps: collectedSteps }
-        : typeof (result as any)?.finalOutput === 'string' && (result as any).finalOutput.trim()
-          ? { source: SOURCE, steps: [], assistantText: (result as any).finalOutput.trim() }
+      return steps.length > 0
+        ? { source: SOURCE, steps }
+        : output.assistantText?.trim()
+          ? { source: SOURCE, steps: [], assistantText: output.assistantText.trim() }
           : { source: SOURCE, steps: [] }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -128,8 +173,6 @@ export class OpenAIAgentsAdapter implements RuntimeAdapter {
           message: message.replace(/sk-[A-Za-z0-9_-]{8,}/g, 'sk-***').slice(0, 300),
         },
       }
-    } finally {
-      await modelProvider?.close().catch(() => undefined)
     }
   }
 }
