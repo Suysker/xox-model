@@ -47,6 +47,7 @@ import {
   sandboxExecutionModeFromFacts,
   sandboxExecutionStatusFromFacts,
   selectCompletedReadObservation,
+  selectAgentPrerequisiteObservations,
   selectReadinessObservation,
   selectSandboxFinalizerObservation,
   type AgentHostLoopCoordinator,
@@ -54,6 +55,7 @@ import {
   type AgentCompletionPort,
   type AgentContextPort,
   type AgentHostAdapter,
+  type AgentPrerequisiteObservationSpec,
   type AgentSandboxPort,
   type AgentStorePort,
   type AgentToolRegistryPort,
@@ -81,6 +83,7 @@ import {
   storePlannedActionGraph,
   type StoredActionGraph,
 } from '../action-graph-store.js'
+import { answerWorkspaceDataQuestion, type DataAgentQueryStep } from '../data-agent.js'
 import { buildXoxClarificationResumeContext } from './xox-clarification-resume-adapter.js'
 import {
   buildEvidenceLedger,
@@ -132,7 +135,6 @@ import {
   type AgentToolObservation,
 } from '../tool-observation-continuation.js'
 import { runtimeIntentHandlers } from '../runtime-intent-handlers.js'
-import { runPrerequisiteObservations } from '../prerequisite-observations.js'
 import { evaluateAgentGoal } from './xox-loop-readiness-adapter.js'
 import {
   applyObservationToLedger,
@@ -176,6 +178,31 @@ type XoxAgenticOsRunState = {
   obligationLedger: AgentLoopObligationLedger
   lastToolSelection: OsToolSelectionHint | null
   finishedResult: OsRunResult | null
+}
+
+type XoxPrerequisiteObligation = {
+  requiredDataScopes?: string[]
+}
+
+const ENTITY_SUMMARY_TOOL_ARGUMENTS = {
+  question: '当前工作区有序成员、股东、员工和成本对象列表',
+  scope: 'entity_summary',
+  metrics: ['shareholderNames', 'shareholderInvestments'],
+} satisfies DataAgentQueryStep
+
+const ENTITY_SUMMARY_PREREQUISITE: AgentPrerequisiteObservationSpec<
+  AgentGoalFacts,
+  AgentToolObservation,
+  XoxPrerequisiteObligation
+> = {
+  id: 'entity_summary',
+  requiredDataScopes: ['entity_summary'],
+  isRequiredByGoal: (goalFacts) => goalFacts?.requiresOrderedEntityFacts === true,
+  isSatisfiedByObservation: (observation) => {
+    if (observation.toolName !== 'data_query_workspace' || observation.status !== 'completed') return false
+    const facts = parseXoxObservationContent(observation)
+    return facts?.scope === 'entity_summary' && Array.isArray(facts.shareholders)
+  },
 }
 
 function compactJsonObject(value: unknown): OsJsonObject {
@@ -256,6 +283,40 @@ function applyStoredGraph(state: XoxAgenticOsRunState, graph: StoredActionGraph)
   for (const observation of graph.observations) {
     state.xoxObservations.push(observation)
   }
+}
+
+async function runInitialPrerequisiteObservations(
+  ctx: XoxAgenticOsPlannerContext,
+  input: {
+    goalFacts: AgentGoalFacts
+    observations: AgentToolObservation[]
+    plannerSource: AgentPlannerSource
+  },
+): Promise<StoredActionGraph | null> {
+  const prerequisites = selectAgentPrerequisiteObservations({
+    specs: [ENTITY_SUMMARY_PREREQUISITE],
+    goalFacts: input.goalFacts,
+    observations: input.observations,
+  })
+  if (!prerequisites.some((prerequisite) => prerequisite.id === ENTITY_SUMMARY_PREREQUISITE.id)) {
+    return null
+  }
+
+  const read = await answerWorkspaceDataQuestion(ctx, ENTITY_SUMMARY_TOOL_ARGUMENTS)
+  if (!read) return null
+
+  return storePlannedActionGraph(ctx, {
+    plannerSource: input.plannerSource,
+    items: [{
+      ...read,
+      toolName: 'data_query_workspace',
+      toolCallId: `runner_evidence_${ctx.runId}_entity_summary`,
+      toolArguments: ENTITY_SUMMARY_TOOL_ARGUMENTS,
+      observationLane: 'runner_evidence',
+      syntheticObservation: true,
+    }],
+    emitPlanReady: false,
+  })
 }
 
 function applyNewObservationsToLedger(
@@ -1952,7 +2013,7 @@ export async function executeXoxAgenticOsRun(
     goalFacts: goalContractFacts(goal),
     ...(providedWorkspaceBundle ? { providedWorkspaceBundle } : {}),
   }
-  const initialPrerequisites = await runPrerequisiteObservations(planningCtx, {
+  const initialPrerequisites = await runInitialPrerequisiteObservations(planningCtx, {
     goalFacts: goalContractFacts(goal),
     observations: state.xoxObservations,
     plannerSource: state.plannerSource,

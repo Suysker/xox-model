@@ -166,6 +166,17 @@ describe('Agent ADR architecture boundaries', () => {
     expect(adapter).not.toContain("status = 'needs_confirmation'")
   })
 
+  it('keeps initial prerequisite observation selection in Agentic OS core', () => {
+    expect(existsSync(join(srcRoot, 'agent', 'prerequisite-observations.ts'))).toBe(false)
+
+    const hostKit = source('agent/agentic-os/xox-agentic-os-host-kit.ts')
+    expect(hostKit).toContain("@agentic-os/core")
+    expect(hostKit).toContain('selectAgentPrerequisiteObservations')
+    expect(hostKit).toContain('ENTITY_SUMMARY_PREREQUISITE')
+    expect(hostKit).not.toContain("from '../prerequisite-observations.js'")
+    expect(hostKit).not.toContain('runPrerequisiteObservations')
+  })
+
   it('keeps final review obligation projection merge in Agentic OS core', () => {
     const hostKit = source('agent/agentic-os/xox-agentic-os-host-kit.ts')
     expect(hostKit).toContain('serializeObligationLedgerForResponseEvent')
