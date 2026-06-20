@@ -315,19 +315,8 @@ describe('Agent ADR architecture boundaries', () => {
 
   it('keeps tool call supervision and runtime event payloads in Agentic OS core', () => {
     expect(existsSync(join(srcRoot, 'agent', 'tool-runtime'))).toBe(false)
-    const planningSession = source('agent/planning-session.ts')
-    expect(planningSession).toContain("@agentic-os/core")
-    expect(planningSession).toContain('runToolCallSupervisor')
-    expect(planningSession).not.toContain('createToolSupervisorCall')
-    expect(planningSession).not.toContain('toolSupervisorInventoryByName')
-    expect(planningSession).not.toContain('shouldBlockToolCallOutsideInventory')
-    expect(planningSession).not.toContain('buildToolSupervisorFailureObservation')
-    expect(planningSession).not.toContain('summarizeToolSupervisorObservation')
-    expect(planningSession).not.toContain('function safeToolArguments')
-    expect(planningSession).not.toContain('function resolvedToolName')
-    expect(planningSession).not.toContain('function resultPreview')
-    expect(planningSession).not.toContain('for (const [index, step] of input.steps.entries())')
-    expect(planningSession).not.toContain("observationType: 'tool_supervisor_failure'")
+    expect(existsSync(join(srcRoot, 'agent', 'planner.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'planning-session.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'tool-runtime', 'tool-execution-events.ts'))).toBe(false)
   })
 
