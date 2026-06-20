@@ -1,13 +1,22 @@
 import type { Kysely } from 'kysely'
 import type { AgentRunEvent, AgentRunEventStatus, AgentRuntimeChannel } from '@xox/contracts'
+import {
+  createAgentServerSequencedRunEventAppender,
+  isAgentServerSqliteUniqueConstraintError,
+} from '@agentic-os/server'
 import type { Database, Row } from '../db/schema.js'
 import { jsonString, parseJson } from '../db/database.js'
 import { newId } from '../core/security.js'
 import { utcNow } from '../core/time.js'
 import { agentThreadEvents } from './thread-events.js'
 
-const runEventQueues = new Map<string, Promise<void>>()
-const MAX_SEQUENCE_RETRIES = 5
+const runEventAppender = createAgentServerSequencedRunEventAppender({
+  maxSequenceRetries: 5,
+  isSequenceConflict: (error) => isAgentServerSqliteUniqueConstraintError(error, [
+    'agent_run_events.run_id',
+    'agent_run_events.sequence_no',
+  ]),
+})
 
 function runEventStatus(value: string): AgentRunEventStatus {
   if (
@@ -56,37 +65,6 @@ function inferredRunEventChannel(input: {
   return 'lifecycle'
 }
 
-function isRunEventSequenceConflict(error: unknown) {
-  const code = typeof (error as { code?: unknown })?.code === 'string' ? (error as { code: string }).code : ''
-  const message = error instanceof Error ? error.message : String(error)
-  return (
-    code === 'SQLITE_CONSTRAINT_UNIQUE' ||
-    (message.includes('UNIQUE constraint failed') &&
-      message.includes('agent_run_events.run_id') &&
-      message.includes('agent_run_events.sequence_no'))
-  )
-}
-
-async function waitForRunEventTurn<T>(runId: string, work: () => Promise<T>): Promise<T> {
-  const previous = runEventQueues.get(runId) ?? Promise.resolve()
-  let release!: () => void
-  const gate = new Promise<void>((resolve) => {
-    release = resolve
-  })
-  const next = previous.catch(() => undefined).then(() => gate)
-  runEventQueues.set(runId, next)
-
-  await previous.catch(() => undefined)
-  try {
-    return await work()
-  } finally {
-    release()
-    if (runEventQueues.get(runId) === next) {
-      runEventQueues.delete(runId)
-    }
-  }
-}
-
 export function serializeRunEvent(row: Row<'agent_run_events'>): AgentRunEvent {
   return {
     id: row.id,
@@ -103,6 +81,15 @@ export function serializeRunEvent(row: Row<'agent_run_events'>): AgentRunEvent {
   }
 }
 
+async function loadRunEventMaxSequence(db: Kysely<Database>, runId: string) {
+  const existing = await db
+    .selectFrom('agent_run_events')
+    .select(({ fn }) => fn.max<number>('sequence_no').as('maxSequence'))
+    .where('run_id', '=', runId)
+    .executeTakeFirst()
+  return Number(existing?.maxSequence ?? 0)
+}
+
 async function insertRunEvent(
   db: Kysely<Database>,
   input: {
@@ -115,13 +102,8 @@ async function insertRunEvent(
     channel?: AgentRuntimeChannel | undefined
     data?: Record<string, unknown> | null
   },
+  sequence: number,
 ) {
-  const existing = await db
-    .selectFrom('agent_run_events')
-    .select(({ fn }) => fn.max<number>('sequence_no').as('maxSequence'))
-    .where('run_id', '=', input.runId)
-    .executeTakeFirst()
-  const sequence = Number(existing?.maxSequence ?? 0) + 1
   const id = newId()
   await db
     .insertInto('agent_run_events')
@@ -155,15 +137,10 @@ export async function addRunEvent(
     data?: Record<string, unknown> | null
   },
 ) {
-  const row = await waitForRunEventTurn(input.runId, async () => {
-    for (let attempt = 0; attempt < MAX_SEQUENCE_RETRIES; attempt += 1) {
-      try {
-        return await insertRunEvent(db, input)
-      } catch (error) {
-        if (!isRunEventSequenceConflict(error) || attempt === MAX_SEQUENCE_RETRIES - 1) throw error
-      }
-    }
-    throw new Error('Unable to append agent run event after sequence retries')
+  const row = await runEventAppender.append({
+    runId: input.runId,
+    loadMaxSequence: () => loadRunEventMaxSequence(db, input.runId),
+    insert: ({ sequence }) => insertRunEvent(db, input, sequence),
   })
   agentThreadEvents.publish(input.threadId, 'run_trace')
   return row
