@@ -9,7 +9,6 @@ import { toolObservationFinalizerSystemPrompt } from './prompt-registry.js'
 import { addRunEvent } from './run-events.js'
 import { addRuntimeStreamRunEvent } from './runtime-trace-events.js'
 import { buildThreadConversationLog } from './context-pack.js'
-import { runtimeMessagesFromThreadConversationLog } from './runtime-conversation-log.js'
 import { planWithRuntimeAdapter } from './runtime/adapter-router.js'
 import type { RuntimeChatMessage } from './runtime/runtime-adapter.js'
 import {
@@ -19,6 +18,7 @@ import {
 import {
   buildActionPreviewObservation,
   buildActionResultObservation,
+  runtimeMessagesFromConversationLog,
 } from '@agentic-os/core'
 import type { AgentToolObservationLane, AgentToolObservationOutcome } from '@xox/contracts'
 
@@ -189,7 +189,7 @@ function observationMessages(input: {
     capability: providerRuntime.capability,
     thinkingLevel: providerRuntime.thinkingLevel,
     systemPrompt: toolObservationFinalizerSystemPrompt(),
-    priorMessages: runtimeMessagesFromThreadConversationLog(input.threadConversationLog),
+    priorMessages: runtimeMessagesFromConversationLog(input.threadConversationLog),
     userMessage: input.userMessage,
     observations: input.observations,
     suffix: 'finalizer_observation',

@@ -46,7 +46,6 @@ describe('Agent ADR architecture boundaries', () => {
       'agent/runtime/provider-request-shaper.ts',
       'agent/runtime/runtime-adapter.ts',
       'agent/runtime/tool-call-repair.ts',
-      'agent/runtime/tool-call-validator.ts',
     ]
     const forbidden = [
       /['"]\.\.\/\.\.\/db\//,
@@ -108,6 +107,8 @@ describe('Agent ADR architecture boundaries', () => {
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-name-normalizer.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-stream-assembler.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-runtime-turn-output.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'runtime-conversation-log.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-validator.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'tool-runtime', 'approval-policy-composer.ts'))).toBe(false)
 
     const obsoleteToolContextDir = join(srcRoot, 'agent', 'tool-context-engine')
@@ -317,7 +318,10 @@ describe('Agent ADR architecture boundaries', () => {
   it('keeps provider observation planning message assembly in Agentic OS runtime', () => {
     const planningCall = source('agent/runtime-planning-call.ts')
     expect(planningCall).toContain("@agentic-os/runtime-openai-compatible")
+    expect(planningCall).toContain("@agentic-os/core")
     expect(planningCall).toContain('buildProviderToolObservationTurnMessages')
+    expect(planningCall).toContain('runtimeMessagesFromConversationLog')
+    expect(planningCall).toContain('contextWithoutRuntimeConversationLog')
     expect(planningCall).not.toContain('providerToolObservationReplayMessages')
     expect(planningCall).not.toContain("role: 'tool'")
     expect(planningCall).not.toContain('tool_calls')
@@ -325,6 +329,7 @@ describe('Agent ADR architecture boundaries', () => {
 
   it('keeps provider tool-call normalization in Agentic OS runtime', () => {
     const repair = source('agent/runtime/tool-call-repair.ts')
+    const adapter = source('agent/runtime/openai-compatible-chat-adapter.ts')
     expect(repair).toContain("@agentic-os/runtime-openai-compatible")
     expect(repair).toContain('normalizeProviderToolCallsForExecution')
     expect(repair).not.toContain('extractBalancedJson')
@@ -332,6 +337,21 @@ describe('Agent ADR architecture boundaries', () => {
     expect(repair).not.toContain('argumentBoundaryCode')
     expect(repair).not.toContain('outside the current effective tool inventory')
     expect(repair).not.toContain('before the tool schema was materialized')
+    expect(adapter).toContain('plannerStepsFromProviderToolCalls')
+    expect(adapter).not.toContain('validateProviderToolCallsForExecution')
+    expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-validator.ts'))).toBe(false)
+  })
+
+  it('keeps same-thread runtime conversation replay in Agentic OS core', () => {
+    const planningCall = source('agent/runtime-planning-call.ts')
+    const continuation = source('agent/tool-observation-continuation.ts')
+    expect(planningCall).toContain("@agentic-os/core")
+    expect(planningCall).toContain('runtimeConversationLogFromContext')
+    expect(planningCall).toContain('runtimeMessagesFromConversationLog')
+    expect(planningCall).toContain('contextWithoutRuntimeConversationLog')
+    expect(continuation).toContain("@agentic-os/core")
+    expect(continuation).toContain('runtimeMessagesFromConversationLog')
+    expect(existsSync(join(srcRoot, 'agent', 'runtime-conversation-log.ts'))).toBe(false)
   })
 
   it('keeps provider probing runtime mechanics in Agentic OS runtime', () => {

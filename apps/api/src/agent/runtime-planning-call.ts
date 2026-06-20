@@ -21,10 +21,10 @@ import { plannerSystemPrompt } from './prompt-registry.js'
 import type { AgentToolObservation } from './tool-observation-continuation.js'
 import { materializedToolInventorySnapshot, provideRuntimeToolCatalog } from './tool-gateway.js'
 import {
-  contextWithoutThreadConversationLog,
-  runtimeMessagesFromThreadConversationLog,
-  threadConversationLogFromContext,
-} from './runtime-conversation-log.js'
+  contextWithoutRuntimeConversationLog,
+  runtimeConversationLogFromContext,
+  runtimeMessagesFromConversationLog,
+} from '@agentic-os/core'
 import type { RuntimeToolCatalogProjection } from './tool-gateway.js'
 import {
   buildProviderToolObservationTurnMessages,
@@ -140,8 +140,8 @@ function plannerRuntimeMessages(input: {
     capability: providerRuntime.capability,
     thinkingLevel: providerRuntime.thinkingLevel,
     systemPrompt: plannerSystemPrompt(),
-    priorMessages: runtimeMessagesFromThreadConversationLog(threadConversationLogFromContext(input.context)),
-    userContent: `上下文：${JSON.stringify(contextWithoutThreadConversationLog(input.context))}\n用户指令：${input.message}`,
+    priorMessages: runtimeMessagesFromConversationLog(runtimeConversationLogFromContext(input.context)),
+    userContent: `上下文：${JSON.stringify(contextWithoutRuntimeConversationLog(input.context))}\n用户指令：${input.message}`,
     observations: input.priorObservations ?? [],
     suffix: 'planning_observation',
     maxObservations: 12,

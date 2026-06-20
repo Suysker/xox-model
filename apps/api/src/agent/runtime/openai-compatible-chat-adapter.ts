@@ -8,8 +8,8 @@ import type { AgentToolCallStep } from '../tool-catalog.js'
 import { shapeOpenAICompatibleChatRequest } from './provider-request-shaper.js'
 import {
   ProviderToolCallParseError,
+  plannerStepsFromProviderToolCalls,
 } from './tool-call-repair.js'
-import { validateProviderToolCallsForExecution } from './tool-call-validator.js'
 import {
   normalizeOpenAICompatibleJsonTurnResult,
   normalizeOpenAICompatibleStreamTurnResult,
@@ -110,7 +110,7 @@ function planResultFromProviderTurn(
   input: RuntimePlanningInput,
   profile: ProviderModelProfile,
 ): RuntimePlanResult {
-  const toolSteps = validateProviderToolCallsForExecution({
+  const toolSteps = plannerStepsFromProviderToolCalls({
     toolCalls: turn.toolCalls,
     allowedToolNames: allowedToolNames(input),
     materializableToolNames: input.materializableToolNames ?? [],
@@ -264,7 +264,7 @@ export class OpenAICompatibleChatAdapter implements RuntimeAdapter {
     }))
     let toolSteps: AgentToolCallStep[]
     try {
-      toolSteps = validateProviderToolCallsForExecution({
+      toolSteps = plannerStepsFromProviderToolCalls({
         toolCalls: turn.toolCalls,
         allowedToolNames: allowedToolNames(input),
         materializableToolNames: input.materializableToolNames ?? [],
