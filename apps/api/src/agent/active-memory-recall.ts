@@ -8,7 +8,7 @@ import {
   retrieveAgentMemories,
   type AgentMemoryRetrievalResult,
 } from './memory-retriever.js'
-import { redactSecretLikeContent } from './memory-safety.js'
+import { redactSecretLikeContent } from '@agentic-os/core'
 import { buildOpenClawActiveMemoryPromptPack } from './memory/active-memory-subagent.js'
 
 const ACTIVE_RECALL_TIMEOUT_MS = 1200

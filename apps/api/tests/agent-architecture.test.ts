@@ -577,12 +577,18 @@ describe('Agent ADR architecture boundaries', () => {
   })
 
   it('keeps active memory recall as a harness context subsystem, not a business executor', () => {
+    expect(existsSync(join(srcRoot, 'agent', 'memory-safety.ts'))).toBe(false)
+    const memory = source('agent/memory.ts')
+    expect(memory).toContain("@agentic-os/core")
+    expect(memory).toContain('normalizeSecretSafeText')
+    expect(memory).not.toContain("from './memory-safety.js'")
+
     const memoryFiles = [
       'agent/active-memory-recall.ts',
       'agent/memory-events.ts',
       'agent/memory-kernel.ts',
       'agent/memory-retriever.ts',
-      'agent/memory-safety.ts',
+      'agent/memory.ts',
     ]
     const forbidden = [
       /approval-executor/,

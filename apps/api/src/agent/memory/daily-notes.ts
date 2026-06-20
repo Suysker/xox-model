@@ -3,7 +3,7 @@ import { newId } from '../../core/security.js'
 import { utcNow } from '../../core/time.js'
 import type { Database, Row } from '../../db/schema.js'
 import type { CurrentUser } from '../../modules/auth.js'
-import { redactSecretLikeContent } from '../memory-safety.js'
+import { redactSecretLikeContent } from '@agentic-os/core'
 
 export async function storeDailyMemoryNote(input: {
   db: Kysely<Database>

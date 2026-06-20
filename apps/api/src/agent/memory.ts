@@ -1,4 +1,9 @@
 import type { Kysely } from 'kysely'
+import {
+  containsSecretLikeContent,
+  normalizeSecretSafeText,
+  redactSecretLikeContent,
+} from '@agentic-os/core'
 import type { Database, Row } from '../db/schema.js'
 import { parseJson } from '../db/database.js'
 import { forbidden, notFound } from '../core/http.js'
@@ -12,11 +17,6 @@ import {
   type AgentMemoryLane,
   type AgentMemoryStatus,
 } from './memory-promotion-policy.js'
-import {
-  containsSecretLikeContent,
-  normalizeMemoryText,
-  redactSecretLikeContent,
-} from './memory-safety.js'
 
 const COMPACTION_MESSAGE_THRESHOLD = 10
 const COMPACTION_MESSAGE_STEP = 6
@@ -35,10 +35,10 @@ export type AgentRuntimeContext = {
   recentMessages: Row<'agent_messages'>[]
 }
 
-export { redactSecretLikeContent } from './memory-safety.js'
+export { redactSecretLikeContent } from '@agentic-os/core'
 
 function normalizeMemoryValue(value: string) {
-  return normalizeMemoryText(value, MEMORY_VALUE_LIMIT)
+  return normalizeSecretSafeText(value, MEMORY_VALUE_LIMIT)
 }
 
 function normalizeMemoryKind(value: string | null | undefined) {

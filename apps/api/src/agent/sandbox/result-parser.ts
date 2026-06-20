@@ -3,7 +3,7 @@ import { readdir, readFile, stat } from 'node:fs/promises'
 import { extname, join } from 'node:path'
 import type { SandboxArtifactKind, SandboxObservation } from '@xox/contracts'
 import type { SandboxArtifactDescriptor } from './backend.js'
-import { redactSecretLikeContent } from '../memory-safety.js'
+import { redactSecretLikeContent } from '@agentic-os/core'
 
 type ParsedSandboxOutput = {
   result: SandboxObservation['result']

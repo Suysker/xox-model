@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
+import { containsSecretLikeContent, normalizeSecretSafeText } from '@agentic-os/core'
 import type { Row } from '../db/schema.js'
 import { utcNow } from '../core/time.js'
-import { containsSecretLikeContent, normalizeMemoryText } from './memory-safety.js'
 
 export type AgentMemoryLane =
   | 'working'
@@ -91,7 +91,7 @@ function stableHash(value: string) {
 }
 
 export function normalizedMemoryHash(input: Pick<MemoryPolicyInput, 'kind' | 'scopeType' | 'key' | 'value'>) {
-  const normalized = normalizeMemoryText(`${input.kind}:${input.scopeType}:${input.key}:${input.value}`, 800)
+  const normalized = normalizeSecretSafeText(`${input.kind}:${input.scopeType}:${input.key}:${input.value}`, 800)
     .toLowerCase()
     .replace(/\s+/g, ' ')
     .trim()
@@ -155,7 +155,7 @@ export function decideMemoryCandidate(input: MemoryPolicyInput): MemoryPolicyDec
         : lane === 'diagnostic'
           ? 0.1
           : 0.35
-  const specificity = normalizeMemoryText(input.value, 600).length >= 12 ? 0.8 : 0.35
+  const specificity = normalizeSecretSafeText(input.value, 600).length >= 12 ? 0.8 : 0.35
   const usefulness = lane === 'semantic' || lane === 'procedural' ? 0.8 : lane === 'working' ? 0.55 : 0.35
   const novelty = 0.7
   const injectable =

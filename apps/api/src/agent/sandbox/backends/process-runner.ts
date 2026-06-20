@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { redactSecretLikeContent } from '../../memory-safety.js'
+import { redactSecretLikeContent } from '@agentic-os/core'
 import type { SandboxExecutionResult } from '../backend.js'
 
 export type SandboxProcessRunResult = {

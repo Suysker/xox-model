@@ -1,6 +1,6 @@
 import { buildMemoryCitation, formatMemoryCitation, takeBudgetedMemoryItems } from '@xox/agent-memory-core'
 import type { Row } from '../../db/schema.js'
-import { redactSecretLikeContent } from '../memory-safety.js'
+import { redactSecretLikeContent } from '@agentic-os/core'
 import type { AgentMemoryRetrievalResult } from '../memory-retriever.js'
 
 export type ActiveMemoryPromptPack = {
