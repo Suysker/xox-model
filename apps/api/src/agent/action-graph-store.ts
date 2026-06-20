@@ -1,4 +1,24 @@
 import type { Kysely } from 'kysely'
+import type {
+  AgentActionRequest as OsActionRequest,
+  AgentActionStatus as OsActionStatus,
+  AgentObservation as OsObservation,
+  AgentRunRecord as OsRunRecord,
+  JsonObject as OsJsonObject,
+} from '@agentic-os/contracts'
+import {
+  materializeAgentServerActionGraph,
+  type AgentServerActionGraphEventDraft,
+  type AgentServerActionGraphPlanStepItem,
+  type AgentServerActionGraphPlannedItem,
+  type AgentServerActionGraphReadObservationItem,
+  type AgentServerActionGraphStore,
+  type AgentServerActionGraphStoreActionRequestResult,
+  type AgentServerActionGraphSummary,
+  type AgentServerActionPlanStep,
+  type AgentServerActionPlanStepDraft,
+  type AgentServerActionPlanStepStatus,
+} from '@agentic-os/server'
 import type { AgentNavigationEvent, AgentPlannerSource, AgentPlanStepStatus } from '@xox/contracts'
 import type { Database, Row } from '../db/schema.js'
 import { jsonString } from '../db/database.js'
@@ -6,7 +26,7 @@ import type { Settings } from '../core/settings.js'
 import { newId } from '../core/security.js'
 import { utcNow } from '../core/time.js'
 import type { CurrentUser } from '../modules/auth.js'
-import { isActionDraft, type PlannedItem } from './action-draft-builder.js'
+import { isActionDraft, type PlannedItem, type ReadDraft } from './action-draft-builder.js'
 import {
   addAgentActionRequest,
   autoExecuteAgentActionRequest,
@@ -23,6 +43,7 @@ import {
 } from './tool-observation-continuation.js'
 import { resolveActionAuthority, type AgentAutomationLevel } from './tool-policy.js'
 import { classifyToolObservation } from './tool-observation-outcome.js'
+import { agenticOsObservationFromXox } from './agentic-os/xox-observation-adapter.js'
 
 type ActionGraphContext = {
   db: Kysely<Database>
@@ -48,14 +69,146 @@ type StoredActionResult = {
   observation: AgentToolObservation
 }
 
-function toolNameForRead(item: PlannedItem, sequence: number) {
-  if (!('toolName' in item) || !item.toolName) return `read_observation_${sequence}`
+type MaterializerMetadata = {
+  xoxNavigation?: AgentNavigationEvent | null
+  xoxPlanStatus?: AgentPlanStepStatus
+}
+
+function osJsonObject(value: unknown): OsJsonObject {
+  return JSON.parse(JSON.stringify(value ?? {})) as OsJsonObject
+}
+
+function optionalOsJsonObject(value: Record<string, unknown> | null | undefined): OsJsonObject | undefined {
+  return value && Object.keys(value).length > 0 ? osJsonObject(value) : undefined
+}
+
+function metadata(input: MaterializerMetadata): OsJsonObject | undefined {
+  const record: Record<string, unknown> = {}
+  if (input.xoxNavigation !== undefined) record.xoxNavigation = input.xoxNavigation
+  if (input.xoxPlanStatus !== undefined) record.xoxPlanStatus = input.xoxPlanStatus
+  return optionalOsJsonObject(record)
+}
+
+function metadataRecord(item: AgentServerActionGraphPlannedItem): Record<string, unknown> {
+  return item.metadata ? item.metadata as Record<string, unknown> : {}
+}
+
+function navigationFromItem(item: AgentServerActionGraphPlannedItem): AgentNavigationEvent | null {
+  const value = metadataRecord(item).xoxNavigation
+  return value && typeof value === 'object' ? value as AgentNavigationEvent : null
+}
+
+function xoxStatusFromMetadata(item: AgentServerActionGraphPlannedItem): AgentPlanStepStatus | null {
+  const value = metadataRecord(item).xoxPlanStatus
+  return value === 'pending' ||
+    value === 'ready' ||
+    value === 'executed' ||
+    value === 'cancelled' ||
+    value === 'failed' ||
+    value === 'info'
+    ? value
+    : null
+}
+
+function serverStatusFromXox(status: AgentPlanStepStatus | undefined): AgentServerActionPlanStepStatus | undefined {
+  if (status === 'failed') return 'failed'
+  if (status === 'cancelled') return 'cancelled'
+  if (status === 'pending') return 'running'
+  if (status === 'ready' || status === 'executed' || status === 'info') return 'completed'
+  return undefined
+}
+
+function xoxStatusFromServer(status: AgentServerActionPlanStepStatus): AgentPlanStepStatus {
+  if (status === 'waiting') return 'ready'
+  if (status === 'running') return 'pending'
+  if (status === 'completed') return 'info'
+  if (status === 'failed') return 'failed'
+  return 'cancelled'
+}
+
+function xoxActionStepStatus(status: AgentServerActionPlanStepStatus): AgentPlanStepStatus {
+  if (status === 'waiting') return 'ready'
+  if (status === 'completed') return 'executed'
+  if (status === 'failed') return 'failed'
+  if (status === 'cancelled') return 'cancelled'
+  return 'pending'
+}
+
+function xoxPlanStepStatus(
+  item: AgentServerActionGraphPlannedItem,
+  step: AgentServerActionPlanStepDraft,
+): AgentPlanStepStatus {
+  const explicit = xoxStatusFromMetadata(item)
+  if (explicit) return explicit
+  return item.type === 'action_request' ? xoxActionStepStatus(step.status) : xoxStatusFromServer(step.status)
+}
+
+function osRunRecord(ctx: ActionGraphContext): OsRunRecord {
+  return {
+    runId: ctx.runId,
+    threadId: ctx.threadId,
+    scope: {
+      tenantId: ctx.workspace.id,
+      workspaceId: ctx.workspace.id,
+      userId: ctx.user.id,
+    },
+    status: 'running',
+    createdAt: utcNow(),
+  }
+}
+
+function osActionStatus(status: string): OsActionStatus {
+  if (status === 'executed') return 'executed'
+  if (status === 'failed') return 'failed'
+  if (status === 'cancelled') return 'rejected'
+  if (status === 'confirmed') return 'executing'
+  return 'pending'
+}
+
+function osActionRequestFromDraft(
+  ctx: ActionGraphContext,
+  draft: AgentActionDraft,
+  index: number,
+): OsActionRequest {
+  const provisionalId = `xox_draft_${index + 1}_${draft.kind}`
+  return {
+    actionRequestId: provisionalId,
+    runId: ctx.runId,
+    threadId: ctx.threadId,
+    toolCallId: provisionalId,
+    toolName: draft.kind,
+    status: 'pending',
+    title: draft.title,
+    description: draft.summary,
+    preview: osJsonObject({
+      targetLabel: draft.targetLabel,
+      riskLevel: draft.riskLevel,
+      details: draft.details,
+      payload: draft.payload,
+    }),
+  }
+}
+
+function osActionRequestFromRow(row: Row<'agent_action_requests'>, base: OsActionRequest): OsActionRequest {
+  return {
+    ...base,
+    actionRequestId: row.id,
+    runId: row.run_id,
+    threadId: row.thread_id,
+    status: osActionStatus(row.status),
+    title: row.title,
+    description: row.summary,
+  }
+}
+
+function toolNameForRead(item: ReadDraft, sequenceHint: number) {
+  if (!('toolName' in item) || !item.toolName) return `read_observation_${sequenceHint}`
   return item.toolName
 }
 
-function observationFromRead(item: PlannedItem, sequence: number): AgentToolObservation | null {
+function observationFromRead(item: ReadDraft, sequenceHint: number): AgentToolObservation | null {
   if (!('readKind' in item) || item.readKind !== 'tool_observation') return null
-  const toolName = toolNameForRead(item, sequence)
+  const toolName = toolNameForRead(item, sequenceHint)
   const displayPreview = item.displayPreview ?? item.message
   const lane = item.observationLane ?? 'provider_tool'
   const status = item.observationStatus ??
@@ -63,7 +216,7 @@ function observationFromRead(item: PlannedItem, sequence: number): AgentToolObse
   const observation = {
     title: item.title,
     toolName,
-    toolCallId: item.toolCallId ?? `call_observation_${sequence}_${toolName}`,
+    toolCallId: item.toolCallId ?? `call_observation_${sequenceHint}_${toolName}`,
     toolArguments: item.toolArguments ?? {},
     displayPreview,
     modelContent: item.modelContent ?? displayPreview,
@@ -115,10 +268,6 @@ async function addAgentPlanStep(ctx: ActionGraphContext, input: AddAgentPlanStep
       updated_at: now,
     })
     .execute()
-  return ctx.db.selectFrom('agent_plan_steps').selectAll().where('id', '=', id).executeTakeFirstOrThrow()
-}
-
-async function getPlanStep(ctx: ActionGraphContext, id: string) {
   return ctx.db.selectFrom('agent_plan_steps').selectAll().where('id', '=', id).executeTakeFirstOrThrow()
 }
 
@@ -176,6 +325,190 @@ async function settleStoredAction(
   }
 }
 
+function rememberObservation(
+  observationsById: Map<string, AgentToolObservation>,
+  osObservation: OsObservation,
+  xoxObservation: AgentToolObservation,
+): void {
+  observationsById.set(osObservation.observationId, xoxObservation)
+  observationsById.set(osObservation.toolCallId, xoxObservation)
+}
+
+function fallbackObservationFromOs(observation: OsObservation): AgentToolObservation {
+  const preview = typeof observation.content === 'string'
+    ? observation.content
+    : JSON.stringify(observation.content)
+  const fallback: AgentToolObservation = {
+    title: observation.toolName,
+    toolName: observation.toolName,
+    toolCallId: observation.toolCallId,
+    toolArguments: {},
+    displayPreview: preview,
+    modelContent: preview,
+    status: observation.status === 'ok' ? 'completed' : 'failed',
+    synthetic: true,
+  }
+  if (observation.outcome !== undefined) fallback.outcome = observation.outcome
+  return fallback
+}
+
+function itemInput(toolArguments: Record<string, unknown> | null | undefined): OsJsonObject | undefined {
+  return toolArguments ? osJsonObject(toolArguments) : undefined
+}
+
+function readPlannedItem(
+  item: ReadDraft,
+  index: number,
+  observationsById: Map<string, AgentToolObservation>,
+): AgentServerActionGraphPlannedItem {
+  if ('readKind' in item && item.readKind === 'assistant_message') {
+    return {
+      type: 'assistant_message',
+      content: item.message,
+    }
+  }
+
+  const xoxStatus = item.status ?? 'info'
+  const baseMetadata = metadata({
+    ...(item.navigation !== undefined ? { xoxNavigation: item.navigation } : {}),
+    xoxPlanStatus: xoxStatus,
+  })
+  const input = itemInput('toolArguments' in item ? item.toolArguments : undefined)
+  const observation = observationFromRead(item, index + 1)
+
+  if (observation) {
+    const osObservation = agenticOsObservationFromXox(observation, index)
+    rememberObservation(observationsById, osObservation, observation)
+    if (isRunnerOwnedObservationLane(item.observationLane)) {
+      return {
+        type: 'observation_only',
+        observation: osObservation,
+      }
+    }
+    const planned: AgentServerActionGraphReadObservationItem = {
+      type: 'read_observation',
+      title: item.title,
+      description: item.message,
+      observation: osObservation,
+    }
+    const serverStatus = serverStatusFromXox(xoxStatus)
+    if (serverStatus !== undefined) planned.status = serverStatus
+    if (input !== undefined) planned.input = input
+    if (baseMetadata !== undefined) planned.metadata = baseMetadata
+    return planned
+  }
+
+  const toolName = 'toolName' in item && item.toolName ? item.toolName : `status_step_${index + 1}`
+  const toolCallId = 'toolCallId' in item && item.toolCallId ? item.toolCallId : `status_step_${index + 1}`
+  const planned: AgentServerActionGraphPlanStepItem = {
+    type: 'plan_step',
+    title: item.title,
+    description: item.message,
+    toolName,
+    toolCallId,
+  }
+  const serverStatus = serverStatusFromXox(xoxStatus)
+  if (serverStatus !== undefined) planned.status = serverStatus
+  if (input !== undefined) planned.input = input
+  if (baseMetadata !== undefined) planned.metadata = baseMetadata
+  return planned
+}
+
+function materializerItemFromPlannedItem(
+  ctx: ActionGraphContext,
+  item: PlannedItem,
+  index: number,
+  actionDrafts: Map<string, AgentActionDraft>,
+  observationsById: Map<string, AgentToolObservation>,
+): AgentServerActionGraphPlannedItem {
+  if (!isActionDraft(item)) return readPlannedItem(item, index, observationsById)
+
+  const actionRequest = osActionRequestFromDraft(ctx, item, index)
+  actionDrafts.set(actionRequest.actionRequestId, item)
+  const planned: AgentServerActionGraphPlannedItem = {
+    type: 'action_request',
+    actionRequest,
+    title: item.title,
+    description: item.summary,
+    input: osJsonObject({
+      kind: item.kind,
+      payload: item.payload,
+    }),
+  }
+  const itemMetadata = metadata({ xoxNavigation: item.navigation })
+  if (itemMetadata !== undefined) planned.metadata = itemMetadata
+  return planned
+}
+
+function toolArgumentsFromStep(step: AgentServerActionPlanStepDraft): Record<string, unknown> | null {
+  return step.input ? JSON.parse(JSON.stringify(step.input)) as Record<string, unknown> : null
+}
+
+function storedPlanStep(
+  row: Row<'agent_plan_steps'>,
+  step: AgentServerActionPlanStepDraft,
+): AgentServerActionPlanStep {
+  const stored: AgentServerActionPlanStep = {
+    ...step,
+    planStepId: row.id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+  return stored
+}
+
+async function addLocalizedActionGraphEvent(
+  ctx: ActionGraphContext,
+  input: {
+    plannerSource: AgentPlannerSource
+    summary: AgentServerActionGraphSummary
+    eventDraft: AgentServerActionGraphEventDraft
+  },
+): Promise<void> {
+  if (input.eventDraft.type === 'action_graph.confirmation_required') {
+    await addRunEvent(ctx.db, {
+      threadId: ctx.threadId,
+      runId: ctx.runId,
+      type: 'confirmation_ready',
+      title: '确认卡已生成',
+      message: `已生成 ${input.summary.pendingActionCount} 张待确认动作卡，用户可编辑后执行。`,
+      status: 'blocked',
+      data: { actionCount: input.summary.pendingActionCount, automationLevel: ctx.automationLevel },
+    })
+    return
+  }
+
+  const actionCount = input.summary.actionCount
+  const pendingActionCount = input.summary.pendingActionCount
+  const executedActionCount = input.summary.executedActionCount
+  const failedCount = input.summary.failedStepCount
+  const visibleStepCount = input.summary.stepCount + input.summary.assistantMessageCount
+  const actionSummary = actionCount > 0
+    ? `，其中 ${pendingActionCount} 个写入动作需要确认，${executedActionCount} 个已按自动化策略执行。`
+    : '。'
+  await addRunEvent(ctx.db, {
+    threadId: ctx.threadId,
+    runId: ctx.runId,
+    type: 'tool_plan_ready',
+    title: failedCount > 0 ? '模型规划需要处理' : actionCount > 0 ? '模型工具调用已解析' : '模型回复已生成',
+    message:
+      visibleStepCount > 0
+        ? `模型规划生成 ${visibleStepCount} 个步骤${actionSummary}`
+        : '模型没有生成可执行步骤。',
+    status: failedCount > 0 ? 'failed' : pendingActionCount > 0 ? 'blocked' : executedActionCount > 0 ? 'completed' : 'info',
+    data: {
+      plannerSource: input.plannerSource,
+      stepCount: visibleStepCount,
+      actionCount,
+      pendingActionCount,
+      executedActionCount,
+      failedCount,
+      automationLevel: ctx.automationLevel,
+      actionGraphEvent: input.eventDraft,
+    },
+  })
+}
+
 export async function storePlannedActionGraph(
   ctx: ActionGraphContext,
   input: { items: PlannedItem[]; plannerSource: AgentPlannerSource; emitPlanReady?: boolean },
@@ -183,110 +516,80 @@ export async function storePlannedActionGraph(
   const navigationEvents: AgentNavigationEvent[] = []
   const actionRows: Row<'agent_action_requests'>[] = []
   const planRows: Row<'agent_plan_steps'>[] = []
-  const assistantTexts: string[] = []
-  const observations: AgentToolObservation[] = []
+  const actionDrafts = new Map<string, AgentActionDraft>()
+  const observationsById = new Map<string, AgentToolObservation>()
 
-  await assertAgentRunLease(ctx.db, ctx.settings, ctx.runId)
-  const existing = await ctx.db
-    .selectFrom('agent_plan_steps')
-    .select(({ fn }) => fn.max<number>('sequence_no').as('maxSequence'))
-    .where('run_id', '=', ctx.runId)
-    .executeTakeFirst()
-  const sequenceOffset = Number(existing?.maxSequence ?? 0)
-  for (const [index, item] of input.items.entries()) {
-    const sequence = sequenceOffset + index + 1
-    await assertAgentRunLease(ctx.db, ctx.settings, ctx.runId)
-    if (isActionDraft(item)) {
-      let action = await addAgentActionRequest(ctx, item)
-      let step = await addAgentPlanStep(ctx, {
-        sequence,
-        title: item.title,
-        description: item.summary,
-        status: 'ready',
-        actionRequestId: action.id,
-        navigation: item.navigation,
+  const store: AgentServerActionGraphStore = {
+    loadMaxPlanSequence: async () => {
+      await assertAgentRunLease(ctx.db, ctx.settings, ctx.runId)
+      const existing = await ctx.db
+        .selectFrom('agent_plan_steps')
+        .select(({ fn }) => fn.max<number>('sequence_no').as('maxSequence'))
+        .where('run_id', '=', ctx.runId)
+        .executeTakeFirst()
+      return Number(existing?.maxSequence ?? 0)
+    },
+    storeActionRequest: async (actionInput): Promise<AgentServerActionGraphStoreActionRequestResult> => {
+      await assertAgentRunLease(ctx.db, ctx.settings, ctx.runId)
+      const draft = actionDrafts.get(actionInput.actionRequest.actionRequestId)
+      if (!draft) throw new Error(`Missing xox action draft for ${actionInput.actionRequest.actionRequestId}`)
+      const createdAction = await addAgentActionRequest(ctx, draft)
+      const settled = await settleStoredAction(ctx, { draft, action: createdAction })
+      actionRows.push(settled.action)
+      navigationEvents.push(draft.navigation)
+      const osObservation = agenticOsObservationFromXox(settled.observation, observationsById.size)
+      rememberObservation(observationsById, osObservation, settled.observation)
+      return {
+        actionRequest: osActionRequestFromRow(settled.action, actionInput.actionRequest),
+        observation: osObservation,
+      }
+    },
+    storePlanStep: async (stepInput) => {
+      await assertAgentRunLease(ctx.db, ctx.settings, ctx.runId)
+      const navigation = navigationFromItem(stepInput.item)
+      if (navigation && stepInput.item.type !== 'action_request') navigationEvents.push(navigation)
+      const row = await addAgentPlanStep(ctx, {
+        sequence: stepInput.step.sequence,
+        title: stepInput.step.title,
+        description: stepInput.step.description,
+        status: xoxPlanStepStatus(stepInput.item, stepInput.step),
+        actionRequestId: stepInput.step.actionRequestId ?? null,
+        navigation,
+        toolName: stepInput.item.type === 'action_request' ? null : stepInput.step.toolName,
+        toolCallId: stepInput.item.type === 'action_request' ? null : stepInput.step.toolCallId,
+        toolArguments: stepInput.item.type === 'action_request' ? null : toolArgumentsFromStep(stepInput.step),
       })
-      const settled = await settleStoredAction(ctx, { draft: item, action })
-      action = settled.action
-      step = await getPlanStep(ctx, step.id)
-      observations.push(settled.observation)
-      actionRows.push(action)
-      planRows.push(step)
-      navigationEvents.push(item.navigation)
-      continue
-    }
-
-    if (item.readKind === 'assistant_message') {
-      assistantTexts.push(item.message)
-      continue
-    }
-
-    if (item.readKind === 'tool_observation' && isRunnerOwnedObservationLane(item.observationLane)) {
-      const observation = observationFromRead(item, sequence)
-      if (observation) observations.push(observation)
-      continue
-    }
-
-    if (item.navigation) navigationEvents.push(item.navigation)
-    const step = await addAgentPlanStep(ctx, {
-      sequence,
-      title: item.title,
-      description: item.message,
-      status: item.status ?? 'info',
-      navigation: item.navigation ?? null,
-      toolName: item.toolName ?? null,
-      toolCallId: item.toolCallId ?? null,
-      toolArguments: item.toolArguments ?? null,
-    })
-    planRows.push(step)
-    const observation = observationFromRead(item, sequence)
-    if (observation) observations.push(observation)
+      planRows.push(row)
+      return storedPlanStep(row, stepInput.step)
+    },
   }
 
-  const failedCount = planRows.filter((row) => row.status === 'failed').length
-  const actionCount = actionRows.length
-  const pendingActionCount = actionRows.filter((row) => row.status === 'pending').length
-  const executedActionCount = actionRows.filter((row) => row.status === 'executed').length
-  const actionSummary = actionCount > 0
-    ? `，其中 ${pendingActionCount} 个写入动作需要确认，${executedActionCount} 个已按自动化策略执行。`
-    : '。'
+  const items = input.items.map((item, index) =>
+    materializerItemFromPlannedItem(ctx, item, index, actionDrafts, observationsById)
+  )
+  const materialized = await materializeAgentServerActionGraph({
+    store,
+    run: osRunRecord(ctx),
+    items,
+  })
+
   if (input.emitPlanReady !== false) {
-    await addRunEvent(ctx.db, {
-      threadId: ctx.threadId,
-      runId: ctx.runId,
-      type: 'tool_plan_ready',
-      title: failedCount > 0 ? '模型规划需要处理' : actionCount > 0 ? '模型工具调用已解析' : '模型回复已生成',
-      message:
-        planRows.length > 0 || assistantTexts.length > 0
-          ? `模型规划生成 ${planRows.length + assistantTexts.length} 个步骤${actionSummary}`
-          : '模型没有生成可执行步骤。',
-      status: failedCount > 0 ? 'failed' : pendingActionCount > 0 ? 'blocked' : executedActionCount > 0 ? 'completed' : 'info',
-      data: {
+    for (const eventDraft of materialized.eventDrafts) {
+      await addLocalizedActionGraphEvent(ctx, {
         plannerSource: input.plannerSource,
-        stepCount: planRows.length + assistantTexts.length,
-        actionCount,
-        pendingActionCount,
-        executedActionCount,
-        failedCount,
-        automationLevel: ctx.automationLevel,
-      },
-    })
-  }
-  if (pendingActionCount > 0 && input.emitPlanReady !== false) {
-    await addRunEvent(ctx.db, {
-      threadId: ctx.threadId,
-      runId: ctx.runId,
-      type: 'confirmation_ready',
-      title: '确认卡已生成',
-      message: `已生成 ${pendingActionCount} 张待确认动作卡，用户可编辑后执行。`,
-      status: 'blocked',
-      data: { actionCount: pendingActionCount, automationLevel: ctx.automationLevel },
-    })
+        summary: materialized.summary,
+        eventDraft,
+      })
+    }
   }
   agentThreadEvents.publish(ctx.threadId, 'plan_ready')
   return {
-    assistantText: assistantTexts.length > 0 ? assistantTexts.join('\n\n') : null,
-    observations,
+    assistantText: materialized.assistantText,
+    observations: materialized.observations.map((observation) =>
+      observationsById.get(observation.observationId) ??
+      observationsById.get(observation.toolCallId) ??
+      fallbackObservationFromOs(observation)
+    ),
     navigationEvents,
     actionRows,
     planRows,

@@ -21,7 +21,6 @@ import type {
   AgentSandboxExecutionResult as OsSandboxExecutionResult,
   AgentToolDefinition as OsToolDefinition,
   AgentToolHandlerResult as OsToolHandlerResult,
-  AgentToolObservationOutcome as OsToolObservationOutcome,
   AgentToolRiskLevel as OsToolRiskLevel,
   AgentToolConfirmationMode as OsToolConfirmationMode,
   AgentToolAuthorityClass as OsToolAuthorityClass,
@@ -60,6 +59,11 @@ import { newId } from '../../core/security.js'
 import { utcNow } from '../../core/time.js'
 import type { PlannerContext } from '../planning-context.js'
 import { runtimePlanResultToAgenticOsTurnOutput } from './xox-runtime-turn-output.js'
+import {
+  agenticOsObservationFromXox,
+  xoxObservationContent,
+  xoxObservationOutcome,
+} from './xox-observation-adapter.js'
 import { executeAgentActionRequest } from '../approval-executor.js'
 import {
   buildPlannedItemFromRuntimeStep,
@@ -250,34 +254,6 @@ function applyStoredGraph(state: XoxAgenticOsRunState, graph: StoredActionGraph)
   state.planRows.push(...graph.planRows)
   for (const observation of graph.observations) {
     state.xoxObservations.push(observation)
-  }
-}
-
-function observationContent(observation: AgentToolObservation): OsJsonObject {
-  return {
-    xoxObservation: compactJsonObject(observation),
-    displayPreview: observation.displayPreview,
-    modelContent: observation.modelContent,
-    status: observation.status,
-    outcome: observation.outcome ?? null,
-  }
-}
-
-function osOutcome(observation: AgentToolObservation): OsToolObservationOutcome {
-  return classifyToolObservation(observation) as OsToolObservationOutcome
-}
-
-function osObservationFromXox(
-  observation: AgentToolObservation,
-  index: number,
-): OsObservation {
-  return {
-    observationId: observation.toolCallId || `xox_observation_${index + 1}`,
-    toolCallId: observation.toolCallId || `xox_tool_call_${index + 1}`,
-    toolName: observation.toolName,
-    status: observation.status === 'completed' ? 'ok' : 'error',
-    outcome: osOutcome(observation),
-    content: observationContent(observation),
   }
 }
 
@@ -480,7 +456,7 @@ function agenticOsToolDefinition(
       }
       const graph = await storeSingleToolStep(ctx, state, step)
       const observation = graph.observations.at(-1) ?? fallbackToolObservation(step)
-      const osObservation = osObservationFromXox(observation, state.xoxObservations.length)
+      const osObservation = agenticOsObservationFromXox(observation, state.xoxObservations.length)
       rememberObservationMapping(state, osObservation, observation)
       const handlerResult: OsToolHandlerResult = {
         content: osObservation.content,
@@ -731,8 +707,8 @@ function osObservationForAction(
     toolCallId: observation.toolCallId,
     toolName: action.kind,
     status: observation.status === 'completed' ? 'ok' : 'error',
-    outcome: osOutcome(observation),
-    content: observationContent(observation),
+    outcome: xoxObservationOutcome(observation),
+    content: xoxObservationContent(observation),
   }
 }
 
@@ -1736,7 +1712,7 @@ function createXoxAgenticOsHost(
 
       const graph = await storeSingleToolStep(ctx, state, step)
       const xoxObservation = graph.observations.at(-1) ?? fallbackToolObservation(step)
-      const osObservation = osObservationFromXox(xoxObservation, state.xoxObservations.length)
+      const osObservation = agenticOsObservationFromXox(xoxObservation, state.xoxObservations.length)
       rememberObservationMapping(state, osObservation, xoxObservation)
       const facts = parseToolObservationModelFacts(xoxObservation)
       const result: OsSandboxExecutionResult = {
@@ -2275,7 +2251,7 @@ export async function executeXoxAgenticOsRun(
   if (initialPrerequisites) applyStoredGraph(state, initialPrerequisites)
 
   const initialOsObservations = state.xoxObservations.map((observation, index) => {
-    const osObservation = osObservationFromXox(observation, index)
+    const osObservation = agenticOsObservationFromXox(observation, index)
     rememberObservationMapping(state, osObservation, observation)
     return osObservation
   })

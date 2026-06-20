@@ -166,6 +166,18 @@ describe('Agent ADR architecture boundaries', () => {
     expect(actionGraph).not.toContain("observationType: 'action_result'")
   })
 
+  it('keeps action graph materialization in Agentic OS server', () => {
+    const actionGraph = source('agent/action-graph-store.ts')
+    expect(actionGraph).toContain("@agentic-os/server")
+    expect(actionGraph).toContain('materializeAgentServerActionGraph')
+    expect(actionGraph).toContain('AgentServerActionGraphStore')
+    expect(actionGraph).not.toContain('for (const [index, item] of input.items.entries())')
+    expect(actionGraph).not.toContain('const sequenceOffset')
+    expect(actionGraph).not.toContain('pendingActionCount = actionRows.filter')
+    expect(actionGraph).not.toContain('executedActionCount = actionRows.filter')
+    expect(actionGraph).not.toContain('if (pendingActionCount > 0 && input.emitPlanReady')
+  })
+
   it('keeps tool observation loop semantics in Agentic OS core', () => {
     const hostKit = source('agent/agentic-os/xox-agentic-os-host-kit.ts')
     expect(hostKit).toContain('parseToolObservationModelFacts')
