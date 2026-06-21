@@ -112,6 +112,33 @@ describe('Agent ADR architecture boundaries', () => {
     expect(worker).not.toContain('goal-run-engine')
   })
 
+  it('keeps single-entry agent helper files collapsed into real host boundaries', () => {
+    const deletedHelpers = [
+      'agent/config-patch.ts',
+      'agent/provider-key-codec.ts',
+      'agent/tool-coverage.ts',
+      'agent/sandbox-file-adapters.ts',
+      'agent/memory/daily-notes.ts',
+      'agent/memory/dreaming-worker.ts',
+      'agent/memory/memory-backend.ts',
+      'agent/memory/memory-center.ts',
+      'agent/memory/memory-tools.ts',
+      'agent/memory/recall-signals.ts',
+    ]
+    for (const file of deletedHelpers) {
+      expect(existsSync(join(srcRoot, file)), `${file} must stay deleted`).toBe(false)
+    }
+
+    for (const file of sourceFilesUnder('agent')) {
+      const content = source(file)
+      expect(content, `${file} must not import deleted provider key codec`).not.toContain('provider-key-codec')
+      expect(content, `${file} must not import deleted config patch helper`).not.toContain('config-patch')
+      expect(content, `${file} must not import deleted tool coverage helper`).not.toContain('tool-coverage')
+      expect(content, `${file} must not import deleted sandbox file adapter`).not.toContain('sandbox-file-adapters')
+      expect(content, `${file} must not import deleted memory helper subdirectory files`).not.toMatch(/memory\/(daily-notes|dreaming-worker|memory-backend|memory-center|memory-tools|recall-signals)/)
+    }
+  })
+
   it('deletes misleading root agent data and planning facades', () => {
     expect(existsSync(join(srcRoot, 'agent', 'data-agent.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'planning-context.ts'))).toBe(false)
@@ -958,6 +985,12 @@ describe('Agent ADR architecture boundaries', () => {
       'agent/memory-retriever.ts',
       'agent/memory-candidate-detector.ts',
       'agent/memory-promotion-policy.ts',
+      'agent/memory/daily-notes.ts',
+      'agent/memory/dreaming-worker.ts',
+      'agent/memory/memory-backend.ts',
+      'agent/memory/memory-center.ts',
+      'agent/memory/memory-tools.ts',
+      'agent/memory/recall-signals.ts',
     ]
     for (const file of deletedMemoryFacades) {
       expect(existsSync(join(srcRoot, file))).toBe(false)
@@ -981,6 +1014,7 @@ describe('Agent ADR architecture boundaries', () => {
 
   it('keeps sandbox runtime in Agentic OS instead of a host-owned runtime subtree', () => {
     const sandboxRuntimeDir = join(srcRoot, 'agent', 'sandbox')
+    expect(existsSync(join(srcRoot, 'agent', 'sandbox-file-adapters.ts'))).toBe(false)
     if (existsSync(sandboxRuntimeDir)) {
       expect(sourceFilesUnder('agent/sandbox')).toEqual([])
     }
@@ -1007,5 +1041,6 @@ describe('Agent ADR architecture boundaries', () => {
     const sandboxTest = testSource('sandbox-tool.test.ts')
     expect(sandboxTest).toContain("@agentic-os/sandbox")
     expect(sandboxTest).not.toContain("../src/agent/sandbox/")
+    expect(sandboxTest).not.toContain("../src/agent/sandbox-file-adapters.js")
   })
 })

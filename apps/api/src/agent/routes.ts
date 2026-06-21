@@ -19,7 +19,7 @@ import {
   redactSecretLikeContent,
   serializeMemory,
 } from './memory.js'
-import { buildTenantMemoryCenterState } from './memory/memory-center.js'
+import { buildTenantMemoryCenterState } from './memory.js'
 import {
   deleteAgentProviderSetting,
   getAgentProviderSetting,

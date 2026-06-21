@@ -21,8 +21,7 @@ import { newId } from '../core/security.js'
 import type { PlannerContext } from './action-draft-builder.js'
 import type { AgentActionDraft } from './action-draft-builder.js'
 import type { ReadDraft, RuntimePlannerStep } from './action-draft-builder.js'
-import { currentDraftConfig, findEmployee, findTeamMember, finiteNumber, normalizedMemberKey } from './action-draft-utils.js'
-import { cloneModelConfig } from './config-patch.js'
+import { cloneModelConfig, currentDraftConfig, findEmployee, findTeamMember, finiteNumber, normalizedMemberKey } from './action-draft-utils.js'
 
 function memberWorkbenchNavigation(reason: string): AgentNavigationEvent {
   return {

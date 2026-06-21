@@ -8,9 +8,9 @@ import {
   inspectSandboxUploadedFile,
   normalizeSandboxArtifactKinds,
   normalizeSandboxFileKinds,
+  sandboxInternalsForTests,
   sandboxFileAdapters,
-} from '../src/agent/sandbox-file-adapters.js'
-import { sandboxInternalsForTests } from '../src/agent/sandbox-service.js'
+} from '../src/agent/sandbox-service.js'
 
 function bytes(value: string) {
   return Buffer.from(value, 'utf8')

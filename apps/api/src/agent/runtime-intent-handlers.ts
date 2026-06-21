@@ -48,7 +48,7 @@ import {
   planWorkspaceRename,
 } from './workspace-action-drafts.js'
 import { rememberAgentMemory, redactSecretLikeContent } from './memory.js'
-import { runMemoryGetTool, runMemorySearchTool } from './memory/memory-tools.js'
+import { runMemoryGetTool, runMemorySearchTool } from './memory.js'
 import { planSandboxRunCode } from './sandbox-service.js'
 import {
   AGENT_TOOL_REGISTRY,

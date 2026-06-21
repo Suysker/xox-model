@@ -13,7 +13,7 @@ import { utcNow } from '../core/time.js'
 import { loadAgentRuntimeContext } from './memory.js'
 import { addMemoryEvent, markAgentMemoriesRecalled, retrieveAgentMemories } from './memory.js'
 import { addRunEvent } from './agentic-os/xox-run-event-store-adapter.js'
-import { buildAgentWritableConfigContext } from './tool-coverage.js'
+import { buildAgentWritableConfigContext } from './tool-catalog.js'
 import { extractWorkspaceBundleArtifact, type ParsedWorkspaceBundleArtifact } from './workspace-bundle-artifact.js'
 
 export type AgentContextPackInput = {

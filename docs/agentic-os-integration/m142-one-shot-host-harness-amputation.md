@@ -1,6 +1,6 @@
 # M142 One-Shot Host Harness Amputation
 
-Status: In Progress (evidence/final-review/obligation root framework, final-review test harness surface, readiness/runtime-planning facades, root data/planning facades, and memory root facades deleted)
+Status: In Progress (evidence/final-review/obligation root framework, final-review test harness surface, readiness/runtime-planning facades, root data/planning facades, memory helper subdirectory, sandbox file helper, provider-key helper, config-patch helper, and tool-coverage helper deleted)
 
 Date: 2026-06-21
 
@@ -196,6 +196,16 @@ Status: completed as a follow-up M142 test-surface deletion cut.
 - The remaining adapter surface is production host policy and DTO mapping only. Agentic OS still owns the generic final-review gate, obligation ledger state machine, and projection primitives.
 - Architecture guards now fail if the deleted tests or public harness helper exports return.
 - The unused local memory prompt `apps/api/src/agent/prompts/memory.system.md` was also deleted in this cut because active-memory prompt assembly is Agentic OS-owned.
+
+### M151: Deleted Single-Entry Agent Helper Files
+
+Status: completed as a follow-up `apps/api/src/agent` deletion cut.
+
+- Deleted `config-patch.ts`, `provider-key-codec.ts`, `tool-coverage.ts`, and `sandbox-file-adapters.ts`.
+- Deleted the remaining `memory/*` helper files: `daily-notes.ts`, `dreaming-worker.ts`, `memory-backend.ts`, `memory-center.ts`, `memory-tools.ts`, and `recall-signals.ts`.
+- Collapsed the remaining code into real host boundaries: `action-draft-utils.ts`, `provider-settings.ts`, `tool-catalog.ts`, `sandbox-service.ts`, and `memory.ts`.
+- `apps/api/src/agent` dropped from 44 files after M150 to 34 files after this cut.
+- Architecture guards now fail if these deleted helpers or imports return.
 
 ## One-Shot Scope
 

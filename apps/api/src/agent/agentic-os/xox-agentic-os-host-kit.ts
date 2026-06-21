@@ -111,7 +111,7 @@ import {
   consolidateExecutedActionMemory,
   flushThreadContextToMemoryIfNeeded,
 } from '../memory.js'
-import { runMemoryDreamingSweep } from '../memory/dreaming-worker.js'
+import { runMemoryDreamingSweep } from '../memory.js'
 import {
   evaluateAssistantResponse,
   responseEvaluationSummary,

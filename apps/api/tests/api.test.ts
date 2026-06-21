@@ -10,8 +10,13 @@ import { createDatabase } from '../src/db/database.js'
 import { runMigrations } from '../src/db/migrations.js'
 import type { Database } from '../src/db/schema.js'
 import type { Settings } from '../src/core/settings.js'
-import { AGENT_MANUAL_CAPABILITY_COVERAGE, agentWritableConfigPatterns, buildAgentWritableConfigCatalog } from '../src/agent/tool-coverage.js'
-import { AGENT_TOOL_CATALOG, AGENT_TOOL_REGISTRY } from '../src/agent/tool-catalog.js'
+import {
+  AGENT_MANUAL_CAPABILITY_COVERAGE,
+  AGENT_TOOL_CATALOG,
+  AGENT_TOOL_REGISTRY,
+  agentWritableConfigPatterns,
+  buildAgentWritableConfigCatalog,
+} from '../src/agent/tool-catalog.js'
 import { buildRuntimeToolCatalogProjection } from '../src/agent/tool-gateway.js'
 import { sanitizeAgentGoalFacts } from '../src/agent/runtime-goal-facts.js'
 import { resolveActionAuthority } from '../src/agent/tool-policy.js'
