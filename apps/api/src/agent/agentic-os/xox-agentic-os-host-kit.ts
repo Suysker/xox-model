@@ -10,6 +10,7 @@ import type {
   AgentContext as OsAgentContext,
   AgentEvidence as OsAgentEvidence,
   AgentFinalAnswerClaim as OsFinalAnswerClaim,
+  AgentLoopObligationMaterializationRequest,
   AgentFinalReview as OsFinalReview,
   AgentObservation as OsObservation,
   AgentRunEvent as OsRunEvent,
@@ -43,7 +44,9 @@ import {
   isRepairableToolObservation,
   isSandboxToolObservation,
   ledgerToReviewObligations,
+  obligationMaterializationCompletedEventPayload,
   parseToolObservationModelFacts,
+  planObligationMaterialization,
   runtimePlannerResultToTurnOutput,
   sandboxExecutionModeFromFacts,
   sandboxExecutionStatusFromFacts,
@@ -56,6 +59,7 @@ import {
   type AgentCompletionPort,
   type AgentContextPort,
   type AgentHostAdapter,
+  type AgentLoopObligationMaterializationCache,
   type AgentPrerequisiteObservationSpec,
   type AgentSandboxPort,
   type AgentStorePort,
@@ -157,11 +161,9 @@ import {
   osLedgerFromXoxLedger,
   runtimeBoundaryMissingObservationRepair,
   serializeObligationLedgerForResponseEvent,
+  type AgentLoopLedgerObligation,
   type AgentLoopObligationLedger,
 } from '../loop-obligation-ledger.js'
-import {
-  materializeLoopObligations,
-} from '../obligation-materializer.js'
 import { extractWorkspaceBundleArtifact } from '../workspace-bundle-artifact.js'
 
 export type AgenticOsKernelRunResult = {
@@ -263,6 +265,143 @@ function maxPendingActionsForObjective(objective: string, collectPendingActionsB
     : 0
   if (explicitParts > 1) return explicitParts
   return collectPendingActionsBeforePause ? 2 : 1
+}
+
+function dataQueryArgumentsForObligation(obligation: AgentLoopLedgerObligation): DataAgentQueryStep | null {
+  if (obligation.kind !== 'domain_fact') return null
+  if (!obligation.toolNames.includes('data_query_workspace')) return null
+  const scope = obligation.requiredDataScopes?.[0] ?? 'workspace_summary'
+  const metrics = obligation.requiredMetrics ?? []
+  return {
+    question: obligation.reason,
+    scope,
+    ...(metrics.length > 0 ? { metrics } : {}),
+  }
+}
+
+function obligationMaterializationRequests(
+  ledger: AgentLoopObligationLedger,
+): AgentLoopObligationMaterializationRequest[] {
+  return ledger.obligations.flatMap((obligation) => {
+    const toolArguments = dataQueryArgumentsForObligation(obligation)
+    if (!toolArguments) return []
+    return [{
+      obligationId: obligation.id,
+      toolName: 'data_query_workspace',
+      toolArguments: toolArguments as unknown as OsJsonObject,
+    }]
+  })
+}
+
+async function materializeDataObservation(input: {
+  ctx: PlannerContext
+  obligation: AgentLoopLedgerObligation
+  toolArguments: DataAgentQueryStep
+  plannerSource: AgentPlannerSource
+}) {
+  const read = await answerWorkspaceDataQuestion(input.ctx, input.toolArguments)
+  const toolCallId = `runner_obligation_${input.ctx.runId}_${input.obligation.id}`
+  if (!read) {
+    return storePlannedActionGraph(input.ctx, {
+      plannerSource: input.plannerSource,
+      emitPlanReady: false,
+      items: [{
+        title: 'Runner observation failed',
+        message: 'The required data observation could not be produced.',
+        readKind: 'tool_observation',
+        toolName: 'data_query_workspace',
+        toolCallId,
+        toolArguments: input.toolArguments as Record<string, unknown>,
+        modelContent: JSON.stringify({
+          observationType: 'runner_obligation_failure',
+          status: 'failed',
+          obligationId: input.obligation.id,
+          reason: 'data_observation_unavailable',
+          toolName: 'data_query_workspace',
+          toolArguments: input.toolArguments,
+        }),
+        displayPreview: 'The required data observation could not be produced.',
+        observationLane: 'runner_obligation',
+        observationStatus: 'failed',
+        observationOutcome: 'failed_repairable',
+        status: 'failed',
+      }],
+    })
+  }
+
+  return storePlannedActionGraph(input.ctx, {
+    plannerSource: input.plannerSource,
+    emitPlanReady: false,
+    items: [{
+      ...read,
+      toolName: 'data_query_workspace',
+      toolCallId,
+      toolArguments: input.toolArguments as Record<string, unknown>,
+      observationLane: 'runner_obligation',
+    }],
+  })
+}
+
+async function materializeLoopObligations(input: {
+  ctx: PlannerContext
+  ledger: AgentLoopObligationLedger
+  plannerSource: AgentPlannerSource
+  taskCache: AgentLoopObligationMaterializationCache
+}): Promise<StoredActionGraph | null> {
+  const graphs: StoredActionGraph[] = []
+  const obligationsById = new Map(input.ledger.obligations.map((obligation) => [obligation.id, obligation]))
+  const plan = planObligationMaterialization({
+    ledger: osLedgerFromXoxLedger(input.ledger),
+    taskCache: input.taskCache,
+    tasks: obligationMaterializationRequests(input.ledger),
+  })
+
+  for (const task of plan.tasks) {
+    const obligation = obligationsById.get(task.obligationId)
+    if (obligation === undefined) continue
+
+    await addRunEvent(input.ctx.db, {
+      threadId: input.ctx.threadId,
+      runId: input.ctx.runId,
+      type: 'runner_obligation_materializing',
+      title: 'Runner observation task',
+      message: 'A required evidence obligation is being materialized as a model-visible observation.',
+      status: 'running',
+      data: task.startedEventPayload as Record<string, unknown>,
+    })
+
+    const graph = await materializeDataObservation({
+      ctx: input.ctx,
+      obligation,
+      toolArguments: task.toolArguments as unknown as DataAgentQueryStep,
+      plannerSource: input.plannerSource,
+    })
+    if (graph) graphs.push(graph)
+  }
+
+  if (graphs.length === 0) return null
+
+  await addRunEvent(input.ctx.db, {
+    threadId: input.ctx.threadId,
+    runId: input.ctx.runId,
+    type: 'runner_obligation_materialized',
+    title: 'Runner observation materialized',
+    message: `${graphs.reduce((sum, graph) => sum + graph.observations.length, 0)} required observation(s) were materialized for model replay.`,
+    status: graphs.some((graph) => graph.observations.some((observation) => observation.status === 'failed')) ? 'failed' : 'completed',
+    data: obligationMaterializationCompletedEventPayload({
+      observationCount: graphs.reduce((sum, graph) => sum + graph.observations.length, 0),
+      toolNames: graphs.flatMap((graph) => graph.observations.map((observation) => observation.toolName)),
+    }) as Record<string, unknown>,
+  })
+
+  return {
+    assistantText: null,
+    observations: graphs.flatMap((graph) => graph.observations),
+    navigationEvents: graphs.flatMap((graph) => graph.navigationEvents),
+    actionRows: graphs.flatMap((graph) => graph.actionRows),
+    planRows: graphs.flatMap((graph) => graph.planRows),
+    plannerSource: graphs.at(-1)?.plannerSource ?? input.plannerSource,
+  }
 }
 
 function osRunInput(ctx: PlannerContext, objective: string, goalFacts: AgentGoalFacts): OsRunInput {

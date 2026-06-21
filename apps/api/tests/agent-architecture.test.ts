@@ -244,9 +244,11 @@ describe('Agent ADR architecture boundaries', () => {
     expect(ledger).toContain('projectObligationLedgerWithAdditionalObligations')
     expect(ledger).toContain('projectObligationStateWithAdditionalObligations')
 
-    const materializer = source('agent/obligation-materializer.ts')
-    expect(materializer).toContain("@agentic-os/core")
-    expect(materializer).toContain('planObligationMaterialization')
+    expect(existsSync(join(srcRoot, 'agent', 'obligation-materializer.ts'))).toBe(false)
+    const hostKit = source('agent/agentic-os/xox-agentic-os-host-kit.ts')
+    expect(hostKit).toContain("@agentic-os/core")
+    expect(hostKit).toContain('planObligationMaterialization')
+    expect(hostKit).not.toContain("from '../obligation-materializer.js'")
   })
 
   it('keeps structured evidence key matching in Agentic OS core', () => {
@@ -307,6 +309,7 @@ describe('Agent ADR architecture boundaries', () => {
     expect(existsSync(join(srcRoot, 'agent', 'ambient-context.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'clarification-resume.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'loop-obligations.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'obligation-materializer.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'tool-runtime', 'approval-policy-composer.ts'))).toBe(false)
 
     const obsoleteToolContextDir = join(srcRoot, 'agent', 'tool-context-engine')
