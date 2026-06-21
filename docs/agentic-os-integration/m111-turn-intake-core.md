@@ -30,7 +30,7 @@ xox：
   - 提供 pending action / pending clarification DB callback；
   - 提供 runtime model callback；
   - 保留 `sanitizeAgentGoalFacts()`；
-  - M152 后不再保留 `turn-lane.system.md` 文件；xox lane 文案只作为 `xox-run-worker-adapter.ts` 的私有 host product policy 常量存在。
+  - M152 后不再保留 `turn-lane.system.md` 文件；M153 将 xox lane 文案恢复为 `host-profile/prompts/xox-turn-lane-policy.md`。
 - `apps/api/src/agent/turn-intake-resolver.ts`
   - 删除。
 
@@ -44,7 +44,7 @@ flowchart TD
     Intake --> Schema["Agentic OS turn lane schema"]
     Adapter --> PendingDb["xox pending action/clarification DB checks"]
     Adapter --> Runtime["xox planWithRuntimeAdapter callback"]
-    Adapter --> Prompt["xox turn lane product policy"]
+    Adapter --> Prompt["host-profile/prompts/xox-turn-lane-policy.md"]
     Adapter --> GoalFacts["xox sanitizeAgentGoalFacts"]
 ```
 

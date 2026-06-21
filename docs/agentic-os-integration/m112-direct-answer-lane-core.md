@@ -32,7 +32,7 @@ xox：
   - 调用 Agentic OS direct answer lane；
   - 提供 xox product policy / ambient context / runtime callback；
   - 提供 xox DB 写入和旧 DTO 映射。
-- M152 后不再保留 `direct-answer.system.md` 文件；direct-answer 文案只作为 `xox-run-worker-adapter.ts` 的私有 host product policy 常量存在。
+- M152 后不再保留 `direct-answer.system.md` 文件；M153 将 direct-answer 文案恢复为 `host-profile/prompts/xox-direct-answer-policy.md`。
 - `apps/api/src/agent/direct-answer-runtime.ts`
   - 删除。
 
@@ -44,7 +44,7 @@ flowchart TD
     Adapter --> Lane["@agentic-os/core runDirectAnswerLane"]
     Adapter --> Runtime["xox planWithRuntimeAdapter callback"]
     Adapter --> Store["xox thread/run/action graph DB callbacks"]
-    Adapter --> Prompt["xox direct answer product policy"]
+    Adapter --> Prompt["host-profile/prompts/xox-direct-answer-policy.md"]
     Adapter --> Ambient["xox ambient context"]
 ```
 

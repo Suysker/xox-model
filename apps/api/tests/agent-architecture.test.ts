@@ -139,8 +139,12 @@ describe('Agent ADR architecture boundaries', () => {
     }
   })
 
-  it('keeps host prompt assets out of the production agent tree', () => {
+  it('keeps host prompt assets in host profile instead of a generic agent prompt framework', () => {
     expect(existsSync(join(srcRoot, 'agent', 'prompts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'host-profile', 'prompts'))).toBe(true)
+    expect(existsSync(join(srcRoot, 'agent', 'host-profile', 'prompts', 'xox-planning-policy.md'))).toBe(true)
+    expect(existsSync(join(srcRoot, 'agent', 'host-profile', 'prompts', 'xox-turn-lane-policy.md'))).toBe(true)
+    expect(existsSync(join(srcRoot, 'agent', 'host-profile', 'prompts', 'xox-direct-answer-policy.md'))).toBe(true)
 
     const deletedPromptAssets = [
       'planner.system.md',
@@ -154,8 +158,8 @@ describe('Agent ADR architecture boundaries', () => {
       for (const prompt of deletedPromptAssets) {
         expect(content, `${file} must not reference the deleted ${prompt} prompt asset`).not.toContain(prompt)
       }
-      expect(content, `${file} must not load prompt files from a local host prompt directory`).not.toContain('/prompts/')
-      expect(content, `${file} must not load prompt files from a local host prompt directory`).not.toContain('\\prompts\\')
+      expect(content, `${file} must not load prompts from the old generic agent prompt directory`).not.toContain('../prompts/')
+      expect(content, `${file} must not load prompts from the old generic agent prompt directory`).not.toContain('..\\prompts\\')
     }
   })
 

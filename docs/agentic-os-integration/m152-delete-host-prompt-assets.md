@@ -1,6 +1,6 @@
 # M152: Delete Host Prompt Assets
 
-Status: implemented and verified
+Status: implemented and verified; corrected by M153
 Date: 2026-06-22
 
 ## Goal
@@ -8,6 +8,8 @@ Date: 2026-06-22
 Delete the remaining production `apps/api/src/agent/prompts` directory.
 
 This is an amputation step, not a semantic rewrite of xox business policy. The problem was architectural shape: a downstream SaaS host that keeps `agent/prompts/*.md` still looks like it owns planner, turn-lane, and direct-answer harness surfaces. For future hosts such as navigation, the desirable integration shape is closer to OpenAI Agents JS `Agent({ instructions, tools })`: the host supplies policy and tools at concrete boundaries, while the runner, lane protocol, tool loop, recovery, event lifecycle, and observation semantics stay in Agentic OS.
+
+M153 corrects this document's overreach: prompt files are acceptable as host-profile content assets. The invariant is that `apps/api/src/agent/prompts` and generic harness prompt filenames stay deleted, while xox product policy prompt files may live under `apps/api/src/agent/host-profile/prompts`.
 
 ## References
 
@@ -45,18 +47,18 @@ xox owns:
 flowchart TD
     Worker["xox-run-worker-adapter.ts"] --> TurnIntake["@agentic-os/core resolveAgentTurnIntake"]
     Worker --> DirectAnswer["@agentic-os/core runDirectAnswerLane"]
-    Worker --> WorkerPolicy["private xox lane/direct-answer product policy constants"]
+    Worker --> WorkerPolicy["M153 host-profile prompt assets"]
     Runtime["xox-runtime-adapter.ts"] --> Router["@agentic-os/core createRuntimePlanRouter"]
     Runtime --> ProviderRuntime["@agentic-os/runtime-*"]
-    Runtime --> RuntimePolicy["private xox planning policy constant"]
+    Runtime --> RuntimePolicy["M153 host-profile planning policy asset"]
     Runtime --> Tools["xox tool catalog / gateway / DTO mapping"]
 ```
 
 ## Naming And Style
 
-- The retained text is named `XOX_*_PRODUCT_POLICY` or `XOX_PLANNING_POLICY_PROMPT`, not `planner.system.md`.
-- The constants are private to the concrete adapter that consumes them.
-- No standalone `prompt-registry`, `prompts` directory, or reusable-looking downstream prompt pack remains.
+- M153 restores the retained text to files named `xox-*-policy.md`, not `planner.system.md`.
+- The prompt files live under `host-profile/prompts` and are consumed by concrete adapters.
+- No standalone `prompt-registry`, generic `agent/prompts` directory, or reusable-looking downstream prompt pack remains.
 
 ## Validation
 
@@ -85,4 +87,4 @@ Verified on 2026-06-22:
 
 ## Migration Note
 
-This does not mean xox has no product policy. It means product policy is attached to real host boundaries, while Agentic OS continues to absorb the harness semantics. If a future migration moves these constants into Agentic OS host-profile configuration, the move should be accompanied by an Agentic OS API that is reusable by navigation and other SaaS hosts, not by recreating a downstream prompt directory.
+This does not mean xox has no product policy. It means product policy is attached to real host boundaries, while Agentic OS continues to absorb the harness semantics. M153 makes that boundary more maintainable by storing product policy in `host-profile/prompts` markdown files instead of TypeScript constants.
