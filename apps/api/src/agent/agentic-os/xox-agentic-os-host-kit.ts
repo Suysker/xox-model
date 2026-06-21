@@ -126,7 +126,7 @@ import {
   type RuntimeChatMessage,
   type RuntimePlanningInput,
   type RuntimePlanResult,
-} from '../runtime/runtime-adapter.js'
+} from './xox-runtime-adapter.js'
 import {
   mergeAgentGoalFacts,
   readRuntimeGoalFacts,

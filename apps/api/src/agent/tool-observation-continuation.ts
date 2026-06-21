@@ -7,7 +7,7 @@ import type { CurrentUser } from '../modules/auth.js'
 import { loadAgentRuntimeContext, redactSecretLikeContent } from './memory.js'
 import { addRunEvent, addRuntimeStreamRunEvent } from './run-events.js'
 import { buildThreadConversationLog } from './context-pack.js'
-import { planWithRuntimeAdapter, type RuntimeChatMessage } from './runtime/runtime-adapter.js'
+import { planWithRuntimeAdapter, type RuntimeChatMessage } from './agentic-os/xox-runtime-adapter.js'
 import {
   buildProviderToolObservationContinuationMessages,
   resolveProviderRuntimeProfile,

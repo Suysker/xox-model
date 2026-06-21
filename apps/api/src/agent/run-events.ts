@@ -12,7 +12,7 @@ import { newId } from '../core/security.js'
 import { utcNow } from '../core/time.js'
 import { agentThreadEvents } from './thread-events.js'
 import { redactSecretLikeContent } from './memory.js'
-import type { RuntimeStreamEvent } from './runtime/runtime-adapter.js'
+import type { RuntimeStreamEvent } from './agentic-os/xox-runtime-adapter.js'
 
 const runEventAppender = createAgentServerSequencedRunEventAppender({
   maxSequenceRetries: 5,

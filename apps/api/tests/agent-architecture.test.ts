@@ -70,8 +70,9 @@ describe('Agent ADR architecture boundaries', () => {
   })
 
   it('keeps runtime adapters provider-only and free of DB, routes, approvals, and domain execution', () => {
+    expect(existsSync(join(srcRoot, 'agent', 'runtime', 'runtime-adapter.ts'))).toBe(false)
     const runtimeFiles = [
-      'agent/runtime/runtime-adapter.ts',
+      'agent/agentic-os/xox-runtime-adapter.ts',
     ]
     const forbidden = [
       /['"]\.\.\/\.\.\/db\//,
@@ -303,6 +304,7 @@ describe('Agent ADR architecture boundaries', () => {
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-validator.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-repair.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'high-volume-tool-policy.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'runtime', 'runtime-adapter.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'openai-compatible-chat-adapter.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'openai-agents-adapter.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'direct-answer-runtime.ts'))).toBe(false)
@@ -347,7 +349,7 @@ describe('Agent ADR architecture boundaries', () => {
   it('deletes the runtime plan reader facade while keeping provider boundary payloads in Agentic OS', () => {
     expect(existsSync(join(srcRoot, 'agent', 'runtime-plan-reader.ts'))).toBe(false)
     const draftBuilder = source('agent/action-draft-builder.ts')
-    const runtimeAdapter = source('agent/runtime/runtime-adapter.ts')
+    const runtimeAdapter = source('agent/agentic-os/xox-runtime-adapter.ts')
     expect(draftBuilder).toContain('providerToolCallBoundaryObservations')
     expect(draftBuilder).toContain("@agentic-os/runtime-openai-compatible")
     expect(draftBuilder).not.toContain("observationType: 'provider_tool_call_boundary'")
@@ -357,7 +359,7 @@ describe('Agent ADR architecture boundaries', () => {
 
   it('keeps OpenAI-compatible runtime turn execution in Agentic OS runtime', () => {
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'openai-compatible-chat-adapter.ts'))).toBe(false)
-    const adapter = source('agent/runtime/runtime-adapter.ts')
+    const adapter = source('agent/agentic-os/xox-runtime-adapter.ts')
     expect(adapter).toContain('runOpenAICompatibleRuntimeTurn')
     expect(adapter).toContain("@agentic-os/runtime-openai-compatible")
     expect(adapter).not.toContain('requestOpenAICompatibleChatCompletion')
@@ -379,7 +381,7 @@ describe('Agent ADR architecture boundaries', () => {
 
   it('keeps OpenAI-compatible chat transport in Agentic OS runtime', () => {
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'openai-compatible-chat-adapter.ts'))).toBe(false)
-    const adapter = source('agent/runtime/runtime-adapter.ts')
+    const adapter = source('agent/agentic-os/xox-runtime-adapter.ts')
     expect(adapter).toContain('runOpenAICompatibleRuntimeTurn')
     expect(adapter).toContain("@agentic-os/runtime-openai-compatible")
     expect(adapter).not.toContain('new AbortController')
@@ -391,7 +393,7 @@ describe('Agent ADR architecture boundaries', () => {
 
   it('keeps OpenAI-compatible provider turn normalization in Agentic OS runtime', () => {
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'openai-compatible-chat-adapter.ts'))).toBe(false)
-    const adapter = source('agent/runtime/runtime-adapter.ts')
+    const adapter = source('agent/agentic-os/xox-runtime-adapter.ts')
     expect(adapter).toContain('runOpenAICompatibleRuntimeTurn')
     expect(adapter).toContain("@agentic-os/runtime-openai-compatible")
     expect(adapter).not.toContain('function textContentFromMessage')
@@ -567,7 +569,7 @@ describe('Agent ADR architecture boundaries', () => {
 
   it('deletes the provider tool-call repair facade and keeps normalization in Agentic OS runtime', () => {
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'openai-compatible-chat-adapter.ts'))).toBe(false)
-    const adapter = source('agent/runtime/runtime-adapter.ts')
+    const adapter = source('agent/agentic-os/xox-runtime-adapter.ts')
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-repair.ts'))).toBe(false)
     expect(adapter).toContain("@agentic-os/runtime-openai-compatible")
     expect(adapter).toContain('runOpenAICompatibleRuntimeTurn')
@@ -596,7 +598,7 @@ describe('Agent ADR architecture boundaries', () => {
   })
 
   it('keeps runtime adapter routing in Agentic OS core', () => {
-    const adapter = source('agent/runtime/runtime-adapter.ts')
+    const adapter = source('agent/agentic-os/xox-runtime-adapter.ts')
     expect(adapter).toContain("@agentic-os/core")
     expect(adapter).toContain('createRuntimePlanRouter')
     expect(adapter).toContain("@agentic-os/runtime-openai-agents")
@@ -604,6 +606,7 @@ describe('Agent ADR architecture boundaries', () => {
     expect(adapter).toContain('planWithRuntimeAdapter')
     expect(adapter).not.toContain("from './openai-agents-adapter.js'")
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'adapter-router.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'runtime', 'runtime-adapter.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'openai-agents-adapter.ts'))).toBe(false)
   })
 

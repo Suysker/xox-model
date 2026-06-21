@@ -12,7 +12,7 @@ import {
 import type { Row } from '../../db/schema.js'
 import type { PlannerContext } from '../planning-context.js'
 import { redactSecretLikeContent } from '../memory.js'
-import { planWithRuntimeAdapter } from '../runtime/runtime-adapter.js'
+import { planWithRuntimeAdapter } from './xox-runtime-adapter.js'
 import { sanitizeAgentGoalFacts } from '../runtime-goal-facts.js'
 import type { AgentToolCallStep, ChatTool } from '../tool-catalog.js'
 

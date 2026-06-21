@@ -11,7 +11,7 @@ import {
 import { providerToolCallBoundaryObservations } from '@agentic-os/runtime-openai-compatible'
 import type { AgentActionDraft } from './approval-executor.js'
 import { redactSecretLikeContent } from './memory.js'
-import type { RuntimePlanError, RuntimePlanResult } from './runtime/runtime-adapter.js'
+import type { RuntimePlanError, RuntimePlanResult } from './agentic-os/xox-runtime-adapter.js'
 
 export type ReadDraft = {
   title: string

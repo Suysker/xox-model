@@ -18,7 +18,7 @@ import {
   type RuntimeChatMessage,
   type RuntimePlanError,
   type RuntimePlanResult,
-} from '../runtime/runtime-adapter.js'
+} from './xox-runtime-adapter.js'
 import { redactSecretLikeContent } from '../memory.js'
 import { addRunEvent, addRuntimeStreamRunEvent } from '../run-events.js'
 import { addMessage } from '../thread-store.js'
