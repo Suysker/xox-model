@@ -5,7 +5,6 @@ import { newId } from '../core/security.js'
 import { utcNow } from '../core/time.js'
 import type { CurrentUser } from '../modules/auth.js'
 import { loadAgentRuntimeContext, redactSecretLikeContent } from './memory.js'
-import { toolObservationFinalizerSystemPrompt } from './prompt-registry.js'
 import { addRunEvent, addRuntimeStreamRunEvent } from './run-events.js'
 import { buildThreadConversationLog } from './context-pack.js'
 import { planWithRuntimeAdapter, type RuntimeChatMessage } from './runtime/runtime-adapter.js'
@@ -18,6 +17,7 @@ import {
   buildActionResultObservation,
   buildToolSupervisorEmptyResultFailureObservation,
   runtimeMessagesFromConversationLog,
+  toolObservationContinuationSystemPrompt,
 } from '@agentic-os/core'
 import type { AgentToolObservationLane, AgentToolObservationOutcome } from '@xox/contracts'
 import type { AgentToolCallStep } from './tool-catalog.js'
@@ -39,6 +39,14 @@ export type ToolObservationContinuationResult =
   | { status: 'answered'; assistantText: string }
   | { status: 'skipped'; reason: 'no_observations' | 'rules_provider' }
   | { status: 'failed'; message: string; planStep: Row<'agent_plan_steps'> }
+
+function toolObservationFinalizerSystemPrompt() {
+  return toolObservationContinuationSystemPrompt({
+    platformName: 'xox-model SaaS 平台',
+    agentName: 'Agent OS',
+    extraRules: ['你是 xox-model Agent OS，不要自称 DeepSeek、Qwen、OpenAI 或其他模型。'],
+  })
+}
 
 function parseJsonObject(value: string | null) {
   if (!value) return null

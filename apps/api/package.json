@@ -7,7 +7,7 @@
     "dev": "tsx watch src/main.ts",
     "build": "tsc --noEmit",
     "test": "vitest run",
-    "smoke:agent": "tsx src/agent/real-provider-smoke.ts"
+    "smoke:agent": "tsx scripts/agent-real-provider-smoke.ts"
   },
   "dependencies": {
     "@agentic-os/contracts": "^0.1.0",

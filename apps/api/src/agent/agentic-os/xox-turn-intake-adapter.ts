@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import {
   AGENT_TURN_LANE_RESOLUTION_TOOL_NAME,
   AGENT_TURN_LANE_RESOLUTION_TOOL_SCHEMA,
@@ -10,10 +12,18 @@ import {
 import type { Row } from '../../db/schema.js'
 import type { PlannerContext } from '../planning-context.js'
 import { redactSecretLikeContent } from '../memory.js'
-import { turnLaneSystemPrompt } from '../prompt-registry.js'
 import { planWithRuntimeAdapter } from '../runtime/runtime-adapter.js'
 import { sanitizeAgentGoalFacts } from '../runtime-goal-facts.js'
 import type { AgentToolCallStep, ChatTool } from '../tool-catalog.js'
+
+const TURN_LANE_SYSTEM_PROMPT = readFileSync(
+  fileURLToPath(new URL('../prompts/turn-lane.system.md', import.meta.url)),
+  'utf8',
+).trim()
+
+function turnLaneSystemPrompt() {
+  return TURN_LANE_SYSTEM_PROMPT
+}
 
 const TURN_LANE_RESOLUTION_TOOL: ChatTool = {
   type: 'function',

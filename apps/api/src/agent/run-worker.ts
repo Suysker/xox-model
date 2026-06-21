@@ -1,5 +1,6 @@
 import type { Kysely } from 'kysely'
 import { createAgentServerRunScheduler, type AgentServerRunScheduler } from '@agentic-os/server'
+import type { AgentGoalStatus, AgentNavigationEvent, AgentPlannerSource } from '@xox/contracts'
 import type { Database, Row } from '../db/schema.js'
 import type { Settings } from '../core/settings.js'
 import { utcNow } from '../core/time.js'
@@ -7,7 +8,9 @@ import type { CurrentUser } from '../modules/auth.js'
 import { redactSecretLikeContent } from './memory.js'
 import { resolveAgentRuntimeSettings } from './provider-settings.js'
 import type { PlannerContext } from './planning-context.js'
-import { executeAgentKernelRun, type AgentKernelRunResult } from './agent-kernel.js'
+import { executeXoxAgenticOsRun } from './agentic-os/xox-agentic-os-host-kit.js'
+import { executeXoxDirectAnswerLane } from './agentic-os/xox-direct-answer-adapter.js'
+import { resolveXoxAgentTurnIntake } from './agentic-os/xox-turn-intake-adapter.js'
 import {
   AgentRunLeaseLostError,
   claimAgentRunLease,
@@ -19,10 +22,35 @@ import { addRunEvent } from './run-events.js'
 import { agentThreadEvents } from './thread-events.js'
 import { addMessage, touchThreadAfterRun } from './thread-store.js'
 import { normalizeAgentAutomationLevel } from './tool-policy.js'
+import { sanitizeAgentGoalFacts } from './runtime-goal-facts.js'
 
 const agentRunSchedulers = new WeakMap<Kysely<Database>, AgentServerRunScheduler>()
 
-export type CompletedAgentRun = AgentKernelRunResult
+export type CompletedAgentRun = {
+  plannerSource: AgentPlannerSource
+  assistantMessage: Row<'agent_messages'> | null
+  navigationEvents: AgentNavigationEvent[]
+  actionRows: Row<'agent_action_requests'>[]
+  planRows: Row<'agent_plan_steps'>[]
+  goalStatus: AgentGoalStatus | null
+}
+
+async function executeAgentRun(
+  ctx: PlannerContext & { thread: Row<'agent_threads'> },
+  options: { beforeStateWrite: () => Promise<boolean> },
+): Promise<CompletedAgentRun | null> {
+  const resolution = await resolveXoxAgentTurnIntake(ctx)
+  if (resolution.lane === 'direct_answer') {
+    return executeXoxDirectAnswerLane(ctx, {
+      resolution,
+      beforeStateWrite: options.beforeStateWrite,
+    })
+  }
+  return executeXoxAgenticOsRun({
+    ...ctx,
+    ...(resolution.goalFacts ? { initialGoalFacts: sanitizeAgentGoalFacts(resolution.goalFacts) } : {}),
+  }, options)
+}
 
 function getExistingAgentRunScheduler(db: Kysely<Database>) {
   return agentRunSchedulers.get(db)
@@ -161,21 +189,21 @@ export async function completeAgentRun(ctx: PlannerContext & { thread: Row<'agen
       status: 'running',
     })
     stopHeartbeat = startAgentRunLeaseHeartbeat(ctx.db, runtimeSettings, ctx.runId)
-    const kernelResult = await executeAgentKernelRun(runtimeCtx, {
+    const runResult = await executeAgentRun(runtimeCtx, {
       beforeStateWrite: () => refreshAgentRunLease(ctx.db, runtimeSettings, ctx.runId),
     })
-    if (!kernelResult) return null
-    const goalFailed = kernelResult.goalStatus === 'failed' || kernelResult.goalStatus === 'blocked'
+    if (!runResult) return null
+    const goalFailed = runResult.goalStatus === 'failed' || runResult.goalStatus === 'blocked'
     await ctx.db
       .updateTable('agent_runs')
-      .set({ status: goalFailed ? 'failed' : 'completed', planner_source: kernelResult.plannerSource, completed_at: utcNow(), lease_expires_at: null })
+      .set({ status: goalFailed ? 'failed' : 'completed', planner_source: runResult.plannerSource, completed_at: utcNow(), lease_expires_at: null })
       .where('id', '=', ctx.runId)
       .where('status', '=', 'running')
       .where('worker_id', '=', runtimeSettings.agentWorkerId)
       .execute()
     await touchThreadAfterRun(ctx.db, ctx.thread, ctx.message)
-    const pendingActionCount = kernelResult.actionRows.filter((row) => row.status === 'pending').length
-    const executedActionCount = kernelResult.actionRows.filter((row) => row.status === 'executed').length
+    const pendingActionCount = runResult.actionRows.filter((row) => row.status === 'pending').length
+    const executedActionCount = runResult.actionRows.filter((row) => row.status === 'executed').length
     await addRunEvent(ctx.db, {
       threadId: ctx.thread.id,
       runId: ctx.runId,
@@ -189,10 +217,10 @@ export async function completeAgentRun(ctx: PlannerContext & { thread: Row<'agen
             ? '模型规划和自动执行已完成。'
             : '模型规划和只读回答已完成。',
       status: goalFailed ? 'failed' : 'completed',
-      data: { actionCount: kernelResult.actionRows.length, pendingActionCount, executedActionCount, planStepCount: kernelResult.planRows.length },
+      data: { actionCount: runResult.actionRows.length, pendingActionCount, executedActionCount, planStepCount: runResult.planRows.length },
     })
     agentThreadEvents.publish(ctx.thread.id, goalFailed ? 'run_failed' : 'run_completed')
-    return kernelResult
+    return runResult
   } catch (error) {
     if (error instanceof AgentRunLeaseLostError) return null
     if (!(await refreshAgentRunLease(ctx.db, runtimeSettings, ctx.runId).catch(() => false))) {

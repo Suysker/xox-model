@@ -19,7 +19,6 @@ import {
 } from '@agentic-os/runtime-openai-compatible'
 import type { AgentPlannerSource, AgentToolInventorySnapshot } from '@xox/contracts'
 import type { Settings } from '../../core/settings.js'
-import { plannerSystemPrompt } from '../prompt-registry.js'
 import {
   AGENT_TOOL_REGISTRY,
   isHarnessManagedObservationToolName,
@@ -169,6 +168,7 @@ export interface RuntimeAdapter {
 
 const OPENAI_AGENTS_SOURCE = 'openai_agents' as const
 const OPENAI_COMPATIBLE_SOURCE = 'openai_compatible_tool_calls' as const
+const DEFAULT_RUNTIME_SYSTEM_PROMPT = 'You are an Agentic OS runtime adapter. Follow the supplied host instructions and tool schema.'
 const toolRegistryByName = new Map(AGENT_TOOL_REGISTRY.map((entry) => [entry.name, entry]))
 const TOOL_CALL_BOUNDARY_CODES = new Set<ToolCallBoundaryViolationCode>([
   'tool_call_registered_but_deferred',
@@ -365,7 +365,7 @@ async function planWithOpenAICompatibleRuntime(input: RuntimePlanningInput): Pro
     model: input.settings.openaiCompatibleModel,
     baseUrl: input.settings.openaiCompatibleBaseUrl,
     apiKey: input.settings.openaiCompatibleApiKey,
-    systemPrompt: input.systemPrompt ?? plannerSystemPrompt(),
+    systemPrompt: input.systemPrompt ?? DEFAULT_RUNTIME_SYSTEM_PROMPT,
     userContent: `上下文：${JSON.stringify(input.context)}\n用户指令：${input.message}`,
     tools: input.tools,
     stream: input.stream ?? true,
@@ -520,7 +520,7 @@ async function planWithOpenAIAgentsRuntime(input: RuntimePlanningInput): Promise
       ...(input.settings.openaiBaseUrl ? { baseURL: input.settings.openaiBaseUrl } : {}),
       model: input.settings.openaiModel,
       agentName: 'XOX Agent Planner',
-      instructions: input.systemPrompt ?? plannerSystemPrompt(),
+      instructions: input.systemPrompt ?? DEFAULT_RUNTIME_SYSTEM_PROMPT,
       buildPrompt: () => promptFromOpenAIAgentsMessages(input),
       onEvent: (event) => emitOpenAIAgentsRuntimeEvent(input, event),
     })

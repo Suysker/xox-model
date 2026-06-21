@@ -1,10 +1,11 @@
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { buildAgentContextPack } from './context-pack.js'
 import { redactSecretLikeContent } from './memory.js'
 import type { PlannerContext } from './planning-context.js'
 import { planWithRuntimeAdapter, type RuntimeChatMessage, type RuntimePlanningInput, type RuntimePlanResult } from './runtime/runtime-adapter.js'
 import type { Settings } from '../core/settings.js'
 import { addRunEvent, addRuntimeStreamRunEvent } from './run-events.js'
-import { plannerSystemPrompt } from './prompt-registry.js'
 import type { AgentToolObservation } from './tool-observation-continuation.js'
 import { materializedToolInventorySnapshot, provideRuntimeToolCatalog } from './tool-gateway.js'
 import {
@@ -28,6 +29,14 @@ const XOX_HIGH_VOLUME_STRUCTURED_TOOL_NAMES = [
 ] as const
 const XOX_HIGH_VOLUME_STRUCTURED_MAX_TOKENS = 48_000
 const XOX_HIGH_VOLUME_STRUCTURED_TIMEOUT_MS = 360_000
+const PLANNER_SYSTEM_PROMPT = readFileSync(
+  fileURLToPath(new URL('./prompts/planner.system.md', import.meta.url)),
+  'utf8',
+).trim()
+
+function plannerSystemPrompt() {
+  return PLANNER_SYSTEM_PROMPT
+}
 
 function plannerTokenBudget(message: string) {
   const structuredLineCount = message.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).length
@@ -326,6 +335,7 @@ export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePl
     context,
     tools: toolCatalog.tools,
     materializableToolNames: toolCatalog.materializableToolNames,
+    systemPrompt: plannerSystemPrompt(),
     messages: plannerRuntimeMessages({
       settings: ctx.settings,
       context,

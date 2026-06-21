@@ -48,14 +48,25 @@ describe('Agent ADR architecture boundaries', () => {
     expect(existsSync(join(srcRoot, 'agent', 'tool-projector.ts'))).toBe(false)
   })
 
-  it('keeps Agentic OS host kit as the single harness run-loop entrypoint', () => {
+  it('keeps Agentic OS host kit as the single harness run-loop entrypoint and deletes the host kernel facade', () => {
     expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-agentic-os-host-kit.ts'))).toBe(true)
     expect(existsSync(join(srcRoot, 'agent', 'agent-run-engine.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'goal-run-engine.ts'))).toBe(false)
-    const kernel = source('agent/agent-kernel.ts')
-    expect(kernel).toContain("from './agentic-os/xox-agentic-os-host-kit.js'")
-    expect(kernel).not.toContain("from './agent-run-engine.js'")
-    expect(kernel).not.toContain('goal-run-engine')
+    expect(existsSync(join(srcRoot, 'agent', 'agent-kernel.ts'))).toBe(false)
+
+    const worker = source('agent/run-worker.ts')
+    expect(worker).toContain("from './agentic-os/xox-agentic-os-host-kit.js'")
+    expect(worker).toContain("from './agentic-os/xox-direct-answer-adapter.js'")
+    expect(worker).toContain("from './agentic-os/xox-turn-intake-adapter.js'")
+    expect(worker).not.toContain("from './agent-run-engine.js'")
+    expect(worker).not.toContain('goal-run-engine')
+  })
+
+  it('keeps real-provider smoke outside the production agent runtime tree', () => {
+    expect(existsSync(join(srcRoot, 'agent', 'real-provider-smoke.ts'))).toBe(false)
+    expect(existsSync(join(apiRoot, 'scripts', 'agent-real-provider-smoke.ts'))).toBe(true)
+    const apiPackage = readFileSync(join(apiRoot, 'package.json'), 'utf8')
+    expect(apiPackage).toContain('tsx scripts/agent-real-provider-smoke.ts')
   })
 
   it('keeps runtime adapters provider-only and free of DB, routes, approvals, and domain execution', () => {
@@ -91,22 +102,23 @@ describe('Agent ADR architecture boundaries', () => {
     ])
   })
 
-  it('keeps the Lean Agent Kernel out of HTTP and provider implementation details', () => {
-    expectNoImports('agent/agent-kernel.ts', [
+  it('keeps the run worker out of HTTP, provider runtime, and tool execution implementation details', () => {
+    expectNoImports('agent/run-worker.ts', [
       /fastify/i,
-      /['"]\.\.\/modules\//,
       /runtime\//,
-      /provider-settings/,
       /tool-executor/,
+      /tool-gateway/,
+      /context-pack/,
+      /action-graph-store/,
     ])
   })
 
   it('keeps turn intake protocol in Agentic OS core', () => {
     expect(existsSync(join(srcRoot, 'agent', 'turn-intake-resolver.ts'))).toBe(false)
-    const kernel = source('agent/agent-kernel.ts')
-    expect(kernel).toContain("from './agentic-os/xox-turn-intake-adapter.js'")
-    expect(kernel).not.toContain('planWithRuntimeAdapter')
-    expect(kernel).not.toContain("name: 'turn_lane_resolve'")
+    const worker = source('agent/run-worker.ts')
+    expect(worker).toContain("from './agentic-os/xox-turn-intake-adapter.js'")
+    expect(worker).not.toContain('planWithRuntimeAdapter')
+    expect(worker).not.toContain("name: 'turn_lane_resolve'")
     const intakeAdapter = source('agent/agentic-os/xox-turn-intake-adapter.ts')
     expect(intakeAdapter).toContain("@agentic-os/core")
     expect(intakeAdapter).toContain('resolveAgentTurnIntake')
@@ -118,9 +130,9 @@ describe('Agent ADR architecture boundaries', () => {
 
   it('keeps direct answer lane state machine in Agentic OS core', () => {
     expect(existsSync(join(srcRoot, 'agent', 'direct-answer-runtime.ts'))).toBe(false)
-    const kernel = source('agent/agent-kernel.ts')
-    expect(kernel).toContain("from './agentic-os/xox-direct-answer-adapter.js'")
-    expect(kernel).not.toContain("from './direct-answer-runtime.js'")
+    const worker = source('agent/run-worker.ts')
+    expect(worker).toContain("from './agentic-os/xox-direct-answer-adapter.js'")
+    expect(worker).not.toContain("from './direct-answer-runtime.js'")
 
     const adapter = source('agent/agentic-os/xox-direct-answer-adapter.ts')
     expect(adapter).toContain("@agentic-os/core")
@@ -263,6 +275,9 @@ describe('Agent ADR architecture boundaries', () => {
   })
 
   it('does not keep obsolete local harness helper boundaries after Agentic OS replacement', () => {
+    expect(existsSync(join(srcRoot, 'agent', 'agent-kernel.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'prompt-registry.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'real-provider-smoke.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'agent-action-runtime.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'context-engine', 'index.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'turn-resolver.ts'))).toBe(false)
@@ -503,11 +518,15 @@ describe('Agent ADR architecture boundaries', () => {
     expect(continuation).not.toContain('did not produce an action or observation')
   })
 
-  it('keeps the tool observation continuation prompt in Agentic OS core', () => {
-    const registry = source('agent/prompt-registry.ts')
-    expect(registry).toContain("@agentic-os/core")
-    expect(registry).toContain('toolObservationContinuationSystemPrompt')
-    expect(registry).not.toContain('tool-observation-finalizer.system.md')
+  it('deletes the prompt registry facade and keeps the tool observation continuation prompt in Agentic OS core', () => {
+    expect(existsSync(join(srcRoot, 'agent', 'prompt-registry.ts'))).toBe(false)
+    for (const file of sourceFilesUnder('agent')) {
+      expect(source(file), `${file} must not import the deleted prompt registry facade`).not.toContain('prompt-registry')
+    }
+    const continuation = source('agent/tool-observation-continuation.ts')
+    expect(continuation).toContain("@agentic-os/core")
+    expect(continuation).toContain('toolObservationContinuationSystemPrompt')
+    expect(continuation).not.toContain('tool-observation-finalizer.system.md')
     expect(existsSync(join(srcRoot, 'agent', 'prompts', 'tool-observation-finalizer.system.md'))).toBe(false)
   })
 

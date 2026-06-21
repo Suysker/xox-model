@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import {
   agentAmbientSessionContextFacts,
   buildAgentAmbientSessionContext,
@@ -10,7 +12,6 @@ import type { AgentTurnLaneResolution } from '@agentic-os/contracts'
 import type { AgentGoalStatus, AgentNavigationEvent, AgentPlannerSource } from '@xox/contracts'
 import type { Row } from '../../db/schema.js'
 import type { PlannerContext } from '../planning-context.js'
-import { directAnswerSystemPrompt } from '../prompt-registry.js'
 import {
   configuredRuntimePlannerSource,
   planWithRuntimeAdapter,
@@ -35,6 +36,15 @@ export type DirectAnswerRunResult = {
 
 type XoxDirectAnswerModelOutput = DirectAnswerLaneModelOutput<RuntimePlanError> & {
   result: RuntimePlanResult | null
+}
+
+const DIRECT_ANSWER_SYSTEM_PROMPT = readFileSync(
+  fileURLToPath(new URL('../prompts/direct-answer.system.md', import.meta.url)),
+  'utf8',
+).trim()
+
+function directAnswerSystemPrompt() {
+  return DIRECT_ANSWER_SYSTEM_PROMPT
 }
 
 function compactJson(value: unknown) {
@@ -135,6 +145,7 @@ export async function executeXoxDirectAnswerLane(
         context: { ambient: agentAmbientSessionContextFacts(ambientContext) },
         tools: [],
         messages: directAnswerMessages({ message: ctx.message, ambientContext }),
+        systemPrompt: directAnswerSystemPrompt(),
         maxTokens: 500,
         thinkingLevel: 'off',
         requestTimeoutMs: ctx.settings.agentProviderRequestTimeoutMs,

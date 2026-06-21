@@ -3,9 +3,9 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { FastifyInstance } from 'fastify'
-import { createApp } from '../server.js'
-import { createDatabase } from '../db/database.js'
-import type { Settings } from '../core/settings.js'
+import { createApp } from '../src/server.js'
+import { createDatabase } from '../src/db/database.js'
+import type { Settings } from '../src/core/settings.js'
 
 type JsonResponse = {
   statusCode: number
@@ -112,8 +112,8 @@ function loadDotenvFile(path: string) {
 }
 
 function loadLocalEnvFiles() {
-  const agentDir = dirname(fileURLToPath(import.meta.url))
-  const apiRoot = resolve(agentDir, '../..')
+  const scriptDir = dirname(fileURLToPath(import.meta.url))
+  const apiRoot = resolve(scriptDir, '..')
   const repoRoot = resolve(apiRoot, '../..')
   loadDotenvFile(resolve(repoRoot, '.env'))
   loadDotenvFile(resolve(apiRoot, '.env'))
