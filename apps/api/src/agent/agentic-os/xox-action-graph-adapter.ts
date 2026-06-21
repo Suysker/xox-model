@@ -29,20 +29,17 @@ import { utcNow } from '../../core/time.js'
 import type { CurrentUser } from '../../modules/auth.js'
 import { isActionDraft, type AgentActionDraft, type PlannedItem, type ReadDraft } from '../action-draft-builder.js'
 import { autoExecuteAgentActionRequest } from '../tool-executor.js'
-import { addRunEvent } from './xox-run-event-store-adapter.js'
+import { addRunEvent, agentThreadEvents } from './xox-run-event-store-adapter.js'
 import { assertAgentRunLease } from './xox-run-lease-store-adapter.js'
-import { agentThreadEvents } from './xox-thread-signal-adapter.js'
 import {
   actionFailureObservation,
   actionExecutionObservation,
   actionPreviewObservation,
+  createXoxObservationBridge,
   type AgentToolObservation,
+  type XoxObservationBridge,
 } from './xox-tool-observation-adapter.js'
 import { assertActionDraftAllowed, resolveActionAuthority, type AgentAutomationLevel } from '../tool-policy.js'
-import {
-  createXoxObservationBridge,
-  type XoxObservationBridge,
-} from './xox-observation-adapter.js'
 
 type ActionGraphContext = {
   db: Kysely<Database>

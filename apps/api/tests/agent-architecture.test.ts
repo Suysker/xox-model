@@ -56,7 +56,6 @@ describe('Agent ADR architecture boundaries', () => {
       'agent/agentic-os/xox-action-graph-adapter.ts',
       'agent/agentic-os/xox-runtime-planning-adapter.ts',
       'agent/agentic-os/xox-tool-observation-adapter.ts',
-      'agent/agentic-os/xox-direct-answer-adapter.ts',
       'agent/memory-consolidator.ts',
     ]
     const forbiddenDirectTypeLiterals = [
@@ -107,8 +106,8 @@ describe('Agent ADR architecture boundaries', () => {
 
     const worker = source('agent/agentic-os/xox-run-worker-adapter.ts')
     expect(worker).toContain("from './xox-agentic-os-host-kit.js'")
-    expect(worker).toContain("from './xox-direct-answer-adapter.js'")
-    expect(worker).toContain("from './xox-turn-intake-adapter.js'")
+    expect(worker).not.toContain("from './xox-direct-answer-adapter.js'")
+    expect(worker).not.toContain("from './xox-turn-intake-adapter.js'")
     expect(worker).not.toContain("from './agent-run-engine.js'")
     expect(worker).not.toContain('goal-run-engine')
   })
@@ -167,31 +166,28 @@ describe('Agent ADR architecture boundaries', () => {
 
   it('keeps turn intake protocol in Agentic OS core', () => {
     expect(existsSync(join(srcRoot, 'agent', 'turn-intake-resolver.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-turn-intake-adapter.ts'))).toBe(false)
     const worker = source('agent/agentic-os/xox-run-worker-adapter.ts')
-    expect(worker).toContain("from './xox-turn-intake-adapter.js'")
-    expect(worker).not.toContain('planWithRuntimeAdapter')
+    expect(worker).toContain("@agentic-os/core")
+    expect(worker).toContain('resolveAgentTurnIntake')
+    expect(worker).toContain('AGENT_TURN_LANE_RESOLUTION_TOOL_SCHEMA')
+    expect(worker).not.toContain("from './xox-turn-intake-adapter.js'")
     expect(worker).not.toContain("name: 'turn_lane_resolve'")
-    const intakeAdapter = source('agent/agentic-os/xox-turn-intake-adapter.ts')
-    expect(intakeAdapter).toContain("@agentic-os/core")
-    expect(intakeAdapter).toContain('resolveAgentTurnIntake')
-    expect(intakeAdapter).toContain('AGENT_TURN_LANE_RESOLUTION_TOOL_SCHEMA')
-    expect(intakeAdapter).not.toContain("name: 'turn_lane_resolve'")
-    expect(intakeAdapter).not.toContain("enum: ['direct_answer', 'agent_goal']")
-    expect(intakeAdapter).not.toContain("reasonCode: 'provider_unavailable'")
+    expect(worker).not.toContain("enum: ['direct_answer', 'agent_goal']")
+    expect(worker).not.toContain("reasonCode: 'provider_unavailable'")
   })
 
   it('keeps direct answer lane state machine in Agentic OS core', () => {
     expect(existsSync(join(srcRoot, 'agent', 'direct-answer-runtime.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-direct-answer-adapter.ts'))).toBe(false)
     const worker = source('agent/agentic-os/xox-run-worker-adapter.ts')
-    expect(worker).toContain("from './xox-direct-answer-adapter.js'")
+    expect(worker).toContain("@agentic-os/core")
+    expect(worker).toContain('runDirectAnswerLane')
+    expect(worker).not.toContain("from './xox-direct-answer-adapter.js'")
     expect(worker).not.toContain("from './direct-answer-runtime.js'")
-
-    const adapter = source('agent/agentic-os/xox-direct-answer-adapter.ts')
-    expect(adapter).toContain("@agentic-os/core")
-    expect(adapter).toContain('runDirectAnswerLane')
-    expect(adapter).not.toContain('function usableAssistantText')
-    expect(adapter).not.toContain('result?.steps.length === 0')
-    expect(adapter).not.toContain('if (!assistantText)')
+    expect(worker).not.toContain('function usableAssistantText')
+    expect(worker).not.toContain('result?.steps.length === 0')
+    expect(worker).not.toContain('if (!assistantText)')
   })
 
   it('keeps ambient session context facts in Agentic OS core', () => {
@@ -202,8 +198,7 @@ describe('Agent ADR architecture boundaries', () => {
     }
 
     for (const file of [
-      'agent/agentic-os/xox-turn-intake-adapter.ts',
-      'agent/agentic-os/xox-direct-answer-adapter.ts',
+      'agent/agentic-os/xox-run-worker-adapter.ts',
     ]) {
       const content = source(file)
       expect(content).toContain("@agentic-os/core")
@@ -214,15 +209,17 @@ describe('Agent ADR architecture boundaries', () => {
 
   it('keeps clarification resume scaffold in Agentic OS core', () => {
     expect(existsSync(join(srcRoot, 'agent', 'clarification-resume.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-clarification-resume-adapter.ts'))).toBe(false)
     const hostKit = source('agent/agentic-os/xox-agentic-os-host-kit.ts')
-    expect(hostKit).toContain("from './xox-clarification-resume-adapter.js'")
+    expect(hostKit).toContain("from './xox-goal-store-adapter.js'")
+    expect(hostKit).toContain('buildXoxClarificationResumeContext')
     expect(hostKit).not.toContain("from '../clarification-resume.js'")
 
-    const adapter = source('agent/agentic-os/xox-clarification-resume-adapter.ts')
-    expect(adapter).toContain("@agentic-os/core")
-    expect(adapter).toContain('buildClarificationResumeScaffold')
-    expect(adapter).not.toContain('const objective = [')
-    expect(adapter).not.toContain(".join('\\n')")
+    const goalStore = source('agent/agentic-os/xox-goal-store-adapter.ts')
+    expect(goalStore).toContain("@agentic-os/core")
+    expect(goalStore).toContain('buildClarificationResumeScaffold')
+    expect(goalStore).not.toContain('const objective = [')
+    expect(goalStore).not.toContain(".join('\\n')")
   })
 
   it('keeps loop readiness status priority in Agentic OS core', () => {
@@ -551,10 +548,11 @@ describe('Agent ADR architecture boundaries', () => {
   })
 
   it('keeps host observation bridging in Agentic OS core', () => {
-    const observationAdapter = source('agent/agentic-os/xox-observation-adapter.ts')
-    expect(observationAdapter).toContain("@agentic-os/core")
-    expect(observationAdapter).toContain('createHostObservationBridge')
-    expect(observationAdapter).toContain('createXoxObservationBridge')
+    expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-observation-adapter.ts'))).toBe(false)
+    const toolObservation = source('agent/agentic-os/xox-tool-observation-adapter.ts')
+    expect(toolObservation).toContain("@agentic-os/core")
+    expect(toolObservation).toContain('createHostObservationBridge')
+    expect(toolObservation).toContain('createXoxObservationBridge')
 
     const hostKit = source('agent/agentic-os/xox-agentic-os-host-kit.ts')
     expect(hostKit).toContain('createXoxObservationBridge')
@@ -759,14 +757,16 @@ describe('Agent ADR architecture boundaries', () => {
       }
     }
 
-    const threadSignal = source('agent/agentic-os/xox-thread-signal-adapter.ts')
-    const threadStream = source('agent/agentic-os/xox-thread-state-stream-adapter.ts')
+    expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-thread-signal-adapter.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-thread-state-stream-adapter.ts'))).toBe(false)
+    const routes = source('agent/routes.ts')
     const runLease = source('agent/agentic-os/xox-run-lease-store-adapter.ts')
     const runWorker = source('agent/agentic-os/xox-run-worker-adapter.ts')
-    expect(threadSignal).toContain("@agentic-os/server")
-    expect(threadSignal).toContain('AgentServerSignalBus')
-    expect(threadStream).toContain("@agentic-os/server")
-    expect(threadStream).toContain('openAgentServerSignalStateStream')
+    const runEvents = source('agent/agentic-os/xox-run-event-store-adapter.ts')
+    expect(runEvents).toContain("@agentic-os/server")
+    expect(runEvents).toContain('AgentServerSignalBus')
+    expect(routes).toContain("@agentic-os/server")
+    expect(routes).toContain('openAgentServerSignalStateStream')
     expect(runLease).toContain("@agentic-os/server")
     expect(runLease).toContain('startAgentServerRunLeaseHeartbeat')
     expect(runLease).toContain('assertAgentServerRunLease')
@@ -784,7 +784,8 @@ describe('Agent ADR architecture boundaries', () => {
       expect(source(file), `${file} must not rebuild the deleted AG-UI projection wrapper`).not.toContain('buildAgentAgUiEvents')
     }
 
-    const runView = source('agent/agentic-os/xox-run-submission-view.ts')
+    expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-run-submission-view.ts'))).toBe(false)
+    const runView = source('agent/agentic-os/xox-run-submission-adapter.ts')
     const threadView = source('agent/agentic-os/xox-thread-state-view.ts')
     for (const content of [runView, threadView]) {
       expect(content).toContain("@agentic-os/server")

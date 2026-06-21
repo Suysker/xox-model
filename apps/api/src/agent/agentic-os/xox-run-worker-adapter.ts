@@ -1,5 +1,21 @@
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import type { Kysely } from 'kysely'
-import { createAgentServerRunScheduler, type AgentServerRunScheduler } from '@agentic-os/server'
+import {
+  AGENT_TURN_LANE_RESOLUTION_TOOL_NAME,
+  AGENT_TURN_LANE_RESOLUTION_TOOL_SCHEMA,
+  agentAmbientSessionContextFacts,
+  buildAgentAmbientSessionContext,
+  normalizeAgentTurnLaneResolution,
+  resolveAgentTurnIntake,
+  runDirectAnswerLane,
+  type AgentAmbientSessionContext,
+  type AgentTurnIntakeModelResult,
+  type DirectAnswerLaneFailure,
+  type DirectAnswerLaneModelOutput,
+} from '@agentic-os/core'
+import { createAgentServerRunScheduler, agentServerRunLifecycleEvents, type AgentServerRunScheduler } from '@agentic-os/server'
+import type { AgentTurnLaneResolution } from '@agentic-os/contracts'
 import type { AgentGoalStatus, AgentNavigationEvent, AgentPlannerSource } from '@xox/contracts'
 import type { Database, Row } from '../../db/schema.js'
 import type { Settings } from '../../core/settings.js'
@@ -9,8 +25,6 @@ import { redactSecretLikeContent } from '../memory.js'
 import { resolveAgentRuntimeSettings } from '../provider-settings.js'
 import type { PlannerContext } from '../planning-context.js'
 import { executeXoxAgenticOsRun } from './xox-agentic-os-host-kit.js'
-import { executeXoxDirectAnswerLane } from './xox-direct-answer-adapter.js'
-import { resolveXoxAgentTurnIntake } from './xox-turn-intake-adapter.js'
 import {
   AgentRunLeaseLostError,
   claimAgentRunLease,
@@ -18,11 +32,20 @@ import {
   refreshAgentRunLease,
   startAgentRunLeaseHeartbeat,
 } from './xox-run-lease-store-adapter.js'
-import { addRunEvent } from './xox-run-event-store-adapter.js'
-import { agentThreadEvents } from './xox-thread-signal-adapter.js'
+import { addRunEvent, addRuntimeStreamRunEvent, agentThreadEvents } from './xox-run-event-store-adapter.js'
 import { addMessage, touchThreadAfterRun } from './xox-thread-store-adapter.js'
 import { normalizeAgentAutomationLevel } from '../tool-policy.js'
 import { sanitizeAgentGoalFacts } from '../runtime-goal-facts.js'
+import {
+  configuredRuntimePlannerSource,
+  planWithRuntimeAdapter,
+  type RuntimeChatMessage,
+  type RuntimePlanError,
+  type RuntimePlanResult,
+} from './xox-runtime-adapter.js'
+import { storePlannedActionGraph } from './xox-action-graph-adapter.js'
+import { readDraftFromRuntimeResult } from '../action-draft-builder.js'
+import type { AgentToolCallStep, ChatTool } from '../tool-catalog.js'
 
 const agentRunSchedulers = new WeakMap<Kysely<Database>, AgentServerRunScheduler>()
 
@@ -33,6 +56,289 @@ export type CompletedAgentRun = {
   actionRows: Row<'agent_action_requests'>[]
   planRows: Row<'agent_plan_steps'>[]
   goalStatus: AgentGoalStatus | null
+}
+
+type XoxDirectAnswerModelOutput = DirectAnswerLaneModelOutput<RuntimePlanError> & {
+  result: RuntimePlanResult | null
+}
+
+const TURN_LANE_SYSTEM_PROMPT = readFileSync(
+  fileURLToPath(new URL('../prompts/turn-lane.system.md', import.meta.url)),
+  'utf8',
+).trim()
+
+const DIRECT_ANSWER_SYSTEM_PROMPT = readFileSync(
+  fileURLToPath(new URL('../prompts/direct-answer.system.md', import.meta.url)),
+  'utf8',
+).trim()
+
+const TURN_LANE_RESOLUTION_TOOL: ChatTool = {
+  type: 'function',
+  function: {
+    name: AGENT_TURN_LANE_RESOLUTION_TOOL_NAME,
+    description: 'Resolve the current user turn into the direct_answer lane or the full Agent goal lane.',
+    parameters: AGENT_TURN_LANE_RESOLUTION_TOOL_SCHEMA as unknown as ChatTool['function']['parameters'],
+  },
+}
+
+function compactJson(value: unknown) {
+  return JSON.stringify(value)
+}
+
+function xoxAmbientContext(ctx: PlannerContext & { thread: Row<'agent_threads'> }) {
+  return buildAgentAmbientSessionContext({
+    ...(process.env.XOX_AGENT_TIMEZONE ? { timezone: process.env.XOX_AGENT_TIMEZONE } : {}),
+    userDisplayName: ctx.user.display_name ?? ctx.user.email ?? null,
+    workspaceName: ctx.workspace.name ?? null,
+  })
+}
+
+async function hasPendingAction(ctx: PlannerContext & { thread: Row<'agent_threads'> }) {
+  const pending = await ctx.db
+    .selectFrom('agent_action_requests')
+    .select('id')
+    .where('thread_id', '=', ctx.thread.id)
+    .where('workspace_id', '=', ctx.workspace.id)
+    .where('user_id', '=', ctx.user.id)
+    .where('status', '=', 'pending')
+    .limit(1)
+    .executeTakeFirst()
+  return Boolean(pending)
+}
+
+async function hasPendingClarification(ctx: PlannerContext & { thread: Row<'agent_threads'> }) {
+  const pending = await ctx.db
+    .selectFrom('agent_goals')
+    .select('id')
+    .where('thread_id', '=', ctx.thread.id)
+    .where('status', '=', 'needs_clarification')
+    .orderBy('created_at', 'desc')
+    .limit(1)
+    .executeTakeFirst()
+  return Boolean(pending)
+}
+
+function turnLaneResolutionFromStep(step: AgentToolCallStep | undefined) {
+  if (!step || step.intent !== 'turn_lane.resolve') return null
+  return normalizeAgentTurnLaneResolution(step, {
+    sanitizeGoalFacts: (value) => sanitizeAgentGoalFacts(value),
+    redactReason: (value) => redactSecretLikeContent(value),
+  })
+}
+
+async function resolveTurnLaneWithModel(
+  ctx: PlannerContext & { thread: Row<'agent_threads'> },
+): Promise<AgentTurnIntakeModelResult> {
+  const ambient = xoxAmbientContext(ctx)
+  const result = await planWithRuntimeAdapter({
+    settings: ctx.settings,
+    systemPrompt: TURN_LANE_SYSTEM_PROMPT,
+    message: redactSecretLikeContent(ctx.message),
+    context: { ambient: agentAmbientSessionContextFacts(ambient) },
+    tools: [TURN_LANE_RESOLUTION_TOOL],
+    stream: false,
+    thinkingLevel: 'off',
+    maxTokens: 250,
+    requestTimeoutMs: ctx.settings.agentProviderRequestTimeoutMs,
+    ...(ctx.abortSignal ? { abortSignal: ctx.abortSignal } : {}),
+  })
+
+  if (result?.error) {
+    return { status: 'provider_unavailable', reason: result.error.message ?? result.error.kind }
+  }
+
+  return {
+    status: 'resolved',
+    resolution: turnLaneResolutionFromStep(result?.steps.find((step) => step.intent === 'turn_lane.resolve')),
+  }
+}
+
+async function resolveXoxAgentTurnIntake(ctx: PlannerContext & { thread: Row<'agent_threads'> }) {
+  return resolveAgentTurnIntake({
+    hasPendingAction: () => hasPendingAction(ctx),
+    hasPendingClarification: () => hasPendingClarification(ctx),
+    ...(ctx.settings.llmProvider === 'rules'
+      ? { providerUnavailableReason: 'The local rules provider does not own semantic lane resolution.' }
+      : { resolveWithModel: () => resolveTurnLaneWithModel(ctx) }),
+  })
+}
+
+function directAnswerMessages(input: {
+  message: string
+  ambientContext: AgentAmbientSessionContext
+}): RuntimeChatMessage[] {
+  return [
+    { role: 'system', content: DIRECT_ANSWER_SYSTEM_PROMPT },
+    {
+      role: 'user',
+      content: [
+        'Ambient session context. This is authoritative for current date, time and timezone only.',
+        compactJson(agentAmbientSessionContextFacts(input.ambientContext)),
+      ].join('\n'),
+    },
+    {
+      role: 'user',
+      content: `User message:\n${redactSecretLikeContent(input.message)}`,
+    },
+  ]
+}
+
+function failureEventMessage(failure: DirectAnswerLaneFailure<RuntimePlanError>) {
+  if (failure.code === 'provider_error') {
+    return failure.error?.message ?? failure.error?.kind ?? failure.reason
+  }
+  if (failure.code === 'tool_calls_returned') {
+    return '模型返回了工具调用，direct_answer 路径只接受 assistant 文本。'
+  }
+  return '模型没有返回可用的 assistant 文本，direct_answer 不使用本地语义替代路径。'
+}
+
+function failureStatus(failure: DirectAnswerLaneFailure<RuntimePlanError>) {
+  return failure.code === 'provider_error' ? 'info' : 'failed'
+}
+
+function failureRuntimeResult(
+  failure: DirectAnswerLaneFailure<RuntimePlanError, XoxDirectAnswerModelOutput>,
+  source: Extract<AgentPlannerSource, 'openai_agents' | 'openai_compatible_tool_calls'>,
+): RuntimePlanResult {
+  if (failure.code === 'provider_error' && failure.modelOutput?.result) {
+    return failure.modelOutput.result
+  }
+  return {
+    source,
+    steps: [],
+    error: {
+      kind: 'provider_response_error',
+      message: failure.reason,
+    },
+  }
+}
+
+async function executeXoxDirectAnswerLane(
+  ctx: PlannerContext & { thread: Row<'agent_threads'> },
+  input: {
+    resolution: AgentTurnLaneResolution
+    beforeStateWrite: () => Promise<boolean>
+  },
+): Promise<CompletedAgentRun | null> {
+  const ambientContext = xoxAmbientContext(ctx)
+  let plannerSource: AgentPlannerSource = configuredRuntimePlannerSource(ctx.settings) ?? 'rules'
+
+  const result = await runDirectAnswerLane<RuntimePlanError, XoxDirectAnswerModelOutput, CompletedAgentRun, CompletedAgentRun>({
+    resolution: input.resolution,
+    onLaneStarted: async () => {
+      await addRunEvent(ctx.db, {
+        threadId: ctx.thread.id,
+        runId: ctx.runId,
+        channel: 'lifecycle',
+        type: 'turn_intake_resolved',
+        title: '对话入口已识别',
+        message: '本轮可以通过轻量 direct_answer 路径回答，不进入 Agent goal harness。',
+        status: 'info',
+        data: {
+          lane: input.resolution.lane,
+          reason: input.resolution.reason,
+          reasonCode: input.resolution.reasonCode,
+          ambientAuthority: 'ambient',
+        },
+      })
+    },
+    runModel: async () => {
+      if (ctx.settings.llmProvider === 'rules') {
+        return null
+      }
+      const runtimeResult = await planWithRuntimeAdapter({
+        settings: ctx.settings,
+        message: redactSecretLikeContent(ctx.message),
+        context: { ambient: agentAmbientSessionContextFacts(ambientContext) },
+        tools: [],
+        messages: directAnswerMessages({ message: ctx.message, ambientContext }),
+        systemPrompt: DIRECT_ANSWER_SYSTEM_PROMPT,
+        maxTokens: 500,
+        thinkingLevel: 'off',
+        requestTimeoutMs: ctx.settings.agentProviderRequestTimeoutMs,
+        ...(ctx.abortSignal ? { abortSignal: ctx.abortSignal } : {}),
+        onStreamEvent: (event) => addRuntimeStreamRunEvent({ ...ctx, phase: 'final_answer' }, event),
+      })
+      plannerSource = runtimeResult?.source ?? plannerSource
+      return {
+        result: runtimeResult,
+        assistantText: runtimeResult?.assistantText ?? null,
+        toolCallCount: runtimeResult?.steps.length ?? 0,
+        error: runtimeResult?.error ?? null,
+      }
+    },
+    beforeStateWrite: input.beforeStateWrite,
+    errorMessage: (error) => error.message ?? error.kind,
+    onFailureDetected: async (failure) => {
+      await addRunEvent(ctx.db, agentServerRunLifecycleEvents.directAnswerProviderFailed({
+        threadId: ctx.thread.id,
+        runId: ctx.runId,
+        lane: input.resolution.lane,
+        reasonCode: input.resolution.reasonCode,
+        ...(failure.error ? { error: failure.error } : {}),
+        copy: {
+          title: '直接回答模型调用未完成',
+          message: failureEventMessage(failure),
+          status: failureStatus(failure),
+        },
+      }))
+    },
+    persistSuccess: async (success) => {
+      const assistantMessage = await addMessage(ctx.db, ctx.thread.id, 'assistant', success.assistantText)
+      await addRunEvent(ctx.db, {
+        threadId: ctx.thread.id,
+        runId: ctx.runId,
+        channel: 'assistant',
+        type: 'assistant_final_message',
+        title: '模型回复已完成',
+        message: success.assistantText,
+        status: 'completed',
+        data: {
+          phase: 'final_answer',
+          messageId: assistantMessage.id,
+          lane: 'direct_answer',
+          ambientAuthority: 'ambient',
+        },
+      })
+      await ctx.db
+        .updateTable('agent_runs')
+        .set({ goal_status: 'completed' })
+        .where('id', '=', ctx.runId)
+        .execute()
+
+      return {
+        plannerSource,
+        assistantMessage,
+        navigationEvents: [],
+        actionRows: [],
+        planRows: [],
+        goalStatus: 'completed',
+      }
+    },
+    persistFailure: async (failure) => {
+      const source = configuredRuntimePlannerSource(ctx.settings) ?? 'openai_compatible_tool_calls'
+      const stored = await storePlannedActionGraph(ctx, {
+        items: [readDraftFromRuntimeResult(failureRuntimeResult(failure, source))],
+        plannerSource: failure.code === 'provider_error' ? plannerSource : source,
+      })
+      await ctx.db
+        .updateTable('agent_runs')
+        .set({ goal_status: 'failed' })
+        .where('id', '=', ctx.runId)
+        .execute()
+      return {
+        plannerSource: failure.code === 'provider_error' ? plannerSource : source,
+        assistantMessage: null,
+        navigationEvents: stored.navigationEvents,
+        actionRows: stored.actionRows,
+        planRows: stored.planRows,
+        goalStatus: 'failed',
+      }
+    },
+  })
+
+  return result.status === 'cancelled_before_state_write' ? null : result.value
 }
 
 async function executeAgentRun(

@@ -385,20 +385,19 @@ Agent OS 宿主运行边界，和具体 provider 实现解耦：
 
 `agent-kernel.ts` 与 `prompt-registry.ts` 已删除：宿主不再保留一个伪 agent kernel 或 prompt registry。xox product prompt 仍放在 `prompts/*.md`，由直接消费它的 adapter 读取；generic observation continuation prompt 来自 `@agentic-os/core`。
 
-当前 run lifecycle 由 `apps/api/src/agent/run-worker.ts` 协调：
+当前 run lifecycle 由 `apps/api/src/agent/agentic-os/xox-run-worker-adapter.ts` 协调：
 
-- `run-worker.ts` 模块职责：持有 durable queue/lease/cancel/recovery/finalization，并在取得 lease 后调用 `resolveXoxAgentTurnIntake()`、`executeXoxDirectAnswerLane()` 或 `executeXoxAgenticOsRun()`。
+- `xox-run-worker-adapter.ts` 模块职责：持有 durable queue/lease/cancel/recovery/finalization，并在取得 lease 后调用 Agentic OS `resolveAgentTurnIntake()`、`runDirectAnswerLane()` 或 xox host kit 的 `executeXoxAgenticOsRun()`。
 - 依赖方向：
 
 ```text
 agent/routes.ts
-  -> agent/run-worker
-    -> agent/agentic-os/xox-turn-intake-adapter
-    -> agent/agentic-os/xox-direct-answer-adapter
+  -> agent/agentic-os/xox-run-worker-adapter
+    -> @agentic-os/core resolveAgentTurnIntake / runDirectAnswerLane
     -> agent/agentic-os/xox-agentic-os-host-kit
-    -> agent/run-lease
-    -> agent/run-events
-    -> agent/thread-store
+    -> agent/agentic-os/xox-run-lease-store-adapter
+    -> agent/agentic-os/xox-run-event-store-adapter
+    -> agent/agentic-os/xox-thread-store-adapter
     -> agent/memory
     -> agent/provider-settings
     -> db

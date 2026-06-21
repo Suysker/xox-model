@@ -78,10 +78,6 @@ import type { Row } from '../../db/schema.js'
 import { newId } from '../../core/security.js'
 import { utcNow } from '../../core/time.js'
 import type { PlannerContext } from '../planning-context.js'
-import {
-  createXoxObservationBridge,
-  type XoxObservationBridge,
-} from './xox-observation-adapter.js'
 import { executeAgentActionRequest } from '../tool-executor.js'
 import {
   buildPlannedItemFromRuntimeStep,
@@ -96,7 +92,6 @@ import {
   type StoredActionGraph,
 } from './xox-action-graph-adapter.js'
 import { answerWorkspaceDataQuestion, type DataAgentQueryStep } from '../data-agent.js'
-import { buildXoxClarificationResumeContext } from './xox-clarification-resume-adapter.js'
 import {
   buildEvidenceLedger,
   evidenceForModel,
@@ -106,6 +101,7 @@ import {
 } from './xox-final-review-adapter.js'
 import {
   addEvaluationResult,
+  buildXoxClarificationResumeContext,
   createGoalContract,
   getGoalForRun,
   serializeEvaluation,
@@ -148,8 +144,10 @@ import {
 import {
   actionExecutionObservation,
   continueModelAfterToolObservations,
+  createXoxObservationBridge,
   toolSupervisorFailureObservation,
   type AgentToolObservation,
+  type XoxObservationBridge,
 } from './xox-tool-observation-adapter.js'
 import { redactSecretLikeContent } from '../memory.js'
 import { runtimeIntentHandlers } from '../runtime-intent-handlers.js'

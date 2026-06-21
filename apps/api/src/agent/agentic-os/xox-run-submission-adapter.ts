@@ -1,12 +1,19 @@
 import type { Kysely } from 'kysely'
-import type { AgentSendResponse, AgentThreadState } from '@xox/contracts'
+import { projectAgentServerAgUiEvents, projectAgentServerRunSubmissionView } from '@agentic-os/server'
+import type {
+  AgentActionRequest,
+  AgentAgUiEvent,
+  AgentNavigationEvent,
+  AgentPlanStep,
+  AgentSendResponse,
+  AgentThreadState,
+} from '@xox/contracts'
 import type { Database, Row } from '../../db/schema.js'
 import type { Settings } from '../../core/settings.js'
 import { newId } from '../../core/security.js'
 import { utcNow } from '../../core/time.js'
 import type { CurrentUser } from '../../modules/auth.js'
-import { addRunEvent, listSerializedRunEvents, serializeRunEvent } from './xox-run-event-store-adapter.js'
-import { agentThreadEvents } from './xox-thread-signal-adapter.js'
+import { addRunEvent, agentThreadEvents, listSerializedRunEvents, serializeRunEvent } from './xox-run-event-store-adapter.js'
 import {
   addMessage,
   buildThreadState,
@@ -18,7 +25,17 @@ import {
 } from './xox-thread-store-adapter.js'
 import { completeAgentRun, createAgentRunController, scheduleAgentRunQueueDrain } from './xox-run-worker-adapter.js'
 import { normalizeAgentAutomationLevel, type AgentAutomationLevel } from '../tool-policy.js'
-import { buildSubmittedRunResponse } from './xox-run-submission-view.js'
+import { buildAgentTranscriptItems } from './xox-thread-transcript-adapter.js'
+import { buildAgentTimelineItems, buildAgentTranscriptNodes } from './xox-thread-timeline-adapter.js'
+import {
+  sortXoxRunEventsByOsView,
+  xoxActionRequestToOsActionRequest,
+  xoxCompletedRunResultToOs,
+  xoxMessageToOsMessage,
+  xoxRunEventToOsRunEvent,
+  xoxRunInputToOs,
+  xoxRunToOsRunRecord,
+} from './xox-thread-state-view.js'
 
 export type SubmitAgentMessageRunInput = {
   db: Kysely<Database>
@@ -29,6 +46,100 @@ export type SubmitAgentMessageRunInput = {
   message: string
   background?: boolean | undefined
   automationLevel?: AgentAutomationLevel | undefined
+}
+
+type XoxSubmittedRunResponseInput = {
+  workspace: Row<'workspaces'>
+  user: CurrentUser
+  threadId: string
+  runId: string
+  createdAt: string
+  userMessage: string
+  status: AgentSendResponse['status']
+  planner: AgentSendResponse['planner']
+  automationLevel: AgentSendResponse['automationLevel']
+  messages: AgentSendResponse['messages']
+  navigationEvents: AgentNavigationEvent[]
+  runEvents: AgentSendResponse['runEvents']
+  planSteps: AgentPlanStep[]
+  actionRequests: AgentActionRequest[]
+  assistantText?: string | undefined
+}
+
+function buildSubmittedRunResponse(input: XoxSubmittedRunResponseInput): AgentSendResponse {
+  const osRun = xoxRunToOsRunRecord({
+    workspace: input.workspace,
+    user: input.user,
+    run: {
+      id: input.runId,
+      threadId: input.threadId,
+      status: input.status,
+      planner: input.planner,
+      automationLevel: input.automationLevel,
+      goalStatus: null,
+      createdAt: input.createdAt,
+      completedAt: input.status === 'completed' ? input.createdAt : null,
+    },
+  })
+  const result = xoxCompletedRunResultToOs({
+    run: osRun,
+    assistantText: input.assistantText,
+  })
+  const osView = projectAgentServerRunSubmissionView({
+    thread: {
+      threadId: input.threadId,
+    },
+    run: osRun,
+    request: xoxRunInputToOs({
+      workspace: input.workspace,
+      user: input.user,
+      threadId: input.threadId,
+      userMessage: input.userMessage,
+      automationLevel: input.automationLevel,
+      metadata: {
+        host: 'xox-model',
+        xoxRunId: input.runId,
+      },
+    }),
+    messages: input.messages.map(xoxMessageToOsMessage),
+    actionRequests: input.actionRequests.map(xoxActionRequestToOsActionRequest),
+    events: input.runEvents.map(xoxRunEventToOsRunEvent),
+    metadata: {
+      host: 'xox-model',
+      xoxPlanner: input.planner,
+      navigationEventCount: input.navigationEvents.length,
+      planStepCount: input.planSteps.length,
+    },
+    ...(result ? { result } : {}),
+  })
+  const runEvents = sortXoxRunEventsByOsView(input.runEvents, osView.events)
+  const projection = {
+    thread: { id: osView.thread.threadId },
+    messages: input.messages,
+    goals: [],
+    evaluations: [],
+    navigationEvents: input.navigationEvents,
+    runEvents,
+    planSteps: input.planSteps,
+    actionRequests: input.actionRequests,
+  }
+
+  return {
+    threadId: osView.thread.threadId,
+    runId: osView.run.runId,
+    status: input.status,
+    planner: input.planner,
+    automationLevel: input.automationLevel,
+    messages: input.messages,
+    navigationEvents: input.navigationEvents,
+    runEvents,
+    agUiEvents: projectAgentServerAgUiEvents(projection, { eventNamePrefix: 'xox' }) as AgentAgUiEvent[],
+    transcriptItems: buildAgentTranscriptItems(projection),
+    timelineItems: buildAgentTimelineItems(projection),
+    transcriptNodes: buildAgentTranscriptNodes(projection),
+    planSteps: input.planSteps,
+    actionRequests: input.actionRequests,
+  }
 }
 
 export async function failSubmittedAgentRun(db: Kysely<Database>, runId: string, thread: Row<'agent_threads'>) {

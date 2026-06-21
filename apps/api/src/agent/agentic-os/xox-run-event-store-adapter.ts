@@ -1,9 +1,11 @@
 import type { Kysely } from 'kysely'
 import type { AgentRunEvent, AgentRunEventStatus, AgentRuntimeChannel } from '@xox/contracts'
 import {
+  AgentServerSignalBus,
   addAgentServerRuntimeStreamRunEvent,
   createAgentServerSequencedRunEventAppender,
   isAgentServerSqliteUniqueConstraintError,
+  type AgentServerSignal,
   type AgentServerRuntimeStreamRunEventCopyInput,
 } from '@agentic-os/server'
 import type { Database, Row } from '../../db/schema.js'
@@ -12,7 +14,48 @@ import { newId } from '../../core/security.js'
 import { utcNow } from '../../core/time.js'
 import { redactSecretLikeContent } from '../memory.js'
 import type { RuntimeStreamEvent } from './xox-runtime-adapter.js'
-import { agentThreadEvents } from './xox-thread-signal-adapter.js'
+
+export type AgentThreadEventReason =
+  | 'thread_started'
+  | 'plan_ready'
+  | 'run_completed'
+  | 'run_failed'
+  | 'run_cancelled'
+  | 'run_trace'
+  | 'action_executed'
+  | 'action_cancelled'
+  | 'action_updated'
+  | 'thread_restored'
+
+export type AgentThreadEventSignal = {
+  threadId: string
+  sequence: number
+  reason: AgentThreadEventReason
+}
+
+type AgentThreadEventListener = (event: AgentThreadEventSignal) => void
+
+const threadSignalBus = new AgentServerSignalBus<AgentThreadEventReason>()
+
+function toThreadSignal(signal: AgentServerSignal<AgentThreadEventReason>): AgentThreadEventSignal {
+  return {
+    threadId: signal.topicId,
+    sequence: signal.sequence,
+    reason: signal.reason,
+  }
+}
+
+export const agentThreadEvents = {
+  subscribe(threadId: string, listener: AgentThreadEventListener) {
+    return threadSignalBus.subscribe(threadId, (signal) => listener(toThreadSignal(signal)))
+  },
+  publish(threadId: string, reason: AgentThreadEventReason) {
+    return toThreadSignal(threadSignalBus.publish(threadId, reason))
+  },
+  listenerCount(threadId: string) {
+    return threadSignalBus.listenerCount(threadId)
+  },
+}
 
 const runEventAppender = createAgentServerSequencedRunEventAppender({
   maxSequenceRetries: 5,

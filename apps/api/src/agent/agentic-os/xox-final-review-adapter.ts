@@ -42,8 +42,10 @@ import type { Row } from '../../db/schema.js'
 import { parseJson } from '../../db/database.js'
 import type { AgentToolCapability } from '../tool-catalog.js'
 import { mergeAgentGoalFacts } from '../runtime-goal-facts.js'
-import type { AgentToolObservation } from './xox-tool-observation-adapter.js'
-import { agenticOsObservationFromXox } from './xox-observation-adapter.js'
+import {
+  agenticOsObservationFromXox,
+  type AgentToolObservation,
+} from './xox-tool-observation-adapter.js'
 
 export type AgentEvidenceAuthority = Extract<OsAgentEvidenceAuthority, 'ambient' | 'domain_read' | 'sandbox' | 'action' | 'memory'>
 export type AgentEvidenceValidity = OsAgentEvidenceValidity

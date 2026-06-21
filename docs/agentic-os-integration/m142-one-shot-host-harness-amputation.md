@@ -148,6 +148,15 @@ Status: completed as a follow-up M142 action-lifecycle cut.
 - `xox-agentic-os-host-kit.ts` owns the post-confirmation handoff into Agentic OS `ActionRuntime.confirm()` and `AgentRunEngine.resume()`.
 - Architecture guards now fail if the deleted approval adapter returns or if action graph code imports it.
 
+### M144: Deleted Host Entry, Stream, and Projection Facades
+
+Status: completed as a follow-up M142 whole-file deletion cut.
+
+- Deleted `xox-turn-intake-adapter.ts`, `xox-direct-answer-adapter.ts`, `xox-clarification-resume-adapter.ts`, `xox-observation-adapter.ts`, `xox-thread-state-stream-adapter.ts`, `xox-thread-signal-adapter.ts`, `xox-run-submission-view.ts`, and `xox-agentic-os-facts.ts`.
+- Turn intake and direct-answer state machines still come from `@agentic-os/core`; xox worker keeps only DB/provider/prompt/storage callback wiring at the real worker boundary.
+- Clarification resume row loading moved to the goal store adapter, observation DTO projection moved to the tool observation adapter, SSE transport moved to routes, signal reason mapping moved to the run-event store, and submitted/thread projection fact mapping moved to the concrete submission/thread-state projection boundaries.
+- Architecture guards now fail if any of the deleted facade files return.
+
 ## One-Shot Scope
 
 M142 is not complete until all rows in this table are addressed. If a row cannot be completed in a given implementation cut, that cut must be presented as M142-in-progress rather than M142 completion.

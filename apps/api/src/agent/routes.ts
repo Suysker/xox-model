@@ -1,8 +1,9 @@
+import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { FastifyInstance } from 'fastify'
 import type { Kysely } from 'kysely'
 import { z } from 'zod'
-import type { AgentActionUpdatePayload, AgentNavigationEvent } from '@xox/contracts'
-import { agentServerRunLifecycleEvents } from '@agentic-os/server'
+import type { AgentActionUpdatePayload, AgentNavigationEvent, AgentThreadEvent, AgentThreadState } from '@xox/contracts'
+import { agentServerRunLifecycleEvents, openAgentServerSignalStateStream } from '@agentic-os/server'
 import type { Database, Row } from '../db/schema.js'
 import { jsonString, parseJson } from '../db/database.js'
 import { conflict, forbidden, notFound, unprocessable } from '../core/http.js'
@@ -19,7 +20,6 @@ import {
   serializeMemory,
 } from './memory.js'
 import { buildTenantMemoryCenterState } from './memory/memory-center.js'
-import { agentThreadEvents } from './agentic-os/xox-thread-signal-adapter.js'
 import {
   deleteAgentProviderSetting,
   getAgentProviderSetting,
@@ -37,11 +37,11 @@ import {
 } from './agentic-os/xox-thread-store-adapter.js'
 import {
   cancelRunningAgentRun,
+  safeRunErrorMessage,
   startAgentRunQueueWorker,
 } from './agentic-os/xox-run-worker-adapter.js'
-import { openAgentThreadStateStream } from './agentic-os/xox-thread-state-stream-adapter.js'
 import { submitAgentMessageRun } from './agentic-os/xox-run-submission-adapter.js'
-import { addRunEvent, listSerializedRunEvents } from './agentic-os/xox-run-event-store-adapter.js'
+import { addRunEvent, agentThreadEvents, listSerializedRunEvents } from './agentic-os/xox-run-event-store-adapter.js'
 import { addMessage } from './agentic-os/xox-thread-store-adapter.js'
 import { resumeXoxAgenticOsRunAfterActionConfirmation } from './agentic-os/xox-agentic-os-host-kit.js'
 import { consolidateAgentMemoryCandidates } from './memory-consolidator.js'
@@ -76,6 +76,79 @@ function parseAgentBody<T>(schema: z.ZodType<T>, body: unknown) {
 }
 
 type RiskLevel = 'low' | 'medium' | 'high'
+
+type AgentThreadStateStreamInput = {
+  request: IncomingMessage
+  response: ServerResponse
+  db: Kysely<Database>
+  workspace: Row<'workspaces'>
+  user: CurrentUser
+  threadId: string
+  heartbeatMs?: number
+}
+
+function writeSseEvent(response: ServerResponse, event: string, data: unknown) {
+  if (response.destroyed || response.writableEnded) return
+  response.write(`event: ${event}\n`)
+  response.write(`data: ${JSON.stringify(data)}\n\n`)
+}
+
+function writeSseComment(response: ServerResponse, comment: string) {
+  if (response.destroyed || response.writableEnded) return
+  response.write(`: ${comment}\n\n`)
+}
+
+function openAgentThreadStateStream(input: AgentThreadStateStreamInput) {
+  input.response.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  })
+  input.response.flushHeaders?.()
+
+  let heartbeat: NodeJS.Timeout | null = null
+
+  const stopHeartbeat = () => {
+    if (heartbeat) clearInterval(heartbeat)
+    heartbeat = null
+  }
+
+  const stateStream = openAgentServerSignalStateStream({
+    initialSignal: {
+      threadId: input.threadId,
+      sequence: 0,
+      reason: 'thread_restored',
+    },
+    subscribe: (listener) => agentThreadEvents.subscribe(input.threadId, listener),
+    loadState: () => buildThreadState(input.db, input.workspace, input.user, input.threadId),
+    emitState: ({ signal, state }: { signal: ReturnType<typeof agentThreadEvents.publish>; state: AgentThreadState }) => {
+      const event: AgentThreadEvent = {
+        type: 'thread_state',
+        threadId: input.threadId,
+        sequence: signal.sequence,
+        reason: signal.reason,
+        state,
+      }
+      writeSseEvent(input.response, 'thread_state', event)
+    },
+    emitError: ({ error }) => {
+      writeSseEvent(input.response, 'error', { message: safeRunErrorMessage(error) })
+      stopHeartbeat()
+    },
+  })
+
+  const close = () => {
+    stopHeartbeat()
+    stateStream.close()
+  }
+
+  heartbeat = setInterval(() => writeSseComment(input.response, 'heartbeat'), input.heartbeatMs ?? 15_000)
+  heartbeat.unref?.()
+
+  input.request.on('close', close)
+  input.request.on('aborted', close)
+}
 
 function previewValue(value: unknown) {
   const raw = typeof value === 'string' ? value : JSON.stringify(value)
