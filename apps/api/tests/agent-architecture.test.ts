@@ -423,7 +423,8 @@ describe('Agent ADR architecture boundaries', () => {
   })
 
   it('keeps action observation envelopes in Agentic OS core', () => {
-    const continuation = source('agent/tool-observation-continuation.ts')
+    expect(existsSync(join(srcRoot, 'agent', 'tool-observation-continuation.ts'))).toBe(false)
+    const continuation = source('agent/agentic-os/xox-tool-observation-adapter.ts')
     expect(continuation).toContain("@agentic-os/core")
     expect(continuation).toContain('buildActionPreviewObservation')
     expect(continuation).toContain('buildActionResultObservation')
@@ -517,7 +518,7 @@ describe('Agent ADR architecture boundaries', () => {
     expect(draftBuilder).toContain('buildToolSupervisorEmptyResultFailureObservation')
     expect(draftBuilder).not.toContain('did not produce an action or observation')
 
-    const continuation = source('agent/tool-observation-continuation.ts')
+    const continuation = source('agent/agentic-os/xox-tool-observation-adapter.ts')
     expect(continuation).toContain("@agentic-os/core")
     expect(continuation).toContain('buildToolSupervisorEmptyResultFailureObservation')
     expect(continuation).not.toContain('did not produce an action or observation')
@@ -528,7 +529,7 @@ describe('Agent ADR architecture boundaries', () => {
     for (const file of sourceFilesUnder('agent')) {
       expect(source(file), `${file} must not import the deleted prompt registry facade`).not.toContain('prompt-registry')
     }
-    const continuation = source('agent/tool-observation-continuation.ts')
+    const continuation = source('agent/agentic-os/xox-tool-observation-adapter.ts')
     expect(continuation).toContain("@agentic-os/core")
     expect(continuation).toContain('toolObservationContinuationSystemPrompt')
     expect(continuation).not.toContain('tool-observation-finalizer.system.md')
@@ -536,7 +537,7 @@ describe('Agent ADR architecture boundaries', () => {
   })
 
   it('keeps provider observation continuation message assembly in Agentic OS runtime', () => {
-    const continuation = source('agent/tool-observation-continuation.ts')
+    const continuation = source('agent/agentic-os/xox-tool-observation-adapter.ts')
     expect(continuation).toContain("@agentic-os/runtime-openai-compatible")
     expect(continuation).toContain('buildProviderToolObservationContinuationMessages')
     expect(continuation).not.toContain('providerToolObservationReplayMessages')
@@ -545,7 +546,8 @@ describe('Agent ADR architecture boundaries', () => {
   })
 
   it('keeps provider observation planning message assembly in Agentic OS runtime', () => {
-    const planningCall = source('agent/runtime-planning-call.ts')
+    expect(existsSync(join(srcRoot, 'agent', 'runtime-planning-call.ts'))).toBe(false)
+    const planningCall = source('agent/agentic-os/xox-runtime-planning-adapter.ts')
     expect(planningCall).toContain("@agentic-os/runtime-openai-compatible")
     expect(planningCall).toContain("@agentic-os/core")
     expect(planningCall).toContain('buildProviderToolObservationTurnMessages')
@@ -557,7 +559,7 @@ describe('Agent ADR architecture boundaries', () => {
   })
 
   it('keeps runtime planning recovery orchestration in Agentic OS runtime', () => {
-    const planningCall = source('agent/runtime-planning-call.ts')
+    const planningCall = source('agent/agentic-os/xox-runtime-planning-adapter.ts')
     expect(planningCall).toContain("@agentic-os/runtime-openai-compatible")
     expect(planningCall).toContain('runOpenAICompatibleRuntimePlanningRecovery')
     expect(planningCall).not.toContain('shouldRetryProviderRuntimeResult')
@@ -586,8 +588,8 @@ describe('Agent ADR architecture boundaries', () => {
   })
 
   it('keeps same-thread runtime conversation replay in Agentic OS core', () => {
-    const planningCall = source('agent/runtime-planning-call.ts')
-    const continuation = source('agent/tool-observation-continuation.ts')
+    const planningCall = source('agent/agentic-os/xox-runtime-planning-adapter.ts')
+    const continuation = source('agent/agentic-os/xox-tool-observation-adapter.ts')
     expect(planningCall).toContain("@agentic-os/core")
     expect(planningCall).toContain('runtimeConversationLogFromContext')
     expect(planningCall).toContain('runtimeMessagesFromConversationLog')
@@ -669,8 +671,8 @@ describe('Agent ADR architecture boundaries', () => {
   })
 
   it('routes provider planning through the xox context pack without an obsolete local context wrapper', () => {
-    const planningCall = source('agent/runtime-planning-call.ts')
-    expect(planningCall).toContain("from './context-pack.js'")
+    const planningCall = source('agent/agentic-os/xox-runtime-planning-adapter.ts')
+    expect(planningCall).toContain("from '../context-pack.js'")
     expect(planningCall).not.toContain("from './context-engine/index.js'")
   })
 

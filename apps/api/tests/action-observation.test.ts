@@ -4,7 +4,7 @@ import {
   actionFailureObservation,
   actionPreviewObservation,
   toolSupervisorFailureObservation,
-} from '../src/agent/tool-observation-continuation.js'
+} from '../src/agent/agentic-os/xox-tool-observation-adapter.js'
 import { toolSupervisorFailureReadDraft } from '../src/agent/action-draft-builder.js'
 import type { Row } from '../src/db/schema.js'
 

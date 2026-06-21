@@ -1,13 +1,13 @@
 import type { Kysely } from 'kysely'
-import type { Database, Row } from '../db/schema.js'
-import type { Settings } from '../core/settings.js'
-import { newId } from '../core/security.js'
-import { utcNow } from '../core/time.js'
-import type { CurrentUser } from '../modules/auth.js'
-import { loadAgentRuntimeContext, redactSecretLikeContent } from './memory.js'
-import { addRunEvent, addRuntimeStreamRunEvent } from './run-events.js'
-import { buildThreadConversationLog } from './context-pack.js'
-import { planWithRuntimeAdapter, type RuntimeChatMessage } from './agentic-os/xox-runtime-adapter.js'
+import type { Database, Row } from '../../db/schema.js'
+import type { Settings } from '../../core/settings.js'
+import { newId } from '../../core/security.js'
+import { utcNow } from '../../core/time.js'
+import type { CurrentUser } from '../../modules/auth.js'
+import { loadAgentRuntimeContext, redactSecretLikeContent } from '../memory.js'
+import { addRunEvent, addRuntimeStreamRunEvent } from '../run-events.js'
+import { buildThreadConversationLog } from '../context-pack.js'
+import { planWithRuntimeAdapter, type RuntimeChatMessage } from './xox-runtime-adapter.js'
 import {
   buildProviderToolObservationContinuationMessages,
   resolveProviderRuntimeProfile,
@@ -20,7 +20,7 @@ import {
   toolObservationContinuationSystemPrompt,
 } from '@agentic-os/core'
 import type { AgentToolObservationLane, AgentToolObservationOutcome } from '@xox/contracts'
-import type { AgentToolCallStep } from './tool-catalog.js'
+import type { AgentToolCallStep } from '../tool-catalog.js'
 
 export type AgentToolObservation = {
   title: string

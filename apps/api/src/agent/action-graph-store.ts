@@ -40,7 +40,7 @@ import {
   actionExecutionObservation,
   actionPreviewObservation,
   type AgentToolObservation,
-} from './tool-observation-continuation.js'
+} from './agentic-os/xox-tool-observation-adapter.js'
 import { resolveActionAuthority, type AgentAutomationLevel } from './tool-policy.js'
 import {
   createXoxObservationBridge,

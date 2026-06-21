@@ -8,7 +8,7 @@ import type { Row } from '../db/schema.js'
 import { parseJson } from '../db/database.js'
 import type { AgentEvidenceAuthority, AgentEvidenceItem, AgentFinalAnswerClaim } from './evidence-ledger.js'
 import { buildEvidenceRequirements, isExecutedSandboxEvidenceFacts } from './evidence-ledger.js'
-import type { AgentToolObservation } from './tool-observation-continuation.js'
+import type { AgentToolObservation } from './agentic-os/xox-tool-observation-adapter.js'
 import { mergeAgentGoalFacts } from './runtime-goal-facts.js'
 
 export type ResponseEvaluationStatus =

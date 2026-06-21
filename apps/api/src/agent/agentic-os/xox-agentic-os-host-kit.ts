@@ -119,7 +119,7 @@ import {
   evaluateAssistantResponse,
   responseEvaluationSummary,
 } from '../response-evaluator.js'
-import { callRuntimePlanner } from '../runtime-planning-call.js'
+import { callRuntimePlanner } from './xox-runtime-planning-adapter.js'
 import {
   configuredRuntimePlannerSource,
   planWithRuntimeAdapter,
@@ -149,7 +149,7 @@ import {
   continueModelAfterToolObservations,
   toolSupervisorFailureObservation,
   type AgentToolObservation,
-} from '../tool-observation-continuation.js'
+} from './xox-tool-observation-adapter.js'
 import { redactSecretLikeContent } from '../memory.js'
 import { runtimeIntentHandlers } from '../runtime-intent-handlers.js'
 import { evaluateAgentGoal } from './xox-loop-readiness-adapter.js'

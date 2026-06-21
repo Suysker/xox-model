@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ResponseEvaluation } from '../src/agent/response-evaluator.js'
-import type { AgentToolObservation } from '../src/agent/tool-observation-continuation.js'
+import type { AgentToolObservation } from '../src/agent/agentic-os/xox-tool-observation-adapter.js'
 import {
   activeLedgerObligations,
   applyObservationToLedger,

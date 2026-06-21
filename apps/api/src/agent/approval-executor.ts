@@ -30,7 +30,7 @@ import {
 import {
   actionExecutionObservation,
   continueModelAfterToolObservations,
-} from './tool-observation-continuation.js'
+} from './agentic-os/xox-tool-observation-adapter.js'
 import {
   memoryCandidateFromCancelledAction,
   memoryCandidateFromEditedAction,

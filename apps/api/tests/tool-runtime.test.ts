@@ -12,7 +12,7 @@ import {
   runToolCallSupervisor,
   type ToolSupervisorStepLike,
 } from '@agentic-os/core'
-import type { AgentToolObservation } from '../src/agent/tool-observation-continuation.js'
+import type { AgentToolObservation } from '../src/agent/agentic-os/xox-tool-observation-adapter.js'
 
 function settings(provider = 'deepseek', model = 'deepseek-v4-pro'): Settings {
   return {

@@ -1,4 +1,4 @@
-import type { AgentToolObservation } from './tool-observation-continuation.js'
+import type { AgentToolObservation } from './agentic-os/xox-tool-observation-adapter.js'
 import type { AgentGoalFacts } from '@xox/contracts'
 import type {
   AgentLoopObligationLedger as OsAgentLoopObligationLedger,

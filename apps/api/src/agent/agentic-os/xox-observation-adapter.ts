@@ -8,7 +8,7 @@ import {
   createHostObservationBridge,
   type HostObservationBridge,
 } from '@agentic-os/core'
-import type { AgentToolObservation } from '../tool-observation-continuation.js'
+import type { AgentToolObservation } from './xox-tool-observation-adapter.js'
 
 export type XoxObservationBridge = HostObservationBridge<AgentToolObservation>
 

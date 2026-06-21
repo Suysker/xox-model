@@ -1,19 +1,19 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { buildAgentContextPack } from './context-pack.js'
-import { redactSecretLikeContent } from './memory.js'
-import type { PlannerContext } from './planning-context.js'
-import { planWithRuntimeAdapter, type RuntimeChatMessage, type RuntimePlanningInput, type RuntimePlanResult } from './agentic-os/xox-runtime-adapter.js'
-import type { Settings } from '../core/settings.js'
-import { addRunEvent, addRuntimeStreamRunEvent } from './run-events.js'
-import type { AgentToolObservation } from './tool-observation-continuation.js'
-import { materializedToolInventorySnapshot, provideRuntimeToolCatalog } from './tool-gateway.js'
+import { buildAgentContextPack } from '../context-pack.js'
+import { redactSecretLikeContent } from '../memory.js'
+import type { PlannerContext } from '../planning-context.js'
+import { planWithRuntimeAdapter, type RuntimeChatMessage, type RuntimePlanningInput, type RuntimePlanResult } from './xox-runtime-adapter.js'
+import type { Settings } from '../../core/settings.js'
+import { addRunEvent, addRuntimeStreamRunEvent } from '../run-events.js'
+import type { AgentToolObservation } from './xox-tool-observation-adapter.js'
+import { materializedToolInventorySnapshot, provideRuntimeToolCatalog } from '../tool-gateway.js'
 import {
   contextWithoutRuntimeConversationLog,
   runtimeConversationLogFromContext,
   runtimeMessagesFromConversationLog,
 } from '@agentic-os/core'
-import type { RuntimeToolCatalogProjection } from './tool-gateway.js'
+import type { RuntimeToolCatalogProjection } from '../tool-gateway.js'
 import {
   buildProviderToolObservationTurnMessages,
   isRecoverableProviderHttpRuntimeError,
@@ -30,7 +30,7 @@ const XOX_HIGH_VOLUME_STRUCTURED_TOOL_NAMES = [
 const XOX_HIGH_VOLUME_STRUCTURED_MAX_TOKENS = 48_000
 const XOX_HIGH_VOLUME_STRUCTURED_TIMEOUT_MS = 360_000
 const PLANNER_SYSTEM_PROMPT = readFileSync(
-  fileURLToPath(new URL('./prompts/planner.system.md', import.meta.url)),
+  fileURLToPath(new URL('../prompts/planner.system.md', import.meta.url)),
   'utf8',
 ).trim()
 

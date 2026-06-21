@@ -4,7 +4,7 @@ import {
   evidenceFactsContainKey,
   evidenceRequirementsFromFinalAnswerClaims,
 } from '@agentic-os/core'
-import type { AgentToolObservation } from './tool-observation-continuation.js'
+import type { AgentToolObservation } from './agentic-os/xox-tool-observation-adapter.js'
 
 export type AgentEvidenceAuthority = 'ambient' | 'domain_read' | 'sandbox' | 'action' | 'memory'
 export type AgentEvidenceValidity = 'valid' | 'invalid'
