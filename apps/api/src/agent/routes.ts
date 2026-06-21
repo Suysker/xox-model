@@ -40,7 +40,7 @@ import {
   startAgentRunQueueWorker,
 } from './run-worker.js'
 import { openAgentThreadStateStream } from './agentic-os/xox-thread-state-stream-adapter.js'
-import { submitAgentMessageRun } from './run-submission.js'
+import { submitAgentMessageRun } from './agentic-os/xox-run-submission-adapter.js'
 
 const providerSettingSchema = z.object({
   provider: z.string().min(2).max(64),

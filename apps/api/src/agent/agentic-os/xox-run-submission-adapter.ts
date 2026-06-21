@@ -1,12 +1,12 @@
 import type { Kysely } from 'kysely'
 import type { AgentSendResponse, AgentThreadState } from '@xox/contracts'
-import type { Database, Row } from '../db/schema.js'
-import type { Settings } from '../core/settings.js'
-import { newId } from '../core/security.js'
-import { utcNow } from '../core/time.js'
-import type { CurrentUser } from '../modules/auth.js'
-import { addRunEvent, listSerializedRunEvents, serializeRunEvent } from './agentic-os/xox-run-event-store-adapter.js'
-import { agentThreadEvents } from './agentic-os/xox-thread-signal-adapter.js'
+import type { Database, Row } from '../../db/schema.js'
+import type { Settings } from '../../core/settings.js'
+import { newId } from '../../core/security.js'
+import { utcNow } from '../../core/time.js'
+import type { CurrentUser } from '../../modules/auth.js'
+import { addRunEvent, listSerializedRunEvents, serializeRunEvent } from './xox-run-event-store-adapter.js'
+import { agentThreadEvents } from './xox-thread-signal-adapter.js'
 import {
   addMessage,
   buildThreadState,
@@ -15,10 +15,10 @@ import {
   serializeMessage,
   serializePlanStep,
   touchThreadAfterRun,
-} from './thread-store.js'
-import { completeAgentRun, createAgentRunController, scheduleAgentRunQueueDrain } from './run-worker.js'
-import { normalizeAgentAutomationLevel, type AgentAutomationLevel } from './tool-policy.js'
-import { buildSubmittedRunResponse } from './agentic-os/xox-run-submission-view.js'
+} from '../thread-store.js'
+import { completeAgentRun, createAgentRunController, scheduleAgentRunQueueDrain } from '../run-worker.js'
+import { normalizeAgentAutomationLevel, type AgentAutomationLevel } from '../tool-policy.js'
+import { buildSubmittedRunResponse } from './xox-run-submission-view.js'
 
 export type SubmitAgentMessageRunInput = {
   db: Kysely<Database>

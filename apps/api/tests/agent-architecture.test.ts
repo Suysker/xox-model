@@ -721,7 +721,11 @@ describe('Agent ADR architecture boundaries', () => {
   })
 
   it('keeps memory writes model-selected instead of submission-time regex capture', () => {
-    expectNoImports('agent/run-submission.ts', [
+    expect(existsSync(join(srcRoot, 'agent', 'run-submission.ts'))).toBe(false)
+    for (const file of sourceFilesUnder('agent')) {
+      expect(source(file), `${file} must not import the deleted root run submission adapter`).not.toContain("from './run-submission.js'")
+    }
+    expectNoImports('agent/agentic-os/xox-run-submission-adapter.ts', [
       /rememberFromUserMessage/,
     ])
     const memory = source('agent/memory.ts')
