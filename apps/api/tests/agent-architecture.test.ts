@@ -955,11 +955,18 @@ describe('Agent ADR architecture boundaries', () => {
     expect(settings).not.toContain('choices?.')
   })
 
-  it('routes provider planning through the xox context pack without an obsolete local context wrapper', () => {
+  it('routes provider planning through the xox host-profile context pack without an obsolete local context wrapper', () => {
     expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-runtime-planning-adapter.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'context-pack.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'host-profile', 'xox-context-pack.ts'))).toBe(true)
     const planningCall = source('agent/agentic-os/xox-runtime-adapter.ts')
-    expect(planningCall).toContain("from '../context-pack.js'")
+    expect(planningCall).toContain("from '../host-profile/xox-context-pack.js'")
     expect(planningCall).not.toContain("from './context-engine/index.js'")
+    for (const file of sourceFilesUnder('agent')) {
+      const content = source(file)
+      expect(content, `${file} must not import the deleted root context pack facade`).not.toContain("from './context-pack.js'")
+      expect(content, `${file} must not import the deleted root context pack facade`).not.toContain("from '../context-pack.js'")
+    }
   })
 
   it('keeps historical Agent route imports pointed at current boundaries', () => {
@@ -991,7 +998,7 @@ describe('Agent ADR architecture boundaries', () => {
     expect(memory).toContain("@agentic-os/core")
     expect(memory).toContain('normalizeSecretSafeText')
     expect(memory).not.toContain("from './memory-safety.js'")
-    const contextPack = source('agent/context-pack.ts')
+    const contextPack = source('agent/host-profile/xox-context-pack.ts')
     expect(contextPack).toContain("@agentic-os/core")
     expect(contextPack).toContain('createAgentActiveMemoryRecallRuntime')
     expect(contextPack).toContain('appendRunEvent')

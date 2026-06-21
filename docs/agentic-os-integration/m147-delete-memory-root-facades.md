@@ -25,7 +25,7 @@ Deleted files:
   - tenant-scoped retrieval and recall marking;
   - executed-action and confirmation-edit/cancel memory candidate generation;
   - memory candidate consolidation and long-context flush wiring.
-- `context-pack.ts`, routes, Memory Center, memory tool backend, host kit, and tests now import memory store functions from `memory.ts`.
+- After M157, `host-profile/xox-context-pack.ts`, routes, Memory Center, memory tool backend, host kit, and tests import memory store functions from `memory.ts`.
 - Architecture tests assert the deleted memory root files stay absent.
 
 ## Boundary

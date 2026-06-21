@@ -12,7 +12,7 @@ import { utcNow } from '../../core/time.js'
 import type { CurrentUser } from '../../modules/auth.js'
 import { loadAgentRuntimeContext, redactSecretLikeContent } from '../memory.js'
 import { addRunEvent, addRuntimeStreamRunEvent } from './xox-run-event-store-adapter.js'
-import { buildThreadConversationLog } from '../context-pack.js'
+import { buildThreadConversationLog } from '../host-profile/xox-context-pack.js'
 import { planWithRuntimeAdapter, type RuntimeChatMessage } from './xox-runtime-adapter.js'
 import {
   buildProviderToolObservationContinuationMessages,

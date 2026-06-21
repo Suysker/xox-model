@@ -163,7 +163,7 @@ Status: completed as a follow-up M142 whole-file deletion cut.
 
 - Deleted `xox-loop-readiness-adapter.ts` and `xox-runtime-planning-adapter.ts`.
 - Agentic OS still owns readiness priority through `decideAgentReadiness()`; xox goal-store code now keeps only goal rows, xox domain findings, and persistence mappings at the concrete goal boundary.
-- Runtime planning recovery still comes from Agentic OS runtime packages; xox runtime adapter now keeps provider settings, context-pack input, tool-catalog callback wiring, business high-volume budgets, localized event sink, and legacy runtime DTO projection at the concrete provider boundary.
+- Runtime planning recovery still comes from Agentic OS runtime packages; xox runtime adapter now keeps provider settings, host-profile context-pack input, tool-catalog callback wiring, business high-volume budgets, localized event sink, and legacy runtime DTO projection at the concrete provider boundary.
 - Architecture guards now fail if either deleted facade returns.
 - This cut is intentionally an amputation-first step. It reduces visible host harness files, but the remaining semantics in `xox-agentic-os-host-kit.ts`, `xox-final-review-adapter.ts`, projection adapters, and `xox-tool-observation-adapter.ts` still require deeper Agentic OS extraction.
 

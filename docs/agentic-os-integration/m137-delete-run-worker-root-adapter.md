@@ -83,7 +83,7 @@ Expected result:
 
 ## Next Cut
 
-After M140, `approval-executor.ts`, `action-graph-store.ts`, `active-memory-recall.ts`, and `memory/active-memory-subagent.ts` are also deleted from the root agent directory or memory subtree. Remaining root `apps/api/src/agent` files are mostly business adapters, provider settings, memory persistence/Memory Center, action/evidence/domain projection and product transcript/timeline. The next high-value cuts should target large mixed root files where generic harness responsibilities still remain, especially `context-pack.ts` and transcript/timeline projection.
+After M140, `approval-executor.ts`, `action-graph-store.ts`, `active-memory-recall.ts`, and `memory/active-memory-subagent.ts` are also deleted from the root agent directory or memory subtree. M157 later deletes root `context-pack.ts` by moving the remaining host input adapter to `host-profile/xox-context-pack.ts`. Remaining root `apps/api/src/agent` files are mostly business adapters, provider settings, memory persistence/Memory Center, action/evidence/domain projection and product transcript/timeline.
 
 ## Implementation Notes
 

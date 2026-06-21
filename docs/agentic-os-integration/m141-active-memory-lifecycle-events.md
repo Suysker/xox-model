@@ -6,7 +6,7 @@ Date: 2026-06-21
 
 ## Goal
 
-Remove active-memory recall lifecycle callbacks from xox `context-pack.ts`.
+Remove active-memory recall lifecycle callbacks from the xox context pack. At the time this was `context-pack.ts`; after M157 the remaining host adapter lives at `host-profile/xox-context-pack.ts`.
 
 After M140, xox no longer owned the active-memory runtime file, but it still implemented harness lifecycle details through:
 
@@ -17,12 +17,12 @@ After M140, xox no longer owned the active-memory runtime file, but it still imp
 
 That is still too much. xox should not know when the recall loop starts, completes, skips or injects context. Agentic OS should own that lifecycle and produce canonical event drafts.
 
-Implemented in M141. `@agentic-os/core` now owns active-memory lifecycle event drafts. xox `context-pack.ts` only passes `appendRunEvent` and `recordRecalledMemories` adapters.
+Implemented in M141. `@agentic-os/core` now owns active-memory lifecycle event drafts. After M157, xox `host-profile/xox-context-pack.ts` only passes `appendRunEvent` and `recordRecalledMemories` adapters.
 
 ## Target Shape
 
 ```text
-context-pack.ts
+host-profile/xox-context-pack.ts
   -> createAgentActiveMemoryRecallRuntime({
        retrieve: xox memory DB adapter,
        recordRecalledMemories: xox memory store adapter,
@@ -42,7 +42,7 @@ No xox code should implement active-memory lifecycle event sequencing.
 | append event draft to xox SQL table | `appendRunEvent` sink adapter | host storage peripheral |
 | mark selected memories recalled | `recordRecalledMemories` store adapter | host memory peripheral |
 | retrieve candidate memories | `retrieve` DB adapter | host memory peripheral |
-| consume recall result in context DTO | `context-pack.ts` | host product DTO |
+| consume recall result in context DTO | `host-profile/xox-context-pack.ts` after M157 | host product DTO |
 
 ## Guardrail
 
@@ -52,7 +52,7 @@ No xox code should implement active-memory lifecycle event sequencing.
 - `onSkipped`;
 - `onCompleted`;
 - `onInjected`;
-- handwritten `memory_recall_started`, `memory_recall_completed`, `memory_recall_skipped`, or `memory_injected` event construction inside `context-pack.ts`.
+- handwritten `memory_recall_started`, `memory_recall_completed`, `memory_recall_skipped`, or `memory_injected` event construction inside the xox context pack.
 
 ## Validation
 

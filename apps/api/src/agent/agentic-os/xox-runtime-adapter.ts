@@ -33,7 +33,7 @@ import {
 } from '@agentic-os/runtime-openai-compatible'
 import type { AgentPlannerSource, AgentToolInventorySnapshot } from '@xox/contracts'
 import type { Settings } from '../../core/settings.js'
-import { buildAgentContextPack } from '../context-pack.js'
+import { buildAgentContextPack } from '../host-profile/xox-context-pack.js'
 import { redactSecretLikeContent } from '../memory.js'
 import type { PlannerContext } from '../action-draft-builder.js'
 import { addRunEvent, addRuntimeStreamRunEvent } from './xox-run-event-store-adapter.js'

@@ -18,7 +18,7 @@ This cut is intentionally an amputation first. It does not claim that xox is ful
 | Deleted file | Why it was deleted | Remaining xox owner |
 | --- | --- | --- |
 | `xox-loop-readiness-adapter.ts` | Looked like a host-owned loop readiness subsystem even though Agentic OS owns readiness priority through `decideAgentReadiness()` | `xox-goal-store-adapter.ts` now owns only xox goal row loading, domain finding generation, and goal/evaluation persistence |
-| `xox-runtime-planning-adapter.ts` | Looked like a host-owned provider planning runner around Agentic OS runtime recovery | `xox-runtime-adapter.ts` now owns provider/runtime boundary wiring, xox context pack input, tool catalog callback, business high-volume budgets, localized run events, and legacy `RuntimePlanResult` projection |
+| `xox-runtime-planning-adapter.ts` | Looked like a host-owned provider planning runner around Agentic OS runtime recovery | `xox-runtime-adapter.ts` now owns provider/runtime boundary wiring, xox host-profile context pack input, tool catalog callback, business high-volume budgets, localized run events, and legacy `RuntimePlanResult` projection |
 
 ## What This Does Not Claim
 

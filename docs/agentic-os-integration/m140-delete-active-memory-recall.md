@@ -11,7 +11,7 @@ Delete the xox-owned active memory recall harness files:
 - `apps/api/src/agent/active-memory-recall.ts`
 - `apps/api/src/agent/memory/active-memory-subagent.ts`
 
-Implemented in M140. `@agentic-os/core` now owns `createAgentActiveMemoryRecallRuntime()` and `buildAgentActiveMemoryPromptPack()`. `apps/api/src/agent/context-pack.ts` wires xox memory retrieval, recall-signal persistence, run-event copy and context DTO projection into that runtime.
+Implemented in M140. `@agentic-os/core` now owns `createAgentActiveMemoryRecallRuntime()` and `buildAgentActiveMemoryPromptPack()`. At the time, `apps/api/src/agent/context-pack.ts` wired xox memory retrieval, recall-signal persistence, run-event copy and context DTO projection into that runtime. After M157, the same host input adapter lives at `apps/api/src/agent/host-profile/xox-context-pack.ts`.
 
 These files are not xox business logic. They own generic harness behavior: run-scoped recall cache, query cache, timeout, circuit breaker, prompt pack budgeting, citation formatting, lifecycle event sequencing, and skip reasons. A new SaaS host such as `navigation` should not have to copy these files.
 
@@ -30,13 +30,13 @@ After M140, xox keeps only the memory peripherals:
 | prompt pack budget and untrusted `<memory_context>` rendering | none | `@agentic-os/core` active-memory prompt pack |
 | memory citations and selected memory ids | none | `@agentic-os/core` active-memory prompt pack |
 | xox memory table ranking and lane/status policy | historical M140: `memory-retriever.ts`; after M147: `memory.ts` durable memory store | host business adapter |
-| xox run/memory event persistence and Chinese copy | historical M140: `context-pack.ts` callback + memory event modules; after M147: `memory.ts` + concrete callbacks | host adapter callbacks |
-| context DTO fields expected by existing prompts | `context-pack.ts` | host product DTO |
+| xox run/memory event persistence and Chinese copy | historical M140: `context-pack.ts` callback + memory event modules; after M147/M157: `memory.ts` + `host-profile/xox-context-pack.ts` concrete callbacks | host adapter callbacks |
+| context DTO fields expected by existing prompts | after M157: `host-profile/xox-context-pack.ts` | host product DTO |
 
 ## Dependency Graph
 
 ```text
-context-pack.ts
+host-profile/xox-context-pack.ts
   -> @agentic-os/core createAgentActiveMemoryRecallRuntime()
       -> xox retrieveAgentMemories() callback
       -> xox markAgentMemoriesRecalled() callback
@@ -60,7 +60,7 @@ deleted:
 
 - Agentic OS exports use `AgentActiveMemory*` names.
 - xox code consumes the runtime directly from `@agentic-os/core`.
-- xox memory row mapping stays close to `context-pack.ts`, because this is the real context assembly boundary.
+- xox memory row mapping stays close to `host-profile/xox-context-pack.ts`, because this is the real context assembly boundary after M157.
 
 ## Validation
 
