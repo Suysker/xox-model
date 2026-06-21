@@ -1,7 +1,6 @@
 import type { Kysely } from 'kysely'
 import {
   createAgentActiveMemoryRecallRuntime,
-  type AgentActiveMemoryRecallResult,
   type AgentActiveMemoryRetrieval,
 } from '@agentic-os/core'
 import { hydrateModelConfig } from '@xox/domain'
@@ -65,16 +64,6 @@ function memoryLayer(memory: Row<'agent_memories'>) {
     : 'durable'
 }
 
-function memoryRunCitations(result: AgentActiveMemoryRecallResult<Row<'agent_memories'>>) {
-  const scoreByMemoryId = new Map(result.retrieval.map((item) => [item.memoryId, item.score]))
-  return result.memories.map((memory) => ({
-    memoryId: memory.id,
-    lane: memory.lane,
-    score: scoreByMemoryId.get(memory.id),
-    evidenceRefs: memory.evidence_json ? ['evidence_json'] : [],
-  }))
-}
-
 const activeMemoryRecallRuntime = createAgentActiveMemoryRecallRuntime<AgentContextPackInput, Row<'agent_memories'>>({
   getScopeKey: memoryScopeKey,
   getRunCacheKey: (input) => `${memoryScopeKey(input)}:${input.runId}`,
@@ -100,18 +89,18 @@ const activeMemoryRecallRuntime = createAgentActiveMemoryRecallRuntime<AgentCont
       evidenceRefs: item.memory.evidence_json ? ['evidence_json'] : [],
     }))
   },
-  onStarted: async (input) => {
+  appendRunEvent: async (input, draft) => {
     await addRunEvent(input.db, {
       threadId: input.threadId,
       runId: input.runId,
-      type: 'memory_recall_started',
-      title: '主动记忆召回中',
-      message: '正在按当前用户和当前工作区检索与本轮目标相关的记忆。',
-      status: 'running',
-      data: { scope: 'current_user_current_workspace' },
+      type: draft.type,
+      title: draft.title,
+      message: draft.message,
+      status: draft.status,
+      data: draft.data,
     })
   },
-  onSelected: async (input, event) => {
+  recordRecalledMemories: async (input, event) => {
     await markAgentMemoriesRecalled({
       db: input.db,
       memories: event.result.memories,
@@ -137,88 +126,6 @@ const activeMemoryRecallRuntime = createAgentActiveMemoryRecallRuntime<AgentCont
       metadata: event.cached
         ? { confidence: event.result.confidence, cached: true }
         : { confidence: event.result.confidence, retrieval: event.result.retrieval },
-    })
-  },
-  onSkipped: async (input, event) => {
-    if (event.reason === 'circuit_open') {
-      await addRunEvent(input.db, {
-        threadId: input.threadId,
-        runId: input.runId,
-        type: 'memory_recall_skipped',
-        title: '主动记忆召回已跳过',
-        message: '主动记忆召回熔断器处于冷却期，本轮不注入记忆。',
-        status: 'info',
-        data: { skippedReason: 'circuit_open' },
-      })
-      return
-    }
-    await addRunEvent(input.db, {
-      threadId: input.threadId,
-      runId: input.runId,
-      type: 'memory_recall_completed',
-      title: event.reason === 'timeout' ? '主动记忆召回超时' : '主动记忆召回完成',
-      message: event.reason === 'timeout'
-        ? '主动记忆召回超过预算，本轮不注入记忆。'
-        : '本轮主动记忆召回未注入上下文。',
-      status: 'info',
-      data: { skippedReason: event.reason, timeoutMs: event.timeoutMs ?? null },
-    })
-  },
-  onCompleted: async (input, event) => {
-    if (event.result.memories.length === 0) {
-      await addRunEvent(input.db, {
-        threadId: input.threadId,
-        runId: input.runId,
-        type: 'memory_recall_completed',
-        title: '主动记忆召回完成',
-        message: '未找到与本轮目标足够相关的当前工作区记忆。',
-        status: 'info',
-        data: { skippedReason: 'no_relevant_memory', memoryCount: 0 },
-      })
-      return
-    }
-    await addRunEvent(input.db, {
-      threadId: input.threadId,
-      runId: input.runId,
-      type: 'memory_recall_completed',
-      title: '主动记忆召回完成',
-      message: `找到 ${event.result.memories.length} 条相关记忆，已准备注入为非指令上下文。`,
-      status: 'info',
-      data: {
-        memoryIds: event.result.usedMemoryIds,
-        memoryCount: event.result.memories.length,
-        confidence: event.result.confidence,
-        retrieval: event.result.retrieval,
-        citations: memoryRunCitations(event.result),
-        agenticOsActiveMemory: {
-          budget: event.result.budget,
-          citations: event.result.citations,
-        },
-      },
-    })
-  },
-  onInjected: async (input, event) => {
-    await addRunEvent(input.db, {
-      threadId: input.threadId,
-      runId: input.runId,
-      type: 'memory_injected',
-      title: '主动记忆已注入',
-      message: event.cached
-        ? `已从短期召回缓存注入 ${event.result.memories.length} 条当前用户/工作区相关记忆。`
-        : `已注入 ${event.result.memories.length} 条当前用户/工作区相关记忆，作为非指令上下文供模型参考。`,
-      status: 'info',
-      data: {
-        memoryIds: event.result.usedMemoryIds,
-        memoryCount: event.result.memories.length,
-        confidence: event.result.confidence,
-        cached: event.cached,
-        retrieval: event.result.retrieval,
-        citations: memoryRunCitations(event.result),
-        agenticOsActiveMemory: {
-          budget: event.promptPack.budget,
-          citations: event.promptPack.citations,
-        },
-      },
     })
   },
 })

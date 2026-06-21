@@ -774,8 +774,18 @@ describe('Agent ADR architecture boundaries', () => {
     const contextPack = source('agent/context-pack.ts')
     expect(contextPack).toContain("@agentic-os/core")
     expect(contextPack).toContain('createAgentActiveMemoryRecallRuntime')
+    expect(contextPack).toContain('appendRunEvent')
+    expect(contextPack).toContain('recordRecalledMemories')
     expect(contextPack).not.toContain("from './active-memory-recall.js'")
     expect(contextPack).not.toContain("from './memory/active-memory-subagent.js'")
+    expect(contextPack).not.toContain('onStarted')
+    expect(contextPack).not.toContain('onSkipped')
+    expect(contextPack).not.toContain('onCompleted')
+    expect(contextPack).not.toContain('onInjected')
+    expect(contextPack).not.toContain("type: 'memory_recall_started'")
+    expect(contextPack).not.toContain("type: 'memory_recall_completed'")
+    expect(contextPack).not.toContain("type: 'memory_recall_skipped'")
+    expect(contextPack).not.toContain("type: 'memory_injected'")
 
     for (const file of sourceFilesUnder('agent')) {
       expect(source(file), `${file} must not import the deleted active memory recall harness`).not.toContain("from './active-memory-recall.js'")
