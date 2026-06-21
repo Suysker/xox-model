@@ -38,7 +38,7 @@ import {
 import {
   cancelRunningAgentRun,
   startAgentRunQueueWorker,
-} from './run-worker.js'
+} from './agentic-os/xox-run-worker-adapter.js'
 import { openAgentThreadStateStream } from './agentic-os/xox-thread-state-stream-adapter.js'
 import { submitAgentMessageRun } from './agentic-os/xox-run-submission-adapter.js'
 

@@ -50,14 +50,15 @@ describe('Agent ADR architecture boundaries', () => {
 
   it('keeps Agentic OS host kit as the single harness run-loop entrypoint and deletes the host kernel facade', () => {
     expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-agentic-os-host-kit.ts'))).toBe(true)
+    expect(existsSync(join(srcRoot, 'agent', 'run-worker.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'agent-run-engine.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'goal-run-engine.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'agent-kernel.ts'))).toBe(false)
 
-    const worker = source('agent/run-worker.ts')
-    expect(worker).toContain("from './agentic-os/xox-agentic-os-host-kit.js'")
-    expect(worker).toContain("from './agentic-os/xox-direct-answer-adapter.js'")
-    expect(worker).toContain("from './agentic-os/xox-turn-intake-adapter.js'")
+    const worker = source('agent/agentic-os/xox-run-worker-adapter.ts')
+    expect(worker).toContain("from './xox-agentic-os-host-kit.js'")
+    expect(worker).toContain("from './xox-direct-answer-adapter.js'")
+    expect(worker).toContain("from './xox-turn-intake-adapter.js'")
     expect(worker).not.toContain("from './agent-run-engine.js'")
     expect(worker).not.toContain('goal-run-engine')
   })
@@ -103,8 +104,8 @@ describe('Agent ADR architecture boundaries', () => {
     ])
   })
 
-  it('keeps the run worker out of HTTP, provider runtime, and tool execution implementation details', () => {
-    expectNoImports('agent/run-worker.ts', [
+  it('keeps the run worker adapter out of HTTP, provider runtime, and tool execution implementation details', () => {
+    expectNoImports('agent/agentic-os/xox-run-worker-adapter.ts', [
       /fastify/i,
       /runtime\//,
       /tool-executor/,
@@ -116,8 +117,8 @@ describe('Agent ADR architecture boundaries', () => {
 
   it('keeps turn intake protocol in Agentic OS core', () => {
     expect(existsSync(join(srcRoot, 'agent', 'turn-intake-resolver.ts'))).toBe(false)
-    const worker = source('agent/run-worker.ts')
-    expect(worker).toContain("from './agentic-os/xox-turn-intake-adapter.js'")
+    const worker = source('agent/agentic-os/xox-run-worker-adapter.ts')
+    expect(worker).toContain("from './xox-turn-intake-adapter.js'")
     expect(worker).not.toContain('planWithRuntimeAdapter')
     expect(worker).not.toContain("name: 'turn_lane_resolve'")
     const intakeAdapter = source('agent/agentic-os/xox-turn-intake-adapter.ts')
@@ -131,8 +132,8 @@ describe('Agent ADR architecture boundaries', () => {
 
   it('keeps direct answer lane state machine in Agentic OS core', () => {
     expect(existsSync(join(srcRoot, 'agent', 'direct-answer-runtime.ts'))).toBe(false)
-    const worker = source('agent/run-worker.ts')
-    expect(worker).toContain("from './agentic-os/xox-direct-answer-adapter.js'")
+    const worker = source('agent/agentic-os/xox-run-worker-adapter.ts')
+    expect(worker).toContain("from './xox-direct-answer-adapter.js'")
     expect(worker).not.toContain("from './direct-answer-runtime.js'")
 
     const adapter = source('agent/agentic-os/xox-direct-answer-adapter.ts')
@@ -312,6 +313,7 @@ describe('Agent ADR architecture boundaries', () => {
     expect(existsSync(join(srcRoot, 'agent', 'clarification-resume.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'loop-obligations.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'obligation-materializer.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'run-worker.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'thread-store.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'tool-runtime', 'approval-policy-composer.ts'))).toBe(false)
 
@@ -630,6 +632,7 @@ describe('Agent ADR architecture boundaries', () => {
 
   it('keeps thread signaling, SSE state streams, and run lease helpers outside the root host agent frame', () => {
     const deletedRootFiles = [
+      'run-worker.ts',
       'thread-store.ts',
       'thread-events.ts',
       'thread-state-stream.ts',
@@ -644,8 +647,10 @@ describe('Agent ADR architecture boundaries', () => {
       "from './thread-state-stream.js'",
       "from './run-lease.js'",
       "from './run-events.js'",
+      "from './run-worker.js'",
       "from './thread-store.js'",
       "from '../run-events.js'",
+      "from '../run-worker.js'",
       "from '../thread-store.js'",
     ]
     for (const file of sourceFilesUnder('agent')) {
@@ -658,6 +663,7 @@ describe('Agent ADR architecture boundaries', () => {
     const threadSignal = source('agent/agentic-os/xox-thread-signal-adapter.ts')
     const threadStream = source('agent/agentic-os/xox-thread-state-stream-adapter.ts')
     const runLease = source('agent/agentic-os/xox-run-lease-store-adapter.ts')
+    const runWorker = source('agent/agentic-os/xox-run-worker-adapter.ts')
     expect(threadSignal).toContain("@agentic-os/server")
     expect(threadSignal).toContain('AgentServerSignalBus')
     expect(threadStream).toContain("@agentic-os/server")
@@ -665,6 +671,8 @@ describe('Agent ADR architecture boundaries', () => {
     expect(runLease).toContain("@agentic-os/server")
     expect(runLease).toContain('startAgentServerRunLeaseHeartbeat')
     expect(runLease).toContain('assertAgentServerRunLease')
+    expect(runWorker).toContain("@agentic-os/server")
+    expect(runWorker).toContain('createAgentServerRunScheduler')
     const threadStore = source('agent/agentic-os/xox-thread-store-adapter.ts')
     expect(threadStore).toContain('buildXoxThreadStateView')
     expect(threadStore).toContain('serializeRunEvent')
@@ -723,7 +731,7 @@ describe('Agent ADR architecture boundaries', () => {
 
   it('keeps historical Agent route imports pointed at current boundaries', () => {
     const apiTest = source(relative(srcRoot, join(apiRoot, 'tests', 'api.test.ts')))
-    expect(apiTest).toContain("../src/agent/run-worker.js")
+    expect(apiTest).toContain("../src/agent/agentic-os/xox-run-worker-adapter.js")
     expect(apiTest).not.toContain("../src/modules/agent.js")
   })
 

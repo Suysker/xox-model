@@ -14,7 +14,7 @@ Delete root `apps/api/src/agent/run-submission.ts`. The file is now a host submi
 | --- | --- | --- |
 | xox submit DB row creation and response DTO mapping | `apps/api/src/agent/agentic-os/xox-run-submission-adapter.ts` | `@agentic-os/server` owns submitted-run fact projection through `xox-run-submission-view.ts` |
 | route auth/body parsing | `apps/api/src/agent/routes.ts` | host route shell |
-| sync run completion and background drain scheduling | existing `apps/api/src/agent/run-worker.ts` until later cut | `@agentic-os/server` already owns scheduler primitives; later cuts should shrink/delete root worker |
+| sync run completion and background drain scheduling | `apps/api/src/agent/agentic-os/xox-run-worker-adapter.ts` after M137 | `@agentic-os/server` already owns scheduler primitives; later cuts should shrink the host-prefixed worker adapter |
 
 ## Dependency Graph
 
@@ -59,4 +59,4 @@ Expected result:
 
 ## Next Cut
 
-After M136, `thread-store.ts` has also been deleted from the root agent directory and moved to `agentic-os/xox-thread-store-adapter.ts`. The remaining high-value root run-plane file is `run-worker.ts`; it still contains recovery/fail-closed writes and durable process wiring, so the next design pass must decide what can move into `@agentic-os/server` before deleting or collapsing it.
+After M137, `run-worker.ts` has also been deleted from the root agent directory and moved to `agentic-os/xox-run-worker-adapter.ts`. The remaining run-plane wiring is now explicitly host-prefixed; future cuts should move more durable worker/recovery behavior into `@agentic-os/server` ports rather than restoring root files.

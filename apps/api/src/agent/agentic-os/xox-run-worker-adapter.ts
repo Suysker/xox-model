@@ -1,28 +1,28 @@
 import type { Kysely } from 'kysely'
 import { createAgentServerRunScheduler, type AgentServerRunScheduler } from '@agentic-os/server'
 import type { AgentGoalStatus, AgentNavigationEvent, AgentPlannerSource } from '@xox/contracts'
-import type { Database, Row } from '../db/schema.js'
-import type { Settings } from '../core/settings.js'
-import { utcNow } from '../core/time.js'
-import type { CurrentUser } from '../modules/auth.js'
-import { redactSecretLikeContent } from './memory.js'
-import { resolveAgentRuntimeSettings } from './provider-settings.js'
-import type { PlannerContext } from './planning-context.js'
-import { executeXoxAgenticOsRun } from './agentic-os/xox-agentic-os-host-kit.js'
-import { executeXoxDirectAnswerLane } from './agentic-os/xox-direct-answer-adapter.js'
-import { resolveXoxAgentTurnIntake } from './agentic-os/xox-turn-intake-adapter.js'
+import type { Database, Row } from '../../db/schema.js'
+import type { Settings } from '../../core/settings.js'
+import { utcNow } from '../../core/time.js'
+import type { CurrentUser } from '../../modules/auth.js'
+import { redactSecretLikeContent } from '../memory.js'
+import { resolveAgentRuntimeSettings } from '../provider-settings.js'
+import type { PlannerContext } from '../planning-context.js'
+import { executeXoxAgenticOsRun } from './xox-agentic-os-host-kit.js'
+import { executeXoxDirectAnswerLane } from './xox-direct-answer-adapter.js'
+import { resolveXoxAgentTurnIntake } from './xox-turn-intake-adapter.js'
 import {
   AgentRunLeaseLostError,
   claimAgentRunLease,
   claimRecoverableAgentRuns,
   refreshAgentRunLease,
   startAgentRunLeaseHeartbeat,
-} from './agentic-os/xox-run-lease-store-adapter.js'
-import { addRunEvent } from './agentic-os/xox-run-event-store-adapter.js'
-import { agentThreadEvents } from './agentic-os/xox-thread-signal-adapter.js'
-import { addMessage, touchThreadAfterRun } from './agentic-os/xox-thread-store-adapter.js'
-import { normalizeAgentAutomationLevel } from './tool-policy.js'
-import { sanitizeAgentGoalFacts } from './runtime-goal-facts.js'
+} from './xox-run-lease-store-adapter.js'
+import { addRunEvent } from './xox-run-event-store-adapter.js'
+import { agentThreadEvents } from './xox-thread-signal-adapter.js'
+import { addMessage, touchThreadAfterRun } from './xox-thread-store-adapter.js'
+import { normalizeAgentAutomationLevel } from '../tool-policy.js'
+import { sanitizeAgentGoalFacts } from '../runtime-goal-facts.js'
 
 const agentRunSchedulers = new WeakMap<Kysely<Database>, AgentServerRunScheduler>()
 

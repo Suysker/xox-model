@@ -78,7 +78,4 @@ Expected result:
 
 ## Next Cut
 
-After this slice, root `run-worker.ts` is the main remaining run-plane file. It still contains durable recovery and fail-closed write behavior, so the next cut should decide whether to:
-
-- move only the host worker wrapper to `agentic-os/xox-run-worker-adapter.ts`; or
-- first add stronger Agentic OS server durable worker/store ports and then delete more code rather than only renaming it.
+After M137, root `run-worker.ts` is also deleted and moved to `agentic-os/xox-run-worker-adapter.ts`. Future cuts should add stronger Agentic OS server durable worker/store ports before deleting more behavior, but the root run-plane filename has already been removed.

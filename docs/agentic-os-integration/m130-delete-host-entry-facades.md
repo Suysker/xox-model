@@ -14,7 +14,7 @@ The smoke command is preserved. Only its location changes because it is an opera
 
 | Responsibility | Owner after M130 |
 | --- | --- |
-| Durable run queue, lease, cancellation, fail-close DB writes | `apps/api/src/agent/run-worker.ts` |
+| Durable run queue, lease, cancellation, fail-close DB writes | historical `apps/api/src/agent/run-worker.ts`; M137 moved this to `apps/api/src/agent/agentic-os/xox-run-worker-adapter.ts` |
 | Turn intake lane resolution | `apps/api/src/agent/agentic-os/xox-turn-intake-adapter.ts` + `@agentic-os/core` |
 | Direct answer lane | `apps/api/src/agent/agentic-os/xox-direct-answer-adapter.ts` + `@agentic-os/core` |
 | Main agent loop | `apps/api/src/agent/agentic-os/xox-agentic-os-host-kit.ts` + `@agentic-os/core` |
@@ -25,7 +25,7 @@ The smoke command is preserved. Only its location changes because it is an opera
 
 ```mermaid
 flowchart TD
-    Worker["run-worker.ts"] --> TurnIntake["xox-turn-intake-adapter.ts"]
+    Worker["historical run-worker.ts; M137 xox-run-worker-adapter.ts"] --> TurnIntake["xox-turn-intake-adapter.ts"]
     Worker --> DirectAnswer["xox-direct-answer-adapter.ts"]
     Worker --> HostKit["xox-agentic-os-host-kit.ts"]
     TurnIntake --> CoreTurn["@agentic-os/core resolveAgentTurnIntake"]
