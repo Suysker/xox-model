@@ -343,6 +343,8 @@ describe('Agent ADR architecture boundaries', () => {
   it('deletes the local loop-obligations facade and keeps obligation runtime in Agentic OS core', () => {
     expect(existsSync(join(srcRoot, 'agent', 'loop-obligations.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'loop-obligation-ledger.ts'))).toBe(false)
+    expect(existsSync(join(testDir, 'response-evaluator.test.ts'))).toBe(false)
+    expect(existsSync(join(testDir, 'loop-obligation-ledger.test.ts'))).toBe(false)
 
     for (const file of sourceFilesUnder('agent')) {
       expect(source(file), `${file} must not import the deleted loop-obligations facade`).not.toContain('loop-obligations')
@@ -351,9 +353,25 @@ describe('Agent ADR architecture boundaries', () => {
     const adapter = source('agent/agentic-os/xox-final-review-adapter.ts')
     expect(adapter).toContain("@agentic-os/core")
     expect(adapter).toContain('ledgerToObligationPlan')
-    expect(adapter).toContain('projectObligationLedger')
     expect(adapter).toContain('projectObligationLedgerWithAdditionalObligations')
     expect(adapter).toContain('projectObligationStateWithAdditionalObligations')
+    expect(adapter).not.toContain('  projectObligationLedger,')
+    expect(adapter).not.toContain('projectObligationLedger(ledger')
+
+    for (const deletedExport of [
+      'evidenceContainsKey',
+      'buildEvidenceRequirements',
+      'loopObligationsFromResponseEvaluation',
+      'planLoopObligations',
+      'activeLedgerObligations',
+      'canAttemptFinalAnswer',
+      'serializeObligationLedger',
+      'osEvidenceRecordsFromXoxEvidence',
+      'osEvidenceRequirementFromXoxRequirement',
+    ]) {
+      expect(adapter, `${deletedExport} must not remain as a xox public harness API`).not.toContain(`export function ${deletedExport}(`)
+    }
+    expect(adapter).not.toContain('function loopObligationsFromResponseEvaluation')
 
     expect(existsSync(join(srcRoot, 'agent', 'obligation-materializer.ts'))).toBe(false)
     const hostKit = source('agent/agentic-os/xox-agentic-os-host-kit.ts')
@@ -905,6 +923,7 @@ describe('Agent ADR architecture boundaries', () => {
     expect(existsSync(join(srcRoot, 'agent', 'memory-safety.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'active-memory-recall.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'memory', 'active-memory-subagent.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'prompts', 'memory.system.md'))).toBe(false)
     const memory = source('agent/memory.ts')
     expect(memory).toContain("@agentic-os/core")
     expect(memory).toContain('normalizeSecretSafeText')
@@ -930,6 +949,7 @@ describe('Agent ADR architecture boundaries', () => {
       expect(source(file), `${file} must not import the deleted active memory recall harness`).not.toContain("from '../active-memory-recall.js'")
       expect(source(file), `${file} must not import the deleted active memory prompt pack`).not.toContain("from './memory/active-memory-subagent.js'")
       expect(source(file), `${file} must not import the deleted active memory prompt pack`).not.toContain("from '../memory/active-memory-subagent.js'")
+      expect(source(file), `${file} must not reference the deleted local memory prompt`).not.toContain('memory.system.md')
     }
 
     const deletedMemoryFacades = [

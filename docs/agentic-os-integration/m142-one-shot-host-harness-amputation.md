@@ -1,6 +1,6 @@
 # M142 One-Shot Host Harness Amputation
 
-Status: In Progress (evidence/final-review/obligation root framework, readiness/runtime-planning facades, root data/planning facades, and memory root facades deleted)
+Status: In Progress (evidence/final-review/obligation root framework, final-review test harness surface, readiness/runtime-planning facades, root data/planning facades, and memory root facades deleted)
 
 Date: 2026-06-21
 
@@ -186,6 +186,17 @@ Status: completed as a follow-up M142 root-file deletion cut.
 - Agentic OS still owns active recall runtime and memory lifecycle event drafts. xox keeps SQL row mapping, Memory Center DTOs, business candidate text/evidence, recall signals, daily notes, and localized run-event copy.
 - Architecture guards now fail if any deleted memory root facade returns.
 
+### M150: Deleted Final-Review Harness Test Surface
+
+Status: completed as a follow-up M142 test-surface deletion cut.
+
+- Deleted `apps/api/tests/response-evaluator.test.ts`.
+- Deleted `apps/api/tests/loop-obligation-ledger.test.ts`.
+- Removed the old public final-review/obligation harness exports from `xox-final-review-adapter.ts`: `evidenceContainsKey()`, `buildEvidenceRequirements()`, `loopObligationsFromResponseEvaluation()`, `planLoopObligations()`, `activeLedgerObligations()`, `canAttemptFinalAnswer()`, `serializeObligationLedger()`, `osEvidenceRecordsFromXoxEvidence()`, and `osEvidenceRequirementFromXoxRequirement()`.
+- The remaining adapter surface is production host policy and DTO mapping only. Agentic OS still owns the generic final-review gate, obligation ledger state machine, and projection primitives.
+- Architecture guards now fail if the deleted tests or public harness helper exports return.
+- The unused local memory prompt `apps/api/src/agent/prompts/memory.system.md` was also deleted in this cut because active-memory prompt assembly is Agentic OS-owned.
+
 ## One-Shot Scope
 
 M142 is not complete until all rows in this table are addressed. If a row cannot be completed in a given implementation cut, that cut must be presented as M142-in-progress rather than M142 completion.
@@ -347,7 +358,7 @@ git diff --check
 
 cd C:\Github\xox-model
 npm.cmd run build:api
-npm.cmd run test:api -- --run tests/agent-architecture.test.ts tests/response-evaluator.test.ts tests/loop-obligation-ledger.test.ts tests/action-observation.test.ts tests/provider-runtime.test.ts
+npm.cmd run test:api -- --run tests/agent-architecture.test.ts tests/action-observation.test.ts tests/provider-runtime.test.ts
 npm.cmd run test:api
 git diff --check
 ```

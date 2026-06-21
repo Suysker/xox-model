@@ -18,17 +18,14 @@ import type {
 import type { AgentGoalContract, AgentGoalFacts } from '@xox/contracts'
 import {
   activateObligations,
-  activeLedgerObligations as osActiveLedgerObligations,
   applyFinalPassToObligationLedger,
   applyObservationToObligationLedger as applyOsObservationToObligationLedger,
   buildEvidenceLedger as buildOsEvidenceLedger,
-  canAttemptFinalAnswer as osCanAttemptFinalAnswer,
   evaluateAgentFinalResponseReview,
   evidenceFactsContainKey,
   evidenceRequirementsFromFinalAnswerClaims,
   initializeObligationLedger as initializeOsObligationLedger,
   ledgerToObligationPlan as osLedgerToObligationPlan,
-  projectObligationLedger,
   projectObligationLedgerWithAdditionalObligations,
   projectObligationStateWithAdditionalObligations,
   type AdditionalObligationProjectionInput,
@@ -437,10 +434,6 @@ export function buildEvidenceLedger(input: {
   }).map(xoxEvidenceFromOsRecord)
 }
 
-export function evidenceContainsKey(items: AgentEvidenceItem[], key: string) {
-  return items.some((item) => evidenceFactsContainKey(item.facts, key))
-}
-
 export function evidenceForModel(items: AgentEvidenceItem[]) {
   return items.map((item) => ({
     id: item.id,
@@ -454,7 +447,7 @@ export function evidenceForModel(items: AgentEvidenceItem[]) {
   }))
 }
 
-export function buildEvidenceRequirements(input: {
+function buildEvidenceRequirements(input: {
   facts: AgentGoalFacts
   evidence: AgentEvidenceItem[]
   finalAnswerClaims?: AgentFinalAnswerClaim[]
@@ -799,10 +792,6 @@ function xoxObligationMetadata(input: {
   return metadata
 }
 
-export function loopObligationsFromResponseEvaluation(evaluation: ResponseEvaluation): OsAgentLoopObligation[] {
-  return evaluation.obligations ?? []
-}
-
 function mergeGoalFacts(values: AgentGoalFacts[]) {
   const merged: AgentGoalFacts = {}
   const forbiddenActions = new Set<NonNullable<AgentGoalFacts['forbiddenActions']>[number]>()
@@ -874,28 +863,6 @@ function xoxPlanFromOsPlan(input: {
   }
 }
 
-export function planLoopObligations(input: {
-  objective: string
-  obligations: OsAgentLoopObligation[]
-}): AgentLoopObligationPlan | null {
-  if (input.obligations.length === 0) return null
-  const ledger = initializeOsObligationLedger({
-    runId: 'xox-local-obligation-plan',
-    threadId: 'xox-local-obligation-plan',
-  })
-  activateObligations({
-    ledger,
-    obligations: input.obligations,
-    source: 'completion_evaluator',
-    iteration: 0,
-  })
-  const osPlan = osLedgerToObligationPlan({
-    ledger,
-    objective: input.objective,
-  })
-  return osPlan ? xoxPlanFromOsPlan({ objective: input.objective, osPlan }) : null
-}
-
 export function applyResponseEvaluationToLedger(input: {
   ledger: AgentLoopObligationLedger
   evaluation: ResponseEvaluation
@@ -910,7 +877,7 @@ export function applyResponseEvaluationToLedger(input: {
   }
   activateObligations({
     ledger: input.ledger,
-    obligations: loopObligationsFromResponseEvaluation(input.evaluation),
+    obligations: input.evaluation.obligations ?? [],
     source: 'completion_evaluator',
     iteration: input.iteration,
   })
@@ -956,25 +923,12 @@ export function applyObservationToLedger(input: {
   })
 }
 
-export function activeLedgerObligations(ledger: AgentLoopObligationLedger) {
-  const activeIds = new Set(osActiveLedgerObligations(ledger).map((obligation) => obligation.obligationId))
-  return serializeObligationLedger(ledger).obligations.filter((obligation) => activeIds.has(obligation.id))
-}
-
-export function canAttemptFinalAnswer(ledger: AgentLoopObligationLedger) {
-  return osCanAttemptFinalAnswer(ledger)
-}
-
 export function ledgerToObligationPlan(input: {
   ledger: AgentLoopObligationLedger
   objective: string
 }): AgentLoopObligationPlan | null {
   const osPlan = osLedgerToObligationPlan(input)
   return osPlan ? xoxPlanFromOsPlan({ objective: input.objective, osPlan }) : null
-}
-
-export function serializeObligationLedger(ledger: AgentLoopObligationLedger): AgentLoopObligationLedgerProjection {
-  return xoxProjectionFromOsProjection(projectObligationLedger(ledger))
 }
 
 function additionalObligationFromOsObligation(input: {
@@ -1000,7 +954,7 @@ function additionalObligationFromOsObligation(input: {
 function additionalObligationsFromResponseEvaluation(
   evaluation: ResponseEvaluation,
 ): AdditionalObligationProjectionInput[] {
-  return loopObligationsFromResponseEvaluation(evaluation).map((obligation) => {
+  return (evaluation.obligations ?? []).map((obligation) => {
     const sandboxInvalid = xoxKindFromOsMetadata(obligation.metadata, 'domain_fact') === 'sandbox_calculation' &&
       evaluation.findings.some((finding) => finding.code === 'response.sandbox_evidence_invalid')
     return additionalObligationFromOsObligation({
@@ -1118,10 +1072,6 @@ export function runtimeBoundaryMissingObservationRepair(input: {
   }
 }
 
-export function osEvidenceRecordsFromXoxEvidence(evidence: AgentEvidenceItem[]): OsAgentEvidenceRecord[] {
-  return evidence.map(osRecordFromXoxEvidence)
-}
-
 export function osEvidenceFromXoxEvidence(evidence: AgentEvidenceItem[]) {
   return evidence.map((item) => ({
     kind: item.authority,
@@ -1208,7 +1158,7 @@ function xoxRequirementToolNames(requirement: AgentEvidenceRequirement): string[
   return []
 }
 
-export function osEvidenceRequirementFromXoxRequirement(
+function osEvidenceRequirementFromXoxRequirement(
   requirement: AgentEvidenceRequirement,
   index = 0,
 ): OsAgentEvidenceRequirement {
