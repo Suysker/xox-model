@@ -1,6 +1,8 @@
 import type {
   AgentActionRequest,
   AgentEvaluationResult,
+  AgentGoalRecord,
+  AgentMessage,
   AgentNavigationEvent,
   AgentPlanStep,
   AgentRunEvent,
@@ -8,7 +10,17 @@ import type {
   AgentTranscriptItemKind,
   AgentTranscriptItemStatus,
 } from '@xox/contracts'
-import type { AgentProjectionState } from './ag-ui-projection.js'
+
+export type AgentProjectionState = {
+  thread: { id: string }
+  messages: AgentMessage[]
+  goals: AgentGoalRecord[]
+  evaluations: AgentEvaluationResult[]
+  navigationEvents: AgentNavigationEvent[]
+  runEvents: AgentRunEvent[]
+  planSteps: AgentPlanStep[]
+  actionRequests: AgentActionRequest[]
+}
 
 type PendingTranscriptItem = AgentTranscriptItem & { order: number }
 

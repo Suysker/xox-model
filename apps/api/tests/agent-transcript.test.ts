@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentActionRequest, AgentMessage, AgentNavigationEvent, AgentPlanStep, AgentRunEvent, AgentTranscriptSection } from '@xox/contracts'
-import { buildAgentAgUiEvents } from '../src/agent/ag-ui-projection.js'
-import { buildAgentTranscriptItems } from '../src/agent/agent-transcript-projector.js'
+import { projectAgentServerAgUiEvents } from '@agentic-os/server'
+import { buildAgentTranscriptItems, type AgentProjectionState } from '../src/agent/agent-transcript-projector.js'
 import { buildAgentTimelineItems, buildAgentTranscriptNodes } from '../src/agent/agent-timeline-projector.js'
-import type { AgentProjectionState } from '../src/agent/ag-ui-projection.js'
 
 const createdAt = '2026-05-22T00:00:00.000Z'
 
@@ -163,7 +162,7 @@ describe('Agent execution transcript projection', () => {
       planSteps: [planStep()],
       actionRequests: [action()],
     })
-    const agUiEvents = buildAgentAgUiEvents(state)
+    const agUiEvents = projectAgentServerAgUiEvents(state, { eventNamePrefix: 'xox' })
     const transcript = buildAgentTranscriptItems(state)
 
     expect(agUiEvents.some((event) => event.type === 'TOOL_CALL_ARGS' && event.toolName === 'ledger_create_entry')).toBe(true)

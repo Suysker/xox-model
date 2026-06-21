@@ -1,8 +1,7 @@
-import { projectAgentServerRunSubmissionView } from '@agentic-os/server'
-import type { AgentActionRequest, AgentNavigationEvent, AgentPlanStep, AgentSendResponse } from '@xox/contracts'
+import { projectAgentServerAgUiEvents, projectAgentServerRunSubmissionView } from '@agentic-os/server'
+import type { AgentActionRequest, AgentAgUiEvent, AgentNavigationEvent, AgentPlanStep, AgentSendResponse } from '@xox/contracts'
 import type { Row } from '../../db/schema.js'
 import type { CurrentUser } from '../../modules/auth.js'
-import { buildAgentAgUiEvents } from '../ag-ui-projection.js'
 import { buildAgentTranscriptItems } from '../agent-transcript-projector.js'
 import { buildAgentTimelineItems, buildAgentTranscriptNodes } from '../agent-timeline-projector.js'
 import {
@@ -100,7 +99,7 @@ export function buildSubmittedRunResponse(input: XoxSubmittedRunResponseInput): 
     messages: input.messages,
     navigationEvents: input.navigationEvents,
     runEvents,
-    agUiEvents: buildAgentAgUiEvents(projection),
+    agUiEvents: projectAgentServerAgUiEvents(projection, { eventNamePrefix: 'xox' }) as AgentAgUiEvent[],
     transcriptItems: buildAgentTranscriptItems(projection),
     timelineItems: buildAgentTimelineItems(projection),
     transcriptNodes: buildAgentTranscriptNodes(projection),

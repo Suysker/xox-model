@@ -559,6 +559,22 @@ describe('Agent ADR architecture boundaries', () => {
     expect(runEvents).not.toContain('runtimeStreamEventPayload')
   })
 
+  it('keeps AG-UI event projection in Agentic OS server', () => {
+    expect(existsSync(join(srcRoot, 'agent', 'ag-ui-projection.ts'))).toBe(false)
+    for (const file of sourceFilesUnder('agent')) {
+      expect(source(file), `${file} must not import the deleted AG-UI projection wrapper`).not.toContain('ag-ui-projection')
+      expect(source(file), `${file} must not rebuild the deleted AG-UI projection wrapper`).not.toContain('buildAgentAgUiEvents')
+    }
+
+    const runView = source('agent/agentic-os/xox-run-submission-view.ts')
+    const threadView = source('agent/agentic-os/xox-thread-state-view.ts')
+    for (const content of [runView, threadView]) {
+      expect(content).toContain("@agentic-os/server")
+      expect(content).toContain('projectAgentServerAgUiEvents')
+      expect(content).toContain("eventNamePrefix: 'xox'")
+    }
+  })
+
   it('keeps provider probing runtime mechanics in Agentic OS runtime', () => {
     const settings = source('agent/provider-settings.ts')
     expect(settings).toContain("@agentic-os/runtime-openai-compatible")

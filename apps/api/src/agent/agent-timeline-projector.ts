@@ -7,8 +7,7 @@ import type {
   AgentTimelineItemKind,
   AgentTranscriptItem,
 } from '@xox/contracts'
-import type { AgentProjectionState } from './ag-ui-projection.js'
-import { buildAgentTranscriptItems } from './agent-transcript-projector.js'
+import { buildAgentTranscriptItems, type AgentProjectionState } from './agent-transcript-projector.js'
 
 type PendingTimelineItem = AgentTimelineItem & { order: number }
 

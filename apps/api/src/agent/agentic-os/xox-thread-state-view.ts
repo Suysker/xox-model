@@ -1,7 +1,8 @@
 import type { AgentServerThreadRunState, AgentServerThreadSnapshot } from '@agentic-os/server'
-import { AgentServerThreadStateProjector } from '@agentic-os/server'
+import { AgentServerThreadStateProjector, projectAgentServerAgUiEvents } from '@agentic-os/server'
 import type {
   AgentActionRequest,
+  AgentAgUiEvent,
   AgentEvaluationResult,
   AgentGoalRecord,
   AgentMessage,
@@ -14,7 +15,6 @@ import type {
   AgentThreadSummary,
 } from '@xox/contracts'
 import type { Row } from '../../db/schema.js'
-import { buildAgentAgUiEvents } from '../ag-ui-projection.js'
 import { buildAgentTranscriptItems } from '../agent-transcript-projector.js'
 import { buildAgentTimelineItems, buildAgentTranscriptNodes } from '../agent-timeline-projector.js'
 import {
@@ -71,7 +71,7 @@ export function buildXoxThreadStateView(input: XoxThreadStateViewInput): AgentTh
     evaluations: input.evaluations,
     navigationEvents: input.navigationEvents,
     runEvents,
-    agUiEvents: buildAgentAgUiEvents(projection),
+    agUiEvents: projectAgentServerAgUiEvents(projection, { eventNamePrefix: 'xox' }) as AgentAgUiEvent[],
     transcriptItems: buildAgentTranscriptItems(projection),
     timelineItems: buildAgentTimelineItems(projection),
     transcriptNodes: buildAgentTranscriptNodes(projection),
