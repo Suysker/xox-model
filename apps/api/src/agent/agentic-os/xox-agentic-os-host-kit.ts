@@ -9,6 +9,7 @@ import type {
   AgentActionRequest as OsActionRequest,
   AgentContext as OsAgentContext,
   AgentEvidence as OsAgentEvidence,
+  AgentFinalAnswerClaim as OsFinalAnswerClaim,
   AgentFinalReview as OsFinalReview,
   AgentObservation as OsObservation,
   AgentRunEvent as OsRunEvent,
@@ -60,6 +61,13 @@ import {
   type AgentStorePort,
   type AgentToolRegistryPort,
 } from '@agentic-os/core'
+import {
+  AGENT_SERVER_FINAL_ANSWER_CLAIM_EXTRACTION_TOOL_NAME,
+  runAgentServerFinalAnswerClaimExtraction,
+  type AgentServerFinalAnswerClaimExtractionCopyInput,
+  type AgentServerFinalAnswerClaimExtractionOptions,
+  type AgentServerFinalAnswerClaimExtractionResult,
+} from '@agentic-os/server'
 import type { AgentGoalFacts, AgentGoalStatus, AgentNavigationEvent, AgentPlannerSource } from '@xox/contracts'
 import { parseJson } from '../../db/database.js'
 import type { Row } from '../../db/schema.js'
@@ -87,10 +95,11 @@ import { answerWorkspaceDataQuestion, type DataAgentQueryStep } from '../data-ag
 import { buildXoxClarificationResumeContext } from './xox-clarification-resume-adapter.js'
 import {
   buildEvidenceLedger,
+  evidenceForModel,
   isExecutedSandboxEvidenceFacts,
   type AgentEvidenceItem,
+  type AgentFinalAnswerClaim,
 } from '../evidence-ledger.js'
-import { extractFinalAnswerClaims } from '../final-answer-claim-extractor.js'
 import {
   addEvaluationResult,
   createGoalContract,
@@ -109,6 +118,9 @@ import {
 import { callRuntimePlanner } from '../runtime-planning-call.js'
 import {
   configuredRuntimePlannerSource,
+  planWithRuntimeAdapter,
+  type RuntimeChatMessage,
+  type RuntimePlanningInput,
   type RuntimePlanResult,
 } from '../runtime/runtime-adapter.js'
 import {
@@ -134,6 +146,7 @@ import {
   toolSupervisorFailureObservation,
   type AgentToolObservation,
 } from '../tool-observation-continuation.js'
+import { redactSecretLikeContent } from '../memory.js'
 import { runtimeIntentHandlers } from '../runtime-intent-handlers.js'
 import { evaluateAgentGoal } from './xox-loop-readiness-adapter.js'
 import {
@@ -919,6 +932,148 @@ function shouldRunFinalAnswerClaimReview(input: {
   return false
 }
 
+const XOX_FINAL_ANSWER_CLAIM_SUBJECT_TYPES = [
+  'workspace',
+  'shareholder',
+  'member',
+  'ledger_entry',
+  'forecast',
+  'calculation',
+  'action',
+] as const
+
+const XOX_FINAL_ANSWER_CLAIM_EXTRA_PROMPT_LINES = [
+  'Entity-specific claims include ordinal or named shareholders/members, such as "the second shareholder", "shareholder B", "member 1", or equivalent expressions in any language.',
+  'Derived calculation claims include ROI, payback, inflation adjustment, loan-rate adjustment, profit, cash, projections, allocations, or scenario computations.',
+] as const
+
+type XoxFinalAnswerClaimSubjectType = typeof XOX_FINAL_ANSWER_CLAIM_SUBJECT_TYPES[number]
+
+type XoxFinalAnswerClaimExtractionResult =
+  | { status: 'completed'; claims: AgentFinalAnswerClaim[] }
+  | Extract<AgentServerFinalAnswerClaimExtractionResult, { status: 'skipped' | 'unavailable' }>
+
+function xoxFinalAnswerClaimExtractionCopy(input: AgentServerFinalAnswerClaimExtractionCopyInput) {
+  if (input.status === 'started') {
+    return {
+      title: '最终回答 claim review',
+      message: '正在尝试把模型最终回答转成结构化 claim，以便和 run-scoped observation evidence 对齐。',
+    }
+  }
+  if (input.status === 'unavailable') {
+    return {
+      title: '最终回答 claim review 不可用',
+      message: input.reason ??
+        `Provider did not return ${AGENT_SERVER_FINAL_ANSWER_CLAIM_EXTRACTION_TOOL_NAME} for optional claim review.`,
+    }
+  }
+  return {
+    title: '最终回答 claim 已提取',
+    message: `已提取 ${input.claims?.length ?? 0} 个最终回答 claim。`,
+  }
+}
+
+function isXoxFinalAnswerClaimSubjectType(value: string): value is XoxFinalAnswerClaimSubjectType {
+  return (XOX_FINAL_ANSWER_CLAIM_SUBJECT_TYPES as readonly string[]).includes(value)
+}
+
+function xoxFinalAnswerClaimSubject(
+  subject: OsFinalAnswerClaim['subject'],
+): AgentFinalAnswerClaim['subject'] | undefined {
+  if (!subject || !isXoxFinalAnswerClaimSubjectType(subject.type)) return undefined
+  const xoxSubject: Exclude<AgentFinalAnswerClaim['subject'], string> = {
+    type: subject.type,
+  }
+  if (subject.id !== undefined) {
+    xoxSubject.id = subject.id
+  }
+  if (subject.label !== undefined) {
+    xoxSubject.label = subject.label
+  }
+  return xoxSubject
+}
+
+function xoxFinalAnswerClaim(claim: OsFinalAnswerClaim): AgentFinalAnswerClaim {
+  const mapped: AgentFinalAnswerClaim = {
+    kind: claim.kind,
+    reason: claim.reason,
+  }
+  if (claim.claimId !== undefined) {
+    mapped.claimId = claim.claimId
+  }
+  const subject = xoxFinalAnswerClaimSubject(claim.subject)
+  if (subject !== undefined) {
+    mapped.subject = subject
+  }
+  if (claim.dependsOn !== undefined) {
+    mapped.dependsOn = claim.dependsOn
+  }
+  if (claim.text !== undefined) {
+    mapped.text = claim.text
+  }
+  if (claim.metadata !== undefined) {
+    mapped.metadata = claim.metadata
+  }
+  return mapped
+}
+
+async function extractXoxFinalAnswerClaims(
+  ctx: XoxAgenticOsPlannerContext,
+  input: {
+    objective: string
+    finalAssistantText: string | null
+    evidence: AgentEvidenceItem[]
+  },
+): Promise<XoxFinalAnswerClaimExtractionResult> {
+  const options: AgentServerFinalAnswerClaimExtractionOptions = {
+    threadId: ctx.thread.id,
+    runId: ctx.runId,
+    objective: input.objective,
+    finalAssistantText: input.finalAssistantText,
+    evidence: evidenceForModel(input.evidence).map((item) => compactJsonObject(item)),
+    context: compactJsonObject({
+      workspace: { id: ctx.workspace.id, name: ctx.workspace.name },
+      user: { id: ctx.user.id },
+    }),
+    subjectTypes: XOX_FINAL_ANSWER_CLAIM_SUBJECT_TYPES,
+    extraSystemPromptLines: XOX_FINAL_ANSWER_CLAIM_EXTRA_PROMPT_LINES,
+    requestTimeoutMs: ctx.settings.agentProviderRequestTimeoutMs,
+    redact: redactSecretLikeContent,
+    runtime: async (request) => {
+      const runtimeInput: RuntimePlanningInput = {
+        settings: ctx.settings,
+        message: request.message,
+        context: request.context,
+        tools: request.tools as ChatTool[],
+        messages: request.messages as RuntimeChatMessage[],
+        stream: request.stream,
+        maxTokens: request.maxTokens,
+      }
+      if (request.requestTimeoutMs !== undefined) {
+        runtimeInput.requestTimeoutMs = request.requestTimeoutMs
+      }
+      if (request.abortSignal !== undefined) {
+        runtimeInput.abortSignal = request.abortSignal as AbortSignal
+      }
+      return planWithRuntimeAdapter(runtimeInput)
+    },
+    appendRunEvent: (draft) => addRunEvent(ctx.db, draft),
+    copy: xoxFinalAnswerClaimExtractionCopy,
+  }
+  if (ctx.settings.llmProvider === 'rules') {
+    options.skipReason = 'rules_provider'
+  }
+  if (ctx.abortSignal) {
+    options.abortSignal = ctx.abortSignal
+  }
+  const result = await runAgentServerFinalAnswerClaimExtraction(options)
+  if (result.status !== 'completed') return result
+  return {
+    status: 'completed',
+    claims: result.claims.map(xoxFinalAnswerClaim),
+  }
+}
+
 function loopReadinessSummary(evaluation: ReturnType<typeof serializeEvaluation>) {
   if (evaluation.status === 'pass') return 'Loop Readiness Check 已确认运行图可进入最终回答证据检查。'
   if (evaluation.status === 'needs_confirmation') return 'Loop Readiness Check 已暂停后续规划，等待用户处理确认卡。'
@@ -1583,16 +1738,8 @@ function createXoxAgenticOsHost(
         evidence,
         goalFacts,
       })
-        ? await extractFinalAnswerClaims({
-            db: ctx.db,
-            settings: ctx.settings,
-            workspace: ctx.workspace,
-            user: ctx.user,
-            threadId: ctx.thread.id,
-            runId: ctx.runId,
-            message: state.objective,
-            ...(ctx.abortSignal ? { abortSignal: ctx.abortSignal } : {}),
-          }, {
+        ? await extractXoxFinalAnswerClaims(ctx, {
+            objective: state.objective,
             finalAssistantText: input.assistantText,
             evidence,
           })

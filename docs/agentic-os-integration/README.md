@@ -1,6 +1,6 @@
 # xox-model Agentic OS Integration Plan
 
-Status: Draft (M126 server AG-UI event projection)
+Status: Draft (M127 server final-answer claim extraction)
 
 Date: 2026-06-19
 
@@ -30,7 +30,7 @@ Agentic OS should own reusable harness concerns:
 - tool runtime guardrails;
 - action lifecycle integrity;
 - context boundary and redaction;
-- final answer claim DTO and generic claim-to-evidence-requirement projection;
+- final answer claim DTO, generic claim-to-evidence-requirement projection, and server-owned claim extraction runtime;
 - final answer hygiene for provider protocol artifacts;
 - obligation plan aggregation and runner-obligation instruction;
 - runtime adapter contract testing;
@@ -126,6 +126,7 @@ Current integration is no longer compatibility-only:
 - xox provider stream trace projection now consumes `@agentic-os/server` `addAgentServerRuntimeStreamRunEvent()` / `projectAgentServerRuntimeStreamRunEvent()` through `apps/api/src/agent/run-events.ts`. Local `apps/api/src/agent/runtime-trace-events.ts` has been deleted; xox keeps durable event SQL, thread signal publication, localized Chinese copy, and redaction hook placement.
 - xox OpenAI-compatible host sidecar has been deleted. Local `apps/api/src/agent/runtime/openai-compatible-chat-adapter.ts` no longer exists; `runtime/runtime-adapter.ts` is the only provider selection boundary and calls `@agentic-os/runtime-openai-compatible` `runOpenAICompatibleRuntimeTurn()` directly. xox keeps only settings/prompt/event source mapping and normalized provider call -> xox planner-step mapping there.
 - xox AG-UI event projection now consumes `@agentic-os/server` `projectAgentServerAgUiEvents()` from submitted-run and thread-state views. Local `apps/api/src/agent/ag-ui-projection.ts` has been deleted; xox keeps only `eventNamePrefix: 'xox'`, DTO compatibility, product transcript/timeline nodes, Chinese copy and navigation mapping.
+- xox final-answer claim extraction now consumes `@agentic-os/server` `runAgentServerFinalAnswerClaimExtraction()`. Local `apps/api/src/agent/final-answer-claim-extractor.ts` has been deleted; xox keeps only subject taxonomy, evidence projection, `planWithRuntimeAdapter` provider callback, claim type narrowing, Chinese run-event copy, and financial/shareholder evidence policy.
 - xox `apps/api/src/agent/runtime/openai-compatible-chat-adapter.ts` now consumes `@agentic-os/runtime-openai-compatible` `detectProviderPlainTextToolCallArtifact()` and `recoverProviderPlainTextToolCalls()` for provider plain-text tool-call recovery; the local `provider-plain-text-tool-calls.ts` duplicate has been removed.
 - xox provider runtime now consumes `@agentic-os/runtime-openai-compatible` `extractBalancedJson()`, `parseToolArgumentsWithRepair()`, `repairToolName()`, and `normalizeProviderToolCallsForExecution()` for provider-frame JSON extraction, bounded streamed argument repair, inventory-bound tool-name repair, effective-inventory/deferred boundary validation, and normalized provider tool-call output; local `balanced-json.ts`, `tool-call-argument-repair.ts`, `tool-call-name-normalizer.ts`, and `tool-call-repair.ts` duplicates/facades have been removed. The remaining normalized provider call -> xox planner-step mapping is private inside `openai-compatible-chat-adapter.ts` because it depends on xox `toolCallToPlannerStep()`.
 - xox provider runtime now consumes `@agentic-os/runtime-openai-compatible` `classifyProviderHttpError()`, `safeProviderErrorMessage()`, `providerRejectsToolChoice()`, and `runOpenAICompatibleRuntimePlanningRecovery()` for provider HTTP taxonomy, safe error redaction, `tool_choice` rejection detection, deferred materialization retry, recoverable same-turn retry, retry request shaping, retry patch application, and missing-observation evidence recovery; local `provider-error-classifier.ts`, `provider-failover-policy.ts`, and `high-volume-tool-policy.ts` have been removed. xox keeps high-volume tool budgets, tool catalog materialization, evidence requirement persistence, and Chinese retry run-event copy only as private host callbacks in the real `runtime-planning-call.ts` boundary.
@@ -157,11 +158,11 @@ Current integration is no longer compatibility-only:
 - xox thread event signaling now consumes `@agentic-os/server` `AgentServerSignalBus`. Agentic OS owns topic listener mechanics, process-local sequence, unsubscribe cleanup, listener error isolation, and listener count. `apps/api/src/agent/thread-events.ts` keeps only thread reason names and `{ threadId, sequence, reason }` mapping; `thread-state-stream.ts` remains the SSE transport and thread state DTO adapter.
 - xox run lease heartbeat now consumes `@agentic-os/server` lease helpers. Agentic OS owns lease-lost error shape, lease expiry timestamp helper, heartbeat interval policy, active assertion helper, and heartbeat refresh loop. `apps/api/src/agent/run-lease.ts` keeps Kysely claim/refresh/recovery SQL, worker-id durable facts, and an adapter alias for existing xox imports.
 - xox run event append sequencing now consumes `@agentic-os/server` `createAgentServerSequencedRunEventAppender()`. Agentic OS owns per-run append serialization, max-sequence/next-sequence append flow, and sequence conflict retry. `apps/api/src/agent/run-events.ts` keeps Kysely event SQL, row serialization, localized event DTO fields, legacy channel inference, and `run_trace` thread signal publication.
-- xox still owns provider final-answer claim extraction and financial/shareholder policy, including the xox adapter rule that unscoped entity/domain final-answer claims require shareholder domain evidence.
+- xox still owns financial/shareholder final-review policy, including the xox adapter rule that unscoped entity/domain final-answer claims require shareholder domain evidence.
 - xox still owns response-evaluator finding to financial/domain obligation mapping, plus `goalFacts`, `requiredDataScopes`, and `requiredMetrics`.
 - xox still owns obligation materializer selection, `data_query_workspace` arguments, business read execution, and product run event persistence.
 - xox still owns timeout/abort wiring, business request assembly, localized retry/status run-event copy, planning-boundary high-volume business tool policy, user/workspace provider settings, and provider tool call to xox planner-step mapping at the real adapter boundary. Provider turn execution, tool-call normalization, boundary validation, retry patching, deferred materialization orchestration, missing-observation recovery, and provider stream trace projection now belong to Agentic OS.
-- Obsolete local harness helper files are intentionally removed: `agent-run-engine.ts`, `turn-resolver.ts`, `agent-action-runtime.ts`, `context-engine/index.ts`, the former top-level `agentic-os-adapter.ts`, `planner.ts`, `planning-session.ts`, `turn-intake-resolver.ts`, `direct-answer-runtime.ts`, `clarification-resume.ts`, `loop-readiness-check.ts`, `memory-safety.ts`, `runtime-trace-events.ts`, `ag-ui-projection.ts`, `runtime/provider-failover-policy.ts`, `runtime/provider-request-shaper.ts`, `runtime/provider-probe.ts`, `runtime/tool-call-repair.ts`, `runtime/high-volume-tool-policy.ts`, `runtime/openai-agents-adapter.ts`, `runtime/openai-compatible-chat-adapter.ts`, `runtime-plan-reader.ts`, `apps/api/src/agent/sandbox/*` runtime files, and provider runtime duplicates now owned by Agentic OS runtime packages.
+- Obsolete local harness helper files are intentionally removed: `agent-run-engine.ts`, `turn-resolver.ts`, `agent-action-runtime.ts`, `context-engine/index.ts`, the former top-level `agentic-os-adapter.ts`, `planner.ts`, `planning-session.ts`, `turn-intake-resolver.ts`, `direct-answer-runtime.ts`, `clarification-resume.ts`, `loop-readiness-check.ts`, `memory-safety.ts`, `runtime-trace-events.ts`, `ag-ui-projection.ts`, `final-answer-claim-extractor.ts`, `runtime/provider-failover-policy.ts`, `runtime/provider-request-shaper.ts`, `runtime/provider-probe.ts`, `runtime/tool-call-repair.ts`, `runtime/high-volume-tool-policy.ts`, `runtime/openai-agents-adapter.ts`, `runtime/openai-compatible-chat-adapter.ts`, `runtime-plan-reader.ts`, `apps/api/src/agent/sandbox/*` runtime files, and provider runtime duplicates now owned by Agentic OS packages.
 
 This is a real kernel introduction. Remaining package work is registry/release hardening, not code copying.
 
@@ -169,7 +170,7 @@ This is not yet the final install model. The replacement work prepared Agentic O
 
 Current Agentic OS package state observed on 2026-06-19:
 
-- `@agentic-os/contracts`, `@agentic-os/core`, `@agentic-os/testing`, `@agentic-os/runtime-openai-compatible`, `@agentic-os/runtime-ai-sdk`, and `@agentic-os/sandbox` exist in `C:/Github/agentic-os`.
+- `@agentic-os/contracts`, `@agentic-os/core`, `@agentic-os/testing`, `@agentic-os/server`, `@agentic-os/runtime-openai-compatible`, `@agentic-os/runtime-openai-agents`, `@agentic-os/runtime-ai-sdk`, and `@agentic-os/sandbox` exist in `C:/Github/agentic-os`.
 - package versions are `0.1.0`.
 - publishable packages are no longer marked `private: true`; the repository root remains private.
 - `main`, `types`, and `files` point at built `dist` artifacts.

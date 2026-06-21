@@ -575,6 +575,22 @@ describe('Agent ADR architecture boundaries', () => {
     }
   })
 
+  it('keeps final-answer claim extraction runtime in Agentic OS server', () => {
+    expect(existsSync(join(srcRoot, 'agent', 'final-answer-claim-extractor.ts'))).toBe(false)
+    for (const file of sourceFilesUnder('agent')) {
+      expect(source(file), `${file} must not import the deleted final-answer claim extractor`).not.toContain('final-answer-claim-extractor')
+    }
+
+    const hostKit = source('agent/agentic-os/xox-agentic-os-host-kit.ts')
+    expect(hostKit).toContain("@agentic-os/server")
+    expect(hostKit).toContain('runAgentServerFinalAnswerClaimExtraction')
+    expect(hostKit).toContain('XOX_FINAL_ANSWER_CLAIM_SUBJECT_TYPES')
+    expect(hostKit).not.toContain('const FINAL_ANSWER_CLAIM_TOOL')
+    expect(hostKit).not.toContain('const CLAIM_KINDS')
+    expect(hostKit).not.toContain("name: 'final_answer_extract_claims'")
+    expect(hostKit).not.toContain('function normalizeClaims')
+  })
+
   it('keeps provider probing runtime mechanics in Agentic OS runtime', () => {
     const settings = source('agent/provider-settings.ts')
     expect(settings).toContain("@agentic-os/runtime-openai-compatible")
