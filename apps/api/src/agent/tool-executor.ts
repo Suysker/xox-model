@@ -1,12 +1,16 @@
 import type { Kysely } from 'kysely'
 import { createProductDefaultModel, hydrateModelConfig } from '@xox/domain'
+import { agentServerRunLifecycleEvents } from '@agentic-os/server'
 import type { Database, Row } from '../db/schema.js'
 import { parseJson } from '../db/database.js'
 import { unprocessable } from '../core/http.js'
+import type { Settings } from '../core/settings.js'
+import { utcNow } from '../core/time.js'
 import type { CurrentUser } from '../modules/auth.js'
 import { recordAudit } from '../modules/audit.js'
 import {
   deleteVersion,
+  getWorkspaceForUser,
   getWorkspaceDraft,
   importWorkspaceBundle,
   publishVersion,
@@ -21,6 +25,98 @@ import {
   voidEntry,
 } from '../modules/ledger.js'
 import { createVersionShare, revokeVersionShare } from '../modules/share.js'
+import { redactSecretLikeContent } from './memory.js'
+import { assertActionExecutionAllowed } from './tool-policy.js'
+import { addRunEvent } from './agentic-os/xox-run-event-store-adapter.js'
+
+export function safeAgentActionErrorMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error)
+  return redactSecretLikeContent(message).slice(0, 500) || 'Agent action failed'
+}
+
+export async function executeAgentActionRequest(
+  db: Kysely<Database>,
+  settings: Settings,
+  user: CurrentUser,
+  action: Row<'agent_action_requests'>,
+) {
+  const workspace = await getWorkspaceForUser(db, user)
+  await assertActionExecutionAllowed(db, workspace, user, action)
+  const result = await executeAgentTool(db, workspace, user, action)
+
+  await db
+    .updateTable('agent_action_requests')
+    .set({ status: 'executed', executed_at: utcNow(), error_message: null })
+    .where('id', '=', action.id)
+    .execute()
+  await db
+    .updateTable('agent_plan_steps')
+    .set({ status: 'executed', updated_at: utcNow() })
+    .where('action_request_id', '=', action.id)
+    .execute()
+  await recordAudit(db, {
+    workspaceId: workspace.id,
+    actorId: user.id,
+    action: 'agent.action_executed',
+    entityType: 'agent_action_request',
+    entityId: action.id,
+    meta: { kind: action.kind, provider: settings.llmProvider },
+  })
+  return result
+}
+
+export async function autoExecuteAgentActionRequest(
+  db: Kysely<Database>,
+  settings: Settings,
+  user: CurrentUser,
+  action: Row<'agent_action_requests'>,
+  reason: string,
+) {
+  try {
+    const result = await executeAgentActionRequest(db, settings, user, action)
+    const updated = await db.selectFrom('agent_action_requests').selectAll().where('id', '=', action.id).executeTakeFirstOrThrow()
+    await addRunEvent(db, agentServerRunLifecycleEvents.actionAutoExecuted({
+      threadId: action.thread_id,
+      runId: action.run_id,
+      actionRequestId: action.id,
+      actionKind: action.kind,
+      actionTitle: action.title,
+      reason,
+      copy: {
+        title: '动作已自动执行',
+        message: `已自动执行：${action.title}`,
+      },
+    }))
+    return { actionRequest: updated, result, error: null as string | null }
+  } catch (executionError) {
+    const message = safeAgentActionErrorMessage(executionError)
+    await db.updateTable('agent_action_requests')
+      .set({ status: 'failed', executed_at: null, error_message: message })
+      .where('id', '=', action.id)
+      .execute()
+      .catch(() => undefined)
+    await db.updateTable('agent_plan_steps')
+      .set({ status: 'failed', updated_at: utcNow() })
+      .where('action_request_id', '=', action.id)
+      .execute()
+      .catch(() => undefined)
+    await addRunEvent(db, agentServerRunLifecycleEvents.actionAutoExecutionFailed({
+      threadId: action.thread_id,
+      runId: action.run_id,
+      actionRequestId: action.id,
+      actionKind: action.kind,
+      actionTitle: action.title,
+      reason,
+      errorMessage: message,
+      copy: {
+        title: '自动执行失败',
+        message: `${action.title}：${message}`,
+      },
+    })).catch(() => undefined)
+    const updated = await db.selectFrom('agent_action_requests').selectAll().where('id', '=', action.id).executeTakeFirstOrThrow()
+    return { actionRequest: updated, result: null as unknown, error: message }
+  }
+}
 
 export async function executeAgentTool(
   db: Kysely<Database>,

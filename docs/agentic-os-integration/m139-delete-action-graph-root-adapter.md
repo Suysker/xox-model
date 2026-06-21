@@ -28,7 +28,7 @@ No root compatibility re-export should remain.
 | --- | --- | --- |
 | xox durable action graph row adapter | `agentic-os/xox-action-graph-adapter.ts` | `@agentic-os/server` `AgentServerActionGraphStore` port |
 | action/read/status/assistant item ordering and summary | none in xox | `@agentic-os/server materializeAgentServerActionGraph()` |
-| xox business action request creation and automation settling | `agentic-os/xox-action-graph-adapter.ts` calling `xox-action-approval-adapter.ts` | host business/action policy |
+| xox business action request creation and automation settling | `agentic-os/xox-action-graph-adapter.ts` plus `tool-executor.ts` | host business/action policy |
 | xox plan step row mapping and product run-event copy | `agentic-os/xox-action-graph-adapter.ts` | Agentic OS emits provider-neutral event drafts |
 | xox observation bridge projection | `agentic-os/xox-action-graph-adapter.ts` consuming `xox-observation-adapter.ts` | `@agentic-os/core createHostObservationBridge()` |
 
@@ -38,7 +38,7 @@ No root compatibility re-export should remain.
 agentic-os/xox-agentic-os-host-kit.ts
   -> agentic-os/xox-action-graph-adapter.ts
   -> @agentic-os/server materializeAgentServerActionGraph()
-  -> agentic-os/xox-action-approval-adapter.ts
+  -> tool-executor.ts
   -> xox business draft/execution modules
 
 agentic-os/xox-direct-answer-adapter.ts

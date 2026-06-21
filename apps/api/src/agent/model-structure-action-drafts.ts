@@ -19,7 +19,7 @@ import {
 import type { AgentNavigationEvent } from '@xox/contracts'
 import { newId } from '../core/security.js'
 import type { PlannerContext } from './planning-context.js'
-import type { AgentActionDraft } from './agentic-os/xox-action-approval-adapter.js'
+import type { AgentActionDraft } from './action-draft-builder.js'
 import type { ReadDraft, RuntimePlannerStep } from './action-draft-builder.js'
 import { currentDraftConfig, findEmployee, findTeamMember, finiteNumber, normalizedMemberKey } from './action-draft-utils.js'
 import { cloneModelConfig } from './config-patch.js'

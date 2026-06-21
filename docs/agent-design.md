@@ -472,22 +472,24 @@ agent routes / confirmation flow
 
 Tool Policy 只做权限、状态和可见导航校验，不执行业务写入，不生成确认卡，不调用 provider。
 
-### `apps/api/src/agent/approval-executor.ts`
+### Action Confirmation Boundary
 
-当前落地的 Approval Executor 边界。它统一处理：
+`apps/api/src/agent/approval-executor.ts` and `apps/api/src/agent/agentic-os/xox-action-approval-adapter.ts` have both been deleted.
 
-- `addAgentActionRequest`：模型 tool call 被归一为写入动作草稿后，先持久化 pending confirmation card。
-- `confirmAgentActionRequest`：确认时重新执行 tool policy，再调用 `tool-executor.ts`，最后更新 action/plan 状态，写 assistant message、run event 和 audit log。
-- `cancelAgentActionRequest`：取消 pending 确认卡并同步取消关联 plan step。
-- `updateAgentActionRequest`：用户编辑确认卡后，重新校验风险等级和显式导航要求，并把 plan step 的标题/描述/导航同步到服务端状态。
+The current boundary is:
 
-route module 不再直接拼确认卡状态，避免确认、编辑、取消、执行、恢复和 SSE 看到不同版本的状态。
+- `xox-action-graph-adapter.ts` materializes pending confirmation-card rows from planned action drafts.
+- `tool-executor.ts` executes xox business writes, re-checks tool policy, updates action/plan status, and writes audit rows.
+- `routes.ts` owns only confirm/cancel/edit HTTP response shaping and product transport glue.
+- `xox-agentic-os-host-kit.ts` owns post-confirmation handoff into Agentic OS: `ActionRuntime.confirm()` produces the action observation, then `AgentRunEngine.resume()` continues the loop after human confirmation.
+
+Routes must not rebuild goal evaluation, evidence ledgers, response evaluation, obligation planning, or provider continuation after an action is confirmed.
 
 ### `apps/api/src/agent/action-graph-store.ts`
 
 当前落地的 action graph store 边界。它接收 Action Draft Builder 输出的 `PlannedItem[]`，负责把只读步骤和写入确认卡持久化为 server-owned action graph：
 
-- 写入 draft：调用 Approval Executor 的 `addAgentActionRequest` 生成 pending confirmation card，再由本模块生成关联 step。
+- 写入 draft：在 action graph durable adapter 内生成 pending confirmation card row，再由本模块生成关联 step。
 - 只读结果：直接调用 `addAgentPlanStep` 生成 executed/info/failed step，并保留显式导航事件。
 - Run trace：统一写入 `tool_plan_ready` 和 `confirmation_ready`，并发布 `plan_ready` thread event。
 - Assistant 摘要：根据 stored plan/action 数量生成返回给 route/worker 的 assistant 文本。

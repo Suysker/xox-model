@@ -2,7 +2,7 @@ import { projectModel, type ModelConfig } from '@xox/domain'
 import type { AgentNavigationEvent } from '@xox/contracts'
 import { listEntries, listPeriods, listSubjectsForPeriod } from '../modules/ledger.js'
 import { utcNow } from '../core/time.js'
-import type { AgentActionDraft } from './agentic-os/xox-action-approval-adapter.js'
+import type { AgentActionDraft } from './action-draft-builder.js'
 import type { PlannedItem, ReadDraft, RuntimePlannerStep } from './action-draft-builder.js'
 import {
   currentDraftConfig,

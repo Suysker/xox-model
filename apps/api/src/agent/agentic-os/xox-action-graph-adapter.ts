@@ -27,12 +27,8 @@ import type { Settings } from '../../core/settings.js'
 import { newId } from '../../core/security.js'
 import { utcNow } from '../../core/time.js'
 import type { CurrentUser } from '../../modules/auth.js'
-import { isActionDraft, type PlannedItem, type ReadDraft } from '../action-draft-builder.js'
-import {
-  addAgentActionRequest,
-  autoExecuteAgentActionRequest,
-  type AgentActionDraft,
-} from './xox-action-approval-adapter.js'
+import { isActionDraft, type AgentActionDraft, type PlannedItem, type ReadDraft } from '../action-draft-builder.js'
+import { autoExecuteAgentActionRequest } from '../tool-executor.js'
 import { addRunEvent } from './xox-run-event-store-adapter.js'
 import { assertAgentRunLease } from './xox-run-lease-store-adapter.js'
 import { agentThreadEvents } from './xox-thread-signal-adapter.js'
@@ -42,7 +38,7 @@ import {
   actionPreviewObservation,
   type AgentToolObservation,
 } from './xox-tool-observation-adapter.js'
-import { resolveActionAuthority, type AgentAutomationLevel } from '../tool-policy.js'
+import { assertActionDraftAllowed, resolveActionAuthority, type AgentAutomationLevel } from '../tool-policy.js'
 import {
   createXoxObservationBridge,
   type XoxObservationBridge,
@@ -70,6 +66,35 @@ export type StoredActionGraph = {
 type StoredActionResult = {
   action: Row<'agent_action_requests'>
   observation: AgentToolObservation
+}
+
+async function addAgentActionRequest(ctx: ActionGraphContext, draft: AgentActionDraft) {
+  assertActionDraftAllowed(draft)
+  const id = newId()
+  const now = utcNow()
+  await ctx.db
+    .insertInto('agent_action_requests')
+    .values({
+      id,
+      thread_id: ctx.threadId,
+      run_id: ctx.runId,
+      workspace_id: ctx.workspace.id,
+      user_id: ctx.user.id,
+      kind: draft.kind,
+      status: 'pending',
+      title: draft.title,
+      summary: draft.summary,
+      target_label: draft.targetLabel,
+      risk_level: draft.riskLevel,
+      details_json: jsonString(draft.details),
+      navigation_json: jsonString(draft.navigation),
+      payload_json: jsonString(draft.payload),
+      created_at: now,
+      executed_at: null,
+      error_message: null,
+    })
+    .execute()
+  return ctx.db.selectFrom('agent_action_requests').selectAll().where('id', '=', id).executeTakeFirstOrThrow()
 }
 
 type MaterializerMetadata = {

@@ -1,25 +1,25 @@
 import type { FastifyInstance } from 'fastify'
 import type { Kysely } from 'kysely'
 import { z } from 'zod'
-import type { AgentActionUpdatePayload } from '@xox/contracts'
-import type { Database } from '../db/schema.js'
-import { forbidden, notFound, unprocessable } from '../core/http.js'
+import type { AgentActionUpdatePayload, AgentNavigationEvent } from '@xox/contracts'
+import { agentServerRunLifecycleEvents } from '@agentic-os/server'
+import type { Database, Row } from '../db/schema.js'
+import { jsonString, parseJson } from '../db/database.js'
+import { conflict, forbidden, notFound, unprocessable } from '../core/http.js'
 import type { Settings } from '../core/settings.js'
+import { utcNow } from '../core/time.js'
 import { recordAudit } from '../modules/audit.js'
+import type { CurrentUser } from '../modules/auth.js'
 import { requireCurrentUser } from '../modules/auth.js'
 import { getWorkspaceForUser } from '../modules/workspace.js'
 import {
   archiveAgentMemory,
   promoteAgentMemory,
+  redactSecretLikeContent,
   serializeMemory,
 } from './memory.js'
 import { buildTenantMemoryCenterState } from './memory/memory-center.js'
 import { agentThreadEvents } from './agentic-os/xox-thread-signal-adapter.js'
-import {
-  cancelAgentActionRequest,
-  confirmAgentActionRequest,
-  updateAgentActionRequest,
-} from './agentic-os/xox-action-approval-adapter.js'
 import {
   deleteAgentProviderSetting,
   getAgentProviderSetting,
@@ -41,6 +41,18 @@ import {
 } from './agentic-os/xox-run-worker-adapter.js'
 import { openAgentThreadStateStream } from './agentic-os/xox-thread-state-stream-adapter.js'
 import { submitAgentMessageRun } from './agentic-os/xox-run-submission-adapter.js'
+import { addRunEvent, listSerializedRunEvents } from './agentic-os/xox-run-event-store-adapter.js'
+import { addMessage } from './agentic-os/xox-thread-store-adapter.js'
+import { resumeXoxAgenticOsRunAfterActionConfirmation } from './agentic-os/xox-agentic-os-host-kit.js'
+import { consolidateAgentMemoryCandidates } from './memory-consolidator.js'
+import {
+  memoryCandidateFromCancelledAction,
+  memoryCandidateFromEditedAction,
+} from './memory-candidate-detector.js'
+import {
+  assertActionUpdateAllowed,
+  coerceAgentActionKind,
+} from './tool-policy.js'
 
 const providerSettingSchema = z.object({
   provider: z.string().min(2).max(64),
@@ -61,6 +73,212 @@ function parseAgentBody<T>(schema: z.ZodType<T>, body: unknown) {
     throw unprocessable(parsed.error.issues.map((issue) => issue.message).join('; '))
   }
   return parsed.data
+}
+
+type RiskLevel = 'low' | 'medium' | 'high'
+
+function previewValue(value: unknown) {
+  const raw = typeof value === 'string' ? value : JSON.stringify(value)
+  return redactSecretLikeContent((raw ?? '').slice(0, 260))
+}
+
+function changedField(label: string, before: unknown, after: unknown) {
+  const beforePreview = previewValue(before)
+  const afterPreview = previewValue(after)
+  if (beforePreview === afterPreview) return null
+  return { label, value: `${beforePreview || '空'} -> ${afterPreview || '空'}` }
+}
+
+function actionUpdateChanges(before: Row<'agent_action_requests'>, after: Row<'agent_action_requests'>) {
+  const beforeDetails = parseJson<unknown>(before.details_json, null)
+  const afterDetails = parseJson<unknown>(after.details_json, null)
+  const beforePayload = parseJson<unknown>(before.payload_json, null)
+  const afterPayload = parseJson<unknown>(after.payload_json, null)
+  return [
+    changedField('标题', before.title, after.title),
+    changedField('摘要', before.summary, after.summary),
+    changedField('目标', before.target_label, after.target_label),
+    changedField('风险', before.risk_level, after.risk_level),
+    changedField('明细', beforeDetails, afterDetails),
+    changedField('执行载荷', beforePayload, afterPayload),
+  ].filter((item): item is { label: string; value: string } => Boolean(item))
+}
+
+async function getActionRequest(db: Kysely<Database>, actionRequestId: string) {
+  const action = await db.selectFrom('agent_action_requests').selectAll().where('id', '=', actionRequestId).executeTakeFirst()
+  if (!action) throw notFound('Agent action request not found')
+  return action
+}
+
+async function listPlanStepsForRun(db: Kysely<Database>, runId: string) {
+  return db.selectFrom('agent_plan_steps').selectAll().where('run_id', '=', runId).orderBy('sequence_no', 'asc').execute()
+}
+
+function assertActionOwnedByWorkspace(action: Row<'agent_action_requests'>, workspace: Row<'workspaces'>, user: CurrentUser) {
+  if (action.workspace_id !== workspace.id || action.user_id !== user.id) throw forbidden()
+}
+
+function safeActionRouteErrorMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error)
+  return redactSecretLikeContent(message).slice(0, 500) || 'Agent action failed'
+}
+
+async function confirmAgentActionRequest(db: Kysely<Database>, settings: Settings, user: CurrentUser, actionRequestId: string) {
+  const action = await getActionRequest(db, actionRequestId)
+  const workspace = await getWorkspaceForUser(db, user)
+  assertActionOwnedByWorkspace(action, workspace, user)
+  const resumed = await resumeXoxAgenticOsRunAfterActionConfirmation({
+    db,
+    settings,
+    user,
+    workspace,
+    action,
+  }).catch(async (executionError) => {
+    const message = safeActionRouteErrorMessage(executionError)
+    const latestAction = await db
+      .selectFrom('agent_action_requests')
+      .select(['status'])
+      .where('id', '=', action.id)
+      .executeTakeFirst()
+    await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', action.thread_id).execute().catch(() => undefined)
+    if (latestAction?.status !== 'executed') {
+      await addRunEvent(db, agentServerRunLifecycleEvents.actionExecutionFailed({
+        threadId: action.thread_id,
+        runId: action.run_id,
+        actionRequestId: action.id,
+        actionKind: action.kind,
+        actionTitle: action.title,
+        errorMessage: message,
+        copy: {
+          title: '确认卡执行失败',
+          message: `${action.title}：${message}`,
+        },
+      })).catch(() => undefined)
+    }
+    throw executionError
+  })
+
+  await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', action.thread_id).execute()
+  return {
+    actionRequest: resumed.actionRequest,
+    result: resumed.actionResult,
+    messages: resumed.runResult?.assistantMessage ? [resumed.runResult.assistantMessage] : [],
+    runEvents: await listSerializedRunEvents(db, action.run_id),
+    planSteps: await listPlanStepsForRun(db, action.run_id),
+    threadId: action.thread_id,
+  }
+}
+
+async function cancelAgentActionRequest(db: Kysely<Database>, workspace: Row<'workspaces'>, user: CurrentUser, actionRequestId: string) {
+  const action = await getActionRequest(db, actionRequestId)
+  assertActionOwnedByWorkspace(action, workspace, user)
+  if (action.status !== 'pending') throw conflict('Agent action is not pending')
+
+  await db.updateTable('agent_action_requests').set({ status: 'cancelled' }).where('id', '=', action.id).execute()
+  await db.updateTable('agent_plan_steps').set({ status: 'cancelled', updated_at: utcNow() }).where('action_request_id', '=', action.id).execute()
+  const updated = await db.selectFrom('agent_action_requests').selectAll().where('id', '=', action.id).executeTakeFirstOrThrow()
+  const planSteps = await listPlanStepsForRun(db, action.run_id)
+  const assistant = await addMessage(db, action.thread_id, 'assistant', `已取消：${action.title}`)
+  await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', action.thread_id).execute()
+  await addRunEvent(db, agentServerRunLifecycleEvents.actionCancelled({
+    threadId: action.thread_id,
+    runId: action.run_id,
+    actionRequestId: action.id,
+    actionKind: action.kind,
+    actionTitle: action.title,
+    copy: {
+      title: '确认卡已取消',
+      message: `已取消：${action.title}`,
+    },
+  }))
+  await consolidateAgentMemoryCandidates({
+    db,
+    workspace,
+    user,
+    threadId: action.thread_id,
+    runId: action.run_id,
+    candidates: [memoryCandidateFromCancelledAction({ runId: action.run_id, action: updated })],
+    title: '取消动作已进入记忆候选',
+    message: '用户取消确认卡的事实已作为带证据的纠错记忆候选保存。',
+  })
+  return {
+    actionRequest: updated,
+    messages: [assistant],
+    runEvents: await listSerializedRunEvents(db, action.run_id),
+    planSteps,
+    threadId: action.thread_id,
+  }
+}
+
+async function updateAgentActionRequest(
+  db: Kysely<Database>,
+  workspace: Row<'workspaces'>,
+  user: CurrentUser,
+  actionRequestId: string,
+  body: AgentActionUpdatePayload,
+) {
+  const action = await getActionRequest(db, actionRequestId)
+  assertActionOwnedByWorkspace(action, workspace, user)
+  if (action.status !== 'pending') throw conflict('Agent action is not pending')
+
+  const update: Partial<Row<'agent_action_requests'>> = {}
+  if (typeof body.title === 'string') update.title = body.title.slice(0, 180)
+  if (typeof body.summary === 'string') update.summary = body.summary
+  if (typeof body.targetLabel === 'string') update.target_label = body.targetLabel.slice(0, 180)
+  if (body.riskLevel && ['low', 'medium', 'high'].includes(body.riskLevel)) update.risk_level = body.riskLevel
+  if (Array.isArray(body.details)) update.details_json = jsonString(body.details)
+  if (body.navigation) update.navigation_json = jsonString(body.navigation)
+  if ('payload' in body) update.payload_json = jsonString(body.payload)
+  if (Object.keys(update).length === 0) throw unprocessable('No editable fields provided')
+
+  const policyUpdate: { riskLevel?: RiskLevel; navigation?: AgentNavigationEvent } = {}
+  if (update.risk_level) policyUpdate.riskLevel = update.risk_level as RiskLevel
+  if (body.navigation) policyUpdate.navigation = body.navigation
+  assertActionUpdateAllowed(coerceAgentActionKind(action.kind), policyUpdate)
+
+  await db.updateTable('agent_action_requests').set(update).where('id', '=', action.id).execute()
+  const updated = await db.selectFrom('agent_action_requests').selectAll().where('id', '=', action.id).executeTakeFirstOrThrow()
+  const changes = actionUpdateChanges(action, updated)
+  await db
+    .updateTable('agent_plan_steps')
+    .set({
+      title: updated.title,
+      description: updated.summary,
+      navigation_json: updated.navigation_json,
+      updated_at: utcNow(),
+    })
+    .where('action_request_id', '=', action.id)
+    .execute()
+  await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', action.thread_id).execute()
+  const planSteps = await listPlanStepsForRun(db, action.run_id)
+  await addRunEvent(db, agentServerRunLifecycleEvents.actionUpdated({
+    threadId: action.thread_id,
+    runId: action.run_id,
+    actionRequestId: action.id,
+    actionKind: action.kind,
+    actionTitle: updated.title,
+    changes,
+    copy: {
+      title: '确认卡已编辑',
+      message: `确认卡已编辑：${updated.title}`,
+    },
+  }))
+  await consolidateAgentMemoryCandidates({
+    db,
+    workspace,
+    user,
+    threadId: action.thread_id,
+    runId: action.run_id,
+    candidates: [memoryCandidateFromEditedAction({ runId: action.run_id, action: updated })],
+    title: '编辑动作已进入记忆候选',
+    message: '用户编辑确认卡的事实已作为带证据的纠错记忆候选保存。',
+  })
+  return {
+    actionRequest: updated,
+    runEvents: await listSerializedRunEvents(db, action.run_id),
+    planSteps,
+    threadId: action.thread_id,
+  }
 }
 
 export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, settings: Settings) {

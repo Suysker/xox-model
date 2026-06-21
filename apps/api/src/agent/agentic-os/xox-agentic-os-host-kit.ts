@@ -82,7 +82,7 @@ import {
   createXoxObservationBridge,
   type XoxObservationBridge,
 } from './xox-observation-adapter.js'
-import { executeAgentActionRequest } from './xox-action-approval-adapter.js'
+import { executeAgentActionRequest } from '../tool-executor.js'
 import {
   buildPlannedItemFromRuntimeStep,
   isActionDraft,
@@ -107,6 +107,7 @@ import {
 import {
   addEvaluationResult,
   createGoalContract,
+  getGoalForRun,
   serializeEvaluation,
   updateGoalStatus,
 } from './xox-goal-store-adapter.js'
@@ -153,6 +154,7 @@ import {
 import { redactSecretLikeContent } from '../memory.js'
 import { runtimeIntentHandlers } from '../runtime-intent-handlers.js'
 import { evaluateAgentGoal } from './xox-loop-readiness-adapter.js'
+import { normalizeAgentAutomationLevel } from '../tool-policy.js'
 import {
   applyObservationToLedger,
   applyResponseEvaluationToLedger,
@@ -193,6 +195,7 @@ type XoxAgenticOsRunState = {
   obligationLedger: AgentLoopObligationLedger
   lastToolSelection: OsToolSelectionHint | null
   finishedResult: OsRunResult | null
+  lastActionExecutionResult: unknown | null
 }
 
 type XoxPrerequisiteObligation = {
@@ -218,6 +221,40 @@ const ENTITY_SUMMARY_PREREQUISITE: AgentPrerequisiteObservationSpec<
     const facts = parseXoxObservationContent(observation)
     return facts?.scope === 'entity_summary' && Array.isArray(facts.shareholders)
   },
+}
+
+function createXoxRunState(input: {
+  runId: string
+  threadId?: string
+  plannerSource: AgentPlannerSource
+  goal: Row<'agent_goals'> | null
+  objective: string
+  actionRows?: Row<'agent_action_requests'>[]
+  planRows?: Row<'agent_plan_steps'>[]
+}): XoxAgenticOsRunState {
+  const xoxObservations: AgentToolObservation[] = []
+  const observationBridge = createXoxObservationBridge()
+  return {
+    plannerSource: input.plannerSource,
+    goal: input.goal,
+    objective: input.objective,
+    navigationEvents: [],
+    actionRows: input.actionRows ?? [],
+    planRows: input.planRows ?? [],
+    xoxObservations,
+    observationBridge,
+    loopCoordinator: createAgentHostLoopCoordinator({
+      observationBridge,
+      hostObservations: xoxObservations,
+    }),
+    obligationLedger: initializeObligationLedger({
+      runId: input.runId,
+      ...(input.threadId ? { threadId: input.threadId } : {}),
+    }),
+    lastToolSelection: null,
+    finishedResult: null,
+    lastActionExecutionResult: null,
+  }
 }
 
 function compactJsonObject(value: unknown): OsJsonObject {
@@ -1686,18 +1723,31 @@ function createXoxAgenticOsHost(
         .selectAll()
         .where('id', '=', action.id)
         .executeTakeFirstOrThrow()
-      await addRunEvent(ctx.db, agentServerRunLifecycleEvents.actionAutoExecuted({
-        threadId: updated.thread_id,
-        runId: updated.run_id,
-        actionRequestId: updated.id,
-        actionKind: updated.kind,
-        actionTitle: updated.title,
-        reason: input.reason ?? null,
-        copy: {
-          title: '动作已自动执行',
-          message: `已自动执行：${updated.title}`,
-        },
-      }))
+      state.lastActionExecutionResult = result
+      await addRunEvent(ctx.db, input.reason === undefined
+        ? agentServerRunLifecycleEvents.actionExecuted({
+            threadId: updated.thread_id,
+            runId: updated.run_id,
+            actionRequestId: updated.id,
+            actionKind: updated.kind,
+            actionTitle: updated.title,
+            copy: {
+              title: '确认卡已执行',
+              message: `已执行：${updated.title}`,
+            },
+          })
+        : agentServerRunLifecycleEvents.actionAutoExecuted({
+            threadId: updated.thread_id,
+            runId: updated.run_id,
+            actionRequestId: updated.id,
+            actionKind: updated.kind,
+            actionTitle: updated.title,
+            reason: input.reason,
+            copy: {
+              title: '动作已自动执行',
+              message: `已自动执行：${updated.title}`,
+            },
+          }))
       replaceActionRow(state, updated)
       const xoxObservation = actionExecutionObservation({ action: updated, result })
       state.xoxObservations.push(xoxObservation)
@@ -2264,6 +2314,112 @@ async function finalizeAgenticOsResult(
   }
 }
 
+export async function resumeXoxAgenticOsRunAfterActionConfirmation(input: {
+  db: PlannerContext['db']
+  settings: PlannerContext['settings']
+  user: PlannerContext['user']
+  workspace: Row<'workspaces'>
+  action: Row<'agent_action_requests'>
+  abortSignal?: AbortSignal
+  beforeStateWrite?: () => Promise<boolean>
+}): Promise<{
+  actionRequest: Row<'agent_action_requests'>
+  actionResult: unknown
+  runResult: AgenticOsKernelRunResult | null
+}> {
+  const beforeStateWrite = input.beforeStateWrite ?? (async () => true)
+  const [thread, run, goalRow] = await Promise.all([
+    input.db
+      .selectFrom('agent_threads')
+      .selectAll()
+      .where('id', '=', input.action.thread_id)
+      .executeTakeFirstOrThrow(),
+    input.db
+      .selectFrom('agent_runs')
+      .selectAll()
+      .where('id', '=', input.action.run_id)
+      .executeTakeFirstOrThrow(),
+    getGoalForRun(input.db, input.action.run_id),
+  ])
+  const goal = goalRow ?? null
+  const objective = goal?.objective?.trim() || run.input_message?.trim() || input.action.title
+  const goalFacts = goal ? goalContractFacts(goal) : {}
+  const planningCtx: XoxAgenticOsPlannerContext = {
+    db: input.db,
+    settings: input.settings,
+    user: input.user,
+    workspace: input.workspace,
+    threadId: thread.id,
+    runId: run.id,
+    message: objective,
+    automationLevel: normalizeAgentAutomationLevel(run.automation_level),
+    thread,
+    goalFacts,
+  }
+  if (input.abortSignal) planningCtx.abortSignal = input.abortSignal
+
+  const { actionRows, planRows } = await latestRunRows(planningCtx)
+  const state = createXoxRunState({
+    runId: run.id,
+    threadId: thread.id,
+    plannerSource: configuredRuntimePlannerSource(input.settings) ?? 'rules',
+    goal,
+    objective,
+    actionRows,
+    planRows,
+  })
+  const host = createXoxAgenticOsHost(planningCtx, { beforeStateWrite }, state)
+  const kit = createAgentHostKit(host, {
+    engineOptions: {
+      defaultMaxIterations: 5,
+    },
+  })
+  const request = osRunInput(planningCtx, objective, goalFacts)
+  const osRun: OsRunRecord = {
+    ...osRunRecord(planningCtx, run),
+    status: 'awaiting_confirmation',
+  }
+  const confirmInput = {
+    run: osRun,
+    actionRequest: osActionRequest(input.action, `action_${input.action.id}`),
+    actorId: input.user.id,
+    ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
+  }
+  const execution = await kit.confirmAction(confirmInput)
+  if (state.actionRows.some((row) => row.status === 'pending')) {
+    const actionRequest = await input.db
+      .selectFrom('agent_action_requests')
+      .selectAll()
+      .where('id', '=', input.action.id)
+      .executeTakeFirstOrThrow()
+    return {
+      actionRequest,
+      actionResult: state.lastActionExecutionResult,
+      runResult: null,
+    }
+  }
+  const resumeInput = {
+    run: osRun,
+    request,
+    observations: [execution.observation],
+    ...(request.maxIterations !== undefined ? { maxIterations: request.maxIterations } : {}),
+  }
+  const result = await kit.resume(resumeInput, {
+    ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
+  })
+  const runResult = await finalizeAgenticOsResult(planningCtx, state, result, { beforeStateWrite })
+  const actionRequest = await input.db
+    .selectFrom('agent_action_requests')
+    .selectAll()
+    .where('id', '=', input.action.id)
+    .executeTakeFirstOrThrow()
+  return {
+    actionRequest,
+    actionResult: state.lastActionExecutionResult,
+    runResult,
+  }
+}
+
 export async function executeXoxAgenticOsRun(
   ctx: XoxAgenticOsPlannerContext,
   options: { beforeStateWrite: () => Promise<boolean> },
@@ -2290,25 +2446,13 @@ export async function executeXoxAgenticOsRun(
     automationLevel: ctx.automationLevel,
     goalFacts: initialGoalFacts,
   })
-  const xoxObservations: AgentToolObservation[] = []
-  const observationBridge = createXoxObservationBridge()
-  const state: XoxAgenticOsRunState = {
+  const state = createXoxRunState({
+    runId: ctx.runId,
+    threadId: ctx.thread.id,
     plannerSource: configuredRuntimePlannerSource(ctx.settings) ?? 'rules',
     goal,
     objective,
-    navigationEvents: [],
-    actionRows: [],
-    planRows: [],
-    xoxObservations,
-    observationBridge,
-    loopCoordinator: createAgentHostLoopCoordinator({
-      observationBridge,
-      hostObservations: xoxObservations,
-    }),
-    obligationLedger: initializeObligationLedger({ runId: ctx.runId }),
-    lastToolSelection: null,
-    finishedResult: null,
-  }
+  })
 
   await addRunEvent(ctx.db, agentServerRunLifecycleEvents.goalContractCreated({
     threadId: ctx.thread.id,

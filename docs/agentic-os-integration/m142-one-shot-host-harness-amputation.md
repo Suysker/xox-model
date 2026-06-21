@@ -138,6 +138,16 @@ Remaining M142 hard targets after M142b:
 - `apps/api/src/agent/agentic-os/xox-thread-transcript-adapter.ts` and `xox-thread-timeline-adapter.ts` remain xox product projection adapters; generic projection work should continue moving into Agentic OS server/react packages where still present.
 - `apps/api/src/agent/agentic-os/xox-runtime-adapter.ts` and runtime planning adapters must remain provider settings/DTO mappers and must not become a second runtime.
 
+### M143: Deleted the Action Approval Adapter
+
+Status: completed as a follow-up M142 action-lifecycle cut.
+
+- Deleted `apps/api/src/agent/agentic-os/xox-action-approval-adapter.ts`.
+- `routes.ts` now keeps only confirm/cancel/edit HTTP transport glue.
+- `tool-executor.ts` owns xox business action execution and audit writes.
+- `xox-agentic-os-host-kit.ts` owns the post-confirmation handoff into Agentic OS `ActionRuntime.confirm()` and `AgentRunEngine.resume()`.
+- Architecture guards now fail if the deleted approval adapter returns or if action graph code imports it.
+
 ## One-Shot Scope
 
 M142 is not complete until all rows in this table are addressed. If a row cannot be completed in a given implementation cut, that cut must be presented as M142-in-progress rather than M142 completion.
@@ -179,7 +189,7 @@ Primary targets:
 - `apps/api/src/agent/memory-kernel.ts`
   - Remove generic lifecycle events and kernel orchestration from xox.
 - `apps/api/src/agent/agentic-os/xox-action-approval-adapter.ts`
-  - Keep only business execution and row mapping. No canonical action lifecycle event construction.
+  - Deleted in M143. Do not reintroduce a host approval adapter; keep HTTP glue in routes, business execution in `tool-executor.ts`, and resume semantics in Agentic OS host kit/core.
 - `apps/api/src/agent/agentic-os/xox-runtime-planning-adapter.ts`
   - Keep only provider settings, tool catalog materialization, business budgets, localized copy hook, and legacy DTO projection.
 - `apps/api/src/agent/agentic-os/xox-tool-observation-adapter.ts`

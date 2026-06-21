@@ -53,7 +53,6 @@ describe('Agent ADR architecture boundaries', () => {
 
     const hostLifecycleFiles = [
       'agent/agentic-os/xox-agentic-os-host-kit.ts',
-      'agent/agentic-os/xox-action-approval-adapter.ts',
       'agent/agentic-os/xox-action-graph-adapter.ts',
       'agent/agentic-os/xox-runtime-planning-adapter.ts',
       'agent/agentic-os/xox-tool-observation-adapter.ts',
@@ -236,9 +235,7 @@ describe('Agent ADR architecture boundaries', () => {
     expect(hostKit).not.toContain("from '../observation-collector.js'")
 
     expect(existsSync(join(srcRoot, 'agent', 'approval-executor.ts'))).toBe(false)
-    const approvalExecutor = source('agent/agentic-os/xox-action-approval-adapter.ts')
-    expect(approvalExecutor).toContain("from './xox-loop-readiness-adapter.js'")
-    expect(approvalExecutor).not.toContain("from '../loop-readiness-check.js'")
+    expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-action-approval-adapter.ts'))).toBe(false)
 
     const adapter = source('agent/agentic-os/xox-loop-readiness-adapter.ts')
     expect(adapter).toContain("@agentic-os/core")
@@ -248,6 +245,36 @@ describe('Agent ADR architecture boundaries', () => {
     expect(adapter).not.toContain("let status:")
     expect(adapter).not.toContain("status = 'blocked'")
     expect(adapter).not.toContain("status = 'needs_confirmation'")
+  })
+
+  it('keeps action confirmation resume inside Agentic OS instead of the xox approval adapter', () => {
+    expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-action-approval-adapter.ts'))).toBe(false)
+    const routes = source('agent/routes.ts')
+    for (const forbidden of [
+      'continueModelAfterToolObservations',
+      'actionExecutionObservation',
+      'evaluateAssistantResponse',
+      'buildEvidenceLedger',
+      'evaluateAgentGoal',
+      'readRuntimeGoalFacts',
+      'loopObligationsFromResponseEvaluation',
+      'planLoopObligations',
+      'updateGoalStatus',
+      'getGoalForRun',
+    ]) {
+      expect(routes, `routes must not own ${forbidden}`).not.toContain(forbidden)
+    }
+
+    const actionGraph = source('agent/agentic-os/xox-action-graph-adapter.ts')
+    expect(actionGraph).toContain("from '../tool-executor.js'")
+    expect(actionGraph).toContain("from '../action-draft-builder.js'")
+    expect(actionGraph).not.toContain("from './xox-action-approval-adapter.js'")
+    expect(actionGraph).not.toContain('function confirmAgentActionRequest')
+
+    const hostKit = source('agent/agentic-os/xox-agentic-os-host-kit.ts')
+    expect(hostKit).toContain('createAgentHostKit')
+    expect(hostKit).toContain('confirmAction')
+    expect(hostKit).toContain('resumeXoxAgenticOsRunAfterActionConfirmation')
   })
 
   it('keeps initial prerequisite observation selection in Agentic OS core', () => {
@@ -372,6 +399,7 @@ describe('Agent ADR architecture boundaries', () => {
     expect(existsSync(join(srcRoot, 'agent', 'loop-obligations.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'obligation-materializer.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'approval-executor.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-action-approval-adapter.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'run-worker.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'thread-store.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'tool-runtime', 'approval-policy-composer.ts'))).toBe(false)

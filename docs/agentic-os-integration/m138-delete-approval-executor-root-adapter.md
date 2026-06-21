@@ -1,6 +1,8 @@
 # M138 Delete Approval Executor Root Adapter
 
-Status: Implemented
+Status: Superseded by M143
+
+M138 was an intermediate migration step that moved the root approval executor behind a host-prefixed adapter. M143 completed the cut by deleting `apps/api/src/agent/agentic-os/xox-action-approval-adapter.ts`; current confirm/cancel/edit HTTP glue lives in `routes.ts`, business execution lives in `tool-executor.ts`, and post-confirmation resume lives in the Agentic OS host kit.
 
 ## Implementation Notes
 

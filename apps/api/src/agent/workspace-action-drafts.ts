@@ -23,7 +23,7 @@ import {
 import type { AgentNavigationEvent } from '@xox/contracts'
 import { newId } from '../core/security.js'
 import { exportWorkspaceBundle } from '../modules/workspace.js'
-import type { AgentActionDraft } from './agentic-os/xox-action-approval-adapter.js'
+import type { AgentActionDraft } from './action-draft-builder.js'
 import type { ReadDraft, RuntimePlannerStep } from './action-draft-builder.js'
 import { currentDraftConfig, finiteNumber } from './action-draft-utils.js'
 import { cloneModelConfig, getConfigPath, setConfigPath } from './config-patch.js'

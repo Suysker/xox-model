@@ -1,4 +1,5 @@
 import type {
+  AgentActionKind,
   AgentNavigationEvent,
   AgentPlanStepStatus,
   AgentToolObservationLane,
@@ -9,9 +10,19 @@ import {
   classifyToolObservationOutcome,
 } from '@agentic-os/core'
 import { providerToolCallBoundaryObservations } from '@agentic-os/runtime-openai-compatible'
-import type { AgentActionDraft } from './agentic-os/xox-action-approval-adapter.js'
 import { redactSecretLikeContent } from './memory.js'
 import type { RuntimePlanError, RuntimePlanResult } from './agentic-os/xox-runtime-adapter.js'
+
+export type AgentActionDraft = {
+  kind: AgentActionKind
+  title: string
+  summary: string
+  targetLabel: string
+  riskLevel: 'low' | 'medium' | 'high'
+  details: Array<{ label: string; value: string }>
+  navigation: AgentNavigationEvent
+  payload: unknown
+}
 
 export type ReadDraft = {
   title: string
