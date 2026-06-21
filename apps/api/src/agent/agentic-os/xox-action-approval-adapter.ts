@@ -4,43 +4,43 @@ import type {
   AgentActionUpdatePayload,
   AgentNavigationEvent,
 } from '@xox/contracts'
-import type { Database, Row } from '../db/schema.js'
-import { jsonString, parseJson } from '../db/database.js'
-import { conflict, forbidden, notFound, unprocessable } from '../core/http.js'
-import type { Settings } from '../core/settings.js'
-import { newId } from '../core/security.js'
-import { utcNow } from '../core/time.js'
-import { recordAudit } from '../modules/audit.js'
-import type { CurrentUser } from '../modules/auth.js'
-import { getWorkspaceForUser } from '../modules/workspace.js'
-import { addRunEvent, listSerializedRunEvents } from './agentic-os/xox-run-event-store-adapter.js'
-import { addMessage } from './agentic-os/xox-thread-store-adapter.js'
-import { redactSecretLikeContent } from './memory.js'
-import { executeAgentTool } from './tool-executor.js'
-import { evaluateAgentGoal } from './agentic-os/xox-loop-readiness-adapter.js'
-import { getGoalForRun, serializeEvaluation, updateGoalStatus } from './goal-contract.js'
-import { buildEvidenceLedger } from './evidence-ledger.js'
-import { evaluateAssistantResponse, responseEvaluationSummary } from './response-evaluator.js'
-import { readRuntimeGoalFacts } from './runtime-goal-facts.js'
-import { loopObligationsFromResponseEvaluation, planLoopObligations } from './loop-obligation-ledger.js'
+import type { Database, Row } from '../../db/schema.js'
+import { jsonString, parseJson } from '../../db/database.js'
+import { conflict, forbidden, notFound, unprocessable } from '../../core/http.js'
+import type { Settings } from '../../core/settings.js'
+import { newId } from '../../core/security.js'
+import { utcNow } from '../../core/time.js'
+import { recordAudit } from '../../modules/audit.js'
+import type { CurrentUser } from '../../modules/auth.js'
+import { getWorkspaceForUser } from '../../modules/workspace.js'
+import { addRunEvent, listSerializedRunEvents } from './xox-run-event-store-adapter.js'
+import { addMessage } from './xox-thread-store-adapter.js'
+import { redactSecretLikeContent } from '../memory.js'
+import { executeAgentTool } from '../tool-executor.js'
+import { evaluateAgentGoal } from './xox-loop-readiness-adapter.js'
+import { getGoalForRun, serializeEvaluation, updateGoalStatus } from '../goal-contract.js'
+import { buildEvidenceLedger } from '../evidence-ledger.js'
+import { evaluateAssistantResponse, responseEvaluationSummary } from '../response-evaluator.js'
+import { readRuntimeGoalFacts } from '../runtime-goal-facts.js'
+import { loopObligationsFromResponseEvaluation, planLoopObligations } from '../loop-obligation-ledger.js'
 import {
   consolidateAgentMemoryCandidates,
   consolidateExecutedActionMemory,
-} from './memory-kernel.js'
+} from '../memory-kernel.js'
 import {
   actionExecutionObservation,
   continueModelAfterToolObservations,
-} from './agentic-os/xox-tool-observation-adapter.js'
+} from './xox-tool-observation-adapter.js'
 import {
   memoryCandidateFromCancelledAction,
   memoryCandidateFromEditedAction,
-} from './memory-candidate-detector.js'
+} from '../memory-candidate-detector.js'
 import {
   assertActionDraftAllowed,
   assertActionExecutionAllowed,
   assertActionUpdateAllowed,
   coerceAgentActionKind,
-} from './tool-policy.js'
+} from '../tool-policy.js'
 
 type RiskLevel = 'low' | 'medium' | 'high'
 

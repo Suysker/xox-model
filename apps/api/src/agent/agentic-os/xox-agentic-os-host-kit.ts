@@ -82,7 +82,7 @@ import {
   createXoxObservationBridge,
   type XoxObservationBridge,
 } from './xox-observation-adapter.js'
-import { executeAgentActionRequest } from '../approval-executor.js'
+import { executeAgentActionRequest } from './xox-action-approval-adapter.js'
 import {
   buildPlannedItemFromRuntimeStep,
   isActionDraft,

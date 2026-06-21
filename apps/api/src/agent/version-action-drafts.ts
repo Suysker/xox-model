@@ -1,4 +1,4 @@
-import type { AgentActionDraft } from './approval-executor.js'
+import type { AgentActionDraft } from './agentic-os/xox-action-approval-adapter.js'
 import type { PlannerContext } from './planning-context.js'
 import { getWorkspaceDraft, listVersions } from '../modules/workspace.js'
 

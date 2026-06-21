@@ -19,7 +19,7 @@ import {
   cancelAgentActionRequest,
   confirmAgentActionRequest,
   updateAgentActionRequest,
-} from './approval-executor.js'
+} from './agentic-os/xox-action-approval-adapter.js'
 import {
   deleteAgentProviderSetting,
   getAgentProviderSetting,

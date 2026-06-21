@@ -31,7 +31,7 @@ import {
   addAgentActionRequest,
   autoExecuteAgentActionRequest,
   type AgentActionDraft,
-} from './approval-executor.js'
+} from './agentic-os/xox-action-approval-adapter.js'
 import { addRunEvent } from './agentic-os/xox-run-event-store-adapter.js'
 import { assertAgentRunLease } from './agentic-os/xox-run-lease-store-adapter.js'
 import { agentThreadEvents } from './agentic-os/xox-thread-signal-adapter.js'

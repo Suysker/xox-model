@@ -9,7 +9,7 @@ import {
   classifyToolObservationOutcome,
 } from '@agentic-os/core'
 import { providerToolCallBoundaryObservations } from '@agentic-os/runtime-openai-compatible'
-import type { AgentActionDraft } from './approval-executor.js'
+import type { AgentActionDraft } from './agentic-os/xox-action-approval-adapter.js'
 import { redactSecretLikeContent } from './memory.js'
 import type { RuntimePlanError, RuntimePlanResult } from './agentic-os/xox-runtime-adapter.js'
 

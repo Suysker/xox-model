@@ -184,9 +184,10 @@ describe('Agent ADR architecture boundaries', () => {
     expect(hostKit).not.toContain("from '../loop-readiness-check.js'")
     expect(hostKit).not.toContain("from '../observation-collector.js'")
 
-    const approvalExecutor = source('agent/approval-executor.ts')
-    expect(approvalExecutor).toContain("from './agentic-os/xox-loop-readiness-adapter.js'")
-    expect(approvalExecutor).not.toContain("from './loop-readiness-check.js'")
+    expect(existsSync(join(srcRoot, 'agent', 'approval-executor.ts'))).toBe(false)
+    const approvalExecutor = source('agent/agentic-os/xox-action-approval-adapter.ts')
+    expect(approvalExecutor).toContain("from './xox-loop-readiness-adapter.js'")
+    expect(approvalExecutor).not.toContain("from '../loop-readiness-check.js'")
 
     const adapter = source('agent/agentic-os/xox-loop-readiness-adapter.ts')
     expect(adapter).toContain("@agentic-os/core")
@@ -313,9 +314,16 @@ describe('Agent ADR architecture boundaries', () => {
     expect(existsSync(join(srcRoot, 'agent', 'clarification-resume.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'loop-obligations.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'obligation-materializer.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'approval-executor.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'run-worker.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'thread-store.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'tool-runtime', 'approval-policy-composer.ts'))).toBe(false)
+
+    for (const file of sourceFilesUnder('agent')) {
+      const content = source(file)
+      expect(content, `${file} must not import the deleted approval executor facade`).not.toContain("from './approval-executor.js'")
+      expect(content, `${file} must not import the deleted approval executor facade`).not.toContain("from '../approval-executor.js'")
+    }
 
     const obsoleteToolContextDir = join(srcRoot, 'agent', 'tool-context-engine')
     expect(existsSync(join(obsoleteToolContextDir, 'index.ts'))).toBe(false)
