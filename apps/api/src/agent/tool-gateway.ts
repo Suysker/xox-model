@@ -9,7 +9,7 @@ import { newId } from '../core/security.js'
 import { utcNow } from '../core/time.js'
 import type { Database } from '../db/schema.js'
 import { redactSecretLikeContent } from './memory.js'
-import { addRunEvent } from './run-events.js'
+import { addRunEvent } from './agentic-os/xox-run-event-store-adapter.js'
 import { mergeAgentGoalFacts, sanitizeAgentGoalFacts } from './runtime-goal-facts.js'
 import {
   buildToolContextPack,

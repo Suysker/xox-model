@@ -131,7 +131,7 @@ import {
   mergeAgentGoalFacts,
   readRuntimeGoalFacts,
 } from '../runtime-goal-facts.js'
-import { addRunEvent } from '../run-events.js'
+import { addRunEvent } from './xox-run-event-store-adapter.js'
 import { addMessage } from '../thread-store.js'
 import {
   AGENT_TOOL_REGISTRY,

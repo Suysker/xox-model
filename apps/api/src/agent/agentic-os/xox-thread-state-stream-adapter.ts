@@ -2,11 +2,11 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Kysely } from 'kysely'
 import { openAgentServerSignalStateStream } from '@agentic-os/server'
 import type { AgentThreadEvent, AgentThreadState } from '@xox/contracts'
-import type { Database, Row } from '../db/schema.js'
-import type { CurrentUser } from '../modules/auth.js'
-import { buildThreadState } from './thread-store.js'
-import { agentThreadEvents, type AgentThreadEventSignal } from './thread-events.js'
-import { safeRunErrorMessage } from './run-worker.js'
+import type { Database, Row } from '../../db/schema.js'
+import type { CurrentUser } from '../../modules/auth.js'
+import { buildThreadState } from '../thread-store.js'
+import { safeRunErrorMessage } from '../run-worker.js'
+import { agentThreadEvents, type AgentThreadEventSignal } from './xox-thread-signal-adapter.js'
 
 type AgentThreadStateStreamInput = {
   request: IncomingMessage

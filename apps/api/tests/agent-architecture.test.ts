@@ -614,15 +614,53 @@ describe('Agent ADR architecture boundaries', () => {
 
   it('keeps provider runtime stream trace projection in Agentic OS server', () => {
     expect(existsSync(join(srcRoot, 'agent', 'runtime-trace-events.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'run-events.ts'))).toBe(false)
 
     for (const file of sourceFilesUnder('agent')) {
       expect(source(file), `${file} must not import the deleted runtime trace wrapper`).not.toContain('runtime-trace-events')
     }
 
-    const runEvents = source('agent/run-events.ts')
+    const runEvents = source('agent/agentic-os/xox-run-event-store-adapter.ts')
     expect(runEvents).toContain("@agentic-os/server")
     expect(runEvents).toContain('addAgentServerRuntimeStreamRunEvent')
+    expect(runEvents).toContain('createAgentServerSequencedRunEventAppender')
     expect(runEvents).not.toContain('runtimeStreamEventPayload')
+  })
+
+  it('keeps thread signaling, SSE state streams, and run lease helpers outside the root host agent frame', () => {
+    const deletedRootFiles = [
+      'thread-events.ts',
+      'thread-state-stream.ts',
+      'run-lease.ts',
+    ]
+    for (const file of deletedRootFiles) {
+      expect(existsSync(join(srcRoot, 'agent', file)), `${file} should live under the xox Agentic OS adapter boundary`).toBe(false)
+    }
+
+    const importPatterns = [
+      "from './thread-events.js'",
+      "from './thread-state-stream.js'",
+      "from './run-lease.js'",
+      "from './run-events.js'",
+      "from '../run-events.js'",
+    ]
+    for (const file of sourceFilesUnder('agent')) {
+      const content = source(file)
+      for (const pattern of importPatterns) {
+        expect(content, `${file} must not import deleted root run-plane adapter ${pattern}`).not.toContain(pattern)
+      }
+    }
+
+    const threadSignal = source('agent/agentic-os/xox-thread-signal-adapter.ts')
+    const threadStream = source('agent/agentic-os/xox-thread-state-stream-adapter.ts')
+    const runLease = source('agent/agentic-os/xox-run-lease-store-adapter.ts')
+    expect(threadSignal).toContain("@agentic-os/server")
+    expect(threadSignal).toContain('AgentServerSignalBus')
+    expect(threadStream).toContain("@agentic-os/server")
+    expect(threadStream).toContain('openAgentServerSignalStateStream')
+    expect(runLease).toContain("@agentic-os/server")
+    expect(runLease).toContain('startAgentServerRunLeaseHeartbeat')
+    expect(runLease).toContain('assertAgentServerRunLease')
   })
 
   it('keeps AG-UI event projection in Agentic OS server', () => {

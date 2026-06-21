@@ -5,7 +5,7 @@ import { redactSecretLikeContent } from '../memory.js'
 import type { PlannerContext } from '../planning-context.js'
 import { planWithRuntimeAdapter, type RuntimeChatMessage, type RuntimePlanningInput, type RuntimePlanResult } from './xox-runtime-adapter.js'
 import type { Settings } from '../../core/settings.js'
-import { addRunEvent, addRuntimeStreamRunEvent } from '../run-events.js'
+import { addRunEvent, addRuntimeStreamRunEvent } from './xox-run-event-store-adapter.js'
 import type { AgentToolObservation } from './xox-tool-observation-adapter.js'
 import { materializedToolInventorySnapshot, provideRuntimeToolCatalog } from '../tool-gateway.js'
 import {

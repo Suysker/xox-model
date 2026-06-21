@@ -5,9 +5,9 @@ import {
   assertAgentServerRunLease,
   startAgentServerRunLeaseHeartbeat,
 } from '@agentic-os/server'
-import type { Settings } from '../core/settings.js'
-import { utcNow } from '../core/time.js'
-import type { Database, Row } from '../db/schema.js'
+import type { Settings } from '../../core/settings.js'
+import { utcNow } from '../../core/time.js'
+import type { Database, Row } from '../../db/schema.js'
 
 export { AgentServerRunLeaseLostError as AgentRunLeaseLostError }
 

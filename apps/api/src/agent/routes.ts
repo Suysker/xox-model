@@ -14,7 +14,7 @@ import {
   serializeMemory,
 } from './memory.js'
 import { buildTenantMemoryCenterState } from './memory/memory-center.js'
-import { agentThreadEvents } from './thread-events.js'
+import { agentThreadEvents } from './agentic-os/xox-thread-signal-adapter.js'
 import {
   cancelAgentActionRequest,
   confirmAgentActionRequest,
@@ -39,7 +39,7 @@ import {
   cancelRunningAgentRun,
   startAgentRunQueueWorker,
 } from './run-worker.js'
-import { openAgentThreadStateStream } from './thread-state-stream.js'
+import { openAgentThreadStateStream } from './agentic-os/xox-thread-state-stream-adapter.js'
 import { submitAgentMessageRun } from './run-submission.js'
 
 const providerSettingSchema = z.object({

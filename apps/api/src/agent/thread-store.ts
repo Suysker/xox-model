@@ -18,7 +18,7 @@ import { forbidden, notFound } from '../core/http.js'
 import { newId } from '../core/security.js'
 import { utcNow } from '../core/time.js'
 import { coerceAgentActionKind, normalizeAgentAutomationLevel } from './tool-policy.js'
-import { serializeRunEvent } from './run-events.js'
+import { serializeRunEvent } from './agentic-os/xox-run-event-store-adapter.js'
 import { normalizeGoalStatus, serializeEvaluation, serializeGoal } from './goal-contract.js'
 import { buildXoxThreadStateView } from './agentic-os/xox-thread-state-view.js'
 

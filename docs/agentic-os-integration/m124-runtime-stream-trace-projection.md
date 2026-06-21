@@ -25,12 +25,12 @@ Deleted from xox:
 
 ## What Stayed In xox
 
-- `apps/api/src/agent/run-events.ts`: Kysely durable event append, row serialization, thread signal publication, xox Chinese copy adapter and redaction hook.
+- `apps/api/src/agent/agentic-os/xox-run-event-store-adapter.ts`: Kysely durable event append, row serialization, thread signal publication, xox Chinese copy adapter and redaction hook. This adapter was still rooted at `apps/api/src/agent/run-events.ts` when M124 landed; M134 deleted the root file.
 - Runtime callers still pass stream events from planning/final-answer lanes, but they no longer import a host trace wrapper.
 
 ## Verification
 
 - Agentic OS `@agentic-os/server` build and tests.
 - xox `npm.cmd run build:api`.
-- xox architecture test guards the deleted file and requires `run-events.ts` to consume `@agentic-os/server`.
+- xox architecture test guards the deleted trace file and requires `agentic-os/xox-run-event-store-adapter.ts` to consume `@agentic-os/server`.
 - xox full API suite.

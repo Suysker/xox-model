@@ -32,9 +32,9 @@ import {
   autoExecuteAgentActionRequest,
   type AgentActionDraft,
 } from './approval-executor.js'
-import { addRunEvent } from './run-events.js'
-import { assertAgentRunLease } from './run-lease.js'
-import { agentThreadEvents } from './thread-events.js'
+import { addRunEvent } from './agentic-os/xox-run-event-store-adapter.js'
+import { assertAgentRunLease } from './agentic-os/xox-run-lease-store-adapter.js'
+import { agentThreadEvents } from './agentic-os/xox-thread-signal-adapter.js'
 import {
   actionFailureObservation,
   actionExecutionObservation,

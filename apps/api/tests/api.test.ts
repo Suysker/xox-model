@@ -25,7 +25,7 @@ import {
   memoryCandidateFromEvaluatorFinding,
   memoryCandidatesFromExecutedActions,
 } from '../src/agent/memory-candidate-detector.js'
-import { addRunEvent } from '../src/agent/run-events.js'
+import { addRunEvent } from '../src/agent/agentic-os/xox-run-event-store-adapter.js'
 
 type JsonResponse = {
   statusCode: number

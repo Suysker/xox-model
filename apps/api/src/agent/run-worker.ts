@@ -17,9 +17,9 @@ import {
   claimRecoverableAgentRuns,
   refreshAgentRunLease,
   startAgentRunLeaseHeartbeat,
-} from './run-lease.js'
-import { addRunEvent } from './run-events.js'
-import { agentThreadEvents } from './thread-events.js'
+} from './agentic-os/xox-run-lease-store-adapter.js'
+import { addRunEvent } from './agentic-os/xox-run-event-store-adapter.js'
+import { agentThreadEvents } from './agentic-os/xox-thread-signal-adapter.js'
 import { addMessage, touchThreadAfterRun } from './thread-store.js'
 import { normalizeAgentAutomationLevel } from './tool-policy.js'
 import { sanitizeAgentGoalFacts } from './runtime-goal-facts.js'

@@ -1,7 +1,7 @@
 import type { Kysely } from 'kysely'
 import type { Database, Row } from '../db/schema.js'
 import type { CurrentUser } from '../modules/auth.js'
-import { addRunEvent } from './run-events.js'
+import { addRunEvent } from './agentic-os/xox-run-event-store-adapter.js'
 import { addMemoryEvent } from './memory-events.js'
 import {
   markAgentMemoriesRecalled,

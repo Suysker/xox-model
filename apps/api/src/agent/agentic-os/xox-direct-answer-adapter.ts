@@ -20,7 +20,7 @@ import {
   type RuntimePlanResult,
 } from './xox-runtime-adapter.js'
 import { redactSecretLikeContent } from '../memory.js'
-import { addRunEvent, addRuntimeStreamRunEvent } from '../run-events.js'
+import { addRunEvent, addRuntimeStreamRunEvent } from './xox-run-event-store-adapter.js'
 import { addMessage } from '../thread-store.js'
 import { storePlannedActionGraph } from '../action-graph-store.js'
 import { readDraftFromRuntimeResult } from '../action-draft-builder.js'
