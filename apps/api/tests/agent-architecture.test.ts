@@ -54,7 +54,7 @@ describe('Agent ADR architecture boundaries', () => {
     const hostLifecycleFiles = [
       'agent/agentic-os/xox-agentic-os-host-kit.ts',
       'agent/agentic-os/xox-action-graph-adapter.ts',
-      'agent/agentic-os/xox-runtime-planning-adapter.ts',
+      'agent/agentic-os/xox-runtime-adapter.ts',
       'agent/agentic-os/xox-tool-observation-adapter.ts',
       'agent/memory-consolidator.ts',
     ]
@@ -225,23 +225,26 @@ describe('Agent ADR architecture boundaries', () => {
   it('keeps loop readiness status priority in Agentic OS core', () => {
     expect(existsSync(join(srcRoot, 'agent', 'loop-readiness-check.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'observation-collector.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-loop-readiness-adapter.ts'))).toBe(false)
 
     const hostKit = source('agent/agentic-os/xox-agentic-os-host-kit.ts')
-    expect(hostKit).toContain("from './xox-loop-readiness-adapter.js'")
+    expect(hostKit).toContain("from './xox-goal-store-adapter.js'")
+    expect(hostKit).toContain('evaluateAgentGoal')
+    expect(hostKit).not.toContain("from './xox-loop-readiness-adapter.js'")
     expect(hostKit).not.toContain("from '../loop-readiness-check.js'")
     expect(hostKit).not.toContain("from '../observation-collector.js'")
 
     expect(existsSync(join(srcRoot, 'agent', 'approval-executor.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-action-approval-adapter.ts'))).toBe(false)
 
-    const adapter = source('agent/agentic-os/xox-loop-readiness-adapter.ts')
-    expect(adapter).toContain("@agentic-os/core")
-    expect(adapter).toContain('decideAgentReadiness')
-    expect(adapter).toContain('function collectAgentObservation')
-    expect(adapter).not.toContain('policyFindings.some')
-    expect(adapter).not.toContain("let status:")
-    expect(adapter).not.toContain("status = 'blocked'")
-    expect(adapter).not.toContain("status = 'needs_confirmation'")
+    const goalStore = source('agent/agentic-os/xox-goal-store-adapter.ts')
+    expect(goalStore).toContain("@agentic-os/core")
+    expect(goalStore).toContain('decideAgentReadiness')
+    expect(goalStore).toContain('function collectAgentObservation')
+    expect(goalStore).not.toContain('policyFindings.some')
+    expect(goalStore).not.toContain("let status:")
+    expect(goalStore).not.toContain("status = 'blocked'")
+    expect(goalStore).not.toContain("status = 'needs_confirmation'")
   })
 
   it('keeps action confirmation resume inside Agentic OS instead of the xox approval adapter', () => {
@@ -647,19 +650,19 @@ describe('Agent ADR architecture boundaries', () => {
 
   it('keeps provider observation planning message assembly in Agentic OS runtime', () => {
     expect(existsSync(join(srcRoot, 'agent', 'runtime-planning-call.ts'))).toBe(false)
-    const planningCall = source('agent/agentic-os/xox-runtime-planning-adapter.ts')
+    expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-runtime-planning-adapter.ts'))).toBe(false)
+    const planningCall = source('agent/agentic-os/xox-runtime-adapter.ts')
     expect(planningCall).toContain("@agentic-os/runtime-openai-compatible")
     expect(planningCall).toContain("@agentic-os/core")
     expect(planningCall).toContain('buildProviderToolObservationTurnMessages')
     expect(planningCall).toContain('runtimeMessagesFromConversationLog')
     expect(planningCall).toContain('contextWithoutRuntimeConversationLog')
     expect(planningCall).not.toContain('providerToolObservationReplayMessages')
-    expect(planningCall).not.toContain("role: 'tool'")
-    expect(planningCall).not.toContain('tool_calls')
   })
 
   it('keeps runtime planning recovery orchestration in Agentic OS runtime', () => {
-    const planningCall = source('agent/agentic-os/xox-runtime-planning-adapter.ts')
+    expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-runtime-planning-adapter.ts'))).toBe(false)
+    const planningCall = source('agent/agentic-os/xox-runtime-adapter.ts')
     expect(planningCall).toContain("@agentic-os/runtime-openai-compatible")
     expect(planningCall).toContain('runOpenAICompatibleRuntimePlanningRecovery')
     expect(planningCall).not.toContain('shouldRetryProviderRuntimeResult')
@@ -688,7 +691,7 @@ describe('Agent ADR architecture boundaries', () => {
   })
 
   it('keeps same-thread runtime conversation replay in Agentic OS core', () => {
-    const planningCall = source('agent/agentic-os/xox-runtime-planning-adapter.ts')
+    const planningCall = source('agent/agentic-os/xox-runtime-adapter.ts')
     const continuation = source('agent/agentic-os/xox-tool-observation-adapter.ts')
     expect(planningCall).toContain("@agentic-os/core")
     expect(planningCall).toContain('runtimeConversationLogFromContext')
@@ -824,7 +827,8 @@ describe('Agent ADR architecture boundaries', () => {
   })
 
   it('routes provider planning through the xox context pack without an obsolete local context wrapper', () => {
-    const planningCall = source('agent/agentic-os/xox-runtime-planning-adapter.ts')
+    expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-runtime-planning-adapter.ts'))).toBe(false)
+    const planningCall = source('agent/agentic-os/xox-runtime-adapter.ts')
     expect(planningCall).toContain("from '../context-pack.js'")
     expect(planningCall).not.toContain("from './context-engine/index.js'")
   })

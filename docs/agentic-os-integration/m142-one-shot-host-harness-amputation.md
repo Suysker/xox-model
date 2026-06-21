@@ -1,6 +1,6 @@
 # M142 One-Shot Host Harness Amputation
 
-Status: In Progress (evidence/final-review/obligation root framework deleted)
+Status: In Progress (evidence/final-review/obligation root framework and readiness/runtime-planning facades deleted)
 
 Date: 2026-06-21
 
@@ -34,7 +34,7 @@ Original audit signals:
 - `apps/api/src/agent/agentic-os/xox-agentic-os-host-kit.ts` is 2229 lines and still acts as a host runner.
 - The host kit still constructs generic lifecycle events such as `goal_contract_created`, `goal_iteration_started`, `model_planning`, `goal_evaluated`, `final_answer_candidate`, `goal_iteration_exhausted`, and `runner_obligation_*`.
 - `apps/api/src/agent/agentic-os/xox-action-approval-adapter.ts` still owns generic action lifecycle event drafts and performs post-confirmation goal evaluation.
-- `apps/api/src/agent/agentic-os/xox-runtime-planning-adapter.ts` still owns provider retry and planning lifecycle callbacks.
+- `apps/api/src/agent/agentic-os/xox-runtime-planning-adapter.ts` originally owned provider retry and planning lifecycle callbacks; it was deleted in M145, with residual provider boundary wiring collapsed into `xox-runtime-adapter.ts`.
 - `apps/api/src/agent/agentic-os/xox-tool-observation-adapter.ts` still owns model continuation lifecycle events.
 - `apps/api/src/agent/memory-kernel.ts` still owns generic memory lifecycle event drafts.
 - `apps/api/src/agent/loop-obligation-ledger.ts`, `apps/api/src/agent/response-evaluator.ts`, and `apps/api/src/agent/evidence-ledger.ts` still mix domain policy with generic evidence/final-review harness mechanics.
@@ -136,7 +136,7 @@ Remaining M142 hard targets after M142b:
 
 - `apps/api/src/agent/agentic-os/xox-agentic-os-host-kit.ts` is still too large and must continue shrinking toward HostProfile/HostAdapter wiring.
 - `apps/api/src/agent/agentic-os/xox-thread-transcript-adapter.ts` and `xox-thread-timeline-adapter.ts` remain xox product projection adapters; generic projection work should continue moving into Agentic OS server/react packages where still present.
-- `apps/api/src/agent/agentic-os/xox-runtime-adapter.ts` and runtime planning adapters must remain provider settings/DTO mappers and must not become a second runtime.
+- `apps/api/src/agent/agentic-os/xox-runtime-adapter.ts` must remain a concrete provider settings/DTO/runtime-boundary mapper and must not become a second runtime or regrow a standalone planning adapter.
 
 ### M143: Deleted the Action Approval Adapter
 
@@ -157,6 +157,16 @@ Status: completed as a follow-up M142 whole-file deletion cut.
 - Clarification resume row loading moved to the goal store adapter, observation DTO projection moved to the tool observation adapter, SSE transport moved to routes, signal reason mapping moved to the run-event store, and submitted/thread projection fact mapping moved to the concrete submission/thread-state projection boundaries.
 - Architecture guards now fail if any of the deleted facade files return.
 
+### M145: Deleted Readiness and Runtime Planning Facades
+
+Status: completed as a follow-up M142 whole-file deletion cut.
+
+- Deleted `xox-loop-readiness-adapter.ts` and `xox-runtime-planning-adapter.ts`.
+- Agentic OS still owns readiness priority through `decideAgentReadiness()`; xox goal-store code now keeps only goal rows, xox domain findings, and persistence mappings at the concrete goal boundary.
+- Runtime planning recovery still comes from Agentic OS runtime packages; xox runtime adapter now keeps provider settings, context-pack input, tool-catalog callback wiring, business high-volume budgets, localized event sink, and legacy runtime DTO projection at the concrete provider boundary.
+- Architecture guards now fail if either deleted facade returns.
+- This cut is intentionally an amputation-first step. It reduces visible host harness files, but the remaining semantics in `xox-agentic-os-host-kit.ts`, `xox-final-review-adapter.ts`, projection adapters, and `xox-tool-observation-adapter.ts` still require deeper Agentic OS extraction.
+
 ## One-Shot Scope
 
 M142 is not complete until all rows in this table are addressed. If a row cannot be completed in a given implementation cut, that cut must be presented as M142-in-progress rather than M142 completion.
@@ -166,7 +176,7 @@ M142 is not complete until all rows in this table are addressed. If a row cannot
 | Goal and plan lifecycle | Host kit creates goal contract, iteration, planning, evaluated, exhausted events and updates generic goal states around loop turns | Agentic OS owns goal lifecycle event drafts and loop-state transitions; xox provides durable goal/run row adapters |
 | Evidence and final review | xox mixes final answer hygiene, evidence requirements, obligation projection, review obligations, and financial policy | Agentic OS owns generic final review gate, evidence ledger mechanics, obligation projection, and repair obligations; xox keeps financial/shareholder requirement policy only |
 | Action lifecycle | xox writes canonical action executed/updated/cancelled/auto-execution lifecycle events and re-evaluates goal state after confirm | Agentic OS action runtime owns confirmation/edit/reject/execute lifecycle events and resume observation handoff; xox keeps business writes, audit rows, memory candidates, and product DTOs |
-| Provider planning | xox owns provider retry event drafts, stable long-tool mode events, missing-observation recovery hooks, and provider planning lifecycle callbacks | Agentic OS runtime/server owns provider planning lifecycle, retry event drafts, boundary repair state, and stream event projection; xox keeps settings, tool catalog materialization policy, localized copy hook, and business budget policy |
+| Provider planning | The standalone `xox-runtime-planning-adapter.ts` is deleted, but `xox-runtime-adapter.ts` still carries provider-boundary wiring, localized event sink, tool catalog callbacks, business budget policy, and legacy DTO projection | Agentic OS runtime/server owns provider planning lifecycle, retry event drafts, boundary repair state, and stream event projection; xox keeps only provider settings, tool catalog materialization policy, localized copy hook, and business budget policy at the concrete runtime boundary |
 | Model continuation | xox owns `model_continuation*` events for observation-to-final-answer continuation | Agentic OS owns continuation lifecycle and canonical events; xox keeps prompt identity additions, provider settings, and persisted final message projection |
 | Memory lifecycle | xox owns memory candidate/context-flush/dreaming lifecycle event drafts | Agentic OS owns generic memory lifecycle and event drafts; xox keeps memory store, tenant scope, ranking inputs, Memory Center DTOs, and localized product copy |
 | Projection/transcript | xox builds generic transcript/timeline trees from provider/goal/action/run events | Agentic OS projection/server package owns generic run tree, grouping, visibility, provider stream grouping, and action/observation joins; xox keeps Chinese labels, navigation links, and contract DTO shape |
@@ -200,7 +210,8 @@ Primary targets:
 - `apps/api/src/agent/agentic-os/xox-action-approval-adapter.ts`
   - Deleted in M143. Do not reintroduce a host approval adapter; keep HTTP glue in routes, business execution in `tool-executor.ts`, and resume semantics in Agentic OS host kit/core.
 - `apps/api/src/agent/agentic-os/xox-runtime-planning-adapter.ts`
-  - Keep only provider settings, tool catalog materialization, business budgets, localized copy hook, and legacy DTO projection.
+  - Deleted in M145. Do not reintroduce a standalone provider planning facade.
+  - Any unavoidable xox provider settings, tool catalog materialization, business budgets, localized copy hook, and legacy DTO projection must live at `xox-runtime-adapter.ts`, the concrete runtime boundary.
 - `apps/api/src/agent/agentic-os/xox-tool-observation-adapter.ts`
   - Keep only xox prompt additions, provider settings, final message persistence, and product DTO mapping.
 
@@ -287,7 +298,7 @@ Required guards:
   - `runner_obligation_materializing`
   - `runner_obligation_materialized`
 - `xox-action-approval-adapter.ts` must not construct canonical `action_*` lifecycle event drafts directly.
-- `xox-runtime-planning-adapter.ts` must not branch on provider lifecycle event kinds to hand-build run events.
+- `xox-loop-readiness-adapter.ts` and `xox-runtime-planning-adapter.ts` must stay deleted; readiness priority and runtime planning recovery must be consumed through Agentic OS APIs at concrete xox peripheral boundaries.
 - `xox-tool-observation-adapter.ts` must not construct `model_continuation*` lifecycle events directly.
 - xox root files must not contain generic final review/evidence/obligation ledger runtime code.
 - xox projection files must not own generic provider stream grouping or goal/action tree lifecycle logic.

@@ -103,6 +103,7 @@ import {
   addEvaluationResult,
   buildXoxClarificationResumeContext,
   createGoalContract,
+  evaluateAgentGoal,
   getGoalForRun,
   serializeEvaluation,
   updateGoalStatus,
@@ -116,8 +117,8 @@ import {
   evaluateAssistantResponse,
   responseEvaluationSummary,
 } from './xox-final-review-adapter.js'
-import { callRuntimePlanner } from './xox-runtime-planning-adapter.js'
 import {
+  callRuntimePlanner,
   configuredRuntimePlannerSource,
   planWithRuntimeAdapter,
   type RuntimeChatMessage,
@@ -151,7 +152,6 @@ import {
 } from './xox-tool-observation-adapter.js'
 import { redactSecretLikeContent } from '../memory.js'
 import { runtimeIntentHandlers } from '../runtime-intent-handlers.js'
-import { evaluateAgentGoal } from './xox-loop-readiness-adapter.js'
 import { normalizeAgentAutomationLevel } from '../tool-policy.js'
 import {
   applyObservationToLedger,
