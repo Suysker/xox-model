@@ -25,7 +25,7 @@ import {
   type AgentToolNavigationTarget,
   type ChatTool,
 } from './tool-catalog.js'
-import type { AgentLoopObligationPlan } from './loop-obligations.js'
+import type { AgentLoopObligationPlan } from './loop-obligation-ledger.js'
 import type { AgentToolObservation } from './tool-observation-continuation.js'
 
 type ToolGatewayContext = {

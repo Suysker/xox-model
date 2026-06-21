@@ -200,6 +200,25 @@ describe('Agent ADR architecture boundaries', () => {
     expect(ledger).toContain('projectObligationStateWithAdditionalObligations')
   })
 
+  it('deletes the local loop-obligations facade and keeps obligation runtime in Agentic OS core', () => {
+    expect(existsSync(join(srcRoot, 'agent', 'loop-obligations.ts'))).toBe(false)
+
+    for (const file of sourceFilesUnder('agent')) {
+      expect(source(file), `${file} must not import the deleted loop-obligations facade`).not.toContain('loop-obligations')
+    }
+
+    const ledger = source('agent/loop-obligation-ledger.ts')
+    expect(ledger).toContain("@agentic-os/core")
+    expect(ledger).toContain('ledgerToObligationPlan')
+    expect(ledger).toContain('projectObligationLedger')
+    expect(ledger).toContain('projectObligationLedgerWithAdditionalObligations')
+    expect(ledger).toContain('projectObligationStateWithAdditionalObligations')
+
+    const materializer = source('agent/obligation-materializer.ts')
+    expect(materializer).toContain("@agentic-os/core")
+    expect(materializer).toContain('planObligationMaterialization')
+  })
+
   it('keeps structured evidence key matching in Agentic OS core', () => {
     expect(existsSync(join(srcRoot, 'agent', 'structured-evidence-utils.ts'))).toBe(false)
     for (const file of [
@@ -253,6 +272,7 @@ describe('Agent ADR architecture boundaries', () => {
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'openai-agents-adapter.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'direct-answer-runtime.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'clarification-resume.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'loop-obligations.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'tool-runtime', 'approval-policy-composer.ts'))).toBe(false)
 
     const obsoleteToolContextDir = join(srcRoot, 'agent', 'tool-context-engine')

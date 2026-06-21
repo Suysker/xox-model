@@ -22,7 +22,7 @@ import { getGoalForRun, serializeEvaluation, updateGoalStatus } from './goal-con
 import { buildEvidenceLedger } from './evidence-ledger.js'
 import { evaluateAssistantResponse, responseEvaluationSummary } from './response-evaluator.js'
 import { readRuntimeGoalFacts } from './runtime-goal-facts.js'
-import { loopObligationsFromResponseEvaluation, planLoopObligations } from './loop-obligations.js'
+import { loopObligationsFromResponseEvaluation, planLoopObligations } from './loop-obligation-ledger.js'
 import {
   consolidateAgentMemoryCandidates,
   consolidateExecutedActionMemory,

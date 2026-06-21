@@ -1,6 +1,6 @@
 # xox-model Agentic OS Integration Plan
 
-Status: Draft (M127 server final-answer claim extraction)
+Status: Draft (M128 delete loop-obligations facade)
 
 Date: 2026-06-19
 
@@ -110,7 +110,7 @@ Current integration is no longer compatibility-only:
 - xox still owns product/domain behavior, action graph projection, memory, sandbox, provider settings, and final response evidence policy through Agentic OS ports.
 - xox `apps/api/src/agent/evidence-ledger.ts` now consumes `@agentic-os/core` `evidenceRequirementsFromFinalAnswerClaims()` for generic final claim kind projection.
 - xox `apps/api/src/agent/response-evaluator.ts` now consumes `@agentic-os/core` `evaluateFinalAnswerHygiene()` for final answer protocol artifact rejection.
-- xox `apps/api/src/agent/loop-obligations.ts` now consumes `@agentic-os/core` `ledgerToObligationPlan()` for generic required-tool/capability aggregation, runner-obligation instruction, and opaque metadata passthrough.
+- xox local `apps/api/src/agent/loop-obligations.ts` facade has been deleted. The remaining financial/domain finding -> obligation DTO policy is folded into `apps/api/src/agent/loop-obligation-ledger.ts`, while `@agentic-os/core` owns generic obligation plan aggregation, projection, materialization planning, review-obligation projection, and additional repair state projection.
 - xox `apps/api/src/agent/loop-obligation-ledger.ts` now consumes `@agentic-os/core` `projectObligationLedger()` for generic active/status counts and neutral obligation row projection.
 - xox `apps/api/src/agent/obligation-materializer.ts` now consumes `@agentic-os/core` `planObligationMaterialization()` for active obligation task filtering, stable de-duplication, and generic event payloads.
 - xox final review response now consumes `@agentic-os/core` `ledgerToReviewObligations()` for active ledger obligation to completion repair obligation projection.
@@ -162,7 +162,7 @@ Current integration is no longer compatibility-only:
 - xox still owns response-evaluator finding to financial/domain obligation mapping, plus `goalFacts`, `requiredDataScopes`, and `requiredMetrics`.
 - xox still owns obligation materializer selection, `data_query_workspace` arguments, business read execution, and product run event persistence.
 - xox still owns timeout/abort wiring, business request assembly, localized retry/status run-event copy, planning-boundary high-volume business tool policy, user/workspace provider settings, and provider tool call to xox planner-step mapping at the real adapter boundary. Provider turn execution, tool-call normalization, boundary validation, retry patching, deferred materialization orchestration, missing-observation recovery, and provider stream trace projection now belong to Agentic OS.
-- Obsolete local harness helper files are intentionally removed: `agent-run-engine.ts`, `turn-resolver.ts`, `agent-action-runtime.ts`, `context-engine/index.ts`, the former top-level `agentic-os-adapter.ts`, `planner.ts`, `planning-session.ts`, `turn-intake-resolver.ts`, `direct-answer-runtime.ts`, `clarification-resume.ts`, `loop-readiness-check.ts`, `memory-safety.ts`, `runtime-trace-events.ts`, `ag-ui-projection.ts`, `final-answer-claim-extractor.ts`, `runtime/provider-failover-policy.ts`, `runtime/provider-request-shaper.ts`, `runtime/provider-probe.ts`, `runtime/tool-call-repair.ts`, `runtime/high-volume-tool-policy.ts`, `runtime/openai-agents-adapter.ts`, `runtime/openai-compatible-chat-adapter.ts`, `runtime-plan-reader.ts`, `apps/api/src/agent/sandbox/*` runtime files, and provider runtime duplicates now owned by Agentic OS packages.
+- Obsolete local harness helper files are intentionally removed: `agent-run-engine.ts`, `turn-resolver.ts`, `agent-action-runtime.ts`, `context-engine/index.ts`, the former top-level `agentic-os-adapter.ts`, `planner.ts`, `planning-session.ts`, `turn-intake-resolver.ts`, `direct-answer-runtime.ts`, `clarification-resume.ts`, `loop-readiness-check.ts`, `loop-obligations.ts`, `memory-safety.ts`, `runtime-trace-events.ts`, `ag-ui-projection.ts`, `final-answer-claim-extractor.ts`, `runtime/provider-failover-policy.ts`, `runtime/provider-request-shaper.ts`, `runtime/provider-probe.ts`, `runtime/tool-call-repair.ts`, `runtime/high-volume-tool-policy.ts`, `runtime/openai-agents-adapter.ts`, `runtime/openai-compatible-chat-adapter.ts`, `runtime-plan-reader.ts`, `apps/api/src/agent/sandbox/*` runtime files, and provider runtime duplicates now owned by Agentic OS packages.
 
 This is a real kernel introduction. Remaining package work is registry/release hardening, not code copying.
 

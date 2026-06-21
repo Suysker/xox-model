@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Row } from '../src/db/schema.js'
 import { buildEvidenceLedger } from '../src/agent/evidence-ledger.js'
-import { loopObligationsFromResponseEvaluation, planLoopObligations } from '../src/agent/loop-obligations.js'
+import { loopObligationsFromResponseEvaluation, planLoopObligations } from '../src/agent/loop-obligation-ledger.js'
 import { evaluateAssistantResponse } from '../src/agent/response-evaluator.js'
 import type { AgentToolObservation } from '../src/agent/tool-observation-continuation.js'
 
