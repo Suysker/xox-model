@@ -83,7 +83,7 @@ Expected result:
 
 ## Next Cut
 
-After M139, `approval-executor.ts` and `action-graph-store.ts` are also deleted from the root agent directory and moved to host-prefixed `agentic-os/xox-*adapter.ts` files. Remaining root `apps/api/src/agent` files are mostly business adapters, provider settings, memory/context, action/evidence/domain projection and product transcript/timeline. The next high-value cuts should target large mixed root files where generic harness responsibilities still remain, especially `context-pack.ts`, `active-memory-recall.ts`, and transcript/timeline projection.
+After M140, `approval-executor.ts`, `action-graph-store.ts`, `active-memory-recall.ts`, and `memory/active-memory-subagent.ts` are also deleted from the root agent directory or memory subtree. Remaining root `apps/api/src/agent` files are mostly business adapters, provider settings, memory persistence/Memory Center, action/evidence/domain projection and product transcript/timeline. The next high-value cuts should target large mixed root files where generic harness responsibilities still remain, especially `context-pack.ts` and transcript/timeline projection.
 
 ## Implementation Notes
 

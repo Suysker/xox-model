@@ -763,15 +763,28 @@ describe('Agent ADR architecture boundaries', () => {
     expect(memory).not.toContain('message.match')
   })
 
-  it('keeps active memory recall as a harness context subsystem, not a business executor', () => {
+  it('keeps active memory recall runtime in Agentic OS core instead of xox root agent files', () => {
     expect(existsSync(join(srcRoot, 'agent', 'memory-safety.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'active-memory-recall.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'memory', 'active-memory-subagent.ts'))).toBe(false)
     const memory = source('agent/memory.ts')
     expect(memory).toContain("@agentic-os/core")
     expect(memory).toContain('normalizeSecretSafeText')
     expect(memory).not.toContain("from './memory-safety.js'")
+    const contextPack = source('agent/context-pack.ts')
+    expect(contextPack).toContain("@agentic-os/core")
+    expect(contextPack).toContain('createAgentActiveMemoryRecallRuntime')
+    expect(contextPack).not.toContain("from './active-memory-recall.js'")
+    expect(contextPack).not.toContain("from './memory/active-memory-subagent.js'")
+
+    for (const file of sourceFilesUnder('agent')) {
+      expect(source(file), `${file} must not import the deleted active memory recall harness`).not.toContain("from './active-memory-recall.js'")
+      expect(source(file), `${file} must not import the deleted active memory recall harness`).not.toContain("from '../active-memory-recall.js'")
+      expect(source(file), `${file} must not import the deleted active memory prompt pack`).not.toContain("from './memory/active-memory-subagent.js'")
+      expect(source(file), `${file} must not import the deleted active memory prompt pack`).not.toContain("from '../memory/active-memory-subagent.js'")
+    }
 
     const memoryFiles = [
-      'agent/active-memory-recall.ts',
       'agent/memory-events.ts',
       'agent/memory-kernel.ts',
       'agent/memory-retriever.ts',
