@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentActionRequest, AgentMessage, AgentNavigationEvent, AgentPlanStep, AgentRunEvent, AgentTranscriptSection } from '@xox/contracts'
 import { projectAgentServerAgUiEvents } from '@agentic-os/server'
-import { buildAgentTranscriptItems, type AgentProjectionState } from '../src/agent/agent-transcript-projector.js'
-import { buildAgentTimelineItems, buildAgentTranscriptNodes } from '../src/agent/agent-timeline-projector.js'
+import { buildAgentTranscriptItems, type AgentProjectionState } from '../src/agent/agentic-os/xox-thread-transcript-adapter.js'
+import { buildAgentTimelineItems, buildAgentTranscriptNodes } from '../src/agent/agentic-os/xox-thread-timeline-adapter.js'
 
 const createdAt = '2026-05-22T00:00:00.000Z'
 

@@ -2,8 +2,8 @@ import { projectAgentServerAgUiEvents, projectAgentServerRunSubmissionView } fro
 import type { AgentActionRequest, AgentAgUiEvent, AgentNavigationEvent, AgentPlanStep, AgentSendResponse } from '@xox/contracts'
 import type { Row } from '../../db/schema.js'
 import type { CurrentUser } from '../../modules/auth.js'
-import { buildAgentTranscriptItems } from '../agent-transcript-projector.js'
-import { buildAgentTimelineItems, buildAgentTranscriptNodes } from '../agent-timeline-projector.js'
+import { buildAgentTranscriptItems } from './xox-thread-transcript-adapter.js'
+import { buildAgentTimelineItems, buildAgentTranscriptNodes } from './xox-thread-timeline-adapter.js'
 import {
   sortXoxRunEventsByOsView,
   xoxActionRequestToOsActionRequest,

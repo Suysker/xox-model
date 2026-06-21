@@ -1,6 +1,6 @@
 # M142 One-Shot Host Harness Amputation
 
-Status: In Progress (lifecycle event draft cut started)
+Status: In Progress (evidence/final-review/obligation root framework deleted)
 
 Date: 2026-06-21
 
@@ -84,6 +84,59 @@ Remaining M142 hard targets:
 - Move generic transcript/timeline tree projection out of `agent-transcript-projector.ts` and `agent-timeline-projector.ts`.
 - Shrink `agentic-os/xox-agentic-os-host-kit.ts` further until it is HostProfile/HostAdapter wiring rather than the loop narrative.
 - Continue deleting whole files when the remaining content is only a host harness facade.
+
+### M142b: Agentic OS-Owned Final Gate and Obligation Repair
+
+Status: completed for the evidence/final-review/obligation root framework cut.
+
+What moved to Agentic OS:
+
+- `@agentic-os/core` now owns `evaluateAgentFinalResponseReview()`, a generic final-response gate that orders pending confirmation, pending clarification, missing final answer after observations, provider protocol artifact hygiene, evidence requirement evaluation, empty final answer, and pass.
+- `@agentic-os/core` now generates canonical final-answer and evidence-repair obligations from final-response gate decisions.
+- `@agentic-os/core` evidence requirement obligations support stable host-declared `metadata.obligationId` while preserving the OS-owned lifecycle and projection semantics.
+- `@agentic-os/core` obligation ledger observation updates can accept a host domain evaluator for domain-specific fact satisfaction, without moving the ledger state machine back into xox.
+
+What xox deleted or collapsed:
+
+- Deleted `apps/api/src/agent/evidence-ledger.ts`.
+- Deleted `apps/api/src/agent/response-evaluator.ts`.
+- Deleted `apps/api/src/agent/loop-obligation-ledger.ts`.
+- Moved remaining xox domain evidence/final-review policy into `apps/api/src/agent/agentic-os/xox-final-review-adapter.ts`.
+- `xox-final-review-adapter.ts` no longer owns the generic final gate or constructs repair obligations from response statuses. It supplies xox financial/shareholder requirements, evidence source mapping, localized copy, and product DTO projection around Agentic OS-generated obligations.
+- Architecture tests now guard the deleted root files from returning.
+
+Hardening added during this cut:
+
+- xox host materialization now reads Agentic OS canonical obligation metadata through both top-level metadata and `metadata.host`, because Agentic OS preserves downstream policy as host passthrough instead of understanding xox taxonomies.
+- `needs_more_evidence` can enter the same obligation materialization path as `needs_calculation` and `needs_final_answer`, but only when doing so does not skip a necessary model-visible final-answer turn.
+- Ordered-shareholder evidence is auto-materialized only when the current final candidate already names a concrete shareholder. If the final candidate does not actually answer the entity-specific claim, the loop continues and the model must see the entity read before producing a new final answer.
+- Materialized `runner_obligation` reads are now persisted as visible xox plan steps for audit and UI state. Synthetic `runner_evidence` prerequisites remain observation-only to avoid polluting the user-visible plan.
+
+Reference alignment:
+
+- OpenAI Agents JS keeps the run loop, turn resolution, tool execution, tool output items, interruption handling, and final-output decision inside `Runner` and runner/core modules.
+- Hermes confirms the same loop shape: model turn -> tool calls -> append tool results -> continue/final, with guardrail halt still represented through loop-visible messages.
+- OpenClaw keeps reusable provider/tool-call repair and runtime primitives in packages rather than app-local adapters. This reinforces that xox must not be the Agentic OS blueprint.
+
+Validation evidence for M142b:
+
+```powershell
+cd C:\Github\agentic-os
+npm.cmd run build -w @agentic-os/core
+npm.cmd test -w @agentic-os/core
+
+cd C:\Github\xox-model
+npm.cmd run build:api
+npm.cmd run test --workspace @xox/api -- tests/api.test.ts -t "requires model-visible ordered shareholder evidence|keeps shareholder fact obligations open|repairs shareholder fact obligations|replays repairable sandbox failures"
+npm.cmd run test --workspace @xox/api -- tests/response-evaluator.test.ts tests/loop-obligation-ledger.test.ts tests/agent-architecture.test.ts tests/agent-transcript.test.ts
+npm.cmd run test:api
+```
+
+Remaining M142 hard targets after M142b:
+
+- `apps/api/src/agent/agentic-os/xox-agentic-os-host-kit.ts` is still too large and must continue shrinking toward HostProfile/HostAdapter wiring.
+- `apps/api/src/agent/agentic-os/xox-thread-transcript-adapter.ts` and `xox-thread-timeline-adapter.ts` remain xox product projection adapters; generic projection work should continue moving into Agentic OS server/react packages where still present.
+- `apps/api/src/agent/agentic-os/xox-runtime-adapter.ts` and runtime planning adapters must remain provider settings/DTO mappers and must not become a second runtime.
 
 ## One-Shot Scope
 

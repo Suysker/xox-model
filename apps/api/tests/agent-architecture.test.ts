@@ -268,9 +268,12 @@ describe('Agent ADR architecture boundaries', () => {
     expect(hostKit).not.toContain('function responseEventObligationLedger')
     expect(hostKit).not.toContain('projection.openCount = projection.obligations.filter')
 
-    const ledger = source('agent/loop-obligation-ledger.ts')
-    expect(ledger).toContain("@agentic-os/core")
-    expect(ledger).toContain('projectObligationLedgerWithAdditionalObligations')
+    expect(existsSync(join(srcRoot, 'agent', 'loop-obligation-ledger.ts'))).toBe(false)
+    const adapter = source('agent/agentic-os/xox-final-review-adapter.ts')
+    expect(adapter).toContain("@agentic-os/core")
+    expect(adapter).toContain('evaluateAgentFinalResponseReview')
+    expect(adapter).toContain('projectObligationLedgerWithAdditionalObligations')
+    expect(adapter).not.toContain('evaluateAgentFinalResponseGate')
   })
 
   it('keeps runtime-boundary missing-observation repair projection out of the host kit', () => {
@@ -280,23 +283,25 @@ describe('Agent ADR architecture boundaries', () => {
     expect(hostKit).not.toContain('response.sandbox_evidence_missing')
     expect(hostKit).not.toContain('Provider 已产生 sandbox_run_code 工具意图')
 
-    const ledger = source('agent/loop-obligation-ledger.ts')
-    expect(ledger).toContain('projectObligationStateWithAdditionalObligations')
+    expect(existsSync(join(srcRoot, 'agent', 'loop-obligation-ledger.ts'))).toBe(false)
+    const adapter = source('agent/agentic-os/xox-final-review-adapter.ts')
+    expect(adapter).toContain('projectObligationStateWithAdditionalObligations')
   })
 
   it('deletes the local loop-obligations facade and keeps obligation runtime in Agentic OS core', () => {
     expect(existsSync(join(srcRoot, 'agent', 'loop-obligations.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'loop-obligation-ledger.ts'))).toBe(false)
 
     for (const file of sourceFilesUnder('agent')) {
       expect(source(file), `${file} must not import the deleted loop-obligations facade`).not.toContain('loop-obligations')
     }
 
-    const ledger = source('agent/loop-obligation-ledger.ts')
-    expect(ledger).toContain("@agentic-os/core")
-    expect(ledger).toContain('ledgerToObligationPlan')
-    expect(ledger).toContain('projectObligationLedger')
-    expect(ledger).toContain('projectObligationLedgerWithAdditionalObligations')
-    expect(ledger).toContain('projectObligationStateWithAdditionalObligations')
+    const adapter = source('agent/agentic-os/xox-final-review-adapter.ts')
+    expect(adapter).toContain("@agentic-os/core")
+    expect(adapter).toContain('ledgerToObligationPlan')
+    expect(adapter).toContain('projectObligationLedger')
+    expect(adapter).toContain('projectObligationLedgerWithAdditionalObligations')
+    expect(adapter).toContain('projectObligationStateWithAdditionalObligations')
 
     expect(existsSync(join(srcRoot, 'agent', 'obligation-materializer.ts'))).toBe(false)
     const hostKit = source('agent/agentic-os/xox-agentic-os-host-kit.ts')
@@ -312,12 +317,13 @@ describe('Agent ADR architecture boundaries', () => {
       'agent/loop-obligation-ledger.ts',
       'agent/response-evaluator.ts',
     ]) {
-      const content = source(file)
-      expect(content).toContain("@agentic-os/core")
-      expect(content).toContain('evidenceFactsContainKey')
-      expect(content).not.toContain('structured-evidence-utils')
-      expect(content).not.toContain('function objectHasKey')
+      expect(existsSync(join(srcRoot, file))).toBe(false)
     }
+    const adapter = source('agent/agentic-os/xox-final-review-adapter.ts')
+    expect(adapter).toContain("@agentic-os/core")
+    expect(adapter).toContain('evidenceFactsContainKey')
+    expect(adapter).not.toContain('structured-evidence-utils')
+    expect(adapter).not.toContain('function objectHasKey')
   })
 
   it('keeps the tool executor independent from provider SDKs and runtime adapters', () => {

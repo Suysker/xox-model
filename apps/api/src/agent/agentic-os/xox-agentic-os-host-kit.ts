@@ -8,7 +8,6 @@ import type {
   AgentActionRejectionResult as OsActionRejectionResult,
   AgentActionRequest as OsActionRequest,
   AgentContext as OsAgentContext,
-  AgentEvidence as OsAgentEvidence,
   AgentFinalAnswerClaim as OsFinalAnswerClaim,
   AgentLoopObligationMaterializationRequest,
   AgentFinalReview as OsFinalReview,
@@ -104,13 +103,13 @@ import {
   isExecutedSandboxEvidenceFacts,
   type AgentEvidenceItem,
   type AgentFinalAnswerClaim,
-} from '../evidence-ledger.js'
+} from './xox-final-review-adapter.js'
 import {
   addEvaluationResult,
   createGoalContract,
   serializeEvaluation,
   updateGoalStatus,
-} from '../goal-contract.js'
+} from './xox-goal-store-adapter.js'
 import {
   consolidateExecutedActionMemory,
   flushThreadContextToMemoryIfNeeded,
@@ -119,7 +118,7 @@ import { runMemoryDreamingSweep } from '../memory/dreaming-worker.js'
 import {
   evaluateAssistantResponse,
   responseEvaluationSummary,
-} from '../response-evaluator.js'
+} from './xox-final-review-adapter.js'
 import { callRuntimePlanner } from './xox-runtime-planning-adapter.js'
 import {
   configuredRuntimePlannerSource,
@@ -159,12 +158,12 @@ import {
   applyResponseEvaluationToLedger,
   initializeObligationLedger,
   ledgerToObligationPlan,
-  osLedgerFromXoxLedger,
+  osEvidenceFromXoxEvidence,
   runtimeBoundaryMissingObservationRepair,
   serializeObligationLedgerForResponseEvent,
   type AgentLoopLedgerObligation,
   type AgentLoopObligationLedger,
-} from '../loop-obligation-ledger.js'
+} from './xox-final-review-adapter.js'
 import { extractWorkspaceBundleArtifact } from '../workspace-bundle-artifact.js'
 
 export type AgenticOsKernelRunResult = {
@@ -268,11 +267,32 @@ function maxPendingActionsForObjective(objective: string, collectPendingActionsB
   return collectPendingActionsBeforePause ? 2 : 1
 }
 
+function obligationMetadataValue(obligation: AgentLoopLedgerObligation, key: string): unknown {
+  const direct = obligation.metadata?.[key]
+  if (direct !== undefined) return direct
+  const host = obligation.metadata?.host
+  return host && typeof host === 'object' && !Array.isArray(host)
+    ? (host as Record<string, unknown>)[key]
+    : undefined
+}
+
+function obligationMetadataStringArray(obligation: AgentLoopLedgerObligation, key: string): string[] | undefined {
+  const value = obligationMetadataValue(obligation, key)
+  if (!Array.isArray(value)) return undefined
+  const values = value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+  return values.length > 0 ? values : undefined
+}
+
+function xoxObligationKind(obligation: AgentLoopLedgerObligation) {
+  const value = obligationMetadataValue(obligation, 'xoxKind')
+  return typeof value === 'string' ? value : obligation.kind
+}
+
 function dataQueryArgumentsForObligation(obligation: AgentLoopLedgerObligation): DataAgentQueryStep | null {
-  if (obligation.kind !== 'domain_fact') return null
-  if (!obligation.toolNames.includes('data_query_workspace')) return null
-  const scope = obligation.requiredDataScopes?.[0] ?? 'workspace_summary'
-  const metrics = obligation.requiredMetrics ?? []
+  if (xoxObligationKind(obligation) !== 'domain_fact') return null
+  if (!(obligation.toolNames ?? []).includes('data_query_workspace')) return null
+  const scope = obligationMetadataStringArray(obligation, 'requiredDataScopes')?.[0] ?? 'workspace_summary'
+  const metrics = obligationMetadataStringArray(obligation, 'requiredMetrics') ?? []
   return {
     question: obligation.reason,
     scope,
@@ -287,7 +307,7 @@ function obligationMaterializationRequests(
     const toolArguments = dataQueryArgumentsForObligation(obligation)
     if (!toolArguments) return []
     return [{
-      obligationId: obligation.id,
+      obligationId: obligation.obligationId,
       toolName: 'data_query_workspace',
       toolArguments: toolArguments as unknown as OsJsonObject,
     }]
@@ -301,7 +321,7 @@ async function materializeDataObservation(input: {
   plannerSource: AgentPlannerSource
 }) {
   const read = await answerWorkspaceDataQuestion(input.ctx, input.toolArguments)
-  const toolCallId = `runner_obligation_${input.ctx.runId}_${input.obligation.id}`
+  const toolCallId = `runner_obligation_${input.ctx.runId}_${input.obligation.obligationId}`
   if (!read) {
     return storePlannedActionGraph(input.ctx, {
       plannerSource: input.plannerSource,
@@ -316,7 +336,7 @@ async function materializeDataObservation(input: {
         modelContent: JSON.stringify({
           observationType: 'runner_obligation_failure',
           status: 'failed',
-          obligationId: input.obligation.id,
+          obligationId: input.obligation.obligationId,
           reason: 'data_observation_unavailable',
           toolName: 'data_query_workspace',
           toolArguments: input.toolArguments,
@@ -350,9 +370,9 @@ async function materializeLoopObligations(input: {
   taskCache: AgentLoopObligationMaterializationCache
 }): Promise<StoredActionGraph | null> {
   const graphs: StoredActionGraph[] = []
-  const obligationsById = new Map(input.ledger.obligations.map((obligation) => [obligation.id, obligation]))
+  const obligationsById = new Map(input.ledger.obligations.map((obligation) => [obligation.obligationId, obligation]))
   const plan = planObligationMaterialization({
-    ledger: osLedgerFromXoxLedger(input.ledger),
+    ledger: input.ledger,
     taskCache: input.taskCache,
     tasks: obligationMaterializationRequests(input.ledger),
   })
@@ -398,6 +418,29 @@ async function materializeLoopObligations(input: {
     planRows: graphs.flatMap((graph) => graph.planRows),
     plannerSource: graphs.at(-1)?.plannerSource ?? input.plannerSource,
   }
+}
+
+function finalTextMentionsSpecificShareholder(text: string): boolean {
+  return /第\s*(?:\d+|[一二三四五六七八九十]+)\s*(?:个|位)?\s*股东/.test(text) ||
+    /股东\s*[A-Za-zＡ-Ｚ]/.test(text) ||
+    /股东[甲乙丙丁戊己庚辛壬癸]/.test(text)
+}
+
+function canMaterializeEvaluationObligations(input: {
+  evaluation: ReturnType<typeof evaluateAssistantResponse>
+  assistantText: string
+}): boolean {
+  if (
+    input.evaluation.status !== 'needs_calculation' &&
+    input.evaluation.status !== 'needs_more_evidence' &&
+    input.evaluation.status !== 'needs_final_answer'
+  ) {
+    return false
+  }
+  const requiresOrderedEntityEvidence = input.evaluation.findings.some((finding) =>
+    finding.code === 'response.entity_evidence_missing')
+  if (!requiresOrderedEntityEvidence) return true
+  return finalTextMentionsSpecificShareholder(input.assistantText)
 }
 
 function osRunInput(ctx: PlannerContext, objective: string, goalFacts: AgentGoalFacts): OsRunInput {
@@ -1219,20 +1262,6 @@ function loopReadinessSummary(evaluation: ReturnType<typeof serializeEvaluation>
   return 'Loop Readiness Check 需要补充信息。'
 }
 
-function osEvidenceFromXoxEvidence(evidence: ReturnType<typeof buildEvidenceLedger>): OsAgentEvidence[] {
-  return evidence.map((item) => ({
-    kind: item.authority,
-    label: item.summary ?? item.source,
-    value: compactJsonObject({
-      id: item.id,
-      source: item.source,
-      validity: item.validity,
-      subject: item.subject ?? null,
-      facts: item.facts,
-    }),
-  }))
-}
-
 async function addReadinessEvaluation(input: {
   ctx: XoxAgenticOsPlannerContext
   state: XoxAgenticOsRunState
@@ -1768,10 +1797,10 @@ function createXoxAgenticOsHost(
         }
       }
       const reviewIteration = state.loopCoordinator.nextFinalReviewIteration()
-      const reviewObservations = state.loopCoordinator.combineObservations(input.observations)
+      let reviewObservations = state.loopCoordinator.combineObservations(input.observations)
       state.loopCoordinator.mergeHostObservations(reviewObservations)
       applyNewObservationsToLedger(state, reviewObservations, reviewIteration)
-      const evidence = buildEvidenceLedger({
+      let evidence = buildEvidenceLedger({
         threadId: ctx.thread.id,
         runId: ctx.runId,
         observations: reviewObservations,
@@ -1851,7 +1880,7 @@ function createXoxAgenticOsHost(
           ? { status: 'skipped' as const, reason: 'deterministic_evidence_satisfied' as const }
           : null
       const finalAnswerClaims = claimExtraction?.status === 'completed' ? claimExtraction.claims : []
-      const evaluation = claimExtraction?.status === 'completed'
+      let evaluation = claimExtraction?.status === 'completed'
         ? evaluateAssistantResponse({
             goal: state.goal,
             finalAssistantText: input.assistantText,
@@ -1933,10 +1962,10 @@ function createXoxAgenticOsHost(
           },
         }))
       }
-      if (
-        evaluation.status === 'needs_calculation' ||
-        evaluation.status === 'needs_final_answer'
-      ) {
+      if (canMaterializeEvaluationObligations({
+        evaluation,
+        assistantText: input.assistantText,
+      })) {
         const materialized = await materializeLoopObligations({
           ctx,
           ledger: state.obligationLedger,
@@ -1946,6 +1975,27 @@ function createXoxAgenticOsHost(
         if (materialized) {
           applyStoredGraph(state, materialized)
           applyNewObservationsToLedger(state, materialized.observations, reviewIteration)
+          reviewObservations = state.loopCoordinator.combineObservations(input.observations)
+          state.loopCoordinator.mergeHostObservations(reviewObservations)
+          evidence = buildEvidenceLedger({
+            threadId: ctx.thread.id,
+            runId: ctx.runId,
+            observations: reviewObservations,
+          })
+          evaluation = evaluateAssistantResponse({
+            goal: state.goal,
+            finalAssistantText: input.assistantText,
+            observations: reviewObservations,
+            evidence,
+            runtimeFacts: goalFacts,
+            finalAnswerClaims,
+            pendingActionCount,
+          })
+          applyResponseEvaluationToLedger({
+            ledger: state.obligationLedger,
+            evaluation,
+            iteration: reviewIteration,
+          })
           obligationPlan = ledgerToObligationPlan({
             ledger: state.obligationLedger,
             objective: state.objective,
@@ -1954,6 +2004,51 @@ function createXoxAgenticOsHost(
             ledger: state.obligationLedger,
             evaluation,
           })
+          await addRunEvent(ctx.db, agentServerRunLifecycleEvents.finalReviewed({
+            threadId: ctx.thread.id,
+            runId: ctx.runId,
+            evaluationStatus: evaluation.status,
+            confidence: evaluation.confidence,
+            evidenceCount: evidence.length,
+            findings: evaluation.findings,
+            requiredEvidence: evaluation.requiredEvidence,
+            finalAnswerClaims,
+            obligationLedger: responseEventLedger,
+            obligationPlan,
+            copy: {
+              title: '最终回答证据复检',
+              message: responseEvaluationSummary(evaluation),
+            },
+          }))
+          await addRunEvent(ctx.db, agentServerRunLifecycleEvents.responseEvaluated({
+            threadId: ctx.thread.id,
+            runId: ctx.runId,
+            goalId: state.goal.id,
+            evaluationStatus: evaluation.status,
+            confidence: evaluation.confidence,
+            evidenceCount: evidence.length,
+            findings: evaluation.findings,
+            requiredEvidence: evaluation.requiredEvidence,
+            finalAnswerClaims,
+            claimReviewStatus: claimExtraction?.status ?? null,
+            claimReviewReason: claimExtraction?.status === 'unavailable' ? claimExtraction.reason : null,
+            obligationLedger: responseEventLedger,
+            obligationPlan,
+            nextPlannerBrief: evaluation.nextPlannerBrief,
+            data: {
+              evidence: evidence.map((item) => ({
+                id: item.id,
+                authority: item.authority,
+                source: item.source,
+                subject: item.subject,
+                summary: item.summary,
+              })),
+            },
+            copy: {
+              title: '最终回答证据复检',
+              message: responseEvaluationSummary(evaluation),
+            },
+          }))
         }
       }
       const latestReadinessStatus = await latestGoalEvaluationStatus(ctx, state)
@@ -1995,7 +2090,7 @@ function createXoxAgenticOsHost(
         repairable: evaluation.status === 'needs_calculation' ||
           evaluation.status === 'needs_more_evidence' ||
           evaluation.status === 'needs_final_answer',
-        obligations: ledgerToReviewObligations(osLedgerFromXoxLedger(state.obligationLedger)),
+        obligations: ledgerToReviewObligations(state.obligationLedger),
         evidence: osEvidence,
       }
     },

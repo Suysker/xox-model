@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import type { ResponseEvaluation } from '../src/agent/response-evaluator.js'
+import { finalResponseGateDecisionObligations } from '@agentic-os/core'
+import type { AgentEvidenceRequirementEvaluation } from '@agentic-os/contracts'
+import type {
+  AgentEvidenceRequirement,
+  ResponseEvaluation,
+} from '../src/agent/agentic-os/xox-final-review-adapter.js'
 import type { AgentToolObservation } from '../src/agent/agentic-os/xox-tool-observation-adapter.js'
 import {
   activeLedgerObligations,
@@ -8,13 +13,14 @@ import {
   canAttemptFinalAnswer,
   initializeObligationLedger,
   ledgerToObligationPlan,
+  osEvidenceRequirementFromXoxRequirement,
   runtimeBoundaryMissingObservationRepair,
   serializeObligationLedger,
   serializeObligationLedgerForResponseEvent,
-} from '../src/agent/loop-obligation-ledger.js'
+} from '../src/agent/agentic-os/xox-final-review-adapter.js'
 
 function evaluation(overrides: Partial<ResponseEvaluation> = {}): ResponseEvaluation {
-  return {
+  return withGeneratedObligations({
     status: 'needs_calculation',
     confidence: 0.9,
     requiredEvidence: [
@@ -31,6 +37,87 @@ function evaluation(overrides: Partial<ResponseEvaluation> = {}): ResponseEvalua
     ],
     nextPlannerBrief: '继续取得缺失 evidence。',
     ...overrides,
+  })
+}
+
+function withGeneratedObligations(evaluation: ResponseEvaluation): ResponseEvaluation {
+  if (evaluation.obligations !== undefined || evaluation.status === 'pass') return evaluation
+  if (evaluation.status === 'awaiting_confirmation' || evaluation.status === 'awaiting_clarification') {
+    return evaluation
+  }
+  if (evaluation.status === 'needs_final_answer') {
+    return {
+      ...evaluation,
+      obligations: finalResponseGateDecisionObligations({
+        decision: {
+          kind: 'needs_final_answer',
+          finalText: '',
+          evidenceIds: evaluation.findings.flatMap((finding) => finding.evidenceIds),
+        },
+        evidenceRequirements: [],
+      }),
+    }
+  }
+  const requirements = evaluation.requiredEvidence.map((requirement): AgentEvidenceRequirement => {
+    const mapped: AgentEvidenceRequirement = {
+      authority: requirement.authority,
+      reason: requirement.reason,
+      source: 'goal_facts',
+    }
+    if (isXoxEvidenceSubject(requirement.subject)) {
+      mapped.subject = requirement.subject
+    }
+    return mapped
+  })
+  const osRequirements = requirements.map(osEvidenceRequirementFromXoxRequirement)
+  return {
+    ...evaluation,
+    obligations: finalResponseGateDecisionObligations({
+      decision: {
+        kind: 'needs_evidence',
+        finalText: '',
+        evidenceIds: evaluation.findings.flatMap((finding) => finding.evidenceIds),
+        evidenceRequirementEvaluation: requirementEvaluation(evaluation, osRequirements),
+      },
+      evidenceRequirements: osRequirements,
+    }),
+  }
+}
+
+function isXoxEvidenceSubject(value: string | undefined): value is NonNullable<AgentEvidenceRequirement['subject']> {
+  return value === 'workspace' ||
+    value === 'shareholder' ||
+    value === 'member' ||
+    value === 'ledger_entry' ||
+    value === 'forecast' ||
+    value === 'calculation' ||
+    value === 'action'
+}
+
+function requirementEvaluation(
+  evaluation: ResponseEvaluation,
+  requirements: ReturnType<typeof osEvidenceRequirementFromXoxRequirement>[],
+): AgentEvidenceRequirementEvaluation {
+  const invalidEvidenceIds = evaluation.findings
+    .filter((finding) => finding.code === 'response.sandbox_evidence_invalid')
+    .flatMap((finding) => finding.evidenceIds)
+  const findings = requirements.map((requirement) => {
+    const invalid = requirement.authority === 'sandbox' && invalidEvidenceIds.length > 0
+    return {
+      requirement,
+      status: invalid ? 'invalid' as const : 'missing' as const,
+      reason: invalid ? `${requirement.reason} Matching evidence was invalid or insufficient.` : requirement.reason,
+      matchedEvidenceIds: invalid ? invalidEvidenceIds : [],
+      validEvidenceIds: [],
+      invalidEvidenceIds: invalid ? invalidEvidenceIds : [],
+    }
+  })
+  return {
+    status: 'needs_evidence',
+    findings,
+    satisfiedCount: 0,
+    missingCount: findings.filter((finding) => finding.status === 'missing').length,
+    invalidCount: findings.filter((finding) => finding.status === 'invalid').length,
   }
 }
 
@@ -326,7 +413,7 @@ describe('Agent loop obligation ledger', () => {
 
     expect(ledger.obligations).toEqual([])
     expect(projection).toMatchObject({
-      openCount: 0,
+      openCount: 1,
       invalidCount: 1,
       obligations: [
         expect.objectContaining({
@@ -432,9 +519,12 @@ describe('Agent loop obligation ledger', () => {
     expect(repair?.obligationLedger.obligations).toHaveLength(1)
     expect(repair?.obligationPlan.obligations).toHaveLength(1)
     expect(repair?.obligationPlan.obligations[0]).toMatchObject({
-      id: 'loop_obligation_1_sandbox_calculation',
-      kind: 'sandbox_calculation',
+      obligationId: 'loop_obligation_1_sandbox_calculation',
+      kind: 'tool_observation',
       toolNames: ['sandbox_run_code'],
+      metadata: expect.objectContaining({
+        host: expect.objectContaining({ xoxKind: 'sandbox_calculation' }),
+      }),
     })
   })
 })

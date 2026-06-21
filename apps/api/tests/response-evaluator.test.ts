@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { Row } from '../src/db/schema.js'
-import { buildEvidenceLedger } from '../src/agent/evidence-ledger.js'
-import { loopObligationsFromResponseEvaluation, planLoopObligations } from '../src/agent/loop-obligation-ledger.js'
-import { evaluateAssistantResponse } from '../src/agent/response-evaluator.js'
+import {
+  buildEvidenceLedger,
+  evaluateAssistantResponse,
+  loopObligationsFromResponseEvaluation,
+  planLoopObligations,
+} from '../src/agent/agentic-os/xox-final-review-adapter.js'
 import type { AgentToolObservation } from '../src/agent/agentic-os/xox-tool-observation-adapter.js'
 
 function goal(facts: Record<string, unknown> = {}): Row<'agent_goals'> {
@@ -605,14 +608,26 @@ describe('Agent response evaluator', () => {
     const obligations = loopObligationsFromResponseEvaluation(evaluation)
     expect(obligations).toEqual([
       expect.objectContaining({
-        kind: 'sandbox_calculation',
+        kind: 'tool_observation',
+        obligationId: 'loop_obligation_1_sandbox_calculation',
         toolNames: ['sandbox_run_code'],
-        findingCodes: expect.arrayContaining(['response.sandbox_evidence_missing']),
+        metadata: expect.objectContaining({
+          host: expect.objectContaining({
+            xoxKind: 'sandbox_calculation',
+            findingCodes: expect.arrayContaining(['response.sandbox_evidence_missing']),
+          }),
+        }),
       }),
       expect.objectContaining({
-        kind: 'domain_fact',
-        subject: 'shareholder',
+        kind: 'tool_observation',
+        obligationId: 'loop_obligation_2_ordered_entity_fact',
         toolNames: ['data_query_workspace'],
+        metadata: expect.objectContaining({
+          host: expect.objectContaining({
+            xoxKind: 'domain_fact',
+            subject: 'shareholder',
+          }),
+        }),
       }),
     ])
     expect(planLoopObligations({ objective: 'test objective', obligations })).toMatchObject({

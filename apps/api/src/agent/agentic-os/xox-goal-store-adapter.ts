@@ -9,12 +9,12 @@ import type {
   AgentGoalStatus,
 } from '@xox/contracts'
 import type { Kysely } from 'kysely'
-import type { Database, Row } from '../db/schema.js'
-import { jsonString, parseJson } from '../db/database.js'
-import { newId } from '../core/security.js'
-import { utcNow } from '../core/time.js'
-import type { CurrentUser } from '../modules/auth.js'
-import { sanitizeAgentGoalFacts } from './runtime-goal-facts.js'
+import type { Database, Row } from '../../db/schema.js'
+import { jsonString, parseJson } from '../../db/database.js'
+import { newId } from '../../core/security.js'
+import { utcNow } from '../../core/time.js'
+import type { CurrentUser } from '../../modules/auth.js'
+import { sanitizeAgentGoalFacts } from '../runtime-goal-facts.js'
 
 const DEFAULT_GOAL_PAGES: AgentGoalContract['scope']['pages'] = ['model', 'ledger', 'variance', 'versions', 'share']
 const DEFAULT_CAPABILITIES = ['data', 'draft', 'import_export', 'ledger', 'memory', 'share', 'version']

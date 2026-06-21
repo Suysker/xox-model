@@ -5,7 +5,7 @@ import type { CurrentUser } from '../modules/auth.js'
 import type { ParsedWorkspaceBundleArtifact } from './workspace-bundle-artifact.js'
 import type { AgentAutomationLevel } from './tool-policy.js'
 import type { AgentToolObservation } from './agentic-os/xox-tool-observation-adapter.js'
-import type { AgentLoopObligationPlan } from './loop-obligation-ledger.js'
+import type { AgentLoopObligationPlan } from './agentic-os/xox-final-review-adapter.js'
 import type { AgentGoalFacts } from '@xox/contracts'
 
 export type PlannerContext = {

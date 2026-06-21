@@ -234,7 +234,7 @@ function observationFromRead(item: ReadDraft, sequenceHint: number): AgentToolOb
 }
 
 function isRunnerOwnedObservationLane(lane: unknown) {
-  return lane === 'runner_evidence' || lane === 'runner_obligation'
+  return lane === 'runner_evidence'
 }
 
 type AddAgentPlanStepInput = {

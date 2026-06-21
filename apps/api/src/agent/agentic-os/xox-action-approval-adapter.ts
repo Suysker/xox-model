@@ -19,11 +19,15 @@ import { addMessage } from './xox-thread-store-adapter.js'
 import { redactSecretLikeContent } from '../memory.js'
 import { executeAgentTool } from '../tool-executor.js'
 import { evaluateAgentGoal } from './xox-loop-readiness-adapter.js'
-import { getGoalForRun, serializeEvaluation, updateGoalStatus } from '../goal-contract.js'
-import { buildEvidenceLedger } from '../evidence-ledger.js'
-import { evaluateAssistantResponse, responseEvaluationSummary } from '../response-evaluator.js'
+import { getGoalForRun, serializeEvaluation, updateGoalStatus } from './xox-goal-store-adapter.js'
+import {
+  buildEvidenceLedger,
+  evaluateAssistantResponse,
+  loopObligationsFromResponseEvaluation,
+  planLoopObligations,
+  responseEvaluationSummary,
+} from './xox-final-review-adapter.js'
 import { readRuntimeGoalFacts } from '../runtime-goal-facts.js'
-import { loopObligationsFromResponseEvaluation, planLoopObligations } from '../loop-obligation-ledger.js'
 import {
   consolidateAgentMemoryCandidates,
   consolidateExecutedActionMemory,
