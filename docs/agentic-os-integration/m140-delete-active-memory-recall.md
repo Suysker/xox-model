@@ -17,8 +17,8 @@ These files are not xox business logic. They own generic harness behavior: run-s
 
 After M140, xox keeps only the memory peripherals:
 
-- xox DB query/ranking adapter in `apps/api/src/agent/memory-retriever.ts`;
-- xox memory event persistence in `apps/api/src/agent/memory-events.ts`;
+- historical M140: xox DB query/ranking adapter in `apps/api/src/agent/memory-retriever.ts`; after M147 this is collapsed into `apps/api/src/agent/memory.ts`;
+- historical M140: xox memory event persistence in `apps/api/src/agent/memory-events.ts`; after M147 this is collapsed into `apps/api/src/agent/memory.ts`;
 - Memory Center APIs and product projection;
 - Chinese run-event copy and xox-specific row mapping.
 
@@ -29,8 +29,8 @@ After M140, xox keeps only the memory peripherals:
 | active recall cache, timeout and circuit breaker | none | `@agentic-os/core` active-memory recall runtime |
 | prompt pack budget and untrusted `<memory_context>` rendering | none | `@agentic-os/core` active-memory prompt pack |
 | memory citations and selected memory ids | none | `@agentic-os/core` active-memory prompt pack |
-| xox memory table ranking and lane/status policy | `memory-retriever.ts` | host business adapter |
-| xox run/memory event persistence and Chinese copy | `context-pack.ts` callback + memory event modules | host adapter callbacks |
+| xox memory table ranking and lane/status policy | historical M140: `memory-retriever.ts`; after M147: `memory.ts` durable memory store | host business adapter |
+| xox run/memory event persistence and Chinese copy | historical M140: `context-pack.ts` callback + memory event modules; after M147: `memory.ts` + concrete callbacks | host adapter callbacks |
 | context DTO fields expected by existing prompts | `context-pack.ts` | host product DTO |
 
 ## Dependency Graph

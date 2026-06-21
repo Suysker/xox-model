@@ -56,7 +56,7 @@ describe('Agent ADR architecture boundaries', () => {
       'agent/agentic-os/xox-action-graph-adapter.ts',
       'agent/agentic-os/xox-runtime-adapter.ts',
       'agent/agentic-os/xox-tool-observation-adapter.ts',
-      'agent/memory-consolidator.ts',
+      'agent/memory.ts',
     ]
     const forbiddenDirectTypeLiterals = [
       'goal_contract_created',
@@ -110,6 +110,20 @@ describe('Agent ADR architecture boundaries', () => {
     expect(worker).not.toContain("from './xox-turn-intake-adapter.js'")
     expect(worker).not.toContain("from './agent-run-engine.js'")
     expect(worker).not.toContain('goal-run-engine')
+  })
+
+  it('deletes misleading root agent data and planning facades', () => {
+    expect(existsSync(join(srcRoot, 'agent', 'data-agent.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'planning-context.ts'))).toBe(false)
+
+    const draftBuilder = source('agent/action-draft-builder.ts')
+    expect(draftBuilder).toContain('export type PlannerContext')
+
+    const handlers = source('agent/runtime-intent-handlers.ts')
+    expect(handlers).toContain('WorkspaceDataQueryStep')
+    expect(handlers).toContain('answerWorkspaceDataQuestion')
+    expect(handlers).not.toContain('DataAgentQueryStep')
+    expect(handlers).not.toContain("from './data-agent.js'")
   })
 
   it('keeps real-provider smoke outside the production agent runtime tree', () => {
@@ -884,10 +898,18 @@ describe('Agent ADR architecture boundaries', () => {
       expect(source(file), `${file} must not import the deleted active memory prompt pack`).not.toContain("from '../memory/active-memory-subagent.js'")
     }
 
-    const memoryFiles = [
+    const deletedMemoryFacades = [
       'agent/memory-events.ts',
       'agent/memory-consolidator.ts',
       'agent/memory-retriever.ts',
+      'agent/memory-candidate-detector.ts',
+      'agent/memory-promotion-policy.ts',
+    ]
+    for (const file of deletedMemoryFacades) {
+      expect(existsSync(join(srcRoot, file))).toBe(false)
+    }
+
+    const memoryFiles = [
       'agent/memory.ts',
     ]
     expect(existsSync(join(srcRoot, 'agent', 'memory-kernel.ts'))).toBe(false)

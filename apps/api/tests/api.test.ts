@@ -17,14 +17,14 @@ import { sanitizeAgentGoalFacts } from '../src/agent/runtime-goal-facts.js'
 import { resolveActionAuthority } from '../src/agent/tool-policy.js'
 import { createProductDefaultModel, projectModel } from '@xox/domain'
 import { recoverRunningAgentRuns } from '../src/agent/agentic-os/xox-run-worker-adapter.js'
-import { rememberAgentMemory } from '../src/agent/memory.js'
-import { retrieveAgentMemories } from '../src/agent/memory-retriever.js'
-import { decideMemoryCandidate } from '../src/agent/memory-promotion-policy.js'
 import {
+  decideMemoryCandidate,
   memoryCandidateFromCompletedGoal,
   memoryCandidateFromEvaluatorFinding,
   memoryCandidatesFromExecutedActions,
-} from '../src/agent/memory-candidate-detector.js'
+  rememberAgentMemory,
+  retrieveAgentMemories,
+} from '../src/agent/memory.js'
 import { addRunEvent } from '../src/agent/agentic-os/xox-run-event-store-adapter.js'
 
 type JsonResponse = {

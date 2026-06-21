@@ -27,7 +27,7 @@ import {
   type RuntimePlannerStep,
 } from './action-draft-builder.js'
 import type { AgentActionDraft } from './action-draft-builder.js'
-import type { PlannerContext } from './planning-context.js'
+import type { PlannerContext } from './action-draft-builder.js'
 import type {
   SandboxDataBundle,
   SandboxToolDocument,

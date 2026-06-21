@@ -2,8 +2,7 @@ import { parseJson } from '../../db/database.js'
 import type { Database, Row } from '../../db/schema.js'
 import type { Kysely } from 'kysely'
 import type { CurrentUser } from '../../modules/auth.js'
-import { listAgentMemories, serializeMemory } from '../memory.js'
-import { retrieveAgentMemories } from '../memory-retriever.js'
+import { listAgentMemories, retrieveAgentMemories, serializeMemory } from '../memory.js'
 import { listDailyMemoryNotes } from './daily-notes.js'
 
 function textMatches(value: string, query: string) {

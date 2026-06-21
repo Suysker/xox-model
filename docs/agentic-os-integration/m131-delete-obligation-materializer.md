@@ -14,7 +14,7 @@ The removed file was a single-ingress host harness facade. Its only production c
 After M131, xox keeps only the host adapter work at the real final-review boundary:
 
 - decide that a xox `domain_fact` obligation can be materialized by `data_query_workspace`;
-- construct xox `DataAgentQueryStep` arguments from required scopes/metrics;
+- construct xox workspace data query arguments from required scopes/metrics; after M146 this uses `WorkspaceDataQueryStep`;
 - execute the xox read;
 - persist xox action graph rows and localized run events.
 
@@ -25,8 +25,8 @@ After M131, xox keeps only the host adapter work at the real final-review bounda
 | Obligation materialization planning | `@agentic-os/core planObligationMaterialization()` |
 | Generic started/completed materialization payloads | `@agentic-os/core` |
 | xox `domain_fact -> data_query_workspace` selection | private helper in `apps/api/src/agent/agentic-os/xox-agentic-os-host-kit.ts` |
-| xox data read execution | `apps/api/src/agent/data-agent.ts` |
-| xox action/read row persistence | `apps/api/src/agent/action-graph-store.ts` |
+| xox data read execution | historical M131: `apps/api/src/agent/data-agent.ts`; after M146: `apps/api/src/agent/runtime-intent-handlers.ts` workspace data query handler |
+| xox action/read row persistence | historical M131: `apps/api/src/agent/action-graph-store.ts`; after M139: `apps/api/src/agent/agentic-os/xox-action-graph-adapter.ts` |
 | xox durable event storage and Chinese copy | `apps/api/src/agent/agentic-os/xox-run-event-store-adapter.ts` + host-kit call sites |
 
 ## Dependency Graph
@@ -35,8 +35,8 @@ After M131, xox keeps only the host adapter work at the real final-review bounda
 flowchart TD
     FinalReview["xox host-kit final review"] --> CorePlan["@agentic-os/core planObligationMaterialization"]
     FinalReview --> XoxSelect["private xox obligation -> data query args"]
-    XoxSelect --> DataAgent["xox data-agent.ts"]
-    DataAgent --> GraphStore["xox action-graph-store.ts"]
+    XoxSelect --> DataQuery["xox runtime-intent-handlers.ts workspace data query"]
+    DataQuery --> GraphStore["xox-action-graph-adapter.ts"]
     FinalReview --> Events["xox-run-event-store-adapter.ts"]
 ```
 

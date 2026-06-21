@@ -44,11 +44,11 @@ import { submitAgentMessageRun } from './agentic-os/xox-run-submission-adapter.j
 import { addRunEvent, agentThreadEvents, listSerializedRunEvents } from './agentic-os/xox-run-event-store-adapter.js'
 import { addMessage } from './agentic-os/xox-thread-store-adapter.js'
 import { resumeXoxAgenticOsRunAfterActionConfirmation } from './agentic-os/xox-agentic-os-host-kit.js'
-import { consolidateAgentMemoryCandidates } from './memory-consolidator.js'
 import {
+  consolidateAgentMemoryCandidates,
   memoryCandidateFromCancelledAction,
   memoryCandidateFromEditedAction,
-} from './memory-candidate-detector.js'
+} from './memory.js'
 import {
   assertActionUpdateAllowed,
   coerceAgentActionKind,

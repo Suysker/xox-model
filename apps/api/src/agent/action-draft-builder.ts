@@ -1,16 +1,25 @@
 import type {
   AgentActionKind,
+  AgentGoalFacts,
   AgentNavigationEvent,
   AgentPlanStepStatus,
   AgentToolObservationLane,
   AgentToolObservationOutcome,
 } from '@xox/contracts'
+import type { Kysely } from 'kysely'
 import {
   buildToolSupervisorEmptyResultFailureObservation,
   classifyToolObservationOutcome,
 } from '@agentic-os/core'
 import { providerToolCallBoundaryObservations } from '@agentic-os/runtime-openai-compatible'
+import type { Database, Row } from '../db/schema.js'
+import type { Settings } from '../core/settings.js'
+import type { CurrentUser } from '../modules/auth.js'
 import { redactSecretLikeContent } from './memory.js'
+import type { ParsedWorkspaceBundleArtifact } from './workspace-bundle-artifact.js'
+import type { AgentAutomationLevel } from './tool-policy.js'
+import type { AgentToolObservation } from './agentic-os/xox-tool-observation-adapter.js'
+import type { AgentLoopObligationPlan } from './agentic-os/xox-final-review-adapter.js'
 import type { RuntimePlanError, RuntimePlanResult } from './agentic-os/xox-runtime-adapter.js'
 
 export type AgentActionDraft = {
@@ -39,6 +48,23 @@ export type ReadDraft = {
   syntheticObservation?: boolean
   navigation?: AgentNavigationEvent | null
   status?: AgentPlanStepStatus
+}
+
+export type PlannerContext = {
+  db: Kysely<Database>
+  settings: Settings
+  user: CurrentUser
+  workspace: Row<'workspaces'>
+  threadId: string
+  runId: string
+  message: string
+  planningTurn?: 'user_objective' | 'evaluator_repair'
+  priorObservations?: AgentToolObservation[]
+  loopObligationPlan?: AgentLoopObligationPlan
+  goalFacts?: AgentGoalFacts
+  automationLevel: AgentAutomationLevel
+  abortSignal?: AbortSignal
+  providedWorkspaceBundle?: ParsedWorkspaceBundleArtifact
 }
 
 export type PlannedItem = AgentActionDraft | ReadDraft

@@ -1,22 +1,21 @@
+import { createHash } from 'node:crypto'
 import type { Kysely } from 'kysely'
 import {
   containsSecretLikeContent,
   normalizeSecretSafeText,
   redactSecretLikeContent,
 } from '@agentic-os/core'
+import { applyMmr, buildMemoryFlushPlan, lexicalRelevance } from '@xox/agent-memory-core'
+import { agentServerRunLifecycleEvents } from '@agentic-os/server'
 import type { Database, Row } from '../db/schema.js'
-import { parseJson } from '../db/database.js'
+import { jsonString, parseJson } from '../db/database.js'
 import { forbidden, notFound } from '../core/http.js'
 import { newId } from '../core/security.js'
 import { utcNow } from '../core/time.js'
 import type { CurrentUser } from '../modules/auth.js'
-import { addMemoryEvent } from './memory-events.js'
-import {
-  decideMemoryCandidate,
-  type AgentMemoryKind,
-  type AgentMemoryLane,
-  type AgentMemoryStatus,
-} from './memory-promotion-policy.js'
+import { addRunEvent } from './agentic-os/xox-run-event-store-adapter.js'
+import { storeDailyMemoryNote } from './memory/daily-notes.js'
+import { recordMemoryRecallSignals } from './memory/recall-signals.js'
 
 const COMPACTION_MESSAGE_THRESHOLD = 10
 const COMPACTION_MESSAGE_STEP = 6
@@ -35,7 +34,470 @@ export type AgentRuntimeContext = {
   recentMessages: Row<'agent_messages'>[]
 }
 
+export type AgentMemoryLane =
+  | 'working'
+  | 'session'
+  | 'semantic'
+  | 'procedural'
+  | 'episodic'
+  | 'diagnostic'
+  | 'archived'
+
+export type AgentMemoryStatus =
+  | 'candidate'
+  | 'active'
+  | 'promoted'
+  | 'archived'
+  | 'rejected'
+  | 'expired'
+  | 'superseded'
+
+export type AgentMemoryKind =
+  | 'preference'
+  | 'fact'
+  | 'business_fact'
+  | 'business_rule'
+  | 'workflow'
+  | 'episode'
+  | 'correction'
+  | 'diagnostic'
+
+export type MemoryCandidateDecision =
+  | 'store_candidate'
+  | 'activate'
+  | 'promote'
+  | 'archive'
+  | 'reject'
+  | 'expire'
+  | 'merge'
+  | 'diagnostic_only'
+
+export type MemoryPolicyInput = {
+  kind: AgentMemoryKind
+  scopeType: string
+  memoryType: string
+  lane?: AgentMemoryLane
+  status?: AgentMemoryStatus
+  injectable?: boolean
+  sourceKind?: string | null
+  key: string
+  value: string
+  confidence: number
+  evidenceScore?: number | null
+  expiresAt?: string | null
+}
+
+export type MemoryPolicyDecision = {
+  kind: AgentMemoryKind
+  lane: AgentMemoryLane
+  status: AgentMemoryStatus
+  injectable: boolean
+  normalizedHash: string
+  evidenceScore: number
+  sourceKind: string
+  expiresAt: string | null
+  decision: MemoryCandidateDecision
+  reason: string
+  scoreBreakdown: {
+    usefulness: number
+    stability: number
+    specificity: number
+    safety: number
+    evidence: number
+    novelty: number
+  }
+}
+
 export { redactSecretLikeContent } from '@agentic-os/core'
+
+const PROMPT_INJECTABLE_LANES = new Set<AgentMemoryLane>(['working', 'semantic', 'procedural'])
+const PROMPT_INJECTABLE_STATUSES = new Set<AgentMemoryStatus>(['active', 'promoted'])
+const NON_INJECTABLE_STATUSES = new Set<AgentMemoryStatus>(['candidate', 'archived', 'rejected', 'expired', 'superseded'])
+
+function clamp01(value: number) {
+  if (!Number.isFinite(value)) return 0
+  return Math.max(0, Math.min(1, value))
+}
+
+function stableHash(value: string) {
+  return createHash('sha256').update(value).digest('hex').slice(0, 40)
+}
+
+export function normalizedMemoryHash(input: Pick<MemoryPolicyInput, 'kind' | 'scopeType' | 'key' | 'value'>) {
+  const normalized = normalizeSecretSafeText(`${input.kind}:${input.scopeType}:${input.key}:${input.value}`, 800)
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+  return stableHash(normalized)
+}
+
+export function deriveMemoryLane(input: Pick<MemoryPolicyInput, 'kind' | 'memoryType' | 'lane' | 'sourceKind' | 'key' | 'value'>): AgentMemoryLane {
+  if (input.lane) return input.lane
+  if (input.kind === 'diagnostic' || input.sourceKind === 'evaluator_result' || input.key.startsWith('agent.evaluator.finding.')) return 'diagnostic'
+  if (input.key.startsWith('agent.goal.completed.')) return 'episodic'
+  if (input.key.startsWith('workspace.recent_related_entity.')) return 'working'
+  if (input.memoryType === 'semantic' || input.memoryType === 'procedural' || input.memoryType === 'working' || input.memoryType === 'episodic') return input.memoryType
+  if (input.kind === 'preference' || input.kind === 'business_fact' || input.kind === 'business_rule') return 'semantic'
+  if (input.kind === 'workflow') return 'procedural'
+  if (input.kind === 'episode' || input.kind === 'correction') return 'episodic'
+  return 'semantic'
+}
+
+export function deriveMemoryStatus(input: Pick<MemoryPolicyInput, 'status' | 'kind' | 'lane' | 'memoryType' | 'sourceKind'> & { lane: AgentMemoryLane }): AgentMemoryStatus {
+  if (input.status) return input.status
+  if (input.lane === 'diagnostic') return 'active'
+  if (input.lane === 'working') return 'active'
+  if (input.lane === 'episodic') return 'archived'
+  if (input.memoryType === 'semantic' || input.memoryType === 'procedural' || input.lane === 'semantic' || input.lane === 'procedural') return 'promoted'
+  return 'candidate'
+}
+
+export function isMemoryPromptInjectable(row: Row<'agent_memories'>, options: { threadId?: string | null; now?: string } = {}) {
+  const lane = row.lane as AgentMemoryLane
+  const status = row.status as AgentMemoryStatus
+  if (Number(row.injectable) !== 1) return false
+  if (!PROMPT_INJECTABLE_LANES.has(lane)) return false
+  if (!PROMPT_INJECTABLE_STATUSES.has(status)) return false
+  if (NON_INJECTABLE_STATUSES.has(status)) return false
+  if (lane === 'working') {
+    if (!options.threadId || row.thread_id !== options.threadId) return false
+    if (row.expires_at && Date.parse(row.expires_at) <= Date.parse(options.now ?? utcNow())) return false
+  }
+  return true
+}
+
+export function decideMemoryCandidate(input: MemoryPolicyInput): MemoryPolicyDecision {
+  const lane = deriveMemoryLane(input)
+  const status = deriveMemoryStatus({ ...input, lane })
+  const sourceKind =
+    input.sourceKind ??
+    (lane === 'diagnostic'
+      ? 'evaluator_result'
+      : lane === 'episodic'
+        ? 'confirmed_action'
+        : lane === 'working'
+          ? 'working_context'
+          : 'manual_memory')
+  const safety = containsSecretLikeContent(input.value) ? 0 : 1
+  const evidence = clamp01(input.evidenceScore ?? (sourceKind === 'manual_memory' ? 0.9 : sourceKind === 'confirmed_action' ? 0.75 : 0.45))
+  const stability =
+    lane === 'semantic' || lane === 'procedural'
+      ? 0.85
+      : lane === 'working'
+        ? 0.25
+        : lane === 'diagnostic'
+          ? 0.1
+          : 0.35
+  const specificity = normalizeSecretSafeText(input.value, 600).length >= 12 ? 0.8 : 0.35
+  const usefulness = lane === 'semantic' || lane === 'procedural' ? 0.8 : lane === 'working' ? 0.55 : 0.35
+  const novelty = 0.7
+  const injectable =
+    input.injectable ??
+    (safety === 1 &&
+      PROMPT_INJECTABLE_LANES.has(lane) &&
+      PROMPT_INJECTABLE_STATUSES.has(status) &&
+      sourceKind !== 'evaluator_result')
+
+  let decision: MemoryCandidateDecision = 'store_candidate'
+  let reason = 'stored as governed candidate'
+  if (safety === 0) {
+    decision = 'reject'
+    reason = 'secret-like content is not eligible for memory'
+  } else if (lane === 'diagnostic') {
+    decision = 'diagnostic_only'
+    reason = 'diagnostics are retained for audit but never injected into ordinary planning context'
+  } else if (lane === 'episodic') {
+    decision = 'archive'
+    reason = 'episode is searchable evidence but not prompt-injectable by default'
+  } else if (lane === 'working') {
+    decision = 'activate'
+    reason = 'working memory is scoped to the current thread and expiry'
+  } else if (status === 'promoted') {
+    decision = 'promote'
+    reason = 'stable semantic/procedural memory is eligible for relevant recall'
+  }
+
+  return {
+    kind: input.kind,
+    lane,
+    status,
+    injectable,
+    normalizedHash: normalizedMemoryHash(input),
+    evidenceScore: evidence,
+    sourceKind,
+    expiresAt: input.expiresAt ?? null,
+    decision,
+    reason,
+    scoreBreakdown: { usefulness, stability, specificity, safety, evidence, novelty },
+  }
+}
+
+export type AgentMemoryCandidate = {
+  kind: AgentMemoryKind
+  scopeType: 'thread' | 'workspace' | 'user' | 'procedural' | 'commitment'
+  memoryType: 'working' | 'episodic' | 'semantic' | 'procedural' | 'commitment'
+  lane?: AgentMemoryLane
+  status?: AgentMemoryStatus
+  injectable?: boolean
+  sensitivity?: 'normal' | 'private' | 'restricted'
+  key: string
+  value: string
+  confidence: number
+  evidenceScore?: number
+  sourceKind?: string
+  expiresAt?: string | null
+  evidence: Record<string, unknown>
+}
+
+const WORKING_MEMORY_TTL_MS = 6 * 60 * 60 * 1000
+
+function compactMemoryCandidateValue(value: string) {
+  return value.replace(/\s+/g, ' ').trim().slice(0, 420)
+}
+
+function memoryTtlFromNow(ms: number) {
+  return new Date(Date.now() + ms).toISOString()
+}
+
+export function memoryCandidatesFromExecutedActions(input: {
+  runId: string
+  actionRows: Row<'agent_action_requests'>[]
+}): AgentMemoryCandidate[] {
+  const candidates: AgentMemoryCandidate[] = []
+  for (const action of input.actionRows) {
+    if (action.status !== 'executed') continue
+    const payload = parseJson<any>(action.payload_json, {})
+    if (action.kind === 'workspace.update_draft') {
+      const config = payload?.config
+      const memberCount = Array.isArray(config?.teamMembers) ? config.teamMembers.length : null
+      const monthCount = Array.isArray(config?.months) ? config.months.length : null
+      const shareholderCount = Array.isArray(config?.shareholders) ? config.shareholders.length : null
+      const workspaceName = typeof payload?.workspaceName === 'string' ? payload.workspaceName : action.target_label
+      candidates.push({
+        kind: 'episode',
+        scopeType: 'workspace',
+        memoryType: 'episodic',
+        lane: 'episodic',
+        status: 'archived',
+        injectable: false,
+        sourceKind: 'confirmed_action',
+        key: `workspace.episode.${action.id}`,
+        value: compactMemoryCandidateValue(`已通过 Agent 更新草稿：${workspaceName}，成员 ${memberCount ?? '未知'} 个，股东 ${shareholderCount ?? '未知'} 个，预测 ${monthCount ?? '未知'} 个月。`),
+        confidence: 0.78,
+        evidenceScore: 0.75,
+        evidence: { runId: input.runId, actionRequestId: action.id, actionKind: action.kind },
+      })
+      if (payload?.source === 'workspace_configure_operating_model' && memberCount && monthCount) {
+        candidates.push({
+          kind: 'workflow',
+          scopeType: 'procedural',
+          memoryType: 'procedural',
+          lane: 'procedural',
+          status: 'promoted',
+          injectable: true,
+          sourceKind: 'confirmed_action',
+          key: 'agent.workflow.operating_model_configured_by_high_level_tool',
+          value: '完整经营简报应优先使用 workspace_configure_operating_model 生成一张可编辑草稿确认卡，再由 evaluator 检查成员、股东、成本和月份节奏。',
+          confidence: 0.82,
+          evidenceScore: 0.86,
+          evidence: { runId: input.runId, actionRequestId: action.id, memberCount, monthCount },
+        })
+      }
+      continue
+    }
+
+    if (action.kind.startsWith('ledger.')) {
+      const relatedName = typeof payload?.relatedEntityName === 'string' ? payload.relatedEntityName : null
+      const monthLabel = typeof payload?.monthLabel === 'string' ? payload.monthLabel : null
+      const amount = typeof payload?.amount === 'number' ? payload.amount : null
+      candidates.push({
+        kind: 'episode',
+        scopeType: 'workspace',
+        memoryType: 'episodic',
+        lane: 'episodic',
+        status: 'archived',
+        injectable: false,
+        sourceKind: 'confirmed_action',
+        key: `ledger.episode.${action.id}`,
+        value: compactMemoryCandidateValue(`已通过 Agent 执行账本动作：${action.title}${monthLabel ? `，账期 ${monthLabel}` : ''}${relatedName ? `，对象 ${relatedName}` : ''}${amount ? `，金额 ${amount}` : ''}。`),
+        confidence: 0.72,
+        evidenceScore: 0.75,
+        evidence: { runId: input.runId, actionRequestId: action.id, actionKind: action.kind },
+      })
+      if (relatedName) {
+        candidates.push({
+          kind: 'fact',
+          scopeType: 'thread',
+          memoryType: 'working',
+          lane: 'working',
+          status: 'active',
+          injectable: true,
+          sourceKind: 'working_context',
+          key: `workspace.recent_related_entity.${relatedName}`,
+          value: compactMemoryCandidateValue(`最近一次 Agent 账本动作关联对象是 ${relatedName}。这只是短期情节记忆，不等于默认成员。`),
+          confidence: 0.58,
+          evidenceScore: 0.5,
+          expiresAt: memoryTtlFromNow(WORKING_MEMORY_TTL_MS),
+          evidence: { runId: input.runId, actionRequestId: action.id, relatedName },
+        })
+      }
+      continue
+    }
+
+    if (action.kind.startsWith('workspace.') || action.kind.startsWith('share.')) {
+      candidates.push({
+        kind: 'episode',
+        scopeType: 'workspace',
+        memoryType: 'episodic',
+        lane: 'episodic',
+        status: 'archived',
+        injectable: false,
+        sourceKind: 'confirmed_action',
+        key: `workspace.episode.${action.id}`,
+        value: compactMemoryCandidateValue(`已通过 Agent 执行业务动作：${action.title}。`),
+        confidence: 0.7,
+        evidenceScore: 0.75,
+        evidence: { runId: input.runId, actionRequestId: action.id, actionKind: action.kind },
+      })
+    }
+  }
+  return candidates
+}
+
+export function memoryCandidateFromEditedAction(input: {
+  runId: string
+  action: Row<'agent_action_requests'>
+}): AgentMemoryCandidate {
+  return {
+    kind: 'correction',
+    scopeType: 'workspace',
+    memoryType: 'procedural',
+    lane: 'procedural',
+    status: 'candidate',
+    injectable: false,
+    sourceKind: 'edited_confirmation',
+    key: `agent.correction.action_edit.${input.action.id}`,
+    value: compactMemoryCandidateValue(`用户编辑了 Agent 确认卡：${input.action.title}。后续相似动作应参考用户编辑后的确认卡内容，并继续通过确认卡执行。`),
+    confidence: 0.68,
+    evidenceScore: 0.72,
+    evidence: { runId: input.runId, actionRequestId: input.action.id, actionKind: input.action.kind, lifecycle: 'edited' },
+  }
+}
+
+export function memoryCandidateFromCancelledAction(input: {
+  runId: string
+  action: Row<'agent_action_requests'>
+}): AgentMemoryCandidate {
+  return {
+    kind: 'correction',
+    scopeType: 'workspace',
+    memoryType: 'episodic',
+    lane: 'diagnostic',
+    status: 'active',
+    injectable: false,
+    sourceKind: 'cancelled_confirmation',
+    key: `agent.correction.action_cancel.${input.action.id}`,
+    value: compactMemoryCandidateValue(`用户取消了 Agent 确认卡：${input.action.title}。这表示该动作在当时上下文中不应继续自动推进。`),
+    confidence: 0.62,
+    evidenceScore: 0.62,
+    evidence: { runId: input.runId, actionRequestId: input.action.id, actionKind: input.action.kind, lifecycle: 'cancelled' },
+  }
+}
+
+export function memoryCandidateFromEvaluatorFinding(input: {
+  runId: string
+  evaluation: Row<'agent_evaluations'>
+}): AgentMemoryCandidate | null {
+  if (input.evaluation.status === 'pass') return null
+  const unsatisfied = parseJson<Array<{ message?: string }>>(input.evaluation.unsatisfied_json, [])
+  const firstFinding = unsatisfied.map((item) => item.message).find((message): message is string => Boolean(message))
+  if (!firstFinding) return null
+  return {
+    kind: 'diagnostic',
+    scopeType: 'procedural',
+    memoryType: 'episodic',
+    lane: 'diagnostic',
+    status: 'active',
+    injectable: false,
+    sourceKind: 'evaluator_result',
+    key: `agent.evaluator.finding.${input.evaluation.id}`,
+    value: compactMemoryCandidateValue(`Loop Readiness Check 诊断：${firstFinding}`),
+    confidence: 0.7,
+    evidenceScore: 0.45,
+    evidence: {
+      runId: input.runId,
+      evaluationId: input.evaluation.id,
+      evaluationStatus: input.evaluation.status,
+      iteration: input.evaluation.iteration_no,
+    },
+  }
+}
+
+export function memoryCandidateFromCompletedGoal(input: {
+  goal: Row<'agent_goals'>
+}): AgentMemoryCandidate | null {
+  void input
+  return null
+}
+
+export type AgentMemoryEventType = 'captured' | 'recalled' | 'injected' | 'promoted' | 'rejected' | 'archived' | 'expired'
+
+export async function addMemoryEvent(
+  db: Kysely<Database>,
+  input: {
+    memoryId?: string | null
+    workspaceId: string
+    userId: string
+    threadId?: string | null
+    runId?: string | null
+    eventType: AgentMemoryEventType
+    evidence?: Record<string, unknown> | null
+    metadata?: Record<string, unknown> | null
+  },
+) {
+  const id = newId()
+  await db
+    .insertInto('agent_memory_events')
+    .values({
+      id,
+      memory_id: input.memoryId ?? null,
+      workspace_id: input.workspaceId,
+      user_id: input.userId,
+      thread_id: input.threadId ?? null,
+      run_id: input.runId ?? null,
+      event_type: input.eventType,
+      evidence_json: input.evidence ? jsonString(input.evidence) : null,
+      metadata_json: input.metadata ? jsonString(input.metadata) : null,
+      created_at: utcNow(),
+    })
+    .execute()
+  return db.selectFrom('agent_memory_events').selectAll().where('id', '=', id).executeTakeFirstOrThrow()
+}
+
+export async function countMemoryEvents(db: Kysely<Database>, memoryId: string, eventType: AgentMemoryEventType) {
+  const row = await db
+    .selectFrom('agent_memory_events')
+    .select(({ fn }) => fn.countAll<number>().as('count'))
+    .where('memory_id', '=', memoryId)
+    .where('event_type', '=', eventType)
+    .executeTakeFirst()
+  return Number(row?.count ?? 0)
+}
+
+export function serializeMemoryEvent(row: Row<'agent_memory_events'>) {
+  return {
+    id: row.id,
+    memoryId: row.memory_id,
+    workspaceId: row.workspace_id,
+    userId: row.user_id,
+    threadId: row.thread_id,
+    runId: row.run_id,
+    eventType: row.event_type,
+    evidence: row.evidence_json ? parseJson<Record<string, unknown> | null>(row.evidence_json, null) : null,
+    metadata: row.metadata_json ? parseJson<Record<string, unknown> | null>(row.metadata_json, null) : null,
+    createdAt: row.created_at,
+  }
+}
 
 function normalizeMemoryValue(value: string) {
   return normalizeSecretSafeText(value, MEMORY_VALUE_LIMIT)
@@ -206,6 +668,127 @@ export async function rememberAgentMemory(input: {
   }
 }
 
+export async function storeMemoryCandidates(input: {
+  db: Kysely<Database>
+  workspace: Row<'workspaces'>
+  user: CurrentUser
+  threadId: string
+  runId: string
+  candidates: AgentMemoryCandidate[]
+}) {
+  const stored: Row<'agent_memories'>[] = []
+  for (const candidate of input.candidates) {
+    const decision = decideMemoryCandidate({
+      kind: candidate.kind,
+      scopeType: candidate.scopeType,
+      memoryType: candidate.memoryType,
+      key: candidate.key,
+      value: candidate.value,
+      confidence: candidate.confidence,
+      expiresAt: candidate.expiresAt ?? null,
+      ...(candidate.lane ? { lane: candidate.lane } : {}),
+      ...(candidate.status ? { status: candidate.status } : {}),
+      ...(candidate.injectable !== undefined ? { injectable: candidate.injectable } : {}),
+      ...(candidate.sourceKind ? { sourceKind: candidate.sourceKind } : {}),
+      ...(candidate.evidenceScore !== undefined ? { evidenceScore: candidate.evidenceScore } : {}),
+    })
+    if (decision.decision === 'reject') continue
+    const existing = await input.db
+      .selectFrom('agent_memories')
+      .selectAll()
+      .where('workspace_id', '=', input.workspace.id)
+      .where('user_id', '=', input.user.id)
+      .where((eb) => eb.or([
+        eb('key', '=', candidate.key),
+        eb('normalized_hash', '=', decision.normalizedHash),
+      ]))
+      .where('status', '!=', 'rejected')
+      .where('status', '!=', 'expired')
+      .executeTakeFirst()
+    if (existing) continue
+    const result = await rememberAgentMemory({
+      db: input.db,
+      workspace: input.workspace,
+      user: input.user,
+      threadId: input.threadId,
+      runId: input.runId,
+      kind: candidate.kind,
+      scopeType: candidate.scopeType,
+      memoryType: candidate.memoryType,
+      lane: decision.lane,
+      status: decision.status,
+      injectable: decision.injectable,
+      sensitivity: candidate.sensitivity ?? 'normal',
+      key: candidate.key,
+      value: candidate.value,
+      confidence: candidate.confidence,
+      evidenceScore: decision.evidenceScore,
+      sourceKind: decision.sourceKind,
+      expiresAt: decision.expiresAt,
+      evidence: candidate.evidence,
+      metadata: { source: 'active_memory_consolidator', decision: decision.decision, reason: decision.reason, scoreBreakdown: decision.scoreBreakdown },
+    })
+    if (result.memory) stored.push(result.memory)
+  }
+  return stored
+}
+
+export async function consolidateAgentMemoryCandidates(input: {
+  db: Kysely<Database>
+  workspace: Row<'workspaces'>
+  user: CurrentUser
+  threadId: string
+  runId: string
+  candidates: AgentMemoryCandidate[]
+  title?: string
+  message?: string
+}) {
+  const storedMemories = await storeMemoryCandidates({
+    db: input.db,
+    workspace: input.workspace,
+    user: input.user,
+    threadId: input.threadId,
+    runId: input.runId,
+    candidates: input.candidates,
+  })
+  if (storedMemories.length === 0) return storedMemories
+
+  await addRunEvent(input.db, agentServerRunLifecycleEvents.memoryCandidateStored({
+    threadId: input.threadId,
+    runId: input.runId,
+    memoryIds: storedMemories.map((memory) => memory.id),
+    memoryCount: storedMemories.length,
+    memoryTypes: storedMemories.map((memory) => memory.memory_type),
+    statuses: storedMemories.map((memory) => memory.status),
+    copy: {
+      title: input.title ?? '主动记忆候选已沉淀',
+      message: input.message ?? `已从本轮运行沉淀 ${storedMemories.length} 条带证据的记忆候选。`,
+    },
+  }))
+  return storedMemories
+}
+
+export async function consolidateExecutedActionMemory(input: {
+  db: Kysely<Database>
+  workspace: Row<'workspaces'>
+  user: CurrentUser
+  threadId: string
+  runId: string
+  actionRows: Row<'agent_action_requests'>[]
+  message?: string
+}) {
+  return consolidateAgentMemoryCandidates({
+    db: input.db,
+    workspace: input.workspace,
+    user: input.user,
+    threadId: input.threadId,
+    runId: input.runId,
+    candidates: memoryCandidatesFromExecutedActions({ runId: input.runId, actionRows: input.actionRows }),
+    title: '主动记忆已沉淀',
+    ...(input.message ? { message: input.message } : {}),
+  })
+}
+
 export async function listAgentMemories(db: Kysely<Database>, workspace: Row<'workspaces'>, user: CurrentUser) {
   return db
     .selectFrom('agent_memories')
@@ -224,6 +807,174 @@ export async function touchAgentMemories(db: Kysely<Database>, memories: Row<'ag
     .set({ last_used_at: utcNow(), updated_at: utcNow() })
     .where('id', 'in', memories.map((memory) => memory.id))
     .execute()
+}
+
+export type AgentMemoryRetrievalResult = {
+  memory: Row<'agent_memories'>
+  score: number
+  reasons: string[]
+}
+
+type SearchableMemoryStatus = AgentMemoryStatus
+
+const SEARCHABLE_MEMORY_STATUSES = new Set<SearchableMemoryStatus>(['candidate', 'active', 'promoted', 'archived', 'expired', 'superseded'])
+const DEFAULT_PROMPT_LANE_LIMITS: Record<string, number> = {
+  working: 3,
+  semantic: 4,
+  procedural: 3,
+  episodic: 0,
+  diagnostic: 0,
+  archived: 0,
+}
+
+function normalizeMemorySearchText(value: string) {
+  return redactSecretLikeContent(value).toLowerCase().replace(/\s+/g, ' ').trim()
+}
+
+function memoryAgeBoost(row: Row<'agent_memories'>) {
+  const anchor = Date.parse(row.last_used_at ?? row.updated_at ?? row.created_at)
+  if (!Number.isFinite(anchor)) return 0
+  const days = Math.max(0, (Date.parse(utcNow()) - anchor) / 86_400_000)
+  if (days <= 1) return 0.08
+  if (days <= 7) return 0.04
+  if (days <= 30) return 0.02
+  return 0
+}
+
+function memoryStatusBoost(row: Row<'agent_memories'>) {
+  if (row.status === 'promoted') return 0.16
+  if (row.status === 'active') return 0.1
+  return 0
+}
+
+function memoryTypeBoost(row: Row<'agent_memories'>) {
+  if (row.lane === 'semantic' || row.lane === 'procedural') return 0.14
+  if (row.lane === 'working') return 0.1
+  if (row.lane === 'episodic') return 0.02
+  return 0
+}
+
+function memoryScopeBoost(row: Row<'agent_memories'>) {
+  if (row.scope_type === 'workspace') return 0.08
+  if (row.scope_type === 'user' || row.scope_type === 'procedural') return 0.04
+  if (row.scope_type === 'thread') return 0.02
+  return 0
+}
+
+function scoreMemory(row: Row<'agent_memories'>, query: string): AgentMemoryRetrievalResult {
+  const relevance = lexicalRelevance(query, `${row.key} ${row.kind} ${row.scope_type} ${row.memory_type} ${row.lane} ${row.value}`)
+  const keyHit = normalizeMemorySearchText(row.key).includes(normalizeMemorySearchText(query)) && query.trim().length >= 3 ? 0.12 : 0
+  const confidence = Math.max(0, Math.min(1, row.confidence)) * 0.18
+  const score = relevance.score + keyHit + confidence + memoryStatusBoost(row) + memoryTypeBoost(row) + memoryScopeBoost(row) + memoryAgeBoost(row)
+  const reasons = [
+    ...relevance.reasons,
+    keyHit > 0 ? 'key_match' : null,
+    row.status === 'candidate' ? 'candidate_memory' : `${row.status}_memory`,
+    row.injectable ? 'injectable' : 'non_injectable',
+    row.lane,
+    row.memory_type,
+  ].filter((item): item is string => Boolean(item))
+  return { memory: row, score: Number(score.toFixed(4)), reasons }
+}
+
+function applyPromptLaneBudgets(results: AgentMemoryRetrievalResult[]) {
+  const counts = new Map<string, number>()
+  return results.filter((result) => {
+    const lane = result.memory.lane as AgentMemoryLane
+    const limit = DEFAULT_PROMPT_LANE_LIMITS[lane] ?? 0
+    const current = counts.get(lane) ?? 0
+    if (current >= limit) return false
+    counts.set(lane, current + 1)
+    return true
+  })
+}
+
+export async function retrieveAgentMemories(input: {
+  db: Kysely<Database>
+  workspace: Row<'workspaces'>
+  user: CurrentUser
+  query: string
+  limit?: number
+  includeCandidates?: boolean
+  includeArchived?: boolean
+  includeNonInjectable?: boolean
+  includeDiagnostics?: boolean
+  forPrompt?: boolean
+  threadId?: string | null
+}): Promise<AgentMemoryRetrievalResult[]> {
+  const rows = await input.db
+    .selectFrom('agent_memories')
+    .selectAll()
+    .where('workspace_id', '=', input.workspace.id)
+    .where('user_id', '=', input.user.id)
+    .orderBy('updated_at', 'desc')
+    .limit(80)
+    .execute()
+
+  const scored = rows
+    .filter((row) => SEARCHABLE_MEMORY_STATUSES.has(row.status as SearchableMemoryStatus))
+    .filter((row) => input.includeCandidates === true || row.status !== 'candidate')
+    .filter((row) => input.includeArchived === true || !['archived', 'expired', 'superseded'].includes(row.status))
+    .filter((row) => input.includeDiagnostics === true || row.lane !== 'diagnostic')
+    .filter((row) => input.includeNonInjectable === true || input.forPrompt === true || Number(row.injectable) === 1)
+    .filter((row) => !input.forPrompt || isMemoryPromptInjectable(row, { now: utcNow(), ...(input.threadId !== undefined ? { threadId: input.threadId } : {}) }))
+    .map((row) => scoreMemory(row, input.query))
+    .filter((result) => result.score >= 0.32 || result.reasons.some((reason) => reason.startsWith('token_overlap:')))
+    .sort((left, right) => right.score - left.score)
+  const ranked = applyMmr(
+    (input.forPrompt ? applyPromptLaneBudgets(scored) : scored).map((result) => ({
+      ...result,
+      id: result.memory.id,
+      key: result.memory.key,
+      value: result.memory.value,
+    })),
+  )
+    .map(({ id: _id, key: _key, value: _value, ...result }) => result)
+    .slice(0, Math.max(1, Math.min(50, input.limit ?? 6)))
+
+  return ranked
+}
+
+export async function markAgentMemoriesRecalled(input: {
+  db: Kysely<Database>
+  memories: Row<'agent_memories'>[]
+  workspace: Row<'workspaces'>
+  user: CurrentUser
+  threadId: string
+  runId: string
+  query: string
+  retrieval?: Array<{ memoryId: string; score: number; reasons: string[] }>
+}) {
+  if (input.memories.length === 0) return []
+  await touchAgentMemories(input.db, input.memories)
+  const retrievalByMemoryId = new Map((input.retrieval ?? []).map((item) => [item.memoryId, item]))
+  await recordMemoryRecallSignals({
+    db: input.db,
+    workspace: input.workspace,
+    user: input.user,
+    query: input.query,
+    retrieval: input.memories.map((memory) => {
+      const retrieval = retrievalByMemoryId.get(memory.id)
+      return {
+        memory,
+        score: retrieval?.score ?? 0.5,
+        reasons: retrieval?.reasons ?? ['recalled'],
+      }
+    }),
+  })
+  for (const memory of input.memories) {
+    await addMemoryEvent(input.db, {
+      memoryId: memory.id,
+      workspaceId: input.workspace.id,
+      userId: input.user.id,
+      threadId: input.threadId,
+      runId: input.runId,
+      eventType: 'recalled',
+      evidence: { query: redactSecretLikeContent(input.query).slice(0, 500) },
+      metadata: { memoryType: memory.memory_type, status: memory.status },
+    })
+  }
+  return []
 }
 
 export async function archiveAgentMemory(db: Kysely<Database>, workspace: Row<'workspaces'>, user: CurrentUser, memoryId: string) {
@@ -363,6 +1114,56 @@ export async function compactThreadContextIfNeeded(input: {
     })
     .execute()
   return input.db.selectFrom('agent_context_snapshots').selectAll().where('id', '=', id).executeTakeFirstOrThrow()
+}
+
+export async function flushThreadContextToMemoryIfNeeded(input: {
+  db: Kysely<Database>
+  workspace: Row<'workspaces'>
+  user: CurrentUser
+  threadId: string
+  runId: string
+}) {
+  const snapshot = await compactThreadContextIfNeeded({
+    db: input.db,
+    workspace: input.workspace,
+    user: input.user,
+    threadId: input.threadId,
+  })
+  if (!snapshot) return null
+
+  const flushPlan = buildMemoryFlushPlan()
+  const dailyNote = await storeDailyMemoryNote({
+    db: input.db,
+    workspace: input.workspace,
+    user: input.user,
+    threadId: input.threadId,
+    runId: input.runId,
+    noteDate: flushPlan.noteDate,
+    title: `对话压缩摘要 ${flushPlan.noteDate}`,
+    content: `当前对话长上下文摘要：${snapshot.summary}`,
+    evidence: {
+      runId: input.runId,
+      snapshotId: snapshot.id,
+      messageCount: snapshot.message_count,
+      source: 'openclaw_pre_compaction_flush',
+    },
+  })
+
+  await addRunEvent(input.db, agentServerRunLifecycleEvents.memoryContextFlushed({
+    threadId: input.threadId,
+    runId: input.runId,
+    snapshotId: snapshot.id,
+    dailyNoteId: dailyNote?.id ?? null,
+    noteDate: flushPlan.noteDate,
+    messageCount: snapshot.message_count,
+    source: 'openclaw_pre_compaction_flush',
+    copy: {
+      title: '长对话上下文已压缩',
+      message: '已按 OpenClaw-style pre-compaction flush 把长对话摘要保存为当前用户/工作区的日记忆，后续由 dreaming/promotion 决定是否晋升。',
+    },
+  }))
+
+  return snapshot
 }
 
 export function serializeMemory(row: Row<'agent_memories'>) {

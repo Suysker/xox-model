@@ -3,7 +3,7 @@ import type { Kysely } from 'kysely'
 import { parseJson } from '../../db/database.js'
 import type { Database, Row } from '../../db/schema.js'
 import type { CurrentUser } from '../../modules/auth.js'
-import { retrieveAgentMemories } from '../memory-retriever.js'
+import { retrieveAgentMemories } from '../memory.js'
 import { redactSecretLikeContent } from '@agentic-os/core'
 
 export type MemoryToolItem = {

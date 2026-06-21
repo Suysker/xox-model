@@ -77,7 +77,7 @@ import { parseJson } from '../../db/database.js'
 import type { Row } from '../../db/schema.js'
 import { newId } from '../../core/security.js'
 import { utcNow } from '../../core/time.js'
-import type { PlannerContext } from '../planning-context.js'
+import type { PlannerContext } from '../action-draft-builder.js'
 import { executeAgentActionRequest } from '../tool-executor.js'
 import {
   buildPlannedItemFromRuntimeStep,
@@ -91,7 +91,6 @@ import {
   storePlannedActionGraph,
   type StoredActionGraph,
 } from './xox-action-graph-adapter.js'
-import { answerWorkspaceDataQuestion, type DataAgentQueryStep } from '../data-agent.js'
 import {
   buildEvidenceLedger,
   evidenceForModel,
@@ -111,7 +110,7 @@ import {
 import {
   consolidateExecutedActionMemory,
   flushThreadContextToMemoryIfNeeded,
-} from '../memory-consolidator.js'
+} from '../memory.js'
 import { runMemoryDreamingSweep } from '../memory/dreaming-worker.js'
 import {
   evaluateAssistantResponse,
@@ -151,7 +150,11 @@ import {
   type XoxObservationBridge,
 } from './xox-tool-observation-adapter.js'
 import { redactSecretLikeContent } from '../memory.js'
-import { runtimeIntentHandlers } from '../runtime-intent-handlers.js'
+import {
+  answerWorkspaceDataQuestion,
+  runtimeIntentHandlers,
+  type WorkspaceDataQueryStep,
+} from '../runtime-intent-handlers.js'
 import { normalizeAgentAutomationLevel } from '../tool-policy.js'
 import {
   applyObservationToLedger,
@@ -204,7 +207,7 @@ const ENTITY_SUMMARY_TOOL_ARGUMENTS = {
   question: '当前工作区有序成员、股东、员工和成本对象列表',
   scope: 'entity_summary',
   metrics: ['shareholderNames', 'shareholderInvestments'],
-} satisfies DataAgentQueryStep
+} satisfies WorkspaceDataQueryStep
 
 const ENTITY_SUMMARY_PREREQUISITE: AgentPrerequisiteObservationSpec<
   AgentGoalFacts,
@@ -323,7 +326,7 @@ function xoxObligationKind(obligation: AgentLoopLedgerObligation) {
   return typeof value === 'string' ? value : obligation.kind
 }
 
-function dataQueryArgumentsForObligation(obligation: AgentLoopLedgerObligation): DataAgentQueryStep | null {
+function dataQueryArgumentsForObligation(obligation: AgentLoopLedgerObligation): WorkspaceDataQueryStep | null {
   if (xoxObligationKind(obligation) !== 'domain_fact') return null
   if (!(obligation.toolNames ?? []).includes('data_query_workspace')) return null
   const scope = obligationMetadataStringArray(obligation, 'requiredDataScopes')?.[0] ?? 'workspace_summary'
@@ -352,7 +355,7 @@ function obligationMaterializationRequests(
 async function materializeDataObservation(input: {
   ctx: PlannerContext
   obligation: AgentLoopLedgerObligation
-  toolArguments: DataAgentQueryStep
+  toolArguments: WorkspaceDataQueryStep
   plannerSource: AgentPlannerSource
 }) {
   const read = await answerWorkspaceDataQuestion(input.ctx, input.toolArguments)
@@ -425,7 +428,7 @@ async function materializeLoopObligations(input: {
     const graph = await materializeDataObservation({
       ctx: input.ctx,
       obligation,
-      toolArguments: task.toolArguments as unknown as DataAgentQueryStep,
+      toolArguments: task.toolArguments as unknown as WorkspaceDataQueryStep,
       plannerSource: input.plannerSource,
     })
     if (graph) graphs.push(graph)

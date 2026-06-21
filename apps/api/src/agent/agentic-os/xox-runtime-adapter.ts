@@ -35,7 +35,7 @@ import type { AgentPlannerSource, AgentToolInventorySnapshot } from '@xox/contra
 import type { Settings } from '../../core/settings.js'
 import { buildAgentContextPack } from '../context-pack.js'
 import { redactSecretLikeContent } from '../memory.js'
-import type { PlannerContext } from '../planning-context.js'
+import type { PlannerContext } from '../action-draft-builder.js'
 import { addRunEvent, addRuntimeStreamRunEvent } from './xox-run-event-store-adapter.js'
 import type { AgentToolObservation } from './xox-tool-observation-adapter.js'
 import {

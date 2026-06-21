@@ -23,7 +23,7 @@ import { utcNow } from '../../core/time.js'
 import type { CurrentUser } from '../../modules/auth.js'
 import { redactSecretLikeContent } from '../memory.js'
 import { resolveAgentRuntimeSettings } from '../provider-settings.js'
-import type { PlannerContext } from '../planning-context.js'
+import type { PlannerContext } from '../action-draft-builder.js'
 import { executeXoxAgenticOsRun } from './xox-agentic-os-host-kit.js'
 import {
   AgentRunLeaseLostError,

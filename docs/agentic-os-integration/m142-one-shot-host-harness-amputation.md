@@ -1,6 +1,6 @@
 # M142 One-Shot Host Harness Amputation
 
-Status: In Progress (evidence/final-review/obligation root framework and readiness/runtime-planning facades deleted)
+Status: In Progress (evidence/final-review/obligation root framework, readiness/runtime-planning facades, root data/planning facades, and memory root facades deleted)
 
 Date: 2026-06-21
 
@@ -57,7 +57,7 @@ What moved to Agentic OS:
 What xox deleted or collapsed:
 
 - `apps/api/src/agent/memory-kernel.ts` has been deleted.
-- Remaining xox memory candidate/context-flush persistence lives in `apps/api/src/agent/memory-consolidator.ts` as memory store/peripheral wiring, while event draft semantics come from Agentic OS.
+- Remaining xox memory candidate/context-flush persistence initially lived in `apps/api/src/agent/memory-consolidator.ts`; after M147 the misleading memory root facades are deleted and durable memory storage/retrieval/consolidation wiring is collapsed into `apps/api/src/agent/memory.ts`.
 - xox host adapters now call `agentServerRunLifecycleEvents` instead of hand-building generic lifecycle event objects.
 - `apps/api/tests/agent-architecture.test.ts` now guards against reintroducing the deleted `memory-kernel.ts` file and direct M142 lifecycle event literal construction in host adapters.
 
@@ -166,6 +166,25 @@ Status: completed as a follow-up M142 whole-file deletion cut.
 - Runtime planning recovery still comes from Agentic OS runtime packages; xox runtime adapter now keeps provider settings, context-pack input, tool-catalog callback wiring, business high-volume budgets, localized event sink, and legacy runtime DTO projection at the concrete provider boundary.
 - Architecture guards now fail if either deleted facade returns.
 - This cut is intentionally an amputation-first step. It reduces visible host harness files, but the remaining semantics in `xox-agentic-os-host-kit.ts`, `xox-final-review-adapter.ts`, projection adapters, and `xox-tool-observation-adapter.ts` still require deeper Agentic OS extraction.
+
+### M146: Deleted Root Data and Planning Facades
+
+Status: completed as a follow-up M142 root-file deletion cut.
+
+- Deleted `data-agent.ts` and `planning-context.ts`.
+- `data.query_workspace` business read execution now lives in `runtime-intent-handlers.ts`, the concrete xox tool handler registry, with `WorkspaceDataQueryStep` naming instead of `DataAgentQueryStep`.
+- `PlannerContext` now lives in `action-draft-builder.ts`, beside xox action/read draft DTOs, instead of a standalone planning context facade.
+- Architecture guards now fail if either deleted root file returns.
+- This cut removes misleading root agent filenames only. It does not move business data reads or action draft generation into Agentic OS, because those remain xox peripheral responsibilities.
+
+### M147: Deleted Memory Root Facades
+
+Status: completed as a follow-up M142 root-file deletion cut.
+
+- Deleted `memory-events.ts`, `memory-retriever.ts`, `memory-candidate-detector.ts`, `memory-promotion-policy.ts`, and `memory-consolidator.ts`.
+- Durable memory row/event write, governed candidate policy, retrieval/recall marking, candidate generation, consolidation, and long-context flush wiring now live in `memory.ts`.
+- Agentic OS still owns active recall runtime and memory lifecycle event drafts. xox keeps SQL row mapping, Memory Center DTOs, business candidate text/evidence, recall signals, daily notes, and localized run-event copy.
+- Architecture guards now fail if any deleted memory root facade returns.
 
 ## One-Shot Scope
 
