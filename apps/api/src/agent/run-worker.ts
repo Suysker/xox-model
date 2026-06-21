@@ -20,7 +20,7 @@ import {
 } from './agentic-os/xox-run-lease-store-adapter.js'
 import { addRunEvent } from './agentic-os/xox-run-event-store-adapter.js'
 import { agentThreadEvents } from './agentic-os/xox-thread-signal-adapter.js'
-import { addMessage, touchThreadAfterRun } from './thread-store.js'
+import { addMessage, touchThreadAfterRun } from './agentic-os/xox-thread-store-adapter.js'
 import { normalizeAgentAutomationLevel } from './tool-policy.js'
 import { sanitizeAgentGoalFacts } from './runtime-goal-facts.js'
 

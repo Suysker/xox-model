@@ -34,7 +34,7 @@ import {
   serializeAction,
   serializeMessage,
   serializePlanStep,
-} from './thread-store.js'
+} from './agentic-os/xox-thread-store-adapter.js'
 import {
   cancelRunningAgentRun,
   startAgentRunQueueWorker,

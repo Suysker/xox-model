@@ -21,7 +21,7 @@ import {
 } from './xox-runtime-adapter.js'
 import { redactSecretLikeContent } from '../memory.js'
 import { addRunEvent, addRuntimeStreamRunEvent } from './xox-run-event-store-adapter.js'
-import { addMessage } from '../thread-store.js'
+import { addMessage } from './xox-thread-store-adapter.js'
 import { storePlannedActionGraph } from '../action-graph-store.js'
 import { readDraftFromRuntimeResult } from '../action-draft-builder.js'
 

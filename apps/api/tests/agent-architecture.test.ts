@@ -312,6 +312,7 @@ describe('Agent ADR architecture boundaries', () => {
     expect(existsSync(join(srcRoot, 'agent', 'clarification-resume.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'loop-obligations.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'obligation-materializer.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'thread-store.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'tool-runtime', 'approval-policy-composer.ts'))).toBe(false)
 
     const obsoleteToolContextDir = join(srcRoot, 'agent', 'tool-context-engine')
@@ -629,6 +630,7 @@ describe('Agent ADR architecture boundaries', () => {
 
   it('keeps thread signaling, SSE state streams, and run lease helpers outside the root host agent frame', () => {
     const deletedRootFiles = [
+      'thread-store.ts',
       'thread-events.ts',
       'thread-state-stream.ts',
       'run-lease.ts',
@@ -642,7 +644,9 @@ describe('Agent ADR architecture boundaries', () => {
       "from './thread-state-stream.js'",
       "from './run-lease.js'",
       "from './run-events.js'",
+      "from './thread-store.js'",
       "from '../run-events.js'",
+      "from '../thread-store.js'",
     ]
     for (const file of sourceFilesUnder('agent')) {
       const content = source(file)
@@ -661,6 +665,9 @@ describe('Agent ADR architecture boundaries', () => {
     expect(runLease).toContain("@agentic-os/server")
     expect(runLease).toContain('startAgentServerRunLeaseHeartbeat')
     expect(runLease).toContain('assertAgentServerRunLease')
+    const threadStore = source('agent/agentic-os/xox-thread-store-adapter.ts')
+    expect(threadStore).toContain('buildXoxThreadStateView')
+    expect(threadStore).toContain('serializeRunEvent')
   })
 
   it('keeps AG-UI event projection in Agentic OS server', () => {

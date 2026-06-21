@@ -132,7 +132,7 @@ import {
   readRuntimeGoalFacts,
 } from '../runtime-goal-facts.js'
 import { addRunEvent } from './xox-run-event-store-adapter.js'
-import { addMessage } from '../thread-store.js'
+import { addMessage } from './xox-thread-store-adapter.js'
 import {
   AGENT_TOOL_REGISTRY,
   isHarnessManagedObservationToolName,

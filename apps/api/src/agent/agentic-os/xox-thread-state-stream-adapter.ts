@@ -4,7 +4,7 @@ import { openAgentServerSignalStateStream } from '@agentic-os/server'
 import type { AgentThreadEvent, AgentThreadState } from '@xox/contracts'
 import type { Database, Row } from '../../db/schema.js'
 import type { CurrentUser } from '../../modules/auth.js'
-import { buildThreadState } from '../thread-store.js'
+import { buildThreadState } from './xox-thread-store-adapter.js'
 import { safeRunErrorMessage } from '../run-worker.js'
 import { agentThreadEvents, type AgentThreadEventSignal } from './xox-thread-signal-adapter.js'
 

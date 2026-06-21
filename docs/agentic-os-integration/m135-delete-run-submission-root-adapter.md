@@ -59,4 +59,4 @@ Expected result:
 
 ## Next Cut
 
-After this slice, the remaining root run-plane files are `run-worker.ts` and `thread-store.ts`. They need deeper cuts because they still contain recovery/fail-closed writes and durable state loading. They should be split only after the next design pass identifies what can move into `@agentic-os/server` versus what must remain xox store/route adapter.
+After M136, `thread-store.ts` has also been deleted from the root agent directory and moved to `agentic-os/xox-thread-store-adapter.ts`. The remaining high-value root run-plane file is `run-worker.ts`; it still contains recovery/fail-closed writes and durable process wiring, so the next design pass must decide what can move into `@agentic-os/server` before deleting or collapsing it.

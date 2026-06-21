@@ -103,5 +103,5 @@ Expected result:
 After this slice, the next high-value root deletions are:
 
 - `run-worker.ts`: should become a small xox worker bootstrap once Agentic OS server owns more durable queue/recovery orchestration.
-- `thread-store.ts`: should become a server store/projection adapter once generic thread state projection is fully package-owned.
-- `run-submission.ts`: should become submit transport + xox DTO mapping only.
+- `thread-store.ts`: deleted in M136 and moved to `agentic-os/xox-thread-store-adapter.ts` as durable xox store/DTO wiring.
+- `run-submission.ts`: deleted in M135 and moved to `agentic-os/xox-run-submission-adapter.ts` as submit transport + xox DTO mapping only.

@@ -15,7 +15,7 @@ import {
   serializeMessage,
   serializePlanStep,
   touchThreadAfterRun,
-} from '../thread-store.js'
+} from './xox-thread-store-adapter.js'
 import { completeAgentRun, createAgentRunController, scheduleAgentRunQueueDrain } from '../run-worker.js'
 import { normalizeAgentAutomationLevel, type AgentAutomationLevel } from '../tool-policy.js'
 import { buildSubmittedRunResponse } from './xox-run-submission-view.js'
