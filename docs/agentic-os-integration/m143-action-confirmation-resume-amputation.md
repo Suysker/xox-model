@@ -80,7 +80,7 @@ Forbidden direction after M143:
 xox routes / adapters
   -> xox-loop-readiness-adapter
   -> xox-final-review-adapter
-  -> runtime-goal-facts
+  -> host-profile/xox-goal-facts
   -> xox-tool-observation-adapter continuation
   -> addMessage for final assistant continuation
 ```
@@ -112,7 +112,7 @@ xox routes / adapters
 - `apps/api/src/agent/routes.ts` does not import:
   - `xox-loop-readiness-adapter`
   - `xox-final-review-adapter`
-  - `runtime-goal-facts`
+  - `host-profile/xox-goal-facts`
   - `xox-tool-observation-adapter`
   - `xox-thread-store-adapter` for final assistant continuation
 - the confirm route helper contains no goal evaluation, evidence ledger, response evaluation, obligation planning, or provider continuation code.

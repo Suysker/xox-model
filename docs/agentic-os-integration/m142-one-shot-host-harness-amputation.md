@@ -172,7 +172,7 @@ Status: completed as a follow-up M142 whole-file deletion cut.
 Status: completed as a follow-up M142 root-file deletion cut.
 
 - Deleted `data-agent.ts` and `planning-context.ts`.
-- `data.query_workspace` business read execution now lives in `runtime-intent-handlers.ts`, the concrete xox tool handler registry, with `WorkspaceDataQueryStep` naming instead of `DataAgentQueryStep`.
+- `data.query_workspace` business read execution now lives in `tool-executor.ts`, the concrete xox business tool boundary, with `WorkspaceDataQueryStep` naming instead of `DataAgentQueryStep`. This supersedes the intermediate M146 location after M156 deleted `runtime-intent-handlers.ts`.
 - `PlannerContext` now lives in `action-draft-builder.ts`, beside xox action/read draft DTOs, instead of a standalone planning context facade.
 - Architecture guards now fail if either deleted root file returns.
 - This cut removes misleading root agent filenames only. It does not move business data reads or action draft generation into Agentic OS, because those remain xox peripheral responsibilities.

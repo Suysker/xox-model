@@ -27,7 +27,7 @@ import type { AgentActionDraft } from './action-draft-builder.js'
 import type { ReadDraft, RuntimePlannerStep } from './action-draft-builder.js'
 import { cloneModelConfig, currentDraftConfig, finiteNumber, getConfigPath, setConfigPath } from './action-draft-utils.js'
 import type { PlannerContext } from './action-draft-builder.js'
-import { readRuntimeGoalFacts } from './runtime-goal-facts.js'
+import { readRuntimeGoalFacts } from './host-profile/xox-goal-facts.js'
 
 function modelWorkbenchNavigation(reason: string): AgentNavigationEvent {
   return {

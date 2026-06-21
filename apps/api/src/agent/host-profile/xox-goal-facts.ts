@@ -1,7 +1,7 @@
 import type { AgentGoalFacts } from '@xox/contracts'
 import type { Kysely } from 'kysely'
-import type { Database, Row } from '../db/schema.js'
-import { parseJson } from '../db/database.js'
+import type { Database, Row } from '../../db/schema.js'
+import { parseJson } from '../../db/database.js'
 
 const FORBIDDEN_ACTIONS = new Set<NonNullable<AgentGoalFacts['forbiddenActions']>[number]>([
   'publish_release',

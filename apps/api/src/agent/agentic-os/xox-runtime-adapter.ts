@@ -39,17 +39,15 @@ import type { PlannerContext } from '../action-draft-builder.js'
 import { addRunEvent, addRuntimeStreamRunEvent } from './xox-run-event-store-adapter.js'
 import type { AgentToolObservation } from './xox-tool-observation-adapter.js'
 import {
+  AGENT_TOOL_REGISTRY,
   materializedToolInventorySnapshot,
   provideRuntimeToolCatalog,
-  type RuntimeToolCatalogProjection,
-} from '../tool-gateway.js'
-import {
-  AGENT_TOOL_REGISTRY,
   isHarnessManagedObservationToolName,
   isManualBoundaryNoticeToolName,
   toolCallToPlannerStep,
   type AgentToolCallStep,
   type ChatTool,
+  type RuntimeToolCatalogProjection,
 } from '../tool-catalog.js'
 
 export type RuntimePlannerSource = Extract<AgentPlannerSource, 'openai_agents' | 'openai_compatible_tool_calls'>

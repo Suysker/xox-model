@@ -17,8 +17,8 @@ import {
   agentWritableConfigPatterns,
   buildAgentWritableConfigCatalog,
 } from '../src/agent/tool-catalog.js'
-import { buildRuntimeToolCatalogProjection } from '../src/agent/tool-gateway.js'
-import { sanitizeAgentGoalFacts } from '../src/agent/runtime-goal-facts.js'
+import { buildRuntimeToolCatalogProjection } from '../src/agent/tool-catalog.js'
+import { sanitizeAgentGoalFacts } from '../src/agent/host-profile/xox-goal-facts.js'
 import { resolveActionAuthority } from '../src/agent/tool-policy.js'
 import { createProductDefaultModel, projectModel } from '@xox/domain'
 import { recoverRunningAgentRuns } from '../src/agent/agentic-os/xox-run-worker-adapter.js'

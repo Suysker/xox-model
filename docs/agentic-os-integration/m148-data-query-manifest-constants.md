@@ -6,9 +6,9 @@ Date: 2026-06-21
 
 ## Goal
 
-Remove duplicated hard-coded `data.query_workspace` scope and metric enums from `runtime-intent-handlers.ts`.
+Remove duplicated hard-coded `data.query_workspace` scope and metric enums from the xox business tool handler. At the time this handler lived in `runtime-intent-handlers.ts`; after M156 it lives in `tool-executor.ts`.
 
-`runtime-intent-handlers.ts` should execute xox business reads. It should not carry a second provider-facing manifest for query scopes and metrics.
+The xox business tool handler should execute xox business reads. It should not carry a second provider-facing manifest for query scopes and metrics.
 
 ## What Changed
 
@@ -19,7 +19,7 @@ Remove duplicated hard-coded `data.query_workspace` scope and metric enums from 
   - `WORKSPACE_DATA_QUERY_METRICS`
   - metric groupings and type guards used by the runtime handler
 - The `data_query_workspace` JSON schema now uses those exported constants for `scope.enum` and `metrics.items.enum`.
-- `runtime-intent-handlers.ts` consumes `isWorkspaceDataQueryScope()`, `isWorkspaceDataQueryMetric()`, `WORKSPACE_DATA_QUERY_SCOPE`, and metric group constants instead of duplicating string enum lists.
+- `tool-executor.ts` consumes `isWorkspaceDataQueryScope()`, `isWorkspaceDataQueryMetric()`, `WORKSPACE_DATA_QUERY_SCOPE`, and metric group constants instead of duplicating string enum lists. This is the post-M156 location.
 - Architecture tests guard against reintroducing `step.scope === '...'`, `metricSet.has('...')`, and `metrics.includes('...')` hard-coded enum checks in the handler.
 
 ## Boundary

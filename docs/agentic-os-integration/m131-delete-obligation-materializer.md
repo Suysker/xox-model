@@ -25,7 +25,7 @@ After M131, xox keeps only the host adapter work at the real final-review bounda
 | Obligation materialization planning | `@agentic-os/core planObligationMaterialization()` |
 | Generic started/completed materialization payloads | `@agentic-os/core` |
 | xox `domain_fact -> data_query_workspace` selection | private helper in `apps/api/src/agent/agentic-os/xox-agentic-os-host-kit.ts` |
-| xox data read execution | historical M131: `apps/api/src/agent/data-agent.ts`; after M146: `apps/api/src/agent/runtime-intent-handlers.ts` workspace data query handler |
+| xox data read execution | historical M131: `apps/api/src/agent/data-agent.ts`; after M146: `apps/api/src/agent/runtime-intent-handlers.ts`; after M156: `apps/api/src/agent/tool-executor.ts` workspace data query handler |
 | xox action/read row persistence | historical M131: `apps/api/src/agent/action-graph-store.ts`; after M139: `apps/api/src/agent/agentic-os/xox-action-graph-adapter.ts` |
 | xox durable event storage and Chinese copy | `apps/api/src/agent/agentic-os/xox-run-event-store-adapter.ts` + host-kit call sites |
 
@@ -35,7 +35,7 @@ After M131, xox keeps only the host adapter work at the real final-review bounda
 flowchart TD
     FinalReview["xox host-kit final review"] --> CorePlan["@agentic-os/core planObligationMaterialization"]
     FinalReview --> XoxSelect["private xox obligation -> data query args"]
-    XoxSelect --> DataQuery["xox runtime-intent-handlers.ts workspace data query"]
+    XoxSelect --> DataQuery["xox tool-executor.ts workspace data query"]
     DataQuery --> GraphStore["xox-action-graph-adapter.ts"]
     FinalReview --> Events["xox-run-event-store-adapter.ts"]
 ```

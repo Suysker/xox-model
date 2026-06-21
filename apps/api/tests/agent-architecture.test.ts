@@ -142,6 +142,8 @@ describe('Agent ADR architecture boundaries', () => {
   it('keeps host prompt assets in host profile instead of a generic agent prompt framework', () => {
     expect(existsSync(join(srcRoot, 'agent', 'prompts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'host-profile', 'prompts'))).toBe(true)
+    expect(existsSync(join(srcRoot, 'agent', 'runtime-goal-facts.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'host-profile', 'xox-goal-facts.ts'))).toBe(true)
     expect(existsSync(join(srcRoot, 'agent', 'host-profile', 'prompts', 'xox-planning-policy.md'))).toBe(true)
     expect(existsSync(join(srcRoot, 'agent', 'host-profile', 'prompts', 'xox-turn-lane-policy.md'))).toBe(true)
     expect(existsSync(join(srcRoot, 'agent', 'host-profile', 'prompts', 'xox-direct-answer-policy.md'))).toBe(true)
@@ -160,26 +162,33 @@ describe('Agent ADR architecture boundaries', () => {
       }
       expect(content, `${file} must not load prompts from the old generic agent prompt directory`).not.toContain('../prompts/')
       expect(content, `${file} must not load prompts from the old generic agent prompt directory`).not.toContain('..\\prompts\\')
+      expect(content, `${file} must not import the deleted root runtime goal facts file`).not.toContain('runtime-goal-facts')
     }
   })
 
   it('deletes misleading root agent data and planning facades', () => {
     expect(existsSync(join(srcRoot, 'agent', 'data-agent.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'planning-context.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'runtime-intent-handlers.ts'))).toBe(false)
 
     const draftBuilder = source('agent/action-draft-builder.ts')
     expect(draftBuilder).toContain('export type PlannerContext')
 
-    const handlers = source('agent/runtime-intent-handlers.ts')
-    expect(handlers).toContain('WorkspaceDataQueryStep')
-    expect(handlers).toContain('answerWorkspaceDataQuestion')
-    expect(handlers).toContain('WORKSPACE_DATA_QUERY_SCOPE')
-    expect(handlers).toContain('isWorkspaceDataQueryScope')
-    expect(handlers).not.toContain('DataAgentQueryStep')
-    expect(handlers).not.toContain("from './data-agent.js'")
-    expect(handlers).not.toContain("step.scope === '")
-    expect(handlers).not.toContain("metricSet.has('")
-    expect(handlers).not.toContain("metrics.includes('")
+    const executor = source('agent/tool-executor.ts')
+    expect(executor).toContain('WorkspaceDataQueryStep')
+    expect(executor).toContain('answerWorkspaceDataQuestion')
+    expect(executor).toContain('WORKSPACE_DATA_QUERY_SCOPE')
+    expect(executor).toContain('isWorkspaceDataQueryScope')
+    expect(executor).not.toContain('DataAgentQueryStep')
+    expect(executor).not.toContain("from './data-agent.js'")
+    expect(executor).not.toContain("step.scope === '")
+    expect(executor).not.toContain("metricSet.has('")
+    expect(executor).not.toContain("metrics.includes('")
+
+    for (const file of sourceFilesUnder('agent')) {
+      const content = source(file)
+      expect(content, `${file} must not import the deleted runtime intent handler facade`).not.toContain('runtime-intent-handlers')
+    }
 
     const catalog = source('agent/tool-catalog.ts')
     expect(catalog).toContain('WORKSPACE_DATA_QUERY_SCOPES')
@@ -521,12 +530,14 @@ describe('Agent ADR architecture boundaries', () => {
     expect(manifest).not.toContain('function rankTool')
     expect(manifest).not.toContain('function materializeTool')
 
-    const gateway = source('agent/tool-gateway.ts')
-    expect(gateway).toContain("from './tool-surface-manifest.js'")
-    expect(gateway).not.toContain('tool-context-engine')
+    expect(existsSync(join(srcRoot, 'agent', 'tool-gateway.ts'))).toBe(false)
+    const catalog = source('agent/tool-catalog.ts')
+    expect(catalog).toContain("from './tool-surface-manifest.js'")
+    expect(catalog).not.toContain('tool-context-engine')
 
     expect(existsSync(join(srcRoot, 'agent', 'tool-discovery-tool.ts'))).toBe(false)
-    const handlers = source('agent/runtime-intent-handlers.ts')
+    expect(existsSync(join(srcRoot, 'agent', 'runtime-intent-handlers.ts'))).toBe(false)
+    const handlers = source('agent/tool-executor.ts')
     expect(handlers).toContain("@agentic-os/core")
     expect(handlers).toContain('buildToolSurfaceDiscoveryObservation')
     expect(handlers).toContain('buildToolSurfaceManifestSearchObservation')
@@ -681,13 +692,14 @@ describe('Agent ADR architecture boundaries', () => {
 
   it('keeps tool inventory metadata in Agentic OS packages', () => {
     expect(existsSync(join(srcRoot, 'agent', 'tool-runtime', 'effective-tool-inventory.ts'))).toBe(false)
-    const gateway = source('agent/tool-gateway.ts')
-    expect(gateway).toContain("@agentic-os/runtime-openai-compatible")
-    expect(gateway).toContain('buildOpenAICompatibleEffectiveToolInventorySnapshot')
-    expect(gateway).not.toContain('inferToolAuthorityClass')
-    expect(gateway).not.toContain('providerCompatibilityFlags')
-    expect(gateway).not.toContain('resolveProviderModelProfile')
-    expect(gateway).not.toContain("tool.capability === 'sandbox'")
+    expect(existsSync(join(srcRoot, 'agent', 'tool-gateway.ts'))).toBe(false)
+    const catalog = source('agent/tool-catalog.ts')
+    expect(catalog).toContain("@agentic-os/runtime-openai-compatible")
+    expect(catalog).toContain('buildOpenAICompatibleEffectiveToolInventorySnapshot')
+    expect(catalog).not.toContain('inferToolAuthorityClass')
+    expect(catalog).not.toContain('providerCompatibilityFlags')
+    expect(catalog).not.toContain('resolveProviderModelProfile')
+    expect(catalog).not.toContain("tool.capability === 'sandbox'")
 
     const hostKit = source('agent/agentic-os/xox-agentic-os-host-kit.ts')
     expect(hostKit).toContain('inferToolAuthorityClass')

@@ -38,7 +38,7 @@ import {
 import type { Row } from '../../db/schema.js'
 import { parseJson } from '../../db/database.js'
 import type { AgentToolCapability } from '../tool-catalog.js'
-import { mergeAgentGoalFacts } from '../runtime-goal-facts.js'
+import { mergeAgentGoalFacts } from '../host-profile/xox-goal-facts.js'
 import {
   agenticOsObservationFromXox,
   type AgentToolObservation,

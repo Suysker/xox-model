@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { AGENT_TOOL_REGISTRY } from '../src/agent/tool-catalog.js'
 import { buildToolContextPack } from '../src/agent/tool-surface-manifest.js'
-import { buildRuntimeToolCatalogProjection } from '../src/agent/tool-gateway.js'
+import { buildRuntimeToolCatalogProjection } from '../src/agent/tool-catalog.js'
 
 describe('Progressive Tool Discovery Runtime', () => {
   it('materializes a small fact-first pack for simple payback questions', () => {

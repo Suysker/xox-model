@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { SandboxBroker } from '@agentic-os/sandbox'
 import { createProductDefaultModel, projectModel } from '@xox/domain'
 import type { SandboxManifest, SandboxRunCodeInput } from '@xox/contracts'
-import { buildRuntimeToolCatalogProjection } from '../src/agent/tool-gateway.js'
+import { buildRuntimeToolCatalogProjection } from '../src/agent/tool-catalog.js'
 import { AGENT_TOOL_CATALOG, toolCallToPlannerStep } from '../src/agent/tool-catalog.js'
 import {
   inspectSandboxUploadedFile,

@@ -916,7 +916,7 @@ async function sandboxToolRuntimeHandler(input: {
       status: 'failed' as const,
       error: {
         code: 'sandbox.tool_runtime_mapping_missing',
-        message: `${input.request.toolName} is not mapped in the Tool Runtime Gateway.`,
+        message: `${input.request.toolName} is not mapped in the host tool catalog.`,
         repairable: true,
       },
     }

@@ -78,7 +78,12 @@ import type { Row } from '../../db/schema.js'
 import { newId } from '../../core/security.js'
 import { utcNow } from '../../core/time.js'
 import type { PlannerContext } from '../action-draft-builder.js'
-import { executeAgentActionRequest } from '../tool-executor.js'
+import {
+  answerWorkspaceDataQuestion,
+  executeAgentActionRequest,
+  runtimeIntentHandlers,
+  type WorkspaceDataQueryStep,
+} from '../tool-executor.js'
 import {
   buildPlannedItemFromRuntimeStep,
   isActionDraft,
@@ -127,7 +132,7 @@ import {
 import {
   mergeAgentGoalFacts,
   readRuntimeGoalFacts,
-} from '../runtime-goal-facts.js'
+} from '../host-profile/xox-goal-facts.js'
 import { addRunEvent } from './xox-run-event-store-adapter.js'
 import { addMessage } from './xox-thread-store-adapter.js'
 import {
@@ -150,11 +155,6 @@ import {
   type XoxObservationBridge,
 } from './xox-tool-observation-adapter.js'
 import { redactSecretLikeContent } from '../memory.js'
-import {
-  answerWorkspaceDataQuestion,
-  runtimeIntentHandlers,
-  type WorkspaceDataQueryStep,
-} from '../runtime-intent-handlers.js'
 import { normalizeAgentAutomationLevel } from '../tool-policy.js'
 import {
   applyObservationToLedger,

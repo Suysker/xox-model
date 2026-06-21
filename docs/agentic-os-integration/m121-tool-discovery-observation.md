@@ -21,7 +21,7 @@ Agentic OS：
 
 xox：
 
-- `runtime-intent-handlers.ts`
+- `tool-executor.ts`
   - 调用 core builder；
   - 传入 `buildToolManifests(AGENT_TOOL_REGISTRY)`；
   - 只保留中文标题、message、displayPreview 和 `ReadDraft` shape。
@@ -51,5 +51,5 @@ npm.cmd run test:api
 
 已于 2026-06-21 完成。
 
-- xox `runtime-intent-handlers.ts` 直接消费 Agentic OS core discovery builders。
+- xox `tool-executor.ts` 直接消费 Agentic OS core discovery builders. This supersedes the earlier M121/M146 location after M156 deleted `runtime-intent-handlers.ts`.
 - `apps/api/src/agent/tool-discovery-tool.ts` 已删除。

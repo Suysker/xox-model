@@ -35,7 +35,7 @@ import {
 import { addRunEvent, addRuntimeStreamRunEvent, agentThreadEvents } from './xox-run-event-store-adapter.js'
 import { addMessage, touchThreadAfterRun } from './xox-thread-store-adapter.js'
 import { normalizeAgentAutomationLevel } from '../tool-policy.js'
-import { sanitizeAgentGoalFacts } from '../runtime-goal-facts.js'
+import { sanitizeAgentGoalFacts } from '../host-profile/xox-goal-facts.js'
 import {
   configuredRuntimePlannerSource,
   planWithRuntimeAdapter,

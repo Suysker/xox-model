@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentToolInventorySnapshot } from '@xox/contracts'
 import type { Settings } from '../src/core/settings.js'
-import { buildRuntimeToolCatalogProjection } from '../src/agent/tool-gateway.js'
+import { buildRuntimeToolCatalogProjection } from '../src/agent/tool-catalog.js'
 import {
   resolveProviderModelProfile,
   sanitizeOpenAICompatibleRequestBody,
