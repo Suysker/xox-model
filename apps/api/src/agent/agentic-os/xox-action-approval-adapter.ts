@@ -4,6 +4,7 @@ import type {
   AgentActionUpdatePayload,
   AgentNavigationEvent,
 } from '@xox/contracts'
+import { agentServerRunLifecycleEvents } from '@agentic-os/server'
 import type { Database, Row } from '../../db/schema.js'
 import { jsonString, parseJson } from '../../db/database.js'
 import { conflict, forbidden, notFound, unprocessable } from '../../core/http.js'
@@ -26,7 +27,7 @@ import { loopObligationsFromResponseEvaluation, planLoopObligations } from '../l
 import {
   consolidateAgentMemoryCandidates,
   consolidateExecutedActionMemory,
-} from '../memory-kernel.js'
+} from '../memory-consolidator.js'
 import {
   actionExecutionObservation,
   continueModelAfterToolObservations,
@@ -188,15 +189,18 @@ export async function autoExecuteAgentActionRequest(
   try {
     const result = await executeAgentActionRequest(db, settings, user, action)
     const updated = await db.selectFrom('agent_action_requests').selectAll().where('id', '=', action.id).executeTakeFirstOrThrow()
-    await addRunEvent(db, {
+    await addRunEvent(db, agentServerRunLifecycleEvents.actionAutoExecuted({
       threadId: action.thread_id,
       runId: action.run_id,
-      type: 'action_auto_executed',
-      title: '动作已自动执行',
-      message: `已自动执行：${action.title}`,
-      status: 'completed',
-      data: { actionRequestId: action.id, actionKind: action.kind, reason },
-    })
+      actionRequestId: action.id,
+      actionKind: action.kind,
+      actionTitle: action.title,
+      reason,
+      copy: {
+        title: '动作已自动执行',
+        message: `已自动执行：${action.title}`,
+      },
+    }))
     return { actionRequest: updated, result, error: null as string | null }
   } catch (executionError) {
     const message = safeActionErrorMessage(executionError)
@@ -210,15 +214,19 @@ export async function autoExecuteAgentActionRequest(
       .where('action_request_id', '=', action.id)
       .execute()
       .catch(() => undefined)
-    await addRunEvent(db, {
+    await addRunEvent(db, agentServerRunLifecycleEvents.actionAutoExecutionFailed({
       threadId: action.thread_id,
       runId: action.run_id,
-      type: 'action_auto_execution_failed',
-      title: '自动执行失败',
-      message: `${action.title}：${message}`,
-      status: 'failed',
-      data: { actionRequestId: action.id, actionKind: action.kind, reason },
-    }).catch(() => undefined)
+      actionRequestId: action.id,
+      actionKind: action.kind,
+      actionTitle: action.title,
+      reason,
+      errorMessage: message,
+      copy: {
+        title: '自动执行失败',
+        message: `${action.title}：${message}`,
+      },
+    })).catch(() => undefined)
     const updated = await db.selectFrom('agent_action_requests').selectAll().where('id', '=', action.id).executeTakeFirstOrThrow()
     return { actionRequest: updated, result: null as unknown, error: message }
   }
@@ -234,15 +242,18 @@ export async function confirmAgentActionRequest(db: Kysely<Database>, settings: 
   } catch (executionError) {
     const message = safeActionErrorMessage(executionError)
     await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', action.thread_id).execute().catch(() => undefined)
-    await addRunEvent(db, {
+    await addRunEvent(db, agentServerRunLifecycleEvents.actionExecutionFailed({
       threadId: action.thread_id,
       runId: action.run_id,
-      type: 'action_execution_failed',
-      title: '确认卡执行失败',
-      message: `${action.title}：${message}`,
-      status: 'failed',
-      data: { actionRequestId: action.id, actionKind: action.kind },
-    }).catch(() => undefined)
+      actionRequestId: action.id,
+      actionKind: action.kind,
+      actionTitle: action.title,
+      errorMessage: message,
+      copy: {
+        title: '确认卡执行失败',
+        message: `${action.title}：${message}`,
+      },
+    })).catch(() => undefined)
     throw executionError
   }
 
@@ -253,17 +264,19 @@ export async function confirmAgentActionRequest(db: Kysely<Database>, settings: 
     const iteration = await nextEvaluationIteration(db, action.run_id)
     const evaluationRow = await evaluateAgentGoal({ db, workspace, goal, iteration, allowComplete: false })
     const evaluation = serializeEvaluation(evaluationRow)
-    await addRunEvent(db, {
+    await addRunEvent(db, agentServerRunLifecycleEvents.goalEvaluated({
       threadId: action.thread_id,
       runId: action.run_id,
-      type: 'goal_evaluated',
-      title: 'Loop Readiness Check 已复核',
-      message: evaluation.status === 'pass'
-        ? '确认卡执行后，Loop Readiness Check 已确认运行图可进入最终回答证据检查。'
-        : `确认卡执行后仍需处理：${evaluation.unsatisfiedCriteria.map((item) => item.message).join('；') || evaluation.status}`,
-      status: evaluation.status === 'pass' ? 'running' : evaluation.status === 'needs_confirmation' ? 'blocked' : evaluation.status === 'failed' || evaluation.status === 'blocked' ? 'failed' : 'info',
-      data: { goalId: goal.id, iteration, evaluationStatus: evaluation.status },
-    })
+      goalId: goal.id,
+      iteration,
+      evaluationStatus: evaluation.status,
+      copy: {
+        title: 'Loop Readiness Check 已复核',
+        message: evaluation.status === 'pass'
+          ? '确认卡执行后，Loop Readiness Check 已确认运行图可进入最终回答证据检查。'
+          : `确认卡执行后仍需处理：${evaluation.unsatisfiedCriteria.map((item) => item.message).join('；') || evaluation.status}`,
+      },
+    }))
   }
   await consolidateExecutedActionMemory({
     db,
@@ -275,15 +288,17 @@ export async function confirmAgentActionRequest(db: Kysely<Database>, settings: 
     message: '已从确认卡执行结果沉淀记忆候选。',
   })
   await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', action.thread_id).execute()
-  await addRunEvent(db, {
+  await addRunEvent(db, agentServerRunLifecycleEvents.actionExecuted({
     threadId: action.thread_id,
     runId: action.run_id,
-    type: 'action_executed',
-    title: '确认卡已执行',
-    message: `已执行：${action.title}`,
-    status: 'completed',
-    data: { actionRequestId: action.id, actionKind: action.kind },
-  })
+    actionRequestId: action.id,
+    actionKind: action.kind,
+    actionTitle: action.title,
+    copy: {
+      title: '确认卡已执行',
+      message: `已执行：${action.title}`,
+    },
+  }))
   const continuation = await continueModelAfterToolObservations({
     db,
     settings,
@@ -320,24 +335,24 @@ export async function confirmAgentActionRequest(db: Kysely<Database>, settings: 
         objective: goal.objective,
         obligations,
       })
-      await addRunEvent(db, {
+      await addRunEvent(db, agentServerRunLifecycleEvents.responseEvaluated({
         threadId: action.thread_id,
         runId: action.run_id,
-        type: 'response_evaluated',
-        title: '最终回答证据检查',
-        message: responseEvaluationSummary(responseEvaluation),
-        status: responseEvaluation.status === 'pass' ? 'completed' : responseEvaluation.status === 'blocked' ? 'failed' : 'running',
+        goalId: goal.id,
+        evaluationStatus: responseEvaluation.status,
+        confidence: responseEvaluation.confidence,
+        evidenceCount: evidence.length,
+        findings: responseEvaluation.findings,
+        requiredEvidence: responseEvaluation.requiredEvidence,
         data: {
-          goalId: goal.id,
-          evaluationStatus: responseEvaluation.status,
-          confidence: responseEvaluation.confidence,
-          evidenceCount: evidence.length,
-          findings: responseEvaluation.findings,
-          requiredEvidence: responseEvaluation.requiredEvidence,
           obligations,
           obligationPlan,
         },
-      })
+        copy: {
+          title: '最终回答证据检查',
+          message: responseEvaluationSummary(responseEvaluation),
+        },
+      }))
       if (responseEvaluation.status === 'pass') {
         await updateGoalStatus(db, goal, 'completed')
       }
@@ -365,15 +380,17 @@ export async function cancelAgentActionRequest(db: Kysely<Database>, workspace: 
   const planSteps = await listPlanStepsForRun(db, action.run_id)
   const assistant = await addMessage(db, action.thread_id, 'assistant', `已取消：${action.title}`)
   await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', action.thread_id).execute()
-  await addRunEvent(db, {
+  await addRunEvent(db, agentServerRunLifecycleEvents.actionCancelled({
     threadId: action.thread_id,
     runId: action.run_id,
-    type: 'action_cancelled',
-    title: '确认卡已取消',
-    message: `已取消：${action.title}`,
-    status: 'cancelled',
-    data: { actionRequestId: action.id, actionKind: action.kind },
-  })
+    actionRequestId: action.id,
+    actionKind: action.kind,
+    actionTitle: action.title,
+    copy: {
+      title: '确认卡已取消',
+      message: `已取消：${action.title}`,
+    },
+  }))
   await consolidateAgentMemoryCandidates({
     db,
     workspace,
@@ -434,15 +451,18 @@ export async function updateAgentActionRequest(
     .execute()
   await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', action.thread_id).execute()
   const planSteps = await listPlanStepsForRun(db, action.run_id)
-  await addRunEvent(db, {
+  await addRunEvent(db, agentServerRunLifecycleEvents.actionUpdated({
     threadId: action.thread_id,
     runId: action.run_id,
-    type: 'action_updated',
-    title: '确认卡已编辑',
-    message: `确认卡已编辑：${updated.title}`,
-    status: 'info',
-    data: { actionRequestId: action.id, actionKind: action.kind, changes },
-  })
+    actionRequestId: action.id,
+    actionKind: action.kind,
+    actionTitle: updated.title,
+    changes,
+    copy: {
+      title: '确认卡已编辑',
+      message: `确认卡已编辑：${updated.title}`,
+    },
+  }))
   await consolidateAgentMemoryCandidates({
     db,
     workspace,

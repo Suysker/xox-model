@@ -1,4 +1,5 @@
 import type { Kysely } from 'kysely'
+import { agentServerRunLifecycleEvents } from '@agentic-os/server'
 import type { Database, Row } from '../../db/schema.js'
 import type { Settings } from '../../core/settings.js'
 import { newId } from '../../core/security.js'
@@ -267,15 +268,16 @@ export async function continueModelAfterToolObservations(
   if (observations.length === 0) return { status: 'skipped', reason: 'no_observations' } satisfies ToolObservationContinuationResult
   if (ctx.settings.llmProvider === 'rules') return { status: 'skipped', reason: 'rules_provider' } satisfies ToolObservationContinuationResult
 
-  await addRunEvent(ctx.db, {
+  await addRunEvent(ctx.db, agentServerRunLifecycleEvents.modelContinuation({
     threadId: ctx.threadId,
     runId: ctx.runId,
-    type: 'model_continuation',
-    title: '模型继续生成回复',
-    message: '工具结果已作为 observation 回灌给模型，正在生成最终回复。',
-    status: 'running',
-    data: { observationCount: observations.length, toolNames: observations.map((observation) => observation.toolName) },
-  })
+    observationCount: observations.length,
+    toolNames: observations.map((observation) => observation.toolName),
+    copy: {
+      title: '模型继续生成回复',
+      message: '工具结果已作为 observation 回灌给模型，正在生成最终回复。',
+    },
+  }))
 
   const context = {
     mode: 'tool_observation_finalizer',
@@ -315,28 +317,30 @@ export async function continueModelAfterToolObservations(
 
   const assistantText = result?.assistantText?.trim()
   if (assistantText) {
-    await addRunEvent(ctx.db, {
+    await addRunEvent(ctx.db, agentServerRunLifecycleEvents.modelContinuationCompleted({
       threadId: ctx.threadId,
       runId: ctx.runId,
-      type: 'model_continuation_completed',
-      title: '模型回复已完成',
-      message: '模型已基于工具结果生成最终回复。',
-      status: 'completed',
-      data: { observationCount: observations.length, contentLength: assistantText.length },
-    })
+      observationCount: observations.length,
+      contentLength: assistantText.length,
+      copy: {
+        title: '模型回复已完成',
+        message: '模型已基于工具结果生成最终回复。',
+      },
+    }))
     return { status: 'answered', assistantText } satisfies ToolObservationContinuationResult
   }
 
   const message = result?.error?.message ?? '模型没有基于工具结果返回可展示回复。'
-  await addRunEvent(ctx.db, {
+  await addRunEvent(ctx.db, agentServerRunLifecycleEvents.modelContinuationFailed({
     threadId: ctx.threadId,
     runId: ctx.runId,
-    type: 'model_continuation_failed',
-    title: '模型继续回复失败',
-    message,
-    status: 'failed',
-    data: { observationCount: observations.length, errorKind: result?.error?.kind ?? null },
-  })
+    observationCount: observations.length,
+    errorKind: result?.error?.kind ?? null,
+    copy: {
+      title: '模型继续回复失败',
+      message,
+    },
+  }))
   const planStep = await addContinuationFailureStep(ctx, message)
   return { status: 'failed', message, planStep } satisfies ToolObservationContinuationResult
 }

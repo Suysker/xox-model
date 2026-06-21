@@ -67,6 +67,7 @@ import {
 } from '@agentic-os/core'
 import {
   AGENT_SERVER_FINAL_ANSWER_CLAIM_EXTRACTION_TOOL_NAME,
+  agentServerRunLifecycleEvents,
   runAgentServerFinalAnswerClaimExtraction,
   type AgentServerFinalAnswerClaimExtractionCopyInput,
   type AgentServerFinalAnswerClaimExtractionOptions,
@@ -113,7 +114,7 @@ import {
 import {
   consolidateExecutedActionMemory,
   flushThreadContextToMemoryIfNeeded,
-} from '../memory-kernel.js'
+} from '../memory-consolidator.js'
 import { runMemoryDreamingSweep } from '../memory/dreaming-worker.js'
 import {
   evaluateAssistantResponse,
@@ -360,15 +361,11 @@ async function materializeLoopObligations(input: {
     const obligation = obligationsById.get(task.obligationId)
     if (obligation === undefined) continue
 
-    await addRunEvent(input.ctx.db, {
+    await addRunEvent(input.ctx.db, agentServerRunLifecycleEvents.runnerObligationMaterializing({
       threadId: input.ctx.threadId,
       runId: input.ctx.runId,
-      type: 'runner_obligation_materializing',
-      title: 'Runner observation task',
-      message: 'A required evidence obligation is being materialized as a model-visible observation.',
-      status: 'running',
-      data: task.startedEventPayload as Record<string, unknown>,
-    })
+      payload: task.startedEventPayload as Record<string, unknown>,
+    }))
 
     const graph = await materializeDataObservation({
       ctx: input.ctx,
@@ -381,18 +378,17 @@ async function materializeLoopObligations(input: {
 
   if (graphs.length === 0) return null
 
-  await addRunEvent(input.ctx.db, {
+  await addRunEvent(input.ctx.db, agentServerRunLifecycleEvents.runnerObligationMaterialized({
     threadId: input.ctx.threadId,
     runId: input.ctx.runId,
-    type: 'runner_obligation_materialized',
-    title: 'Runner observation materialized',
-    message: `${graphs.reduce((sum, graph) => sum + graph.observations.length, 0)} required observation(s) were materialized for model replay.`,
-    status: graphs.some((graph) => graph.observations.some((observation) => observation.status === 'failed')) ? 'failed' : 'completed',
-    data: obligationMaterializationCompletedEventPayload({
+    observationCount: graphs.reduce((sum, graph) => sum + graph.observations.length, 0),
+    toolNames: graphs.flatMap((graph) => graph.observations.map((observation) => observation.toolName)),
+    failed: graphs.some((graph) => graph.observations.some((observation) => observation.status === 'failed')),
+    payload: obligationMaterializationCompletedEventPayload({
       observationCount: graphs.reduce((sum, graph) => sum + graph.observations.length, 0),
       toolNames: graphs.flatMap((graph) => graph.observations.map((observation) => observation.toolName)),
     }) as Record<string, unknown>,
-  })
+  }))
 
   return {
     assistantText: null,
@@ -1266,32 +1262,20 @@ async function recordGoalEvaluation(input: {
     allowComplete: input.allowComplete,
   })
   const evaluation = serializeEvaluation(evaluationRow)
-  await addRunEvent(input.ctx.db, {
+  await addRunEvent(input.ctx.db, agentServerRunLifecycleEvents.goalEvaluated({
     threadId: input.ctx.thread.id,
     runId: input.ctx.runId,
-    type: 'goal_evaluated',
-    title: 'Loop Readiness Check 已运行',
-    message: loopReadinessSummary(evaluation),
-    status:
-      evaluation.status === 'pass'
-        ? 'running'
-        : evaluation.status === 'needs_confirmation'
-          ? 'blocked'
-          : evaluation.status === 'continue'
-            ? 'running'
-            : evaluation.status === 'blocked' || evaluation.status === 'failed'
-              ? 'failed'
-              : 'info',
-    data: {
-      goalId: input.state.goal.id,
-      iteration: input.iteration,
-      evaluationStatus: evaluation.status,
-      satisfiedCriteria: evaluation.satisfiedCriteria,
-      unsatisfiedCount: evaluation.unsatisfiedCriteria.length,
-      nextPlannerBrief: evaluation.nextPlannerBrief,
-      harness: 'agentic-os',
+    goalId: input.state.goal.id,
+    iteration: input.iteration,
+    evaluationStatus: evaluation.status,
+    satisfiedCriteria: evaluation.satisfiedCriteria,
+    unsatisfiedCount: evaluation.unsatisfiedCriteria.length,
+    nextPlannerBrief: evaluation.nextPlannerBrief,
+    copy: {
+      title: 'Loop Readiness Check 已运行',
+      message: loopReadinessSummary(evaluation),
     },
-  })
+  }))
   const updatedGoal = await input.ctx.db
     .selectFrom('agent_goals')
     .selectAll()
@@ -1327,23 +1311,21 @@ async function addPendingWriteReadinessEvaluation(input: {
   })
   const evaluation = serializeEvaluation(row)
   await updateGoalStatus(input.ctx.db, input.state.goal, 'repairing')
-  await addRunEvent(input.ctx.db, {
+  await addRunEvent(input.ctx.db, agentServerRunLifecycleEvents.goalEvaluated({
     threadId: input.ctx.thread.id,
     runId: input.ctx.runId,
-    type: 'goal_evaluated',
-    title: 'Loop Readiness Check 已运行',
-    message: loopReadinessSummary(evaluation),
-    status: 'running',
-    data: {
-      goalId: input.state.goal.id,
-      iteration: input.iteration,
-      evaluationStatus: evaluation.status,
-      satisfiedCriteria: evaluation.satisfiedCriteria,
-      unsatisfiedCount: evaluation.unsatisfiedCriteria.length,
-      nextPlannerBrief: evaluation.nextPlannerBrief,
-      harness: 'agentic-os',
+    goalId: input.state.goal.id,
+    iteration: input.iteration,
+    evaluationStatus: evaluation.status,
+    satisfiedCriteria: evaluation.satisfiedCriteria,
+    unsatisfiedCount: evaluation.unsatisfiedCriteria.length,
+    nextPlannerBrief: evaluation.nextPlannerBrief,
+    copy: {
+      title: 'Loop Readiness Check 已运行',
+      message: loopReadinessSummary(evaluation),
+      status: 'running',
     },
-  })
+  }))
   const updatedGoal = await input.ctx.db
     .selectFrom('agent_goals')
     .selectAll()
@@ -1383,19 +1365,16 @@ function createXoxAgenticOsHost(
       if (event.type === 'turn.started') {
         const payload = event.payload as Record<string, unknown>
         const iteration = typeof payload.iteration === 'number' ? payload.iteration : null
-        await addRunEvent(ctx.db, {
+        await addRunEvent(ctx.db, agentServerRunLifecycleEvents.goalIterationStarted({
           threadId: ctx.thread.id,
           runId: ctx.runId,
-          type: 'goal_iteration_started',
-          title: `目标循环 ${iteration ?? ''}`.trim(),
-          message: iteration === 1 ? '开始第一轮模型规划。' : '根据 readiness findings 开始下一轮修复规划。',
-          status: 'running',
-          data: {
-            goalId: state.goal?.id ?? null,
-            iteration,
-            harness: 'agentic-os',
+          goalId: state.goal?.id ?? null,
+          iteration,
+          copy: {
+            title: `目标循环 ${iteration ?? ''}`.trim(),
+            message: iteration === 1 ? '开始第一轮模型规划。' : '根据 readiness findings 开始下一轮修复规划。',
           },
-        })
+        }))
       }
       if (event.type === 'tool.observed') {
         const payload = event.payload as Record<string, unknown>
@@ -1521,53 +1500,49 @@ function createXoxAgenticOsHost(
         }),
       })
       if (sandboxFinalizerObservation) {
-        await addRunEvent(ctx.db, {
+        await addRunEvent(ctx.db, agentServerRunLifecycleEvents.observationContinuationRequested({
           threadId: ctx.thread.id,
           runId: ctx.runId,
-          type: 'observation_assistant_continuation_requested',
-          title: '基于工具结果生成回复',
-          message: '工具 observation 已满足当前 runner obligations，下一步用无工具 assistant continuation 生成最终回答候选。',
-          status: 'running',
-          data: {
-            goalId: state.goal?.id ?? null,
-            iteration: input.iteration,
-            observationCount: xoxObservations.length,
-            toolNames: xoxObservations.map((observation) => observation.toolName),
-            harness: 'agentic-os',
+          goalId: state.goal?.id ?? null,
+          iteration: input.iteration,
+          observationCount: xoxObservations.length,
+          toolNames: xoxObservations.map((observation) => observation.toolName),
+          assistantOnly: true,
+          copy: {
+            title: '基于工具结果生成回复',
+            message: '工具 observation 已满足当前 runner obligations，下一步用无工具 assistant continuation 生成最终回答候选。',
           },
-        })
+        }))
         return {
           assistantText: readableObservationText(sandboxFinalizerObservation),
         }
       }
       const completedRead = completedReadObservationAssistantText(state, xoxObservations)
       if (completedRead) {
-        await addRunEvent(ctx.db, {
+        await addRunEvent(ctx.db, agentServerRunLifecycleEvents.observationContinuationRequested({
           threadId: ctx.thread.id,
           runId: ctx.runId,
-          type: 'observation_continuation_requested',
-          title: '继续基于工具结果规划',
-          message: '工具结果已作为 observation 回到 Agentic OS harness，本轮 read observation 可直接进入最终回答证据检查。',
-          status: 'running',
-          data: {
-            observationCount: completedRead.observations.length,
-            toolNames: completedRead.observations.map((observation) => observation.toolName),
-            harness: 'agentic-os',
+          observationCount: completedRead.observations.length,
+          toolNames: completedRead.observations.map((observation) => observation.toolName),
+          copy: {
+            title: '继续基于工具结果规划',
+            message: '工具结果已作为 observation 回到 Agentic OS harness，本轮 read observation 可直接进入最终回答证据检查。',
           },
-        })
+        }))
         return {
           assistantText: completedRead.text,
         }
       }
-      await addRunEvent(ctx.db, {
+      await addRunEvent(ctx.db, agentServerRunLifecycleEvents.modelPlanning({
         threadId: ctx.thread.id,
         runId: ctx.runId,
-        type: 'model_planning',
-        title: '模型规划中',
-        message: '正在通过 Agentic OS runtime port 调用配置的模型，并等待 provider-native tool calls。',
-        status: 'running',
-        data: { provider: ctx.settings.llmProvider, iteration: input.iteration },
-      })
+        provider: ctx.settings.llmProvider,
+        iteration: input.iteration,
+        copy: {
+          title: '模型规划中',
+          message: '正在通过 Agentic OS runtime port 调用配置的模型，并等待 provider-native tool calls。',
+        },
+      }))
       const result = normalizeRuntimePlanResultForAgenticOs(
         state,
         await callRuntimePlanner(runtimePlannerContext(ctx, state, input)),
@@ -1590,44 +1565,40 @@ function createXoxAgenticOsHost(
           toolNames: boundaryToolNames,
         })
         if (missingObservationRepair) {
-          await addRunEvent(ctx.db, {
+          await addRunEvent(ctx.db, agentServerRunLifecycleEvents.runtimeEvidenceRequired({
             threadId: ctx.thread.id,
             runId: ctx.runId,
-            type: 'runtime_evidence_required',
-            title: '需要补齐工具证据',
-            message: 'Provider 已产生 sandbox_run_code 工具调用意图，但没有形成对应工具 observation；最终回答前必须补齐 sandbox evidence 或失败关闭。',
-            status: 'running',
-            data: {
-              toolNames: missingObservationRepair.toolNames,
-              reason: 'provider_tool_call_without_observation_after_retry',
-              requiredGoalFacts: missingObservationRepair.requiredGoalFacts,
-              harness: 'agentic-os',
+            toolNames: missingObservationRepair.toolNames,
+            reason: 'provider_tool_call_without_observation_after_retry',
+            requiredGoalFacts: missingObservationRepair.requiredGoalFacts,
+            copy: {
+              title: '需要补齐工具证据',
+              message: 'Provider 已产生 sandbox_run_code 工具调用意图，但没有形成对应工具 observation；最终回答前必须补齐 sandbox evidence 或失败关闭。',
             },
-          })
-          await addRunEvent(ctx.db, {
+          }))
+          await addRunEvent(ctx.db, agentServerRunLifecycleEvents.responseEvaluated({
             threadId: ctx.thread.id,
             runId: ctx.runId,
-            type: 'response_evaluated',
-            title: '最终回答证据检查',
-            message: '最终回答还缺少可复核计算 evidence。',
-            status: 'running',
+            goalId: state.goal?.id ?? null,
+            evaluationStatus: missingObservationRepair.evaluation.status,
+            confidence: missingObservationRepair.evaluation.confidence,
+            evidenceCount: 0,
+            findings: missingObservationRepair.evaluation.findings,
+            requiredEvidence: missingObservationRepair.evaluation.requiredEvidence,
+            finalAnswerClaims: [],
+            claimReviewStatus: null,
+            claimReviewReason: null,
+            obligationLedger: missingObservationRepair.obligationLedger,
+            obligationPlan: missingObservationRepair.obligationPlan,
+            nextPlannerBrief: missingObservationRepair.nextPlannerBrief,
             data: {
-              goalId: state.goal?.id ?? null,
-              evaluationStatus: missingObservationRepair.evaluation.status,
-              confidence: missingObservationRepair.evaluation.confidence,
-              evidenceCount: 0,
               evidence: [],
-              findings: missingObservationRepair.evaluation.findings,
-              requiredEvidence: missingObservationRepair.evaluation.requiredEvidence,
-              finalAnswerClaims: [],
-              claimReviewStatus: null,
-              claimReviewReason: null,
-              obligationLedger: missingObservationRepair.obligationLedger,
-              obligationPlan: missingObservationRepair.obligationPlan,
-              nextPlannerBrief: missingObservationRepair.nextPlannerBrief,
-              harness: 'agentic-os',
             },
-          })
+            copy: {
+              title: '最终回答证据检查',
+              message: '最终回答还缺少可复核计算 evidence。',
+            },
+          }))
         }
       }
       return runtimePlannerResultToTurnOutput(result, {
@@ -1686,20 +1657,18 @@ function createXoxAgenticOsHost(
         .selectAll()
         .where('id', '=', action.id)
         .executeTakeFirstOrThrow()
-      await addRunEvent(ctx.db, {
+      await addRunEvent(ctx.db, agentServerRunLifecycleEvents.actionAutoExecuted({
         threadId: updated.thread_id,
         runId: updated.run_id,
-        type: 'action_auto_executed',
-        title: '动作已自动执行',
-        message: `已自动执行：${updated.title}`,
-        status: 'completed',
-        data: {
-          actionRequestId: updated.id,
-          actionKind: updated.kind,
-          reason: input.reason ?? null,
-          harness: 'agentic-os',
+        actionRequestId: updated.id,
+        actionKind: updated.kind,
+        actionTitle: updated.title,
+        reason: input.reason ?? null,
+        copy: {
+          title: '动作已自动执行',
+          message: `已自动执行：${updated.title}`,
         },
-      })
+      }))
       replaceActionRow(state, updated)
       const xoxObservation = actionExecutionObservation({ action: updated, result })
       state.xoxObservations.push(xoxObservation)
@@ -1856,20 +1825,16 @@ function createXoxAgenticOsHost(
           evidence: [],
         }
       }
-      await addRunEvent(ctx.db, {
+      await addRunEvent(ctx.db, agentServerRunLifecycleEvents.finalAnswerCandidate({
         threadId: ctx.thread.id,
         runId: ctx.runId,
-        type: 'final_answer_candidate',
-        title: '最终回答候选已生成',
-        message: '模型已基于本轮 observation 生成最终回答候选，进入 response evaluation。',
-        status: 'running',
-        channel: 'assistant',
-        data: {
-          goalId: state.goal.id,
-          priorObservationCount: state.xoxObservations.length,
-          harness: 'agentic-os',
+        goalId: state.goal.id,
+        priorObservationCount: state.xoxObservations.length,
+        copy: {
+          title: '最终回答候选已生成',
+          message: '模型已基于本轮 observation 生成最终回答候选，进入 response evaluation。',
         },
-      })
+      }))
       const claimExtraction = shouldRunFinalAnswerClaimReview({
         assistantText: input.assistantText,
         pendingActionCount,
@@ -1910,45 +1875,38 @@ function createXoxAgenticOsHost(
         ledger: state.obligationLedger,
         evaluation,
       })
-      await addRunEvent(ctx.db, {
+      await addRunEvent(ctx.db, agentServerRunLifecycleEvents.finalReviewed({
         threadId: ctx.thread.id,
         runId: ctx.runId,
-        type: 'agentic_os.final_reviewed',
-        title: '最终回答证据检查',
-        message: responseEvaluationSummary(evaluation),
-        status: evaluation.status === 'pass'
-          ? 'completed'
-          : evaluation.status === 'blocked'
-            ? 'failed'
-            : 'running',
-        data: {
-          harness: 'agentic-os',
-          evaluationStatus: evaluation.status,
-          confidence: evaluation.confidence,
-          evidenceCount: evidence.length,
-          findings: evaluation.findings,
-          requiredEvidence: evaluation.requiredEvidence,
-          finalAnswerClaims,
-          obligationLedger: responseEventLedger,
-          obligationPlan,
+        evaluationStatus: evaluation.status,
+        confidence: evaluation.confidence,
+        evidenceCount: evidence.length,
+        findings: evaluation.findings,
+        requiredEvidence: evaluation.requiredEvidence,
+        finalAnswerClaims,
+        obligationLedger: responseEventLedger,
+        obligationPlan,
+        copy: {
+          title: '最终回答证据检查',
+          message: responseEvaluationSummary(evaluation),
         },
-      })
-      await addRunEvent(ctx.db, {
+      }))
+      await addRunEvent(ctx.db, agentServerRunLifecycleEvents.responseEvaluated({
         threadId: ctx.thread.id,
         runId: ctx.runId,
-        type: 'response_evaluated',
-        title: '最终回答证据检查',
-        message: responseEvaluationSummary(evaluation),
-        status: evaluation.status === 'pass'
-          ? 'completed'
-          : evaluation.status === 'blocked'
-            ? 'failed'
-            : 'running',
+        goalId: state.goal.id,
+        evaluationStatus: evaluation.status,
+        confidence: evaluation.confidence,
+        evidenceCount: evidence.length,
+        findings: evaluation.findings,
+        requiredEvidence: evaluation.requiredEvidence,
+        finalAnswerClaims,
+        claimReviewStatus: claimExtraction?.status ?? null,
+        claimReviewReason: claimExtraction?.status === 'unavailable' ? claimExtraction.reason : null,
+        obligationLedger: responseEventLedger,
+        obligationPlan,
+        nextPlannerBrief: evaluation.nextPlannerBrief,
         data: {
-          goalId: state.goal.id,
-          evaluationStatus: evaluation.status,
-          confidence: evaluation.confidence,
-          evidenceCount: evidence.length,
           evidence: evidence.map((item) => ({
             id: item.id,
             authority: item.authority,
@@ -1956,31 +1914,24 @@ function createXoxAgenticOsHost(
             subject: item.subject,
             summary: item.summary,
           })),
-          findings: evaluation.findings,
-          requiredEvidence: evaluation.requiredEvidence,
-          finalAnswerClaims,
-          claimReviewStatus: claimExtraction?.status ?? null,
-          claimReviewReason: claimExtraction?.status === 'unavailable' ? claimExtraction.reason : null,
-          obligationLedger: responseEventLedger,
-          obligationPlan,
-          nextPlannerBrief: evaluation.nextPlannerBrief,
-          harness: 'agentic-os',
         },
-      })
+        copy: {
+          title: '最终回答证据检查',
+          message: responseEvaluationSummary(evaluation),
+        },
+      }))
       if (evaluation.requiredEvidence.some((requirement) => requirement.authority === 'sandbox')) {
-        await addRunEvent(ctx.db, {
+        await addRunEvent(ctx.db, agentServerRunLifecycleEvents.runtimeEvidenceRequired({
           threadId: ctx.thread.id,
           runId: ctx.runId,
-          type: 'runtime_evidence_required',
-          title: '运行证据要求已收紧',
-          message: '最终回答需要可复核的 sandbox_run_code observation。',
-          status: 'running',
-          data: {
-            toolNames: ['sandbox_run_code'],
-            requiredGoalFacts: { requiresSandboxComputation: true },
-            harness: 'agentic-os',
+          toolNames: ['sandbox_run_code'],
+          reason: 'final_answer_requires_sandbox_evidence',
+          requiredGoalFacts: { requiresSandboxComputation: true },
+          copy: {
+            title: '运行证据要求已收紧',
+            message: '最终回答需要可复核的 sandbox_run_code observation。',
           },
-        })
+        }))
       }
       if (
         evaluation.status === 'needs_calculation' ||
@@ -2141,19 +2092,17 @@ async function finalizeAgenticOsResult(
     const reason = result.reason || 'Agentic OS harness did not complete the run.'
     if (state.goal) await updateGoalStatus(ctx.db, state.goal, 'failed', { blockedReason: reason })
     if (result.status === 'blocked' && reason.includes('Iteration budget exhausted')) {
-      await addRunEvent(ctx.db, {
+      await addRunEvent(ctx.db, agentServerRunLifecycleEvents.goalIterationExhausted({
         threadId: ctx.thread.id,
         runId: ctx.runId,
-        type: 'goal_iteration_exhausted',
-        title: '目标循环已耗尽',
-        message: `Agent 已达到本轮最大修复次数，但目标仍未完成：${reason}`,
-        status: 'failed',
-        data: {
-          goalId: state.goal?.id ?? null,
-          maxIterations: 5,
-          harness: 'agentic-os',
+        goalId: state.goal?.id ?? null,
+        maxIterations: 5,
+        reason,
+        copy: {
+          title: '目标循环已耗尽',
+          message: `Agent 已达到本轮最大修复次数，但目标仍未完成：${reason}`,
         },
-      })
+      }))
     }
     const providerConfigurationFailure = state.planRows.some((row) =>
       row.status === 'failed' &&
@@ -2191,19 +2140,17 @@ async function finalizeAgenticOsResult(
     runId: ctx.runId,
   })
   if (dreamReport) {
-    await addRunEvent(ctx.db, {
+    await addRunEvent(ctx.db, agentServerRunLifecycleEvents.memoryDreamingReported({
       threadId: ctx.thread.id,
       runId: ctx.runId,
-      type: 'memory_dreaming_reported',
-      title: '记忆整理报告已生成',
-      message: dreamReport.summary,
-      status: 'info',
-      data: {
-        dreamReportId: dreamReport.id,
-        candidateIds: JSON.parse(dreamReport.candidate_ids_json),
-        source: 'openclaw_dreaming_sweep',
+      dreamReportId: dreamReport.id,
+      candidateIds: JSON.parse(dreamReport.candidate_ids_json),
+      source: 'openclaw_dreaming_sweep',
+      copy: {
+        title: '记忆整理报告已生成',
+        message: dreamReport.summary,
       },
-    })
+    }))
   }
   const [{ actionRows, planRows }, finalGoal] = await Promise.all([
     latestRunRows(ctx),
@@ -2268,15 +2215,16 @@ export async function executeXoxAgenticOsRun(
     finishedResult: null,
   }
 
-  await addRunEvent(ctx.db, {
+  await addRunEvent(ctx.db, agentServerRunLifecycleEvents.goalContractCreated({
     threadId: ctx.thread.id,
     runId: ctx.runId,
-    type: 'goal_contract_created',
-    title: '目标契约已建立',
-    message: 'Agentic OS harness 已建立目标契约，后续由 Agentic OS loop 推进工具、评估和最终回答。',
-    status: 'info',
-    data: { goalId: goal.id, maxIterations: JSON.parse(goal.contract_json).maxIterations },
-  })
+    goalId: goal.id,
+    maxIterations: JSON.parse(goal.contract_json).maxIterations,
+    copy: {
+      title: '目标契约已建立',
+      message: 'Agentic OS harness 已建立目标契约，后续由 Agentic OS loop 推进工具、评估和最终回答。',
+    },
+  }))
   if (resumeContext) {
     await addRunEvent(ctx.db, {
       threadId: ctx.thread.id,

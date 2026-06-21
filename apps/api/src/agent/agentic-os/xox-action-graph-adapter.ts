@@ -7,6 +7,7 @@ import type {
 } from '@agentic-os/contracts'
 import { classifyToolObservationOutcome } from '@agentic-os/core'
 import {
+  agentServerRunLifecycleEvents,
   materializeAgentServerActionGraph,
   type AgentServerActionGraphEventDraft,
   type AgentServerActionGraphPlanStepItem,
@@ -305,15 +306,18 @@ async function settleStoredAction(
       .set({ status: 'failed', updated_at: utcNow() })
       .where('action_request_id', '=', input.action.id)
       .execute()
-    await addRunEvent(ctx.db, {
+    await addRunEvent(ctx.db, agentServerRunLifecycleEvents.actionAutoExecutionFailed({
       threadId: ctx.threadId,
       runId: ctx.runId,
-      type: 'action_auto_execution_failed',
-      title: '动作被策略阻止',
-      message: `${input.draft.title}：${authority.reason}`,
-      status: 'failed',
-      data: { actionRequestId: input.action.id, actionKind: input.action.kind, reason: authority.reason },
-    })
+      actionRequestId: input.action.id,
+      actionKind: input.action.kind,
+      actionTitle: input.draft.title,
+      reason: authority.reason,
+      copy: {
+        title: '动作被策略阻止',
+        message: `${input.draft.title}：${authority.reason}`,
+      },
+    }))
     const action = await ctx.db.selectFrom('agent_action_requests').selectAll().where('id', '=', input.action.id).executeTakeFirstOrThrow()
     return {
       action,

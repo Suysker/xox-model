@@ -48,6 +48,57 @@ describe('Agent ADR architecture boundaries', () => {
     expect(existsSync(join(srcRoot, 'agent', 'tool-projector.ts'))).toBe(false)
   })
 
+  it('keeps M142 lifecycle event drafts in Agentic OS server instead of xox host adapters', () => {
+    expect(existsSync(join(srcRoot, 'agent', 'memory-kernel.ts'))).toBe(false)
+
+    const hostLifecycleFiles = [
+      'agent/agentic-os/xox-agentic-os-host-kit.ts',
+      'agent/agentic-os/xox-action-approval-adapter.ts',
+      'agent/agentic-os/xox-action-graph-adapter.ts',
+      'agent/agentic-os/xox-runtime-planning-adapter.ts',
+      'agent/agentic-os/xox-tool-observation-adapter.ts',
+      'agent/agentic-os/xox-direct-answer-adapter.ts',
+      'agent/memory-consolidator.ts',
+    ]
+    const forbiddenDirectTypeLiterals = [
+      'goal_contract_created',
+      'goal_iteration_started',
+      'model_planning',
+      'goal_evaluated',
+      'final_answer_candidate',
+      'goal_iteration_exhausted',
+      'runner_obligation_materializing',
+      'runner_obligation_materialized',
+      'action_auto_executed',
+      'action_auto_execution_failed',
+      'action_execution_failed',
+      'action_executed',
+      'action_cancelled',
+      'action_updated',
+      'provider_stable_long_tool_mode',
+      'provider_retrying',
+      'model_continuation',
+      'model_continuation_completed',
+      'model_continuation_failed',
+      'memory_candidate_stored',
+      'memory_context_flushed',
+      'memory_dreaming_reported',
+      'direct_answer_provider_failed',
+      'response_evaluated',
+      'runtime_evidence_required',
+      'observation_assistant_continuation_requested',
+      'observation_continuation_requested',
+    ]
+
+    for (const file of hostLifecycleFiles) {
+      const content = source(file)
+      expect(content, `${file} should consume Agentic OS lifecycle draft helpers`).toContain('agentServerRunLifecycleEvents')
+      for (const type of forbiddenDirectTypeLiterals) {
+        expect(content, `${file} must not construct ${type} directly`).not.toContain(`type: '${type}'`)
+      }
+    }
+  })
+
   it('keeps Agentic OS host kit as the single harness run-loop entrypoint and deletes the host kernel facade', () => {
     expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-agentic-os-host-kit.ts'))).toBe(true)
     expect(existsSync(join(srcRoot, 'agent', 'run-worker.ts'))).toBe(false)
@@ -796,10 +847,11 @@ describe('Agent ADR architecture boundaries', () => {
 
     const memoryFiles = [
       'agent/memory-events.ts',
-      'agent/memory-kernel.ts',
+      'agent/memory-consolidator.ts',
       'agent/memory-retriever.ts',
       'agent/memory.ts',
     ]
+    expect(existsSync(join(srcRoot, 'agent', 'memory-kernel.ts'))).toBe(false)
     const forbidden = [
       /approval-executor/,
       /tool-executor/,

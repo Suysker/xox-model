@@ -8,6 +8,7 @@ import {
   type DirectAnswerLaneFailure,
   type DirectAnswerLaneModelOutput,
 } from '@agentic-os/core'
+import { agentServerRunLifecycleEvents } from '@agentic-os/server'
 import type { AgentTurnLaneResolution } from '@agentic-os/contracts'
 import type { AgentGoalStatus, AgentNavigationEvent, AgentPlannerSource } from '@xox/contracts'
 import type { Row } from '../../db/schema.js'
@@ -163,20 +164,18 @@ export async function executeXoxDirectAnswerLane(
     beforeStateWrite: input.beforeStateWrite,
     errorMessage: (error) => error.message ?? error.kind,
     onFailureDetected: async (failure) => {
-      await addRunEvent(ctx.db, {
+      await addRunEvent(ctx.db, agentServerRunLifecycleEvents.directAnswerProviderFailed({
         threadId: ctx.thread.id,
         runId: ctx.runId,
-        channel: 'lifecycle',
-        type: 'direct_answer_provider_failed',
-        title: '直接回答模型调用未完成',
-        message: failureEventMessage(failure),
-        status: failureStatus(failure),
-        data: {
-          lane: input.resolution.lane,
-          reasonCode: input.resolution.reasonCode,
-          ...(failure.error ? { error: failure.error } : {}),
+        lane: input.resolution.lane,
+        reasonCode: input.resolution.reasonCode,
+        ...(failure.error ? { error: failure.error } : {}),
+        copy: {
+          title: '直接回答模型调用未完成',
+          message: failureEventMessage(failure),
+          status: failureStatus(failure),
         },
-      })
+      }))
     },
     persistSuccess: async (success) => {
       const assistantMessage = await addMessage(ctx.db, ctx.thread.id, 'assistant', success.assistantText)

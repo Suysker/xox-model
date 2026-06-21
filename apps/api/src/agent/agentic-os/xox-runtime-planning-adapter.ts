@@ -6,6 +6,7 @@ import type { PlannerContext } from '../planning-context.js'
 import { planWithRuntimeAdapter, type RuntimeChatMessage, type RuntimePlanningInput, type RuntimePlanResult } from './xox-runtime-adapter.js'
 import type { Settings } from '../../core/settings.js'
 import { addRunEvent, addRuntimeStreamRunEvent } from './xox-run-event-store-adapter.js'
+import { agentServerRunLifecycleEvents } from '@agentic-os/server'
 import type { AgentToolObservation } from './xox-tool-observation-adapter.js'
 import { materializedToolInventorySnapshot, provideRuntimeToolCatalog } from '../tool-gateway.js'
 import {
@@ -252,19 +253,17 @@ async function addToolEvidenceRequirement(
 ) {
   if (toolNames.length === 0) return
   const requiredGoalFacts = requiredFactsForToolEvidence(toolNames)
-  await addRunEvent(ctx.db, {
+  await addRunEvent(ctx.db, agentServerRunLifecycleEvents.runtimeEvidenceRequired({
     threadId: ctx.threadId,
     runId: ctx.runId,
-    type: 'runtime_evidence_required',
-    title: '需要补齐工具证据',
-    message: 'Provider 已产生工具调用意图，但重试后没有形成对应工具 observation；最终回答前必须补齐对应 evidence 或失败关闭。',
-    status: 'running',
-    data: {
-      toolNames,
-      reason: 'provider_tool_call_without_observation_after_retry',
-      requiredGoalFacts,
+    toolNames,
+    reason: 'provider_tool_call_without_observation_after_retry',
+    requiredGoalFacts,
+    copy: {
+      title: '需要补齐工具证据',
+      message: 'Provider 已产生工具调用意图，但重试后没有形成对应工具 observation；最终回答前必须补齐对应 evidence 或失败关闭。',
     },
-  })
+  }))
 }
 
 function runtimeInputWithMaterializedTools(
@@ -361,21 +360,19 @@ export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePl
       priorObservationCount,
       loopObligationPlan: ctx.loopObligationPlan,
     })
-    await addRunEvent(ctx.db, {
+    await addRunEvent(ctx.db, agentServerRunLifecycleEvents.providerStableLongToolMode({
       threadId: ctx.threadId,
       runId: ctx.runId,
-      type: 'provider_stable_long_tool_mode',
-      title: '长参数工具稳定模式',
-      message: '本轮包含大型结构化工具参数，已跳过易截断的流式 arguments，改用非流式长预算规划。',
-      status: 'running',
-      data: {
-        provider: ctx.settings.openaiCompatibleProvider,
-        toolName: stableToolName,
-        stream: false,
-        maxTokens,
-        requestTimeoutMs: runtimeInput.requestTimeoutMs,
+      provider: ctx.settings.openaiCompatibleProvider,
+      toolName: stableToolName,
+      stream: false,
+      maxTokens,
+      requestTimeoutMs: runtimeInput.requestTimeoutMs,
+      copy: {
+        title: '长参数工具稳定模式',
+        message: '本轮包含大型结构化工具参数，已跳过易截断的流式 arguments，改用非流式长预算规划。',
       },
-    })
+    }))
   }
 
   const result = await runOpenAICompatibleRuntimePlanningRecovery<RuntimePlanningInput, RuntimePlanResult>({
@@ -399,40 +396,36 @@ export async function callRuntimePlanner(ctx: PlannerContext): Promise<RuntimePl
     },
     onEvent: async (event) => {
       if (event.kind === 'deferred_tools_materializing') {
-        await addRunEvent(ctx.db, {
+        await addRunEvent(ctx.db, agentServerRunLifecycleEvents.toolCatalogMaterializing({
           threadId: ctx.threadId,
           runId: ctx.runId,
-          type: 'tool_catalog_materializing',
-          title: '工具目录扩展',
-          message: '模型选择了已注册但尚未物化的工具，正在扩展本轮工具目录并重新规划。',
-          status: 'running',
-          data: {
-            toolNames: event.toolNames,
-            previousVisibleToolNames: toolCatalog.visibleToolNames,
-            nextVisibleToolNames: event.nextInput.tools.map((tool) => tool.function.name),
+          toolNames: event.toolNames,
+          previousVisibleToolNames: toolCatalog.visibleToolNames,
+          nextVisibleToolNames: event.nextInput.tools.map((tool) => tool.function.name),
+          copy: {
+            title: '工具目录扩展',
+            message: '模型选择了已注册但尚未物化的工具，正在扩展本轮工具目录并重新规划。',
           },
-        })
+        }))
         return
       }
 
       if (event.kind === 'provider_retrying') {
-        await addRunEvent(ctx.db, {
+        await addRunEvent(ctx.db, agentServerRunLifecycleEvents.providerRetrying({
           threadId: ctx.threadId,
           runId: ctx.runId,
-          type: 'provider_retrying',
-          title: '模型服务请求重试',
-          message: providerRetryEventMessage(event.error),
-          status: 'running',
-          data: {
-            provider: ctx.settings.openaiCompatibleProvider,
-            errorKind: event.error?.kind,
-            retryStream: event.retryInput.stream ?? true,
-            retryTool: event.retryInput.tools.length === 1
-              ? event.retryInput.tools[0]?.function.name ?? null
-              : null,
-            requestTimeoutMs: event.retryInput.requestTimeoutMs ?? ctx.settings.agentProviderRequestTimeoutMs,
+          provider: ctx.settings.openaiCompatibleProvider,
+          errorKind: event.error?.kind,
+          retryStream: event.retryInput.stream ?? true,
+          retryTool: event.retryInput.tools.length === 1
+            ? event.retryInput.tools[0]?.function.name ?? null
+            : null,
+          requestTimeoutMs: event.retryInput.requestTimeoutMs ?? ctx.settings.agentProviderRequestTimeoutMs,
+          copy: {
+            title: '模型服务请求重试',
+            message: providerRetryEventMessage(event.error),
           },
-        })
+        }))
         return
       }
 
