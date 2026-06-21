@@ -442,13 +442,19 @@ describe('Agent ADR architecture boundaries', () => {
     expect(continuation).not.toContain("observationType: 'action_preview'")
     expect(continuation).not.toContain("observationType: 'action_result'")
 
-    const actionGraph = source('agent/action-graph-store.ts')
+    const actionGraph = source('agent/agentic-os/xox-action-graph-adapter.ts')
     expect(actionGraph).toContain('actionFailureObservation')
     expect(actionGraph).not.toContain("observationType: 'action_result'")
   })
 
   it('keeps action graph materialization in Agentic OS server', () => {
-    const actionGraph = source('agent/action-graph-store.ts')
+    expect(existsSync(join(srcRoot, 'agent', 'action-graph-store.ts'))).toBe(false)
+    for (const file of sourceFilesUnder('agent')) {
+      const content = source(file)
+      expect(content, `${file} must not import the deleted action graph facade`).not.toContain("from './action-graph-store.js'")
+      expect(content, `${file} must not import the deleted action graph facade`).not.toContain("from '../action-graph-store.js'")
+    }
+    const actionGraph = source('agent/agentic-os/xox-action-graph-adapter.ts')
     expect(actionGraph).toContain("@agentic-os/server")
     expect(actionGraph).toContain('materializeAgentServerActionGraph')
     expect(actionGraph).toContain('AgentServerActionGraphStore')
@@ -473,7 +479,7 @@ describe('Agent ADR architecture boundaries', () => {
     expect(hostKit).not.toContain('function combinedXoxObservations')
     expect(hostKit).not.toContain('function mergeXoxObservationsIntoState')
 
-    const actionGraph = source('agent/action-graph-store.ts')
+    const actionGraph = source('agent/agentic-os/xox-action-graph-adapter.ts')
     expect(actionGraph).toContain('createXoxObservationBridge')
     expect(actionGraph).not.toContain('const observationsById = new Map')
     expect(actionGraph).not.toContain('function rememberObservation')

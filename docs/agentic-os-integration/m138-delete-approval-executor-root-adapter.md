@@ -5,7 +5,7 @@ Status: Implemented
 ## Implementation Notes
 
 - Moved `apps/api/src/agent/approval-executor.ts` to `apps/api/src/agent/agentic-os/xox-action-approval-adapter.ts`.
-- Updated routes, host kit, action graph store and business action draft builders to import the host-prefixed adapter.
+- Updated routes, host kit, action graph adapter and business action draft builders to import the host-prefixed adapter.
 - Added architecture guards so the deleted root file and old `./approval-executor.js` / `../approval-executor.js` imports cannot return.
 
 Date: 2026-06-21
@@ -37,7 +37,7 @@ No root compatibility re-export should remain.
 routes.ts
   -> agentic-os/xox-action-approval-adapter.ts
 
-action-graph-store.ts
+agentic-os/xox-action-graph-adapter.ts
   -> agentic-os/xox-action-approval-adapter.ts
 
 agentic-os/xox-agentic-os-host-kit.ts

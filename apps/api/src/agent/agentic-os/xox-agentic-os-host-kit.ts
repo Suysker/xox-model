@@ -94,7 +94,7 @@ import {
 import {
   storePlannedActionGraph,
   type StoredActionGraph,
-} from '../action-graph-store.js'
+} from './xox-action-graph-adapter.js'
 import { answerWorkspaceDataQuestion, type DataAgentQueryStep } from '../data-agent.js'
 import { buildXoxClarificationResumeContext } from './xox-clarification-resume-adapter.js'
 import {

@@ -22,7 +22,7 @@ import {
 import { redactSecretLikeContent } from '../memory.js'
 import { addRunEvent, addRuntimeStreamRunEvent } from './xox-run-event-store-adapter.js'
 import { addMessage } from './xox-thread-store-adapter.js'
-import { storePlannedActionGraph } from '../action-graph-store.js'
+import { storePlannedActionGraph } from './xox-action-graph-adapter.js'
 import { readDraftFromRuntimeResult } from '../action-draft-builder.js'
 
 export type DirectAnswerRunResult = {

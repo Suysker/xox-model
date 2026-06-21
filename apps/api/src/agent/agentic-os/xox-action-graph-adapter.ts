@@ -20,32 +20,32 @@ import {
   type AgentServerActionPlanStepStatus,
 } from '@agentic-os/server'
 import type { AgentNavigationEvent, AgentPlannerSource, AgentPlanStepStatus } from '@xox/contracts'
-import type { Database, Row } from '../db/schema.js'
-import { jsonString } from '../db/database.js'
-import type { Settings } from '../core/settings.js'
-import { newId } from '../core/security.js'
-import { utcNow } from '../core/time.js'
-import type { CurrentUser } from '../modules/auth.js'
-import { isActionDraft, type PlannedItem, type ReadDraft } from './action-draft-builder.js'
+import type { Database, Row } from '../../db/schema.js'
+import { jsonString } from '../../db/database.js'
+import type { Settings } from '../../core/settings.js'
+import { newId } from '../../core/security.js'
+import { utcNow } from '../../core/time.js'
+import type { CurrentUser } from '../../modules/auth.js'
+import { isActionDraft, type PlannedItem, type ReadDraft } from '../action-draft-builder.js'
 import {
   addAgentActionRequest,
   autoExecuteAgentActionRequest,
   type AgentActionDraft,
-} from './agentic-os/xox-action-approval-adapter.js'
-import { addRunEvent } from './agentic-os/xox-run-event-store-adapter.js'
-import { assertAgentRunLease } from './agentic-os/xox-run-lease-store-adapter.js'
-import { agentThreadEvents } from './agentic-os/xox-thread-signal-adapter.js'
+} from './xox-action-approval-adapter.js'
+import { addRunEvent } from './xox-run-event-store-adapter.js'
+import { assertAgentRunLease } from './xox-run-lease-store-adapter.js'
+import { agentThreadEvents } from './xox-thread-signal-adapter.js'
 import {
   actionFailureObservation,
   actionExecutionObservation,
   actionPreviewObservation,
   type AgentToolObservation,
-} from './agentic-os/xox-tool-observation-adapter.js'
-import { resolveActionAuthority, type AgentAutomationLevel } from './tool-policy.js'
+} from './xox-tool-observation-adapter.js'
+import { resolveActionAuthority, type AgentAutomationLevel } from '../tool-policy.js'
 import {
   createXoxObservationBridge,
   type XoxObservationBridge,
-} from './agentic-os/xox-observation-adapter.js'
+} from './xox-observation-adapter.js'
 
 type ActionGraphContext = {
   db: Kysely<Database>
