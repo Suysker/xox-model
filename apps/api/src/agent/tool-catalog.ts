@@ -14,6 +14,103 @@ export type AgentToolCapability =
   | 'tooling'
   | 'version'
 
+export const WORKSPACE_DATA_QUERY_SCOPE = {
+  workspaceSummary: 'workspace_summary',
+  periodSummary: 'period_summary',
+  memberSummary: 'member_summary',
+  teamSummary: 'team_summary',
+  entitySummary: 'entity_summary',
+  topMonths: 'top_months',
+  varianceDetail: 'variance_detail',
+  ledgerHistory: 'ledger_history',
+} as const
+
+export type WorkspaceDataQueryScope = typeof WORKSPACE_DATA_QUERY_SCOPE[keyof typeof WORKSPACE_DATA_QUERY_SCOPE]
+
+export const WORKSPACE_DATA_QUERY_SCOPES: WorkspaceDataQueryScope[] = Object.values(WORKSPACE_DATA_QUERY_SCOPE)
+
+export const WORKSPACE_DATA_QUERY_METRIC = {
+  plannedRevenue: 'plannedRevenue',
+  plannedCost: 'plannedCost',
+  actualRevenue: 'actualRevenue',
+  actualCost: 'actualCost',
+  plannedProfit: 'plannedProfit',
+  actualProfit: 'actualProfit',
+  cash: 'cash',
+  roi: 'roi',
+  payback: 'payback',
+  memberRevenue: 'memberRevenue',
+  memberCommission: 'memberCommission',
+  memberContribution: 'memberContribution',
+  teamMemberCount: 'teamMemberCount',
+  teamMemberNames: 'teamMemberNames',
+  shareholderNames: 'shareholderNames',
+  shareholderInvestments: 'shareholderInvestments',
+  employeeNames: 'employeeNames',
+  costItemNames: 'costItemNames',
+} as const
+
+export type WorkspaceDataQueryMetric = typeof WORKSPACE_DATA_QUERY_METRIC[keyof typeof WORKSPACE_DATA_QUERY_METRIC]
+
+export const WORKSPACE_DATA_QUERY_METRICS: WorkspaceDataQueryMetric[] = Object.values(WORKSPACE_DATA_QUERY_METRIC)
+
+export const WORKSPACE_DATA_QUERY_PERIOD_INFER_METRICS: WorkspaceDataQueryMetric[] = [
+  WORKSPACE_DATA_QUERY_METRIC.plannedRevenue,
+  WORKSPACE_DATA_QUERY_METRIC.plannedCost,
+  WORKSPACE_DATA_QUERY_METRIC.plannedProfit,
+  WORKSPACE_DATA_QUERY_METRIC.actualRevenue,
+  WORKSPACE_DATA_QUERY_METRIC.actualCost,
+  WORKSPACE_DATA_QUERY_METRIC.actualProfit,
+]
+
+export const WORKSPACE_DATA_QUERY_ACTUAL_METRICS: WorkspaceDataQueryMetric[] = [
+  WORKSPACE_DATA_QUERY_METRIC.actualRevenue,
+  WORKSPACE_DATA_QUERY_METRIC.actualCost,
+  WORKSPACE_DATA_QUERY_METRIC.actualProfit,
+]
+
+export const WORKSPACE_DATA_QUERY_TOP_MONTH_METRICS = [
+  WORKSPACE_DATA_QUERY_METRIC.plannedRevenue,
+  WORKSPACE_DATA_QUERY_METRIC.plannedCost,
+  WORKSPACE_DATA_QUERY_METRIC.cash,
+  WORKSPACE_DATA_QUERY_METRIC.plannedProfit,
+] as const
+
+export type WorkspaceDataQueryTopMonthMetric = typeof WORKSPACE_DATA_QUERY_TOP_MONTH_METRICS[number]
+
+export const WORKSPACE_DATA_QUERY_METRIC_LABELS: Record<WorkspaceDataQueryMetric, string> = {
+  [WORKSPACE_DATA_QUERY_METRIC.plannedRevenue]: '计划收入',
+  [WORKSPACE_DATA_QUERY_METRIC.plannedCost]: '计划成本',
+  [WORKSPACE_DATA_QUERY_METRIC.actualRevenue]: '实际收入',
+  [WORKSPACE_DATA_QUERY_METRIC.actualCost]: '实际成本',
+  [WORKSPACE_DATA_QUERY_METRIC.plannedProfit]: '计划利润',
+  [WORKSPACE_DATA_QUERY_METRIC.actualProfit]: '实际利润',
+  [WORKSPACE_DATA_QUERY_METRIC.cash]: '累计现金',
+  [WORKSPACE_DATA_QUERY_METRIC.roi]: '投资回报率',
+  [WORKSPACE_DATA_QUERY_METRIC.payback]: '回本周期',
+  [WORKSPACE_DATA_QUERY_METRIC.memberRevenue]: '成员收入',
+  [WORKSPACE_DATA_QUERY_METRIC.memberCommission]: '成员提成',
+  [WORKSPACE_DATA_QUERY_METRIC.memberContribution]: '成员贡献',
+  [WORKSPACE_DATA_QUERY_METRIC.teamMemberCount]: '团队成员数量',
+  [WORKSPACE_DATA_QUERY_METRIC.teamMemberNames]: '团队成员名单',
+  [WORKSPACE_DATA_QUERY_METRIC.shareholderNames]: '股东名单',
+  [WORKSPACE_DATA_QUERY_METRIC.shareholderInvestments]: '股东投资额',
+  [WORKSPACE_DATA_QUERY_METRIC.employeeNames]: '员工名单',
+  [WORKSPACE_DATA_QUERY_METRIC.costItemNames]: '成本项名单',
+}
+
+export function isWorkspaceDataQueryScope(value: unknown): value is WorkspaceDataQueryScope {
+  return typeof value === 'string' && WORKSPACE_DATA_QUERY_SCOPES.includes(value as WorkspaceDataQueryScope)
+}
+
+export function isWorkspaceDataQueryMetric(value: unknown): value is WorkspaceDataQueryMetric {
+  return typeof value === 'string' && WORKSPACE_DATA_QUERY_METRICS.includes(value as WorkspaceDataQueryMetric)
+}
+
+export function isWorkspaceDataQueryTopMonthMetric(value: unknown): value is WorkspaceDataQueryTopMonthMetric {
+  return typeof value === 'string' && WORKSPACE_DATA_QUERY_TOP_MONTH_METRICS.includes(value as WorkspaceDataQueryTopMonthMetric)
+}
+
 export type AgentToolCallStep = {
   providerToolCallId?: string
   providerToolName?: string
@@ -120,7 +217,7 @@ export type AgentToolCallStep = {
   reasonCode?: AgentTurnLaneReasonCode
   missingContext?: string[]
   goalFacts?: unknown
-  scope?: 'workspace_summary' | 'period_summary' | 'member_summary' | 'team_summary' | 'entity_summary' | 'top_months' | 'variance_detail' | 'ledger_history'
+  scope?: WorkspaceDataQueryScope
   metrics?: string[]
   order?: 'asc' | 'desc'
   limit?: number
@@ -875,7 +972,7 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
         question: { type: 'string', description: '用户原始问题的简短复述。' },
         scope: {
           type: 'string',
-          enum: ['workspace_summary', 'period_summary', 'member_summary', 'team_summary', 'entity_summary', 'top_months', 'variance_detail', 'ledger_history'],
+          enum: [...WORKSPACE_DATA_QUERY_SCOPES],
           description: '查询范围：整体工作区、单月汇总、指定成员汇总、团队成员数量/名单、工作区业务对象清单、月份排行、预实科目差异、账本历史筛选。用户问“几个成员/有哪些成员/团队构成”时用 team_summary；用户要先确认成员、股东、员工、成本项是谁或当前投资额是多少时用 entity_summary；用户问“3月/4月/某月计划收入、计划成本、计划利润、实际收入、实际成本、实际利润”时必须用 period_summary。',
         },
         monthLabel: { ...monthLabel, description: '目标月份，例如 3月；scope=period_summary、variance_detail、ledger_history 涉及月份时必须填写。' },
@@ -884,7 +981,7 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
           type: 'array',
           items: {
             type: 'string',
-            enum: ['plannedRevenue', 'plannedCost', 'actualRevenue', 'actualCost', 'plannedProfit', 'actualProfit', 'cash', 'roi', 'payback', 'memberRevenue', 'memberCommission', 'memberContribution', 'teamMemberCount', 'teamMemberNames', 'shareholderNames', 'shareholderInvestments', 'employeeNames', 'costItemNames'],
+            enum: [...WORKSPACE_DATA_QUERY_METRICS],
           },
           description: '需要回答的指标；例如“3月计划收入和计划成本”传 ["plannedRevenue","plannedCost"]。不确定时传空数组或省略，由服务端返回该范围的核心指标。',
         },

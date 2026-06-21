@@ -122,8 +122,19 @@ describe('Agent ADR architecture boundaries', () => {
     const handlers = source('agent/runtime-intent-handlers.ts')
     expect(handlers).toContain('WorkspaceDataQueryStep')
     expect(handlers).toContain('answerWorkspaceDataQuestion')
+    expect(handlers).toContain('WORKSPACE_DATA_QUERY_SCOPE')
+    expect(handlers).toContain('isWorkspaceDataQueryScope')
     expect(handlers).not.toContain('DataAgentQueryStep')
     expect(handlers).not.toContain("from './data-agent.js'")
+    expect(handlers).not.toContain("step.scope === '")
+    expect(handlers).not.toContain("metricSet.has('")
+    expect(handlers).not.toContain("metrics.includes('")
+
+    const catalog = source('agent/tool-catalog.ts')
+    expect(catalog).toContain('WORKSPACE_DATA_QUERY_SCOPES')
+    expect(catalog).toContain('WORKSPACE_DATA_QUERY_METRICS')
+    expect(catalog).toContain('enum: [...WORKSPACE_DATA_QUERY_SCOPES]')
+    expect(catalog).toContain('enum: [...WORKSPACE_DATA_QUERY_METRICS]')
   })
 
   it('keeps real-provider smoke outside the production agent runtime tree', () => {

@@ -50,7 +50,20 @@ import {
 import { rememberAgentMemory, redactSecretLikeContent } from './memory.js'
 import { runMemoryGetTool, runMemorySearchTool } from './memory/memory-tools.js'
 import { planSandboxRunCode } from './sandbox-service.js'
-import { AGENT_TOOL_REGISTRY } from './tool-catalog.js'
+import {
+  AGENT_TOOL_REGISTRY,
+  isWorkspaceDataQueryMetric,
+  isWorkspaceDataQueryScope,
+  isWorkspaceDataQueryTopMonthMetric,
+  WORKSPACE_DATA_QUERY_ACTUAL_METRICS,
+  WORKSPACE_DATA_QUERY_METRIC,
+  WORKSPACE_DATA_QUERY_METRIC_LABELS,
+  WORKSPACE_DATA_QUERY_PERIOD_INFER_METRICS,
+  WORKSPACE_DATA_QUERY_SCOPE,
+  type WorkspaceDataQueryMetric,
+  type WorkspaceDataQueryScope,
+  type WorkspaceDataQueryTopMonthMetric,
+} from './tool-catalog.js'
 import { buildToolManifests } from './tool-surface-manifest.js'
 import type { ReadDraft, RuntimePlannerStep } from './action-draft-builder.js'
 
@@ -81,7 +94,7 @@ type WorkspaceDataQueryContext = Pick<PlannerContext, 'db' | 'workspace'>
 
 export type WorkspaceDataQueryStep = {
   question?: string | null
-  scope?: unknown
+  scope?: WorkspaceDataQueryScope | string | null
   metrics?: unknown
   monthLabel?: string | null
   memberName?: string | null
@@ -150,32 +163,19 @@ function pct(value: number) {
   return `${(value * 100).toFixed(1)}%`
 }
 
-function normalizeDataMetrics(raw: unknown): string[] {
-  return Array.isArray(raw) ? raw.filter((item): item is string => typeof item === 'string') : []
+function normalizeDataMetrics(raw: unknown): WorkspaceDataQueryMetric[] {
+  return Array.isArray(raw) ? raw.filter(isWorkspaceDataQueryMetric) : []
 }
 
-function normalizedDataScope(step: WorkspaceDataQueryStep, metrics: string[]) {
-  const scope = step.scope === 'workspace_summary' ||
-    step.scope === 'period_summary' ||
-    step.scope === 'member_summary' ||
-    step.scope === 'team_summary' ||
-    step.scope === 'entity_summary' ||
-    step.scope === 'top_months' ||
-    step.scope === 'variance_detail' ||
-    step.scope === 'ledger_history'
+function normalizedDataScope(step: WorkspaceDataQueryStep, metrics: WorkspaceDataQueryMetric[]) {
+  const scope = isWorkspaceDataQueryScope(step.scope)
     ? step.scope
-    : 'workspace_summary'
+    : WORKSPACE_DATA_QUERY_SCOPE.workspaceSummary
 
-  if (scope === 'workspace_summary' && typeof step.monthLabel === 'string' && step.monthLabel.trim().length > 0) {
+  if (scope === WORKSPACE_DATA_QUERY_SCOPE.workspaceSummary && typeof step.monthLabel === 'string' && step.monthLabel.trim().length > 0) {
     const metricSet = new Set(metrics)
-    const hasMonthMetric = metrics.length === 0 ||
-      metricSet.has('plannedRevenue') ||
-      metricSet.has('plannedCost') ||
-      metricSet.has('plannedProfit') ||
-      metricSet.has('actualRevenue') ||
-      metricSet.has('actualCost') ||
-      metricSet.has('actualProfit')
-    if (hasMonthMetric) return 'period_summary'
+    const hasMonthMetric = metrics.length === 0 || WORKSPACE_DATA_QUERY_PERIOD_INFER_METRICS.some((metric) => metricSet.has(metric))
+    if (hasMonthMetric) return WORKSPACE_DATA_QUERY_SCOPE.periodSummary
   }
 
   return scope
@@ -229,6 +229,28 @@ async function currentDraftProjection(ctx: WorkspaceDataQueryContext) {
   return { config, projection: projectModel(config) }
 }
 
+type WorkspaceScenarioMonthForRanking = {
+  grossSales: number
+  totalCost: number
+  cumulativeCash: number
+  monthlyProfit: number
+}
+
+const TOP_MONTH_METRIC_READERS: Record<WorkspaceDataQueryTopMonthMetric, (month: WorkspaceScenarioMonthForRanking) => number> = {
+  [WORKSPACE_DATA_QUERY_METRIC.plannedRevenue]: (month) => month.grossSales,
+  [WORKSPACE_DATA_QUERY_METRIC.plannedCost]: (month) => month.totalCost,
+  [WORKSPACE_DATA_QUERY_METRIC.cash]: (month) => month.cumulativeCash,
+  [WORKSPACE_DATA_QUERY_METRIC.plannedProfit]: (month) => month.monthlyProfit,
+}
+
+function normalizeTopMonthMetric(metric: WorkspaceDataQueryMetric | undefined): WorkspaceDataQueryTopMonthMetric {
+  return isWorkspaceDataQueryTopMonthMetric(metric) ? metric : WORKSPACE_DATA_QUERY_METRIC.plannedProfit
+}
+
+function topMonthMetricReader(metric: WorkspaceDataQueryTopMonthMetric) {
+  return TOP_MONTH_METRIC_READERS[metric]
+}
+
 export async function answerWorkspaceDataQuestion(
   ctx: WorkspaceDataQueryContext,
   step: WorkspaceDataQueryStep,
@@ -240,7 +262,7 @@ export async function answerWorkspaceDataQuestion(
   const metrics = normalizeDataMetrics(step.metrics)
   const scope = normalizedDataScope(step, metrics)
 
-  if (scope === 'entity_summary') {
+  if (scope === WORKSPACE_DATA_QUERY_SCOPE.entitySummary) {
     const members = config.teamMembers.map((member, index) => ({
       index: index + 1,
       id: member.id,
@@ -296,10 +318,10 @@ export async function answerWorkspaceDataQuestion(
     })
   }
 
-  if (scope === 'team_summary') {
+  if (scope === WORKSPACE_DATA_QUERY_SCOPE.teamSummary) {
     const members = config.teamMembers
     const names = members.map((member) => member.name).filter((name) => name.trim().length > 0)
-    const includeNames = metrics.length === 0 || metrics.includes('teamMemberNames')
+    const includeNames = metrics.length === 0 || metrics.includes(WORKSPACE_DATA_QUERY_METRIC.teamMemberNames)
     const nameText = includeNames && names.length > 0 ? `，分别是：${names.join('、')}` : ''
     return workspaceDataRead({
       title: '回答团队成员问题',
@@ -313,7 +335,7 @@ export async function answerWorkspaceDataQuestion(
     })
   }
 
-  if (scope === 'period_summary') {
+  if (scope === WORKSPACE_DATA_QUERY_SCOPE.periodSummary) {
     const period = step.monthLabel ? await periodForMonth(ctx, step.monthLabel) : null
     if (!period) return null
     const periods = await listPeriods(ctx.db, ctx.workspace)
@@ -325,7 +347,7 @@ export async function answerWorkspaceDataQuestion(
     const actualCost = summary?.actualCost ?? 0
     const plannedProfit = plannedRevenue - plannedCost
     const actualProfit = actualRevenue - actualCost
-    const includeActual = metrics.length === 0 || metrics.some((metric) => metric.startsWith('actual'))
+    const includeActual = metrics.length === 0 || WORKSPACE_DATA_QUERY_ACTUAL_METRICS.some((metric) => metrics.includes(metric))
     const parts = [
       `${period.month_label}计划收入 ${money(plannedRevenue)}`,
       `计划成本 ${money(plannedCost)}`,
@@ -347,7 +369,7 @@ export async function answerWorkspaceDataQuestion(
     })
   }
 
-  if (scope === 'member_summary') {
+  if (scope === WORKSPACE_DATA_QUERY_SCOPE.memberSummary) {
     const memberName = typeof step.memberName === 'string' ? step.memberName : null
     const member = memberName ? config.teamMembers.find((item) => item.name === memberName || item.id === memberName) ?? null : null
     if (!member) return null
@@ -379,14 +401,9 @@ export async function answerWorkspaceDataQuestion(
     })
   }
 
-  if (scope === 'top_months') {
-    const metric = metrics[0] ?? 'plannedProfit'
-    const metricValue = (month: (typeof baseScenario.months)[number]) => {
-      if (metric === 'plannedRevenue') return month.grossSales
-      if (metric === 'plannedCost') return month.totalCost
-      if (metric === 'cash') return month.cumulativeCash
-      return month.monthlyProfit
-    }
+  if (scope === WORKSPACE_DATA_QUERY_SCOPE.topMonths) {
+    const metric = normalizeTopMonthMetric(metrics[0])
+    const metricValue = topMonthMetricReader(metric)
     const order = step.order === 'asc' ? 'asc' : 'desc'
     const limit = Math.min(6, Math.max(1, Math.round(typeof step.limit === 'number' ? step.limit : 3)))
     const ranked = baseScenario.months
@@ -395,7 +412,7 @@ export async function answerWorkspaceDataQuestion(
       .slice(0, limit)
     return workspaceDataRead({
       title: '回答月份排行问题',
-      message: `按${metric === 'plannedRevenue' ? '计划收入' : metric === 'plannedCost' ? '计划成本' : metric === 'cash' ? '累计现金' : '计划利润'}${order === 'asc' ? '升序' : '降序'}，前 ${limit} 个月份是：${ranked.map((item) => `${item.month.label} ${money(item.value)}`).join('；')}。`,
+      message: `按${WORKSPACE_DATA_QUERY_METRIC_LABELS[metric]}${order === 'asc' ? '升序' : '降序'}，前 ${limit} 个月份是：${ranked.map((item) => `${item.month.label} ${money(item.value)}`).join('；')}。`,
       navigation: {
         type: 'navigation',
         route: { mainTab: 'dashboard', secondaryTab: 'months' },
@@ -405,7 +422,7 @@ export async function answerWorkspaceDataQuestion(
     })
   }
 
-  if (scope === 'variance_detail') {
+  if (scope === WORKSPACE_DATA_QUERY_SCOPE.varianceDetail) {
     const period = step.monthLabel ? await periodForMonth(ctx, step.monthLabel) : null
     if (!period) return null
     const variance = await varianceForPeriod(ctx.db, ctx.workspace, period.id)
@@ -436,7 +453,7 @@ export async function answerWorkspaceDataQuestion(
     })
   }
 
-  if (scope === 'ledger_history') {
+  if (scope === WORKSPACE_DATA_QUERY_SCOPE.ledgerHistory) {
     const periods = await listPeriods(ctx.db, ctx.workspace)
     const targetPeriods = step.monthLabel
       ? periods.filter((period) => period.monthLabel === step.monthLabel)
