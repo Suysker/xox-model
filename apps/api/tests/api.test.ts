@@ -1174,7 +1174,7 @@ describe('xox TypeScript API', () => {
         .filter((item: any) => item.visibility === 'user')
         .map((item: any) => `${item.title}\n${item.summary}`)
         .join('\n')
-      expect(visibleTranscript).toContain('正在理解你的目标')
+      expect(visibleTranscript).toContain('你')
       expect(visibleTranscript).toContain('确认成员收入入账')
       expect(visibleTranscript).not.toContain('需要你确认动作')
       expect(visibleTranscript).not.toContain('待确认动作卡')

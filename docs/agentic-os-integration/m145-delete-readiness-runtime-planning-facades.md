@@ -26,7 +26,7 @@ This is not the final state. The remaining large files still show more work:
 
 - `xox-agentic-os-host-kit.ts` is still too much of the loop narrative.
 - `xox-final-review-adapter.ts` still contains a large financial final-review/evidence policy surface.
-- `xox-thread-timeline-adapter.ts` and `xox-thread-transcript-adapter.ts` still own generic projection logic.
+- M149 has since deleted `xox-thread-timeline-adapter.ts` and `xox-thread-transcript-adapter.ts`; xox now keeps only thin legacy DTO projection in `xox-thread-state-view.ts`.
 - `xox-tool-observation-adapter.ts` still owns a model-continuation helper that should move further into Agentic OS.
 
 ## Architecture Guard

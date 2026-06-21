@@ -25,9 +25,8 @@ import {
 } from './xox-thread-store-adapter.js'
 import { completeAgentRun, createAgentRunController, scheduleAgentRunQueueDrain } from './xox-run-worker-adapter.js'
 import { normalizeAgentAutomationLevel, type AgentAutomationLevel } from '../tool-policy.js'
-import { buildAgentTranscriptItems } from './xox-thread-transcript-adapter.js'
-import { buildAgentTimelineItems, buildAgentTranscriptNodes } from './xox-thread-timeline-adapter.js'
 import {
+  buildXoxProjectionViews,
   sortXoxRunEventsByOsView,
   xoxActionRequestToOsActionRequest,
   xoxCompletedRunResultToOs,
@@ -123,6 +122,14 @@ function buildSubmittedRunResponse(input: XoxSubmittedRunResponseInput): AgentSe
     planSteps: input.planSteps,
     actionRequests: input.actionRequests,
   }
+  const agUiEvents = projectAgentServerAgUiEvents(projection, { eventNamePrefix: 'xox' }) as AgentAgUiEvent[]
+  const projected = buildXoxProjectionViews({
+    threadId: osView.thread.threadId,
+    messages: input.messages,
+    osTranscriptItems: osView.transcriptItems,
+    actionRequests: input.actionRequests,
+    fallbackCreatedAt: input.createdAt,
+  })
 
   return {
     threadId: osView.thread.threadId,
@@ -133,10 +140,10 @@ function buildSubmittedRunResponse(input: XoxSubmittedRunResponseInput): AgentSe
     messages: input.messages,
     navigationEvents: input.navigationEvents,
     runEvents,
-    agUiEvents: projectAgentServerAgUiEvents(projection, { eventNamePrefix: 'xox' }) as AgentAgUiEvent[],
-    transcriptItems: buildAgentTranscriptItems(projection),
-    timelineItems: buildAgentTimelineItems(projection),
-    transcriptNodes: buildAgentTranscriptNodes(projection),
+    agUiEvents,
+    transcriptItems: projected.transcriptItems,
+    timelineItems: projected.timelineItems,
+    transcriptNodes: projected.transcriptNodes,
     planSteps: input.planSteps,
     actionRequests: input.actionRequests,
   }

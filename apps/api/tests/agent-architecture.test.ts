@@ -822,6 +822,29 @@ describe('Agent ADR architecture boundaries', () => {
     }
   })
 
+  it('deletes local transcript and timeline projection engines in favor of Agentic OS projection facts', () => {
+    expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-thread-transcript-adapter.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-thread-timeline-adapter.ts'))).toBe(false)
+    expect(existsSync(join(testDir, 'agent-transcript.test.ts'))).toBe(false)
+
+    for (const file of sourceFilesUnder('agent')) {
+      const content = source(file)
+      expect(content, `${file} must not import the deleted transcript projector`).not.toContain('xox-thread-transcript-adapter')
+      expect(content, `${file} must not import the deleted timeline projector`).not.toContain('xox-thread-timeline-adapter')
+      expect(content, `${file} must not rebuild local transcript item projection`).not.toContain('buildAgentTranscriptItems')
+      expect(content, `${file} must not rebuild local timeline projection`).not.toContain('buildAgentTimelineItems')
+      expect(content, `${file} must not rebuild local transcript tree projection`).not.toContain('buildAgentTranscriptNodes')
+    }
+
+    const threadView = source('agent/agentic-os/xox-thread-state-view.ts')
+    expect(threadView).toContain('AgentServerThreadStateProjector')
+    expect(threadView).toContain('osTranscriptItems')
+    expect(threadView).toContain('buildXoxProjectionViews')
+    expect(threadView).not.toContain('toolActionKindAliases')
+    expect(threadView).not.toContain('mergeProviderToolCallsIntoActionNodes')
+    expect(threadView).not.toContain('groupRunSegment')
+  })
+
   it('keeps final-answer claim extraction runtime in Agentic OS server', () => {
     expect(existsSync(join(srcRoot, 'agent', 'final-answer-claim-extractor.ts'))).toBe(false)
     for (const file of sourceFilesUnder('agent')) {

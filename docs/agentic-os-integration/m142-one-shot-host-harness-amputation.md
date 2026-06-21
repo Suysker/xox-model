@@ -73,7 +73,7 @@ git diff --check
 cd C:\Github\xox-model
 npm.cmd run build:api
 npm.cmd run test:api -- --run tests/agent-architecture.test.ts
-npm.cmd run test:api -- --run tests/action-observation.test.ts tests/provider-runtime.test.ts tests/response-evaluator.test.ts tests/loop-obligation-ledger.test.ts tests/agent-transcript.test.ts
+npm.cmd run test:api -- --run tests/action-observation.test.ts tests/provider-runtime.test.ts tests/response-evaluator.test.ts tests/loop-obligation-ledger.test.ts
 npm.cmd run test:api
 git diff --check
 ```
@@ -128,14 +128,14 @@ npm.cmd test -w @agentic-os/core
 cd C:\Github\xox-model
 npm.cmd run build:api
 npm.cmd run test --workspace @xox/api -- tests/api.test.ts -t "requires model-visible ordered shareholder evidence|keeps shareholder fact obligations open|repairs shareholder fact obligations|replays repairable sandbox failures"
-npm.cmd run test --workspace @xox/api -- tests/response-evaluator.test.ts tests/loop-obligation-ledger.test.ts tests/agent-architecture.test.ts tests/agent-transcript.test.ts
+npm.cmd run test --workspace @xox/api -- tests/response-evaluator.test.ts tests/loop-obligation-ledger.test.ts tests/agent-architecture.test.ts
 npm.cmd run test:api
 ```
 
 Remaining M142 hard targets after M142b:
 
 - `apps/api/src/agent/agentic-os/xox-agentic-os-host-kit.ts` is still too large and must continue shrinking toward HostProfile/HostAdapter wiring.
-- `apps/api/src/agent/agentic-os/xox-thread-transcript-adapter.ts` and `xox-thread-timeline-adapter.ts` remain xox product projection adapters; generic projection work should continue moving into Agentic OS server/react packages where still present.
+- `apps/api/src/agent/agentic-os/xox-thread-transcript-adapter.ts` and `xox-thread-timeline-adapter.ts` were directly deleted in M149. xox keeps only a thin legacy DTO compatibility mapper in `xox-thread-state-view.ts`; generic projection grouping and merge algorithms must stay Agentic OS-owned.
 - `apps/api/src/agent/agentic-os/xox-runtime-adapter.ts` must remain a concrete provider settings/DTO/runtime-boundary mapper and must not become a second runtime or regrow a standalone planning adapter.
 
 ### M143: Deleted the Action Approval Adapter
@@ -347,7 +347,7 @@ git diff --check
 
 cd C:\Github\xox-model
 npm.cmd run build:api
-npm.cmd run test:api -- --run tests/agent-architecture.test.ts tests/response-evaluator.test.ts tests/loop-obligation-ledger.test.ts tests/action-observation.test.ts tests/provider-runtime.test.ts tests/agent-transcript.test.ts
+npm.cmd run test:api -- --run tests/agent-architecture.test.ts tests/response-evaluator.test.ts tests/loop-obligation-ledger.test.ts tests/action-observation.test.ts tests/provider-runtime.test.ts
 npm.cmd run test:api
 git diff --check
 ```
