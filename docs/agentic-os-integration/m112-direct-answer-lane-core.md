@@ -30,8 +30,9 @@ xox：
   - 调用 xox thin adapter。
 - `apps/api/src/agent/agentic-os/xox-direct-answer-adapter.ts`
   - 调用 Agentic OS direct answer lane；
-  - 提供 xox prompt / ambient context / runtime callback；
+  - 提供 xox product policy / ambient context / runtime callback；
   - 提供 xox DB 写入和旧 DTO 映射。
+- M152 后不再保留 `direct-answer.system.md` 文件；direct-answer 文案只作为 `xox-run-worker-adapter.ts` 的私有 host product policy 常量存在。
 - `apps/api/src/agent/direct-answer-runtime.ts`
   - 删除。
 
@@ -43,7 +44,7 @@ flowchart TD
     Adapter --> Lane["@agentic-os/core runDirectAnswerLane"]
     Adapter --> Runtime["xox planWithRuntimeAdapter callback"]
     Adapter --> Store["xox thread/run/action graph DB callbacks"]
-    Adapter --> Prompt["xox direct-answer.system.md"]
+    Adapter --> Prompt["xox direct answer product policy"]
     Adapter --> Ambient["xox ambient context"]
 ```
 

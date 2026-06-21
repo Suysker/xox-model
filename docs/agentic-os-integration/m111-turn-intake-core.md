@@ -29,7 +29,8 @@ xox：
   - 调用 Agentic OS turn intake；
   - 提供 pending action / pending clarification DB callback；
   - 提供 runtime model callback；
-  - 保留 xox-specific `turn-lane.system.md` 和 `sanitizeAgentGoalFacts()`。
+  - 保留 `sanitizeAgentGoalFacts()`；
+  - M152 后不再保留 `turn-lane.system.md` 文件；xox lane 文案只作为 `xox-run-worker-adapter.ts` 的私有 host product policy 常量存在。
 - `apps/api/src/agent/turn-intake-resolver.ts`
   - 删除。
 
@@ -43,7 +44,7 @@ flowchart TD
     Intake --> Schema["Agentic OS turn lane schema"]
     Adapter --> PendingDb["xox pending action/clarification DB checks"]
     Adapter --> Runtime["xox planWithRuntimeAdapter callback"]
-    Adapter --> Prompt["xox turn-lane.system.md"]
+    Adapter --> Prompt["xox turn lane product policy"]
     Adapter --> GoalFacts["xox sanitizeAgentGoalFacts"]
 ```
 

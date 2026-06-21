@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
 import type { Kysely } from 'kysely'
 import {
   AGENT_TURN_LANE_RESOLUTION_TOOL_NAME,
@@ -62,15 +60,41 @@ type XoxDirectAnswerModelOutput = DirectAnswerLaneModelOutput<RuntimePlanError> 
   result: RuntimePlanResult | null
 }
 
-const TURN_LANE_SYSTEM_PROMPT = readFileSync(
-  fileURLToPath(new URL('../prompts/turn-lane.system.md', import.meta.url)),
-  'utf8',
-).trim()
+const XOX_TURN_LANE_PRODUCT_POLICY = `You are the xox-model turn lane resolver.
 
-const DIRECT_ANSWER_SYSTEM_PROMPT = readFileSync(
-  fileURLToPath(new URL('../prompts/direct-answer.system.md', import.meta.url)),
-  'utf8',
-).trim()
+Your only job is to decide which runtime lane should handle the current user turn.
+
+Return the decision by calling \`turn_lane_resolve\`.
+
+Lane definitions:
+- \`direct_answer\`: ordinary conversation, identity/capability questions, or questions about ambient session facts such as current date, current time, timezone, current user display name, or current workspace name. This lane must not inspect workspace metrics, ledger, model config, saved memory, versions, shares, or perform writes.
+- \`agent_goal\`: any request that needs workspace reads, business data, model calculations, ledger/history inspection, memory access, page navigation, confirmation cards, writes, version/share/import/export actions, sandbox work, or any multi-step business goal.
+
+Rules:
+- Do not answer the user.
+- Do not choose business tools.
+- Do not infer unstated business facts, but do emit hard \`goalFacts\` that are explicitly stated by the user.
+- When uncertain, choose \`agent_goal\`.
+- If the user asks for any durable change or confirmation card, choose \`agent_goal\` and set \`requiresTools=true\`.
+- Use only the supplied user turn and ambient session facts. Conversation history and workspace data are intentionally not provided here.
+
+Goal facts:
+- If the user asks for a verifiable forecast, payback, ROI, profit, cash, or other workspace-derived answer, choose \`agent_goal\`.
+- If the user asks for a derived calculation that combines workspace facts with hypothetical assumptions, loan interest, inflation, shareholder-specific returns, ratios, or scenario math, set \`goalFacts.requiresSandboxComputation=true\`.
+- If the user refers to an ordered business entity such as first/second shareholder, first employee, a ranked version, or another position-dependent entity, set \`goalFacts.requiresOrderedEntityFacts=true\`.
+- If the user requests writes, set \`goalFacts.requiredActionCapabilities\` to the exact capability families needed: \`ledger\`, \`draft\`, \`version\`, \`share\`, or \`import_export\`.
+- If the user explicitly forbids publishing or sharing, set \`goalFacts.forbiddenActions\` accordingly.`
+
+const XOX_DIRECT_ANSWER_PRODUCT_POLICY = `You are xox-model Agent OS.
+
+Answer ordinary conversation, identity, capability, and ambient session fact questions directly.
+
+Rules:
+- Do not claim to have inspected workspace data.
+- Do not answer current workspace metrics, members, shareholders, ledger, forecasts, versions, shares, model settings, or saved memories from conversation memory alone.
+- If the user asks for current workspace data or wants any workspace change, say that this request needs the Agent goal path.
+- Use the ambient session context for current date, time and timezone.
+- Keep answers concise and useful.`
 
 const TURN_LANE_RESOLUTION_TOOL: ChatTool = {
   type: 'function',
@@ -132,7 +156,7 @@ async function resolveTurnLaneWithModel(
   const ambient = xoxAmbientContext(ctx)
   const result = await planWithRuntimeAdapter({
     settings: ctx.settings,
-    systemPrompt: TURN_LANE_SYSTEM_PROMPT,
+    systemPrompt: XOX_TURN_LANE_PRODUCT_POLICY,
     message: redactSecretLikeContent(ctx.message),
     context: { ambient: agentAmbientSessionContextFacts(ambient) },
     tools: [TURN_LANE_RESOLUTION_TOOL],
@@ -168,7 +192,7 @@ function directAnswerMessages(input: {
   ambientContext: AgentAmbientSessionContext
 }): RuntimeChatMessage[] {
   return [
-    { role: 'system', content: DIRECT_ANSWER_SYSTEM_PROMPT },
+    { role: 'system', content: XOX_DIRECT_ANSWER_PRODUCT_POLICY },
     {
       role: 'user',
       content: [
@@ -253,7 +277,7 @@ async function executeXoxDirectAnswerLane(
         context: { ambient: agentAmbientSessionContextFacts(ambientContext) },
         tools: [],
         messages: directAnswerMessages({ message: ctx.message, ambientContext }),
-        systemPrompt: DIRECT_ANSWER_SYSTEM_PROMPT,
+        systemPrompt: XOX_DIRECT_ANSWER_PRODUCT_POLICY,
         maxTokens: 500,
         thinkingLevel: 'off',
         requestTimeoutMs: ctx.settings.agentProviderRequestTimeoutMs,

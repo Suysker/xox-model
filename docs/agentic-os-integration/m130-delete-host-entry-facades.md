@@ -18,7 +18,7 @@ The smoke command is preserved. Only its location changes because it is an opera
 | Turn intake lane resolution | `apps/api/src/agent/agentic-os/xox-turn-intake-adapter.ts` + `@agentic-os/core` |
 | Direct answer lane | `apps/api/src/agent/agentic-os/xox-direct-answer-adapter.ts` + `@agentic-os/core` |
 | Main agent loop | `apps/api/src/agent/agentic-os/xox-agentic-os-host-kit.ts` + `@agentic-os/core` |
-| xox product prompt text | `apps/api/src/agent/prompts/*.md` loaded at the consuming adapter boundary |
+| xox product prompt text | M152 deleted `apps/api/src/agent/prompts`; remaining host policy text is private to the concrete worker/runtime adapter that consumes it |
 | Real provider smoke | `apps/api/scripts/agent-real-provider-smoke.ts` |
 
 ## Dependency Graph
@@ -37,7 +37,7 @@ flowchart TD
 ## Naming And Style
 
 - No new `kernel`, `registry`, or `runner` host module is introduced.
-- Prompt helper functions are private to the adapter that consumes them.
+- Prompt/helper policy constants are private to the concrete adapter that consumes them; no production `src/agent/prompts` directory remains.
 - Architecture tests guard deleted files by exact path.
 
 ## Validation

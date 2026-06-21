@@ -139,6 +139,26 @@ describe('Agent ADR architecture boundaries', () => {
     }
   })
 
+  it('keeps host prompt assets out of the production agent tree', () => {
+    expect(existsSync(join(srcRoot, 'agent', 'prompts'))).toBe(false)
+
+    const deletedPromptAssets = [
+      'planner.system.md',
+      'turn-lane.system.md',
+      'direct-answer.system.md',
+      'memory.system.md',
+      'tool-observation-finalizer.system.md',
+    ]
+    for (const file of sourceFilesUnder('agent')) {
+      const content = source(file)
+      for (const prompt of deletedPromptAssets) {
+        expect(content, `${file} must not reference the deleted ${prompt} prompt asset`).not.toContain(prompt)
+      }
+      expect(content, `${file} must not load prompt files from a local host prompt directory`).not.toContain('/prompts/')
+      expect(content, `${file} must not load prompt files from a local host prompt directory`).not.toContain('\\prompts\\')
+    }
+  })
+
   it('deletes misleading root agent data and planning facades', () => {
     expect(existsSync(join(srcRoot, 'agent', 'data-agent.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'planning-context.ts'))).toBe(false)
