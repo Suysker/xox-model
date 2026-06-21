@@ -130,6 +130,24 @@ describe('Agent ADR architecture boundaries', () => {
     expect(adapter).not.toContain('if (!assistantText)')
   })
 
+  it('keeps ambient session context facts in Agentic OS core', () => {
+    expect(existsSync(join(srcRoot, 'agent', 'ambient-context.ts'))).toBe(false)
+
+    for (const file of sourceFilesUnder('agent')) {
+      expect(source(file), `${file} must not import the deleted ambient-context helper`).not.toContain('ambient-context')
+    }
+
+    for (const file of [
+      'agent/agentic-os/xox-turn-intake-adapter.ts',
+      'agent/agentic-os/xox-direct-answer-adapter.ts',
+    ]) {
+      const content = source(file)
+      expect(content).toContain("@agentic-os/core")
+      expect(content).toContain('buildAgentAmbientSessionContext')
+      expect(content).toContain('agentAmbientSessionContextFacts')
+    }
+  })
+
   it('keeps clarification resume scaffold in Agentic OS core', () => {
     expect(existsSync(join(srcRoot, 'agent', 'clarification-resume.ts'))).toBe(false)
     const hostKit = source('agent/agentic-os/xox-agentic-os-host-kit.ts')
@@ -271,6 +289,7 @@ describe('Agent ADR architecture boundaries', () => {
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'openai-compatible-chat-adapter.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'openai-agents-adapter.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'direct-answer-runtime.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'ambient-context.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'clarification-resume.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'loop-obligations.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'tool-runtime', 'approval-policy-composer.ts'))).toBe(false)

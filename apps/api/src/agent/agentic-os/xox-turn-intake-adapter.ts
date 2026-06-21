@@ -1,13 +1,14 @@
 import {
   AGENT_TURN_LANE_RESOLUTION_TOOL_NAME,
   AGENT_TURN_LANE_RESOLUTION_TOOL_SCHEMA,
+  agentAmbientSessionContextFacts,
+  buildAgentAmbientSessionContext,
   normalizeAgentTurnLaneResolution,
   resolveAgentTurnIntake,
   type AgentTurnIntakeModelResult,
 } from '@agentic-os/core'
 import type { Row } from '../../db/schema.js'
 import type { PlannerContext } from '../planning-context.js'
-import { buildAgentAmbientContext } from '../ambient-context.js'
 import { redactSecretLikeContent } from '../memory.js'
 import { turnLaneSystemPrompt } from '../prompt-registry.js'
 import { planWithRuntimeAdapter } from '../runtime/runtime-adapter.js'
@@ -59,20 +60,16 @@ function turnLaneResolutionFromStep(step: AgentToolCallStep | undefined) {
 async function resolveTurnLaneWithModel(
   ctx: PlannerContext & { thread: Row<'agent_threads'> },
 ): Promise<AgentTurnIntakeModelResult> {
-  const ambient = buildAgentAmbientContext({ user: ctx.user, workspace: ctx.workspace })
+  const ambient = buildAgentAmbientSessionContext({
+    ...(process.env.XOX_AGENT_TIMEZONE ? { timezone: process.env.XOX_AGENT_TIMEZONE } : {}),
+    userDisplayName: ctx.user.display_name ?? ctx.user.email ?? null,
+    workspaceName: ctx.workspace.name ?? null,
+  })
   const result = await planWithRuntimeAdapter({
     settings: ctx.settings,
     systemPrompt: turnLaneSystemPrompt(),
     message: redactSecretLikeContent(ctx.message),
-    context: {
-      ambient: {
-        nowIso: ambient.nowIso,
-        localDate: ambient.localDate,
-        timezone: ambient.timezone,
-        userDisplayName: ambient.userDisplayName ?? null,
-        workspaceName: ambient.workspaceName ?? null,
-      },
-    },
+    context: { ambient: agentAmbientSessionContextFacts(ambient) },
     tools: [TURN_LANE_RESOLUTION_TOOL],
     stream: false,
     thinkingLevel: 'off',

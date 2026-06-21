@@ -1,5 +1,8 @@
 import {
+  agentAmbientSessionContextFacts,
+  buildAgentAmbientSessionContext,
   runDirectAnswerLane,
+  type AgentAmbientSessionContext,
   type DirectAnswerLaneFailure,
   type DirectAnswerLaneModelOutput,
 } from '@agentic-os/core'
@@ -7,7 +10,6 @@ import type { AgentTurnLaneResolution } from '@agentic-os/contracts'
 import type { AgentGoalStatus, AgentNavigationEvent, AgentPlannerSource } from '@xox/contracts'
 import type { Row } from '../../db/schema.js'
 import type { PlannerContext } from '../planning-context.js'
-import { buildAgentAmbientContext } from '../ambient-context.js'
 import { directAnswerSystemPrompt } from '../prompt-registry.js'
 import {
   configuredRuntimePlannerSource,
@@ -41,7 +43,7 @@ function compactJson(value: unknown) {
 
 function directAnswerMessages(input: {
   message: string
-  ambientContext: ReturnType<typeof buildAgentAmbientContext>
+  ambientContext: AgentAmbientSessionContext
 }): RuntimeChatMessage[] {
   return [
     { role: 'system', content: directAnswerSystemPrompt() },
@@ -49,15 +51,7 @@ function directAnswerMessages(input: {
       role: 'user',
       content: [
         'Ambient session context. This is authoritative for current date, time and timezone only.',
-        compactJson({
-          authority: 'ambient',
-          source: 'agent_ambient_context',
-          nowIso: input.ambientContext.nowIso,
-          localDate: input.ambientContext.localDate,
-          timezone: input.ambientContext.timezone,
-          userDisplayName: input.ambientContext.userDisplayName ?? null,
-          workspaceName: input.ambientContext.workspaceName ?? null,
-        }),
+        compactJson(agentAmbientSessionContextFacts(input.ambientContext)),
       ].join('\n'),
     },
     {
@@ -105,9 +99,10 @@ export async function executeXoxDirectAnswerLane(
     beforeStateWrite: () => Promise<boolean>
   },
 ): Promise<DirectAnswerRunResult | null> {
-  const ambientContext = buildAgentAmbientContext({
-    user: ctx.user,
-    workspace: ctx.workspace,
+  const ambientContext = buildAgentAmbientSessionContext({
+    ...(process.env.XOX_AGENT_TIMEZONE ? { timezone: process.env.XOX_AGENT_TIMEZONE } : {}),
+    userDisplayName: ctx.user.display_name ?? ctx.user.email ?? null,
+    workspaceName: ctx.workspace.name ?? null,
   })
   let plannerSource: AgentPlannerSource = configuredRuntimePlannerSource(ctx.settings) ?? 'rules'
 
@@ -137,7 +132,7 @@ export async function executeXoxDirectAnswerLane(
       const runtimeResult = await planWithRuntimeAdapter({
         settings: ctx.settings,
         message: redactSecretLikeContent(ctx.message),
-        context: { ambient: ambientContext },
+        context: { ambient: agentAmbientSessionContextFacts(ambientContext) },
         tools: [],
         messages: directAnswerMessages({ message: ctx.message, ambientContext }),
         maxTokens: 500,
