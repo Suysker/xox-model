@@ -55,7 +55,6 @@ describe('Agent ADR architecture boundaries', () => {
       'agent/host-profile/xox-agent-run-profile.ts',
       'agent/agentic-os/xox-action-graph-adapter.ts',
       'agent/host-profile/xox-provider-runtime.ts',
-      'agent/agentic-os/xox-tool-observation-adapter.ts',
       'agent/memory.ts',
     ]
     const forbiddenDirectTypeLiterals = [
@@ -634,15 +633,14 @@ describe('Agent ADR architecture boundaries', () => {
 
   it('keeps action observation envelopes in Agentic OS core', () => {
     expect(existsSync(join(srcRoot, 'agent', 'tool-observation-continuation.ts'))).toBe(false)
-    const continuation = source('agent/agentic-os/xox-tool-observation-adapter.ts')
-    expect(continuation).toContain("@agentic-os/core")
-    expect(continuation).toContain('buildActionPreviewObservation')
-    expect(continuation).toContain('buildActionResultObservation')
-    expect(continuation).not.toContain("observationType: 'action_preview'")
-    expect(continuation).not.toContain("observationType: 'action_result'")
+    expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-tool-observation-adapter.ts'))).toBe(false)
 
     const actionGraph = source('agent/agentic-os/xox-action-graph-adapter.ts')
+    expect(actionGraph).toContain("@agentic-os/core")
+    expect(actionGraph).toContain('buildActionPreviewObservation')
+    expect(actionGraph).toContain('buildActionResultObservation')
     expect(actionGraph).toContain('actionFailureObservation')
+    expect(actionGraph).not.toContain("observationType: 'action_preview'")
     expect(actionGraph).not.toContain("observationType: 'action_result'")
   })
 
@@ -666,10 +664,12 @@ describe('Agent ADR architecture boundaries', () => {
 
   it('keeps host observation bridging in Agentic OS core', () => {
     expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-observation-adapter.ts'))).toBe(false)
-    const toolObservation = source('agent/agentic-os/xox-tool-observation-adapter.ts')
-    expect(toolObservation).toContain("@agentic-os/core")
-    expect(toolObservation).toContain('createHostObservationBridge')
-    expect(toolObservation).toContain('createXoxObservationBridge')
+    expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-tool-observation-adapter.ts'))).toBe(false)
+
+    const plannedItems = source('agent/host-profile/xox-planned-items.ts')
+    expect(plannedItems).toContain("@agentic-os/core")
+    expect(plannedItems).toContain('createHostObservationBridge')
+    expect(plannedItems).toContain('createXoxObservationBridge')
 
     const hostKit = source('agent/host-profile/xox-agent-run-profile.ts')
     expect(hostKit).toContain('createXoxObservationBridge')
@@ -735,11 +735,6 @@ describe('Agent ADR architecture boundaries', () => {
     expect(draftBuilder).toContain("@agentic-os/core")
     expect(draftBuilder).toContain('buildToolSupervisorEmptyResultFailureObservation')
     expect(draftBuilder).not.toContain('did not produce an action or observation')
-
-    const continuation = source('agent/agentic-os/xox-tool-observation-adapter.ts')
-    expect(continuation).toContain("@agentic-os/core")
-    expect(continuation).toContain('buildToolSupervisorEmptyResultFailureObservation')
-    expect(continuation).not.toContain('did not produce an action or observation')
   })
 
   it('deletes the prompt registry facade and keeps the tool observation continuation prompt in Agentic OS core', () => {
@@ -747,7 +742,7 @@ describe('Agent ADR architecture boundaries', () => {
     for (const file of sourceFilesUnder('agent')) {
       expect(source(file), `${file} must not import the deleted prompt registry facade`).not.toContain('prompt-registry')
     }
-    const continuation = source('agent/agentic-os/xox-tool-observation-adapter.ts')
+    const continuation = source('agent/host-profile/xox-agent-run-profile.ts')
     expect(continuation).toContain("@agentic-os/core")
     expect(continuation).toContain('toolObservationContinuationSystemPrompt')
     expect(continuation).not.toContain('tool-observation-finalizer.system.md')
@@ -755,7 +750,7 @@ describe('Agent ADR architecture boundaries', () => {
   })
 
   it('keeps provider observation continuation message assembly in Agentic OS runtime', () => {
-    const continuation = source('agent/agentic-os/xox-tool-observation-adapter.ts')
+    const continuation = source('agent/host-profile/xox-agent-run-profile.ts')
     expect(continuation).toContain("@agentic-os/runtime-openai-compatible")
     expect(continuation).toContain('buildProviderToolObservationContinuationMessages')
     expect(continuation).not.toContain('providerToolObservationReplayMessages')
@@ -807,7 +802,7 @@ describe('Agent ADR architecture boundaries', () => {
 
   it('keeps same-thread runtime conversation replay in Agentic OS core', () => {
     const planningCall = source('agent/host-profile/xox-provider-runtime.ts')
-    const continuation = source('agent/agentic-os/xox-tool-observation-adapter.ts')
+    const continuation = source('agent/host-profile/xox-agent-run-profile.ts')
     expect(planningCall).toContain("@agentic-os/core")
     expect(planningCall).toContain('runtimeConversationLogFromContext')
     expect(planningCall).toContain('runtimeMessagesFromConversationLog')

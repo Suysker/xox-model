@@ -57,8 +57,8 @@ host-profile/xox-agent-run-profile.ts
   -> agentic-os/xox-run-event-store-adapter.ts
   -> agentic-os/xox-thread-store-adapter.ts
   -> agentic-os/xox-action-graph-adapter.ts
-  -> agentic-os/xox-tool-observation-adapter.ts
   -> agentic-os/xox-goal-store-adapter.ts
+  -> host-profile/xox-planned-items.ts
 
 agentic-os/xox-* peripheral adapters
   -> @agentic-os/server/core primitives

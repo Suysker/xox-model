@@ -3,8 +3,10 @@ import {
   actionExecutionObservation,
   actionFailureObservation,
   actionPreviewObservation,
+} from '../src/agent/agentic-os/xox-action-graph-adapter.js'
+import {
   toolSupervisorFailureObservation,
-} from '../src/agent/agentic-os/xox-tool-observation-adapter.js'
+} from '../src/agent/host-profile/xox-planned-items.js'
 import { toolSupervisorFailureReadDraft } from '../src/agent/host-profile/xox-planned-items.js'
 import type { Row } from '../src/db/schema.js'
 

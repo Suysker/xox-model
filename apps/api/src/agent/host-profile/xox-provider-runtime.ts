@@ -35,9 +35,8 @@ import type { AgentPlannerSource, AgentToolInventorySnapshot } from '@xox/contra
 import type { Settings } from '../../core/settings.js'
 import { buildAgentContextPack } from './xox-context-pack.js'
 import { redactSecretLikeContent } from '../memory.js'
-import type { PlannerContext } from './xox-planned-items.js'
+import type { AgentToolObservation, PlannerContext } from './xox-planned-items.js'
 import { addRunEvent, addRuntimeStreamRunEvent } from '../agentic-os/xox-run-event-store-adapter.js'
-import type { AgentToolObservation } from '../agentic-os/xox-tool-observation-adapter.js'
 import {
   AGENT_TOOL_REGISTRY,
   materializedToolInventorySnapshot,

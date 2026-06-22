@@ -5,7 +5,11 @@ import type {
   AgentRunRecord as OsRunRecord,
   JsonObject as OsJsonObject,
 } from '@agentic-os/contracts'
-import { classifyToolObservationOutcome } from '@agentic-os/core'
+import {
+  buildActionPreviewObservation,
+  buildActionResultObservation,
+  classifyToolObservationOutcome,
+} from '@agentic-os/core'
 import {
   agentServerRunLifecycleEvents,
   materializeAgentServerActionGraph,
@@ -27,18 +31,18 @@ import type { Settings } from '../../core/settings.js'
 import { newId } from '../../core/security.js'
 import { utcNow } from '../../core/time.js'
 import type { CurrentUser } from '../../modules/auth.js'
-import { isActionDraft, type AgentActionDraft, type PlannedItem, type ReadDraft } from '../host-profile/xox-planned-items.js'
+import {
+  createXoxObservationBridge,
+  isActionDraft,
+  type AgentActionDraft,
+  type AgentToolObservation,
+  type PlannedItem,
+  type ReadDraft,
+  type XoxObservationBridge,
+} from '../host-profile/xox-planned-items.js'
 import { autoExecuteAgentActionRequest } from '../tool-executor.js'
 import { addRunEvent, agentThreadEvents } from './xox-run-event-store-adapter.js'
 import { assertAgentRunLease } from './xox-run-lease-store-adapter.js'
-import {
-  actionFailureObservation,
-  actionExecutionObservation,
-  actionPreviewObservation,
-  createXoxObservationBridge,
-  type AgentToolObservation,
-  type XoxObservationBridge,
-} from './xox-tool-observation-adapter.js'
 import { assertActionDraftAllowed, resolveActionAuthority, type AgentAutomationLevel } from '../tool-policy.js'
 
 type ActionGraphContext = {
@@ -63,6 +67,123 @@ export type StoredActionGraph = {
 type StoredActionResult = {
   action: Row<'agent_action_requests'>
   observation: AgentToolObservation
+}
+
+function parseJsonObject(value: string | null) {
+  if (!value) return null
+  try {
+    const parsed = JSON.parse(value)
+    return parsed && typeof parsed === 'object' ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function conciseResult(value: unknown) {
+  if (!value || typeof value !== 'object') return value ?? null
+  const record = value as Record<string, unknown>
+  const summary: Record<string, unknown> = {}
+  for (const key of [
+    'ok',
+    'id',
+    'revision',
+    'workspaceName',
+    'direction',
+    'amount',
+    'occurredAt',
+    'relatedEntityName',
+    'relatedEntityId',
+    'status',
+    'monthLabel',
+  ]) {
+    if (record[key] !== undefined) summary[key] = record[key]
+  }
+  if (record.version && typeof record.version === 'object') {
+    const version = record.version as Record<string, unknown>
+    summary.version = {
+      id: version.id,
+      versionNo: version.versionNo ?? version.version_no,
+      name: version.name,
+      kind: version.kind,
+    }
+  }
+  if (record.share && typeof record.share === 'object') {
+    summary.share = { ok: true }
+  }
+  return Object.keys(summary).length > 0 ? summary : { ok: true }
+}
+
+export function actionExecutionObservation(input: {
+  action: Row<'agent_action_requests'>
+  result?: unknown
+}): AgentToolObservation {
+  const displayPreview = `已执行：${input.action.title}`
+  const details = parseJsonObject(input.action.details_json)
+  return buildActionResultObservation({
+    actionRequestId: input.action.id,
+    actionKind: input.action.kind,
+    actionStatus: input.action.status,
+    title: input.action.title,
+    summary: input.action.summary,
+    targetLabel: input.action.target_label,
+    riskLevel: input.action.risk_level,
+    changeSet: details,
+    displayPreview,
+    toolName: input.action.kind,
+    toolCallId: `action_${input.action.id}`,
+    toolArguments: {
+      actionRequestId: input.action.id,
+      actionKind: input.action.kind,
+      status: input.action.status,
+    },
+    executedAt: input.action.executed_at,
+    result: conciseResult(input.result),
+  }) as AgentToolObservation
+}
+
+export function actionFailureObservation(input: {
+  action: Row<'agent_action_requests'>
+  reason: string
+  error?: string | null
+}): AgentToolObservation {
+  const displayPreview = input.error
+    ? `自动执行失败：${input.action.title}：${input.error}`
+    : `动作被策略阻止：${input.action.title}`
+  return buildActionResultObservation({
+    actionRequestId: input.action.id,
+    actionKind: input.action.kind,
+    actionStatus: input.action.status,
+    title: input.action.title,
+    displayPreview,
+    toolName: input.action.kind,
+    toolCallId: `action_${input.action.id}`,
+    toolArguments: {},
+    reason: input.reason,
+    error: input.error ?? null,
+    observationStatus: 'failed',
+    outcome: input.error ? 'failed_terminal' : 'policy_blocked',
+  }) as AgentToolObservation
+}
+
+export function actionPreviewObservation(input: {
+  action: Row<'agent_action_requests'>
+}): AgentToolObservation {
+  const details = parseJsonObject(input.action.details_json)
+  const displayPreview = `待确认：${input.action.title}`
+  return buildActionPreviewObservation({
+    actionRequestId: input.action.id,
+    actionKind: input.action.kind,
+    actionStatus: input.action.status,
+    title: input.action.title,
+    summary: input.action.summary,
+    targetLabel: input.action.target_label,
+    riskLevel: input.action.risk_level,
+    changeSet: details,
+    displayPreview,
+    toolName: input.action.kind,
+    toolCallId: `action_preview_${input.action.id}`,
+    toolArguments: {},
+  }) as AgentToolObservation
 }
 
 async function addAgentActionRequest(ctx: ActionGraphContext, draft: AgentActionDraft) {

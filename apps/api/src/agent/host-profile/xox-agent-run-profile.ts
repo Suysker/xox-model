@@ -47,12 +47,14 @@ import {
   parseToolObservationModelFacts,
   planObligationMaterialization,
   runtimePlannerResultToTurnOutput,
+  runtimeMessagesFromConversationLog,
   sandboxExecutionModeFromFacts,
   sandboxExecutionStatusFromFacts,
   selectCompletedReadObservation,
   selectAgentPrerequisiteObservations,
   selectReadinessObservation,
   selectSandboxFinalizerObservation,
+  toolObservationContinuationSystemPrompt,
   type AgentHostLoopCoordinator,
   type AgentActionPort,
   type AgentCompletionPort,
@@ -72,12 +74,17 @@ import {
   type AgentServerFinalAnswerClaimExtractionOptions,
   type AgentServerFinalAnswerClaimExtractionResult,
 } from '@agentic-os/server'
+import {
+  buildProviderToolObservationContinuationMessages,
+  resolveProviderRuntimeProfile,
+} from '@agentic-os/runtime-openai-compatible'
 import type { AgentGoalFacts, AgentGoalStatus, AgentNavigationEvent, AgentPlannerSource } from '@xox/contracts'
 import { parseJson } from '../../db/database.js'
 import type { Row } from '../../db/schema.js'
 import { newId } from '../../core/security.js'
 import { utcNow } from '../../core/time.js'
 import type { PlannerContext } from './xox-planned-items.js'
+import { buildThreadConversationLog } from './xox-context-pack.js'
 import {
   answerWorkspaceDataQuestion,
   executeAgentActionRequest,
@@ -86,13 +93,18 @@ import {
 } from '../tool-executor.js'
 import {
   buildPlannedItemFromRuntimeStep,
+  createXoxObservationBridge,
   isActionDraft,
   readDraftsFromRuntimeResult,
+  toolSupervisorFailureObservation,
   toolSupervisorFailureReadDraft,
+  type AgentToolObservation,
   type PlannedItem,
   type PlannedItemResult,
+  type XoxObservationBridge,
 } from './xox-planned-items.js'
 import {
+  actionExecutionObservation,
   storePlannedActionGraph,
   type StoredActionGraph,
 } from '../agentic-os/xox-action-graph-adapter.js'
@@ -115,6 +127,7 @@ import {
 import {
   consolidateExecutedActionMemory,
   flushThreadContextToMemoryIfNeeded,
+  loadAgentRuntimeContext,
 } from '../memory.js'
 import { runMemoryDreamingSweep } from '../memory.js'
 import {
@@ -133,7 +146,7 @@ import {
   mergeAgentGoalFacts,
   readRuntimeGoalFacts,
 } from './xox-goal-facts.js'
-import { addRunEvent } from '../agentic-os/xox-run-event-store-adapter.js'
+import { addRunEvent, addRuntimeStreamRunEvent } from '../agentic-os/xox-run-event-store-adapter.js'
 import { addMessage } from '../agentic-os/xox-thread-store-adapter.js'
 import {
   AGENT_TOOL_REGISTRY,
@@ -146,14 +159,6 @@ import {
   type AgentToolConfirmationMode,
   type ChatTool,
 } from '../tool-catalog.js'
-import {
-  actionExecutionObservation,
-  continueModelAfterToolObservations,
-  createXoxObservationBridge,
-  toolSupervisorFailureObservation,
-  type AgentToolObservation,
-  type XoxObservationBridge,
-} from '../agentic-os/xox-tool-observation-adapter.js'
 import { redactSecretLikeContent } from '../memory.js'
 import { normalizeAgentAutomationLevel } from '../tool-policy.js'
 import {
@@ -197,6 +202,161 @@ type XoxAgenticOsRunState = {
   lastToolSelection: OsToolSelectionHint | null
   finishedResult: OsRunResult | null
   lastActionExecutionResult: unknown | null
+}
+
+type ToolObservationContinuationResult =
+  | { status: 'answered'; assistantText: string }
+  | { status: 'skipped'; reason: 'no_observations' | 'rules_provider' }
+  | { status: 'failed'; message: string; planStep: Row<'agent_plan_steps'> }
+
+type ToolObservationContinuationContext = Pick<
+  XoxAgenticOsPlannerContext,
+  'db' | 'settings' | 'workspace' | 'user' | 'threadId' | 'runId' | 'message' | 'abortSignal'
+>
+
+function toolObservationFinalizerSystemPrompt() {
+  return toolObservationContinuationSystemPrompt({
+    platformName: 'xox-model SaaS 平台',
+    agentName: 'Agent OS',
+    extraRules: ['你是 xox-model Agent OS，不要自称 DeepSeek、Qwen、OpenAI 或其他模型。'],
+  })
+}
+
+function observationMessages(input: {
+  settings: XoxAgenticOsPlannerContext['settings']
+  userMessage: string
+  observations: AgentToolObservation[]
+  threadConversationLog?: ReturnType<typeof buildThreadConversationLog>
+}): RuntimeChatMessage[] {
+  const providerRuntime = resolveProviderRuntimeProfile({
+    provider: input.settings.openaiCompatibleProvider,
+    model: input.settings.openaiCompatibleModel,
+  })
+  return buildProviderToolObservationContinuationMessages({
+    profile: providerRuntime.profile,
+    capability: providerRuntime.capability,
+    thinkingLevel: providerRuntime.thinkingLevel,
+    systemPrompt: toolObservationFinalizerSystemPrompt(),
+    priorMessages: runtimeMessagesFromConversationLog(input.threadConversationLog),
+    userMessage: input.userMessage,
+    observations: input.observations,
+    suffix: 'finalizer_observation',
+    redact: redactSecretLikeContent,
+  }) as RuntimeChatMessage[]
+}
+
+async function addContinuationFailureStep(
+  ctx: ToolObservationContinuationContext,
+  message: string,
+): Promise<Row<'agent_plan_steps'>> {
+  const maxRow = await ctx.db
+    .selectFrom('agent_plan_steps')
+    .select(({ fn }) => fn.max<number>('sequence_no').as('maxSequence'))
+    .where('run_id', '=', ctx.runId)
+    .executeTakeFirst()
+  const now = utcNow()
+  const id = newId()
+  await ctx.db
+    .insertInto('agent_plan_steps')
+    .values({
+      id,
+      thread_id: ctx.threadId,
+      run_id: ctx.runId,
+      action_request_id: null,
+      sequence_no: Number(maxRow?.maxSequence ?? 0) + 1,
+      title: '模型回复失败',
+      description: redactSecretLikeContent(message).slice(0, 500) || '模型没有基于工具结果返回可展示回复。',
+      status: 'failed',
+      navigation_json: null,
+      created_at: now,
+      updated_at: now,
+    })
+    .execute()
+  return ctx.db.selectFrom('agent_plan_steps').selectAll().where('id', '=', id).executeTakeFirstOrThrow()
+}
+
+async function continueModelAfterToolObservations(
+  ctx: ToolObservationContinuationContext,
+  observations: AgentToolObservation[],
+): Promise<ToolObservationContinuationResult> {
+  if (observations.length === 0) return { status: 'skipped', reason: 'no_observations' }
+  if (ctx.settings.llmProvider === 'rules') return { status: 'skipped', reason: 'rules_provider' }
+
+  await addRunEvent(ctx.db, agentServerRunLifecycleEvents.modelContinuation({
+    threadId: ctx.threadId,
+    runId: ctx.runId,
+    observationCount: observations.length,
+    toolNames: observations.map((observation) => observation.toolName),
+    copy: {
+      title: '模型继续生成回复',
+      message: '工具结果已作为 observation 回灌给模型，正在生成最终回复。',
+    },
+  }))
+
+  const context = {
+    mode: 'tool_observation_finalizer',
+    workspace: { id: ctx.workspace.id, name: ctx.workspace.name },
+    observationCount: observations.length,
+    toolNames: observations.map((observation) => observation.toolName),
+  }
+  const runtimeContext = await loadAgentRuntimeContext({
+    db: ctx.db,
+    workspace: ctx.workspace,
+    user: ctx.user,
+    threadId: ctx.threadId,
+  })
+  const threadConversationLog = buildThreadConversationLog({
+    recentMessages: runtimeContext.recentMessages,
+  })
+
+  const result = await planWithRuntimeAdapter({
+    settings: ctx.settings,
+    message: redactSecretLikeContent(ctx.message),
+    context,
+    tools: [],
+    messages: observationMessages({
+      settings: ctx.settings,
+      userMessage: ctx.message,
+      observations,
+      threadConversationLog,
+    }),
+    systemPrompt: toolObservationFinalizerSystemPrompt(),
+    thinkingLevel: 'off',
+    maxTokens: observations.length > 2 ? 700 : 600,
+    stream: true,
+    requestTimeoutMs: ctx.settings.agentProviderRequestTimeoutMs,
+    ...(ctx.abortSignal ? { abortSignal: ctx.abortSignal } : {}),
+    onStreamEvent: (event) => addRuntimeStreamRunEvent({ ...ctx, phase: 'final_answer' }, event),
+  })
+
+  const assistantText = result?.assistantText?.trim()
+  if (assistantText) {
+    await addRunEvent(ctx.db, agentServerRunLifecycleEvents.modelContinuationCompleted({
+      threadId: ctx.threadId,
+      runId: ctx.runId,
+      observationCount: observations.length,
+      contentLength: assistantText.length,
+      copy: {
+        title: '模型回复已完成',
+        message: '模型已基于工具结果生成最终回复。',
+      },
+    }))
+    return { status: 'answered', assistantText }
+  }
+
+  const message = result?.error?.message ?? '模型没有基于工具结果返回可展示回复。'
+  await addRunEvent(ctx.db, agentServerRunLifecycleEvents.modelContinuationFailed({
+    threadId: ctx.threadId,
+    runId: ctx.runId,
+    observationCount: observations.length,
+    errorKind: result?.error?.kind ?? null,
+    copy: {
+      title: '模型继续回复失败',
+      message,
+    },
+  }))
+  const planStep = await addContinuationFailureStep(ctx, message)
+  return { status: 'failed', message, planStep }
 }
 
 type XoxPrerequisiteObligation = {

@@ -7,9 +7,16 @@ import type {
   AgentToolObservationOutcome,
 } from '@xox/contracts'
 import type { Kysely } from 'kysely'
+import type {
+  AgentObservation as OsObservation,
+  AgentToolObservationOutcome as OsToolObservationOutcome,
+  JsonObject as OsJsonObject,
+} from '@agentic-os/contracts'
 import {
   buildToolSupervisorEmptyResultFailureObservation,
   classifyToolObservationOutcome,
+  createHostObservationBridge,
+  type HostObservationBridge,
 } from '@agentic-os/core'
 import { providerToolCallBoundaryObservations } from '@agentic-os/runtime-openai-compatible'
 import type { Database, Row } from '../../db/schema.js'
@@ -18,7 +25,6 @@ import type { CurrentUser } from '../../modules/auth.js'
 import { redactSecretLikeContent } from '../memory.js'
 import type { ParsedWorkspaceBundleArtifact } from '../workspace-bundle-artifact.js'
 import type { AgentAutomationLevel } from '../tool-policy.js'
-import type { AgentToolObservation } from '../agentic-os/xox-tool-observation-adapter.js'
 import type { AgentLoopObligationPlan } from './xox-final-review-policy.js'
 import type { RuntimePlanError, RuntimePlanResult } from './xox-provider-runtime.js'
 
@@ -49,6 +55,21 @@ export type ReadDraft = {
   navigation?: AgentNavigationEvent | null
   status?: AgentPlanStepStatus
 }
+
+export type AgentToolObservation = {
+  title: string
+  toolName: string
+  toolCallId: string
+  toolArguments: Record<string, unknown>
+  displayPreview: string
+  modelContent: string
+  status: 'completed' | 'failed' | 'cancelled' | 'not_executed' | 'invalid'
+  outcome?: AgentToolObservationOutcome
+  lane?: AgentToolObservationLane
+  synthetic?: boolean
+}
+
+export type XoxObservationBridge = HostObservationBridge<AgentToolObservation>
 
 export type PlannerContext = {
   db: Kysely<Database>
@@ -120,6 +141,103 @@ export function toolSupervisorFailureReadDraft(step: ToolSupervisorFailureStep):
     observationOutcome: failure.observationOutcome,
     status: failure.status,
   }
+}
+
+export function toolSupervisorFailureObservation(step: ToolSupervisorFailureStep): AgentToolObservation {
+  const toolName = step.providerToolName ?? step.intent ?? 'unknown_tool'
+  const toolCallId = step.providerToolCallId ?? `fallback_${toolName}`
+  const displayPreview = `工具 ${toolName} 没有生成可执行动作或可观察结果。`
+  const failure = buildToolSupervisorEmptyResultFailureObservation({
+    title: '工具未生成业务结果',
+    toolName,
+    toolCallId,
+    toolArguments: step.providerToolArguments ?? {},
+  })
+  return {
+    title: failure.title,
+    toolName: failure.toolName,
+    toolCallId: failure.toolCallId ?? toolCallId,
+    toolArguments: failure.toolArguments,
+    displayPreview,
+    modelContent: failure.modelContent,
+    status: failure.observationStatus,
+    outcome: failure.observationOutcome,
+  }
+}
+
+function compactJsonObject(value: unknown): OsJsonObject {
+  return JSON.parse(JSON.stringify(value)) as OsJsonObject
+}
+
+export function xoxObservationContent(observation: AgentToolObservation): OsJsonObject {
+  return {
+    xoxObservation: compactJsonObject(observation),
+    displayPreview: observation.displayPreview,
+    modelContent: observation.modelContent,
+    status: observation.status,
+    outcome: observation.outcome ?? null,
+  }
+}
+
+export function xoxObservationOutcome(observation: AgentToolObservation): OsToolObservationOutcome {
+  return classifyToolObservationOutcome(observation) as OsToolObservationOutcome
+}
+
+export function agenticOsObservationFromXox(
+  observation: AgentToolObservation,
+  index = 0,
+): OsObservation {
+  return {
+    observationId: observation.toolCallId || `xox_observation_${index + 1}`,
+    toolCallId: observation.toolCallId || `xox_tool_call_${index + 1}`,
+    toolName: observation.toolName,
+    status: observation.status === 'completed' ? 'ok' : 'error',
+    outcome: xoxObservationOutcome(observation),
+    content: xoxObservationContent(observation),
+  }
+}
+
+export function xoxObservationFromAgenticOs(observation: OsObservation): AgentToolObservation {
+  const content = observation.content
+  if (content && typeof content === 'object' && !Array.isArray(content)) {
+    const maybeXox = (content as Record<string, unknown>).xoxObservation
+    if (maybeXox && typeof maybeXox === 'object' && !Array.isArray(maybeXox)) {
+      return maybeXox as AgentToolObservation
+    }
+  }
+
+  const preview = typeof content === 'string'
+    ? content
+    : JSON.stringify(content ?? null)
+  const fallback: AgentToolObservation = {
+    title: observation.toolName,
+    toolName: observation.toolName,
+    toolCallId: observation.toolCallId,
+    toolArguments: {},
+    displayPreview: preview,
+    modelContent: preview,
+    status: observation.status === 'ok' ? 'completed' : 'failed',
+    synthetic: true,
+  }
+  if (observation.outcome !== undefined) fallback.outcome = observation.outcome
+  return fallback
+}
+
+export function xoxObservationKey(observation: AgentToolObservation): string {
+  return [
+    observation.toolCallId || observation.toolName,
+    observation.status,
+    observation.outcome ?? '',
+    observation.modelContent,
+  ].join(':')
+}
+
+export function createXoxObservationBridge(): XoxObservationBridge {
+  return createHostObservationBridge<AgentToolObservation>({
+    toCanonical: ({ hostObservation, index }) => agenticOsObservationFromXox(hostObservation, index),
+    fromCanonical: ({ observation }) => xoxObservationFromAgenticOs(observation),
+    hostKey: ({ hostObservation }) => xoxObservationKey(hostObservation),
+  })
 }
 
 function providerToolCallBoundaryObservationReads(error?: RuntimePlanError | null): ReadDraft[] | null {

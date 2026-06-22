@@ -42,7 +42,7 @@ import { mergeAgentGoalFacts } from './xox-goal-facts.js'
 import {
   agenticOsObservationFromXox,
   type AgentToolObservation,
-} from '../agentic-os/xox-tool-observation-adapter.js'
+} from './xox-planned-items.js'
 
 export type AgentEvidenceAuthority = Extract<OsAgentEvidenceAuthority, 'ambient' | 'domain_read' | 'sandbox' | 'action' | 'memory'>
 export type AgentEvidenceValidity = OsAgentEvidenceValidity
