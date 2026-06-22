@@ -8,7 +8,10 @@ import type {
   AgentActionRejectionResult as OsActionRejectionResult,
   AgentActionRequest as OsActionRequest,
   AgentContext as OsAgentContext,
+  AgentEvidenceRecord as OsAgentEvidenceRecord,
+  AgentEvidenceRequirement as OsAgentEvidenceRequirement,
   AgentFinalAnswerClaim as OsFinalAnswerClaim,
+  AgentLoopObligation as OsAgentLoopObligation,
   AgentLoopObligationMaterializationRequest,
   AgentFinalReview as OsFinalReview,
   AgentObservation as OsObservation,
@@ -34,6 +37,7 @@ import type {
 import {
   createAgentHostLoopCoordinator,
   createAgentHostKit,
+  evaluateAgentFinalResponseEvidenceGate,
   hasNonActionHostObservation,
   inferToolAuthorityClass,
   isActionResultToolObservation,
@@ -69,8 +73,10 @@ import {
 import {
   AGENT_SERVER_FINAL_ANSWER_CLAIM_EXTRACTION_TOOL_NAME,
   agentServerRunLifecycleEvents,
+  decideAgentServerFinalAnswerClaimReview,
   runAgentServerObservationContinuation,
   runAgentServerFinalAnswerClaimExtraction,
+  shouldMaterializeAgentServerFinalResponseObligations,
   type AgentServerFinalAnswerClaimExtractionCopyInput,
   type AgentServerFinalAnswerClaimExtractionOptions,
   type AgentServerFinalAnswerClaimExtractionResult,
@@ -112,9 +118,8 @@ import {
 import {
   buildEvidenceLedger,
   evidenceForModel,
-  isExecutedSandboxEvidenceFacts,
   type AgentEvidenceItem,
-  type AgentFinalAnswerClaim,
+  type ResponseRequiredEvidence,
 } from './xox-final-review-policy.js'
 import {
   addEvaluationResult,
@@ -131,11 +136,7 @@ import {
   loadAgentRuntimeContext,
 } from '../memory.js'
 import { runMemoryDreamingSweep } from '../memory.js'
-import {
-  reviewXoxFinalResponse,
-  responseEvaluationSummary,
-  type ResponseEvaluation,
-} from './xox-final-review-policy.js'
+import { responseEvaluationSummary, type ResponseEvaluation } from './xox-final-review-policy.js'
 import {
   callRuntimePlanner,
   configuredRuntimePlannerSource,
@@ -396,19 +397,72 @@ function obligationMetadataStringArray(obligation: AgentLoopLedgerObligation, ke
 
 function xoxObligationKind(obligation: AgentLoopLedgerObligation) {
   const value = obligationMetadataValue(obligation, 'xoxKind')
-  return typeof value === 'string' ? value : obligation.kind
+  if (typeof value === 'string') return value
+  const evidenceKind = obligationMetadataValue(obligation, 'evidenceKind')
+  if (evidenceKind === 'sandbox_calculation') return 'sandbox_calculation'
+  if (evidenceKind === 'domain_fact') return 'domain_fact'
+  const authority = obligationMetadataValue(obligation, 'authority')
+  if (authority === 'sandbox') return 'sandbox_calculation'
+  if (authority === 'domain_read') return 'domain_fact'
+  return obligation.kind
+}
+
+function obligationSubjectType(obligation: AgentLoopLedgerObligation): string | null {
+  const direct = obligationMetadataValue(obligation, 'subject')
+  if (typeof direct === 'string') return direct
+  if (direct && typeof direct === 'object' && !Array.isArray(direct)) {
+    const type = (direct as Record<string, unknown>).type
+    return typeof type === 'string' && type.trim().length > 0 ? type : null
+  }
+  return null
 }
 
 function dataQueryArgumentsForObligation(obligation: AgentLoopLedgerObligation): WorkspaceDataQueryStep | null {
   if (xoxObligationKind(obligation) !== 'domain_fact') return null
-  if (!(obligation.toolNames ?? []).includes('data_query_workspace')) return null
-  const scope = obligationMetadataStringArray(obligation, 'requiredDataScopes')?.[0] ?? 'workspace_summary'
-  const metrics = obligationMetadataStringArray(obligation, 'requiredMetrics') ?? []
+  const canUseDataTool = (obligation.toolNames ?? []).includes('data_query_workspace') ||
+    (obligation.capabilities ?? []).includes('data')
+  if (!canUseDataTool) return null
+  const subjectType = obligationSubjectType(obligation)
+  const scope = obligationMetadataStringArray(obligation, 'requiredDataScopes')?.[0] ??
+    (subjectType === 'shareholder' ? 'entity_summary' : 'workspace_summary')
+  const metadataMetrics = obligationMetadataStringArray(obligation, 'requiredMetrics')
+  const metrics = metadataMetrics ?? (subjectType === 'shareholder'
+    ? ['shareholderNames', 'shareholderInvestments']
+    : [])
   return {
     question: obligation.reason,
     scope,
     ...(metrics.length > 0 ? { metrics } : {}),
   }
+}
+
+function xoxToolNamesForObligation(obligation: OsAgentLoopObligation): string[] | null {
+  if ((obligation.toolNames ?? []).length > 0) return null
+  if ((obligation.capabilities ?? []).includes('data')) return ['data_query_workspace']
+  if ((obligation.capabilities ?? []).includes('sandbox')) return ['sandbox_run_code']
+  return null
+}
+
+function xoxObligationForAgenticOs(obligation: OsAgentLoopObligation): OsAgentLoopObligation {
+  const toolNames = xoxToolNamesForObligation(obligation)
+  return toolNames === null
+    ? obligation
+    : {
+        ...obligation,
+        toolNames,
+      }
+}
+
+function xoxResponseEvaluationForAgenticOs(evaluation: ResponseEvaluation): ResponseEvaluation {
+  if (!evaluation.obligations?.length) return evaluation
+  return {
+    ...evaluation,
+    obligations: evaluation.obligations.map(xoxObligationForAgenticOs),
+  }
+}
+
+function xoxReviewObligationsForAgenticOs(ledger: AgentLoopObligationLedger): OsAgentLoopObligation[] {
+  return ledgerToReviewObligations(ledger).map(xoxObligationForAgenticOs)
 }
 
 function obligationMaterializationRequests(
@@ -529,29 +583,6 @@ async function materializeLoopObligations(input: {
     planRows: graphs.flatMap((graph) => graph.planRows),
     plannerSource: graphs.at(-1)?.plannerSource ?? input.plannerSource,
   }
-}
-
-function finalTextMentionsSpecificShareholder(text: string): boolean {
-  return /第\s*(?:\d+|[一二三四五六七八九十]+)\s*(?:个|位)?\s*股东/.test(text) ||
-    /股东\s*[A-Za-zＡ-Ｚ]/.test(text) ||
-    /股东[甲乙丙丁戊己庚辛壬癸]/.test(text)
-}
-
-function canMaterializeEvaluationObligations(input: {
-  evaluation: ResponseEvaluation
-  assistantText: string
-}): boolean {
-  if (
-    input.evaluation.status !== 'needs_calculation' &&
-    input.evaluation.status !== 'needs_more_evidence' &&
-    input.evaluation.status !== 'needs_final_answer'
-  ) {
-    return false
-  }
-  const requiresOrderedEntityEvidence = input.evaluation.findings.some((finding) =>
-    finding.code === 'response.entity_evidence_missing')
-  if (!requiresOrderedEntityEvidence) return true
-  return finalTextMentionsSpecificShareholder(input.assistantText)
 }
 
 function osRunInput(ctx: PlannerContext, objective: string, goalFacts: AgentGoalFacts): OsRunInput {
@@ -1186,39 +1217,112 @@ function goalFactsForRun(
   return facts
 }
 
-function evidenceHasValidSandbox(evidence: AgentEvidenceItem[]) {
-  return evidence.some((item) =>
-    item.authority === 'sandbox' &&
-    item.validity === 'valid' &&
-    isExecutedSandboxEvidenceFacts(item.facts))
+function osEvidenceRecordsFromXoxEvidence(evidence: AgentEvidenceItem[]): OsAgentEvidenceRecord[] {
+  return evidence.map((item) => ({
+    evidenceId: item.id,
+    runId: item.runId,
+    threadId: item.threadId,
+    authority: item.authority,
+    validity: item.validity,
+    source: item.source,
+    facts: item.facts as OsJsonObject,
+    createdAt: item.createdAt,
+    ...(item.toolCallId ? { toolCallId: item.toolCallId } : {}),
+    ...(item.observationId ? { observationId: item.observationId } : {}),
+    ...(item.subject !== undefined ? { subject: item.subject } : {}),
+    ...(item.invalidReasons !== undefined ? { invalidReasons: item.invalidReasons } : {}),
+    ...(item.summary !== undefined ? { summary: item.summary } : {}),
+  }))
 }
 
-function evidenceHasOrderedShareholderFacts(evidence: AgentEvidenceItem[]) {
-  return evidence.some((item) => {
-    if (item.authority !== 'domain_read' || item.validity !== 'valid') return false
-    return Object.prototype.hasOwnProperty.call(item.facts, 'firstShareholder') ||
-      Object.prototype.hasOwnProperty.call(item.facts, 'shareholders')
-  })
+function responseRequiredEvidence(evidenceRequirements: OsAgentEvidenceRequirement[]): ResponseEvaluation['requiredEvidence'] {
+  return evidenceRequirements.map((requirement) => ({
+    authority: requirement.authority as ResponseRequiredEvidence['authority'],
+    ...(requirement.subject ? { subject: requirement.subject.type } : {}),
+    reason: requirement.reason,
+  }))
 }
 
-function shouldRunFinalAnswerClaimReview(input: {
-  assistantText: string | null
-  pendingActionCount: number
-  preReviewEvaluation: ResponseEvaluation
+function reviewFinalResponseWithAgenticOs(input: {
+  finalAssistantText: string | null
+  observations: AgentToolObservation[]
   evidence: AgentEvidenceItem[]
+  finalAnswerClaims?: OsFinalAnswerClaim[]
   goalFacts: AgentGoalFacts
-}) {
-  if (!input.assistantText?.trim()) return false
-  if (input.pendingActionCount > 0) return false
-  if (input.preReviewEvaluation.status !== 'pass') return false
-  if (input.goalFacts.requiresSandboxComputation || input.goalFacts.requiresOrderedEntityFacts) {
-    const sandboxSatisfied = !input.goalFacts.requiresSandboxComputation || evidenceHasValidSandbox(input.evidence)
-    const entitySatisfied = !input.goalFacts.requiresOrderedEntityFacts || evidenceHasOrderedShareholderFacts(input.evidence)
-    if (sandboxSatisfied && entitySatisfied) return false
-  }
-  if (input.evidence.length === 0) return true
-  if (evidenceHasValidSandbox(input.evidence)) return !evidenceHasOrderedShareholderFacts(input.evidence)
-  return false
+  pendingActionCount?: number
+  awaitingClarification?: boolean
+}): ResponseEvaluation {
+  return evaluateAgentFinalResponseEvidenceGate<ResponseRequiredEvidence>({
+    finalAssistantText: input.finalAssistantText,
+    observationCount: input.observations.length,
+    evidenceRecords: osEvidenceRecordsFromXoxEvidence(input.evidence),
+    facts: input.goalFacts as Record<string, unknown>,
+    finalAnswerClaims: input.finalAnswerClaims ?? [],
+    buildRequiredEvidence: responseRequiredEvidence,
+    missingFinalAnswerRequiredEvidence: [{
+      authority: 'domain_read',
+      reason: '工具 observation 已产生，但还没有模型最终回答。',
+    }],
+    ...(input.pendingActionCount !== undefined ? { pendingActionCount: input.pendingActionCount } : {}),
+    ...(input.awaitingClarification !== undefined ? { awaitingClarification: input.awaitingClarification } : {}),
+    awaitingConfirmation: {
+      severity: 'info',
+      code: 'response.pending_confirmation_interrupt',
+      message: '运行图中仍有待确认动作，不能把说明文字判定为目标完成。',
+      confidence: 0.99,
+      nextPlannerBrief: null,
+    },
+    awaitingClarificationCopy: {
+      severity: 'info',
+      code: 'response.pending_clarification_interrupt',
+      message: '运行图中仍有待澄清问题，不能把说明文字判定为目标完成。',
+      confidence: 0.99,
+      nextPlannerBrief: null,
+    },
+    missingFinalAnswer: {
+      severity: 'fail',
+      code: 'response.final_answer_missing',
+      message: '工具结果只能作为 observation，不能替代面向用户的 assistant final answer。',
+      confidence: 0.99,
+      nextPlannerBrief: '基于已经取得的 observation 生成最终回答；不要把工具返回原文当成最终回答。',
+    },
+    providerProtocolArtifact: ({ artifactFormat }) => ({
+      severity: 'fail',
+      code: 'response.provider_tool_call_text_not_final',
+      message: `Provider 返回了 ${artifactFormat} 工具调用协议文本，不能作为面向用户的最终回答。`,
+      confidence: 0.99,
+      nextPlannerBrief: '上一轮 provider 把工具调用协议片段放进 assistant content。不要把它当最终回答；如果还需要工具，必须通过结构化 tool_calls 继续，否则基于已取得 observation 输出自然语言最终回答。',
+    }),
+    emptyFinalAnswer: {
+      severity: 'fail',
+      code: 'response.empty_final_answer',
+      message: '没有可展示的最终回答。',
+      confidence: 0.98,
+      nextPlannerBrief: '生成一个面向用户的最终回答。',
+    },
+    defaultEvidenceFailure: {
+      status: 'needs_more_evidence',
+      code: 'response.evidence_missing',
+      message: '本轮缺少必要的结构化事实 evidence。',
+      confidence: 0.9,
+      nextPlannerBrief: '补充必要的工作区事实，再基于该事实生成最终回答。',
+      evidenceIds: 'all',
+    },
+    buildPassEvaluation: ({ requiredEvidence }): ResponseEvaluation => ({
+      status: 'pass',
+      confidence: input.evidence.some((item) => item.authority === 'sandbox') ? 0.94 : 0.9,
+      requiredEvidence,
+      findings: [{
+        severity: 'info',
+        code: 'response.evidence_accepted',
+        evidenceIds: input.evidence.filter((item) => item.authority !== 'memory').map((item) => item.id),
+        message: input.evidence.some((item) => item.authority === 'sandbox')
+          ? '最终回答已在 sandbox/domain evidence 之后生成。'
+          : '最终回答已在当前 run evidence 之后生成。',
+      }],
+      nextPlannerBrief: null,
+    }),
+  })
 }
 
 const XOX_FINAL_ANSWER_CLAIM_SUBJECT_TYPES = [
@@ -1239,7 +1343,7 @@ const XOX_FINAL_ANSWER_CLAIM_EXTRA_PROMPT_LINES = [
 type XoxFinalAnswerClaimSubjectType = typeof XOX_FINAL_ANSWER_CLAIM_SUBJECT_TYPES[number]
 
 type XoxFinalAnswerClaimExtractionResult =
-  | { status: 'completed'; claims: AgentFinalAnswerClaim[] }
+  | { status: 'completed'; claims: OsFinalAnswerClaim[] }
   | Extract<AgentServerFinalAnswerClaimExtractionResult, { status: 'skipped' | 'unavailable' }>
 
 function xoxFinalAnswerClaimExtractionCopy(input: AgentServerFinalAnswerClaimExtractionCopyInput) {
@@ -1268,9 +1372,9 @@ function isXoxFinalAnswerClaimSubjectType(value: string): value is XoxFinalAnswe
 
 function xoxFinalAnswerClaimSubject(
   subject: OsFinalAnswerClaim['subject'],
-): AgentFinalAnswerClaim['subject'] | undefined {
+): OsFinalAnswerClaim['subject'] | undefined {
   if (!subject || !isXoxFinalAnswerClaimSubjectType(subject.type)) return undefined
-  const xoxSubject: Exclude<AgentFinalAnswerClaim['subject'], string> = {
+  const xoxSubject: NonNullable<OsFinalAnswerClaim['subject']> = {
     type: subject.type,
   }
   if (subject.id !== undefined) {
@@ -1282,15 +1386,18 @@ function xoxFinalAnswerClaimSubject(
   return xoxSubject
 }
 
-function xoxFinalAnswerClaim(claim: OsFinalAnswerClaim): AgentFinalAnswerClaim {
-  const mapped: AgentFinalAnswerClaim = {
+function xoxFinalAnswerClaim(claim: OsFinalAnswerClaim): OsFinalAnswerClaim {
+  const mapped: OsFinalAnswerClaim = {
     kind: claim.kind,
     reason: claim.reason,
   }
   if (claim.claimId !== undefined) {
     mapped.claimId = claim.claimId
   }
-  const subject = xoxFinalAnswerClaimSubject(claim.subject)
+  const subject = xoxFinalAnswerClaimSubject(claim.subject) ??
+    (claim.kind === 'entity_specific' || claim.kind === 'domain_fact'
+      ? { type: 'shareholder' }
+      : undefined)
   if (subject !== undefined) {
     mapped.subject = subject
   }
@@ -1993,12 +2100,11 @@ function createXoxAgenticOsHost(
       const runtimeFacts = await readRuntimeGoalFacts(ctx.db, ctx.runId)
       const goalFacts = mergeAgentGoalFacts(goalContractFacts(state.goal), runtimeFacts)
       const pendingActionCount = state.actionRows.filter((row) => row.status === 'pending').length
-      const preReviewEvaluation = reviewXoxFinalResponse({
-        goal: state.goal,
+      const preReviewEvaluation = reviewFinalResponseWithAgenticOs({
         finalAssistantText: input.assistantText,
         observations: reviewObservations,
         evidence,
-        runtimeFacts: goalFacts,
+        goalFacts,
         finalAnswerClaims: [],
         pendingActionCount,
       })
@@ -2049,33 +2155,33 @@ function createXoxAgenticOsHost(
           message: '模型已基于本轮 observation 生成最终回答候选，进入 response evaluation。',
         },
       }))
-      const claimExtraction = shouldRunFinalAnswerClaimReview({
-        assistantText: input.assistantText,
+      const claimReviewDecision = decideAgentServerFinalAnswerClaimReview({
+        finalAssistantText: input.assistantText,
         pendingActionCount,
         preReviewEvaluation,
-        evidence,
-        goalFacts,
+        evidenceRecords: osEvidenceRecordsFromXoxEvidence(evidence),
       })
+      const claimExtraction = claimReviewDecision.shouldExtract
         ? await extractXoxFinalAnswerClaims(ctx, {
             objective: state.objective,
             finalAssistantText: input.assistantText,
             evidence,
           })
         : input.assistantText.trim()
-          ? { status: 'skipped' as const, reason: 'deterministic_evidence_satisfied' as const }
+          ? { status: 'skipped' as const, reason: claimReviewDecision.skipReason }
           : null
       const finalAnswerClaims = claimExtraction?.status === 'completed' ? claimExtraction.claims : []
       let evaluation = claimExtraction?.status === 'completed'
-        ? reviewXoxFinalResponse({
-            goal: state.goal,
+        ? reviewFinalResponseWithAgenticOs({
             finalAssistantText: input.assistantText,
             observations: reviewObservations,
             evidence,
-            runtimeFacts: goalFacts,
+            goalFacts,
             finalAnswerClaims,
             pendingActionCount,
           })
         : preReviewEvaluation
+      evaluation = xoxResponseEvaluationForAgenticOs(evaluation)
       applyResponseEvaluationToLedger({
         ledger: state.obligationLedger,
         evaluation,
@@ -2147,10 +2253,7 @@ function createXoxAgenticOsHost(
           },
         }))
       }
-      if (canMaterializeEvaluationObligations({
-        evaluation,
-        assistantText: input.assistantText,
-      })) {
+      if (shouldMaterializeAgentServerFinalResponseObligations({ evaluation })) {
         const materialized = await materializeLoopObligations({
           ctx,
           ledger: state.obligationLedger,
@@ -2167,15 +2270,15 @@ function createXoxAgenticOsHost(
             runId: ctx.runId,
             observations: reviewObservations,
           })
-          evaluation = reviewXoxFinalResponse({
-            goal: state.goal,
+          evaluation = reviewFinalResponseWithAgenticOs({
             finalAssistantText: input.assistantText,
             observations: reviewObservations,
             evidence,
-            runtimeFacts: goalFacts,
+            goalFacts,
             finalAnswerClaims,
             pendingActionCount,
           })
+          evaluation = xoxResponseEvaluationForAgenticOs(evaluation)
           applyResponseEvaluationToLedger({
             ledger: state.obligationLedger,
             evaluation,
@@ -2275,7 +2378,7 @@ function createXoxAgenticOsHost(
         repairable: evaluation.status === 'needs_calculation' ||
           evaluation.status === 'needs_more_evidence' ||
           evaluation.status === 'needs_final_answer',
-        obligations: ledgerToReviewObligations(state.obligationLedger),
+        obligations: xoxReviewObligationsForAgenticOs(state.obligationLedger),
         evidence: osEvidence,
       }
     },

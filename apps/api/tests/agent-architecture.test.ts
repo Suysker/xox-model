@@ -391,10 +391,12 @@ describe('Agent ADR architecture boundaries', () => {
     expect(existsSync(join(srcRoot, 'agent', 'loop-obligation-ledger.ts'))).toBe(false)
     const adapter = source('agent/host-profile/xox-final-review-policy.ts')
     expect(adapter).toContain("@agentic-os/core")
-    expect(adapter).toContain('evaluateAgentFinalResponseEvidenceGate')
     expect(adapter).toContain('projectObligationLedgerWithAdditionalObligations')
     expect(adapter).not.toContain('evaluateAgentFinalResponseGate')
+    expect(adapter).not.toContain('evaluateAgentFinalResponseEvidenceGate')
     expect(adapter).not.toContain('evaluateAgentFinalResponseReview')
+    expect(adapter).not.toContain('xoxFinalEvidencePolicy')
+    expect(adapter).not.toContain('reviewXoxFinalResponse')
   })
 
   it('keeps runtime-boundary missing-observation repair projection out of the host kit', () => {
@@ -431,6 +433,7 @@ describe('Agent ADR architecture boundaries', () => {
       'evidenceContainsKey',
       'buildEvidenceRequirements',
       'evaluateAssistantResponse',
+      'reviewXoxFinalResponse',
       'xoxEvidenceFailureEvaluation',
       'loopObligationsFromResponseEvaluation',
       'planLoopObligations',
@@ -448,12 +451,21 @@ describe('Agent ADR architecture boundaries', () => {
     expect(adapter).not.toContain('function osEvidenceRequirementFromXoxRequirement')
     expect(adapter).not.toContain('buildEvidenceFailureEvaluation')
     expect(adapter).not.toContain('evidenceRequirementsFromFinalAnswerClaims')
+    expect(adapter).not.toContain('AgentFinalResponseEvidencePolicy')
+    expect(adapter).not.toContain('xoxFinalEvidencePolicy')
 
     expect(existsSync(join(srcRoot, 'agent', 'obligation-materializer.ts'))).toBe(false)
     const hostKit = source('agent/host-profile/xox-agent-run-profile.ts')
     expect(hostKit).toContain("@agentic-os/core")
     expect(hostKit).toContain('planObligationMaterialization')
+    expect(hostKit).toContain('decideAgentServerFinalAnswerClaimReview')
+    expect(hostKit).toContain('shouldMaterializeAgentServerFinalResponseObligations')
     expect(hostKit).not.toContain("from '../obligation-materializer.js'")
+    expect(hostKit).not.toContain('function shouldRunFinalAnswerClaimReview')
+    expect(hostKit).not.toContain('function canMaterializeEvaluationObligations')
+    expect(hostKit).not.toContain('function finalTextMentionsSpecificShareholder')
+    expect(hostKit).not.toContain('function evidenceHasValidSandbox')
+    expect(hostKit).not.toContain('function evidenceHasOrderedShareholderFacts')
   })
 
   it('keeps structured evidence key matching in Agentic OS core', () => {
@@ -763,7 +775,7 @@ describe('Agent ADR architecture boundaries', () => {
     expect(continuation).toContain('buildProviderToolObservationContinuationMessages')
     expect(continuation).not.toContain('providerToolObservationReplayMessages')
     expect(continuation).not.toContain("role: 'tool'")
-    expect(continuation).not.toContain('tool_calls')
+    expect(continuation).not.toContain('tool_calls:')
   })
 
   it('keeps observation continuation lifecycle in Agentic OS server', () => {

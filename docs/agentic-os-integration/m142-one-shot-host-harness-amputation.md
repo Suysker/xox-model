@@ -234,7 +234,7 @@ Status: completed as a follow-up M142 final-review boundary cut.
 - Added Agentic OS core `AgentFinalResponseEvidencePolicy`, `buildAgentFinalResponseEvidenceRequirements()`, `evaluateAgentFinalResponseEvidenceGate()`, and `projectAgentFinalResponseEvidenceFailure()`.
 - Added generic `factsContainAny` on `AgentEvidenceRequirement`, so Agentic OS can enforce structured evidence facts such as ordered shareholder data without xox writing a local evaluator.
 - Deleted xox-local final evidence mechanics from `host-profile/xox-final-review-policy.ts`: `buildEvidenceRequirements()`, `evaluateAssistantResponse()`, `xoxEvidenceFailureEvaluation()`, sandbox/shareholder evidence failure helpers, and xox requirement-to-OS converter helpers.
-- xox now keeps only `xoxFinalEvidencePolicy`, claim subject normalization, observation classification, localized copy, and `reviewXoxFinalResponse()` as a thin HostProfile boundary into `evaluateAgentFinalResponseEvidenceGate()`.
+- M164 supersedes the earlier thin-boundary allowance: xox must not keep `xoxFinalEvidencePolicy` or `reviewXoxFinalResponse()`; Agentic OS core now provides the default final evidence policy and xox only supplies observation classification, subject normalization, localized copy, and DTO projection.
 - Architecture guards now fail if the deleted evaluator names, local evidence failure builder, or final-answer claim requirement compiler return in xox.
 
 ## One-Shot Scope
@@ -352,7 +352,8 @@ Each moved primitive must have Agentic OS tests before xox consumes it.
 xox changes must be peripheral-only:
 
 - adapt Kysely rows to Agentic OS goal/run/action/evidence facts;
-- supply financial/domain evidence policy as data/functions, not as a local final-review runtime;
+- supply financial/domain observation classification and domain subject wiring, not a local final-review runtime;
+- wire Agentic OS capability-level obligations to concrete xox tools such as `data_query_workspace` and `sandbox_run_code`;
 - execute business writes and audit side effects;
 - supply provider settings, keys, model policy, and business-specific high-volume tool budgets;
 - supply memory store/retrieval/ranking inputs;
@@ -380,6 +381,7 @@ Required guards:
 - `host-profile/xox-agent-run-profile.ts` must not reintroduce `continueModelAfterToolObservations()` or direct `agentServerRunLifecycleEvents.modelContinuation*()` calls; observation continuation lifecycle belongs to `@agentic-os/server`.
 - xox root files must not contain generic final review/evidence/obligation ledger runtime code.
 - `host-profile/xox-final-review-policy.ts` must not reintroduce local final-review harness mechanics such as `buildEvidenceRequirements`, `evaluateAssistantResponse`, `xoxEvidenceFailureEvaluation`, `buildEvidenceFailureEvaluation`, `evidenceRequirementsFromFinalAnswerClaims`, or xox-owned requirement-to-OS converters.
+- `host-profile/xox-agent-run-profile.ts` must not reintroduce local final-answer claim-review gating or final-response obligation-materialization gating such as `shouldRunFinalAnswerClaimReview`, `canMaterializeEvaluationObligations`, `finalTextMentionsSpecificShareholder`, `evidenceHasValidSandbox`, or `evidenceHasOrderedShareholderFacts`; those decisions must come from `@agentic-os/server`.
 - xox projection files must not own generic provider stream grouping or goal/action tree lifecycle logic.
 
 These guards should check semantics, not just filenames, because move-only refactors are explicitly rejected.
