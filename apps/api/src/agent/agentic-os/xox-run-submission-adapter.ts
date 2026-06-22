@@ -17,16 +17,12 @@ import { addRunEvent, agentThreadEvents, listSerializedRunEvents, serializeRunEv
 import {
   addMessage,
   buildThreadState,
+  buildXoxProjectionViews,
   getOrCreateThread,
   serializeAction,
   serializeMessage,
   serializePlanStep,
   touchThreadAfterRun,
-} from './xox-thread-store-adapter.js'
-import { completeAgentRun, createAgentRunController, scheduleAgentRunQueueDrain } from './xox-run-worker-adapter.js'
-import { normalizeAgentAutomationLevel, type AgentAutomationLevel } from '../tool-policy.js'
-import {
-  buildXoxProjectionViews,
   sortXoxRunEventsByOsView,
   xoxActionRequestToOsActionRequest,
   xoxCompletedRunResultToOs,
@@ -34,7 +30,9 @@ import {
   xoxRunEventToOsRunEvent,
   xoxRunInputToOs,
   xoxRunToOsRunRecord,
-} from './xox-thread-state-view.js'
+} from './xox-thread-store-adapter.js'
+import { completeAgentRun, createAgentRunController, scheduleAgentRunQueueDrain } from './xox-run-worker-adapter.js'
+import { normalizeAgentAutomationLevel, type AgentAutomationLevel } from '../tool-policy.js'
 
 export type SubmitAgentMessageRunInput = {
   db: Kysely<Database>
@@ -124,7 +122,6 @@ function buildSubmittedRunResponse(input: XoxSubmittedRunResponseInput): AgentSe
   }
   const agUiEvents = projectAgentServerAgUiEvents(projection, { eventNamePrefix: 'xox' }) as AgentAgUiEvent[]
   const projected = buildXoxProjectionViews({
-    threadId: osView.thread.threadId,
     messages: input.messages,
     osTranscriptItems: osView.transcriptItems,
     actionRequests: input.actionRequests,

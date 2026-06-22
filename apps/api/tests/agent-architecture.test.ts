@@ -904,7 +904,7 @@ describe('Agent ADR architecture boundaries', () => {
 
     expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-run-submission-view.ts'))).toBe(false)
     const runView = source('agent/agentic-os/xox-run-submission-adapter.ts')
-    const threadView = source('agent/agentic-os/xox-thread-state-view.ts')
+    const threadView = source('agent/agentic-os/xox-thread-store-adapter.ts')
     for (const content of [runView, threadView]) {
       expect(content).toContain("@agentic-os/server")
       expect(content).toContain('projectAgentServerAgUiEvents')
@@ -915,6 +915,7 @@ describe('Agent ADR architecture boundaries', () => {
   it('deletes local transcript and timeline projection engines in favor of Agentic OS projection facts', () => {
     expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-thread-transcript-adapter.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-thread-timeline-adapter.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-thread-state-view.ts'))).toBe(false)
     expect(existsSync(join(testDir, 'agent-transcript.test.ts'))).toBe(false)
 
     for (const file of sourceFilesUnder('agent')) {
@@ -926,13 +927,13 @@ describe('Agent ADR architecture boundaries', () => {
       expect(content, `${file} must not rebuild local transcript tree projection`).not.toContain('buildAgentTranscriptNodes')
     }
 
-    const threadView = source('agent/agentic-os/xox-thread-state-view.ts')
-    expect(threadView).toContain('AgentServerThreadStateProjector')
-    expect(threadView).toContain('osTranscriptItems')
-    expect(threadView).toContain('buildXoxProjectionViews')
-    expect(threadView).not.toContain('toolActionKindAliases')
-    expect(threadView).not.toContain('mergeProviderToolCallsIntoActionNodes')
-    expect(threadView).not.toContain('groupRunSegment')
+    const threadStore = source('agent/agentic-os/xox-thread-store-adapter.ts')
+    expect(threadStore).toContain('AgentServerThreadStateProjector')
+    expect(threadStore).toContain('osTranscriptItems')
+    expect(threadStore).toContain('buildXoxProjectionViews')
+    expect(threadStore).not.toContain('toolActionKindAliases')
+    expect(threadStore).not.toContain('mergeProviderToolCallsIntoActionNodes')
+    expect(threadStore).not.toContain('groupRunSegment')
   })
 
   it('keeps final-answer claim extraction runtime in Agentic OS server', () => {

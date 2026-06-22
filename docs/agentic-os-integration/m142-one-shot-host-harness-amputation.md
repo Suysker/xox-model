@@ -135,7 +135,7 @@ npm.cmd run test:api
 Remaining M142 hard targets after M142b:
 
 - `apps/api/src/agent/host-profile/xox-agent-run-profile.ts` is still too large and must continue shrinking toward HostProfile/HostAdapter wiring.
-- `apps/api/src/agent/agentic-os/xox-thread-transcript-adapter.ts` and `xox-thread-timeline-adapter.ts` were directly deleted in M149. xox keeps only a thin legacy DTO compatibility mapper in `xox-thread-state-view.ts`; generic projection grouping and merge algorithms must stay Agentic OS-owned.
+- `apps/api/src/agent/agentic-os/xox-thread-transcript-adapter.ts` and `xox-thread-timeline-adapter.ts` were directly deleted in M149. `xox-thread-state-view.ts` was deleted in M160; the remaining legacy DTO compatibility mapping lives inside `xox-thread-store-adapter.ts`, the concrete thread store/product projection boundary. Generic projection grouping and merge algorithms must stay Agentic OS-owned.
 - `apps/api/src/agent/host-profile/xox-provider-runtime.ts` must remain a concrete provider settings/DTO/runtime-boundary mapper and must not become a second runtime or regrow a standalone planning adapter.
 
 ### M143: Deleted the Action Approval Adapter
