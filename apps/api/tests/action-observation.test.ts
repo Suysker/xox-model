@@ -5,7 +5,7 @@ import {
   actionPreviewObservation,
   toolSupervisorFailureObservation,
 } from '../src/agent/agentic-os/xox-tool-observation-adapter.js'
-import { toolSupervisorFailureReadDraft } from '../src/agent/action-draft-builder.js'
+import { toolSupervisorFailureReadDraft } from '../src/agent/host-profile/xox-planned-items.js'
 import type { Row } from '../src/db/schema.js'
 
 function action(overrides: Partial<Row<'agent_action_requests'>> = {}): Row<'agent_action_requests'> {

@@ -31,7 +31,7 @@ xox owns:
 
 - `tool-executor.ts`
   - owns confirmed business writes through `executeAgentTool()`;
-  - owns provider-normalized tool step to xox business draft/read handler registration through `runtimeIntentHandlers`;
+  - owns provider-normalized tool step to xox business draft/read handler registration through `xoxBusinessToolHandlers`;
   - owns `answerWorkspaceDataQuestion()` as a xox business read tool.
 - `runtime-intent-handlers.ts`
   - deleted and guarded from returning.

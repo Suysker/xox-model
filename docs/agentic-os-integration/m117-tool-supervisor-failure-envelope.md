@@ -23,7 +23,7 @@ Agentic OS：
 
 xox：
 
-- `apps/api/src/agent/action-draft-builder.ts`
+- `apps/api/src/agent/host-profile/xox-planned-items.ts`
   - 新增 `toolSupervisorFailureReadDraft()`；
   - 把 core failure observation 映射成 xox `ReadDraft`。
 - `apps/api/src/agent/tool-observation-continuation.ts`
@@ -42,7 +42,7 @@ xox：
 
 ```mermaid
 flowchart TD
-    Core["@agentic-os/core buildToolSupervisorFailureObservation"] --> ReadDraft["action-draft-builder.ts"]
+    Core["@agentic-os/core buildToolSupervisorFailureObservation"] --> ReadDraft["host-profile/xox-planned-items.ts"]
     Core --> Observation["tool-observation-continuation.ts"]
     ReadDraft --> HostKit["xox-agentic-os-host-kit.ts"]
     Observation --> HostKit
@@ -73,7 +73,7 @@ npm.cmd run check
 已于 2026-06-21 完成。
 
 - `@agentic-os/core` 新增 `buildToolSupervisorEmptyResultFailureObservation()`。
-- `apps/api/src/agent/action-draft-builder.ts` 只把 core failure observation 映射成 `ReadDraft`。
+- `apps/api/src/agent/host-profile/xox-planned-items.ts` 只把 core failure observation 映射成 `ReadDraft`。
 - `apps/api/src/agent/tool-observation-continuation.ts` 只把 core failure observation 映射成 `AgentToolObservation`。
 - `apps/api/src/agent/agentic-os/xox-agentic-os-host-kit.ts` 已删除 `fallbackToolObservation()` 和手写 fallback `PlannedItem`。
 - 架构守卫防止 host kit 重新手写 `tool_supervisor_failure` JSON。

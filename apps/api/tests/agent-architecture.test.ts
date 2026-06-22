@@ -169,9 +169,11 @@ describe('Agent ADR architecture boundaries', () => {
   it('deletes misleading root agent data and planning facades', () => {
     expect(existsSync(join(srcRoot, 'agent', 'data-agent.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'planning-context.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'action-draft-builder.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'runtime-intent-handlers.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'host-profile', 'xox-planned-items.ts'))).toBe(true)
 
-    const draftBuilder = source('agent/action-draft-builder.ts')
+    const draftBuilder = source('agent/host-profile/xox-planned-items.ts')
     expect(draftBuilder).toContain('export type PlannerContext')
 
     const executor = source('agent/tool-executor.ts')
@@ -188,6 +190,8 @@ describe('Agent ADR architecture boundaries', () => {
     for (const file of sourceFilesUnder('agent')) {
       const content = source(file)
       expect(content, `${file} must not import the deleted runtime intent handler facade`).not.toContain('runtime-intent-handlers')
+      expect(content, `${file} must not import the deleted root planned item facade`).not.toContain('action-draft-builder')
+      expect(content, `${file} must not use the deleted runtime intent handler name`).not.toContain('runtimeIntentHandlers')
     }
 
     const catalog = source('agent/tool-catalog.ts')
@@ -352,7 +356,7 @@ describe('Agent ADR architecture boundaries', () => {
 
     const actionGraph = source('agent/agentic-os/xox-action-graph-adapter.ts')
     expect(actionGraph).toContain("from '../tool-executor.js'")
-    expect(actionGraph).toContain("from '../action-draft-builder.js'")
+    expect(actionGraph).toContain("from '../host-profile/xox-planned-items.js'")
     expect(actionGraph).not.toContain("from './xox-action-approval-adapter.js'")
     expect(actionGraph).not.toContain('function confirmAgentActionRequest')
 
@@ -549,7 +553,7 @@ describe('Agent ADR architecture boundaries', () => {
 
   it('deletes the runtime plan reader facade while keeping provider boundary payloads in Agentic OS', () => {
     expect(existsSync(join(srcRoot, 'agent', 'runtime-plan-reader.ts'))).toBe(false)
-    const draftBuilder = source('agent/action-draft-builder.ts')
+    const draftBuilder = source('agent/host-profile/xox-planned-items.ts')
     const runtimeAdapter = source('agent/agentic-os/xox-runtime-adapter.ts')
     expect(draftBuilder).toContain('providerToolCallBoundaryObservations')
     expect(draftBuilder).toContain("@agentic-os/runtime-openai-compatible")
@@ -722,7 +726,7 @@ describe('Agent ADR architecture boundaries', () => {
     expect(hostKit).not.toContain("observationType: 'tool_supervisor_failure'")
     expect(hostKit).not.toContain('Tool did not produce a business result.')
 
-    const draftBuilder = source('agent/action-draft-builder.ts')
+    const draftBuilder = source('agent/host-profile/xox-planned-items.ts')
     expect(draftBuilder).toContain("@agentic-os/core")
     expect(draftBuilder).toContain('buildToolSupervisorEmptyResultFailureObservation')
     expect(draftBuilder).not.toContain('did not produce an action or observation')

@@ -21,7 +21,7 @@ import { forbidden, notFound } from '../core/http.js'
 import { newId } from '../core/security.js'
 import { utcNow } from '../core/time.js'
 import type { CurrentUser } from '../modules/auth.js'
-import type { PlannerContext, ReadDraft, RuntimePlannerStep } from './action-draft-builder.js'
+import type { PlannerContext, ReadDraft, RuntimePlannerStep } from './host-profile/xox-planned-items.js'
 import { addRunEvent } from './agentic-os/xox-run-event-store-adapter.js'
 
 const COMPACTION_MESSAGE_THRESHOLD = 10

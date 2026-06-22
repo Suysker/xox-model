@@ -26,7 +26,7 @@ import {
   shouldRetryProviderRuntimeResult,
   type ProviderReplayObservation,
 } from '@agentic-os/runtime-openai-compatible'
-import { readDraftsFromRuntimeResult } from '../src/agent/action-draft-builder.js'
+import { readDraftsFromRuntimeResult } from '../src/agent/host-profile/xox-planned-items.js'
 
 const XOX_HIGH_VOLUME_STRUCTURED_TOOL_NAMES = [
   'workspace_configure_operating_model',

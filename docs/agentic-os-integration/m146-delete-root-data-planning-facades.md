@@ -24,7 +24,7 @@ Keeping them as standalone root agent files made xox look like it still had a lo
 - Folded `answerWorkspaceDataQuestion()` and workspace data query DTOs into `runtime-intent-handlers.ts`, the concrete xox tool handler registry at the time. M156 later deleted that runtime facade and moved the business handler into `tool-executor.ts`.
 - Renamed the exported query DTO from `DataAgentQueryStep` to `WorkspaceDataQueryStep`.
 - Deleted `planning-context.ts`.
-- Moved `PlannerContext` into `action-draft-builder.ts`, next to the xox action/read draft DTOs that consume it.
+- Moved `PlannerContext` into `action-draft-builder.ts` at the time, next to the xox action/read draft DTOs that consume it. M158 later deleted that root facade and moved the planned-item boundary to `host-profile/xox-planned-items.ts`.
 - Updated all imports to use the real boundary files.
 
 ## Boundary
@@ -53,7 +53,7 @@ xox must not keep standalone files that imply it owns:
 - `data-agent.ts` is absent;
 - `planning-context.ts` is absent;
 - workspace data query code lived in `runtime-intent-handlers.ts` for this cut; after M156 it lives in `tool-executor.ts`;
-- `PlannerContext` lives in `action-draft-builder.ts`;
+- `PlannerContext` lived in `action-draft-builder.ts` for this cut; after M158 it lives in `host-profile/xox-planned-items.ts`;
 - the deleted `data-agent.ts` import cannot return.
 
 ## Validation

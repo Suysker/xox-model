@@ -23,7 +23,7 @@ import { utcNow } from '../../core/time.js'
 import type { CurrentUser } from '../../modules/auth.js'
 import { redactSecretLikeContent } from '../memory.js'
 import { resolveAgentRuntimeSettings } from '../provider-settings.js'
-import type { PlannerContext } from '../action-draft-builder.js'
+import type { PlannerContext } from '../host-profile/xox-planned-items.js'
 import { executeXoxAgenticOsRun } from './xox-agentic-os-host-kit.js'
 import {
   AgentRunLeaseLostError,
@@ -44,7 +44,7 @@ import {
   type RuntimePlanResult,
 } from './xox-runtime-adapter.js'
 import { storePlannedActionGraph } from './xox-action-graph-adapter.js'
-import { readDraftFromRuntimeResult } from '../action-draft-builder.js'
+import { readDraftFromRuntimeResult } from '../host-profile/xox-planned-items.js'
 import type { AgentToolCallStep, ChatTool } from '../tool-catalog.js'
 
 const agentRunSchedulers = new WeakMap<Kysely<Database>, AgentServerRunScheduler>()

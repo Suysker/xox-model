@@ -77,11 +77,11 @@ import { parseJson } from '../../db/database.js'
 import type { Row } from '../../db/schema.js'
 import { newId } from '../../core/security.js'
 import { utcNow } from '../../core/time.js'
-import type { PlannerContext } from '../action-draft-builder.js'
+import type { PlannerContext } from '../host-profile/xox-planned-items.js'
 import {
   answerWorkspaceDataQuestion,
   executeAgentActionRequest,
-  runtimeIntentHandlers,
+  xoxBusinessToolHandlers,
   type WorkspaceDataQueryStep,
 } from '../tool-executor.js'
 import {
@@ -91,7 +91,7 @@ import {
   toolSupervisorFailureReadDraft,
   type PlannedItem,
   type PlannedItemResult,
-} from '../action-draft-builder.js'
+} from '../host-profile/xox-planned-items.js'
 import {
   storePlannedActionGraph,
   type StoredActionGraph,
@@ -761,7 +761,7 @@ async function storeSingleToolStep(
   step: AgentToolCallStep,
   options: { forceManualApproval?: boolean; emitPlanReady?: boolean } = {},
 ): Promise<StoredActionGraph> {
-  const result = await buildPlannedItemFromRuntimeStep(ctx, step, runtimeIntentHandlers)
+  const result = await buildPlannedItemFromRuntimeStep(ctx, step, xoxBusinessToolHandlers)
   const items = flattenPlannedItems(result)
   const fallbackItem = toolSupervisorFailureReadDraft(step)
   const graph = await storePlannedActionGraph(

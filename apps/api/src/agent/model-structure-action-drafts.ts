@@ -18,9 +18,9 @@ import {
 } from '@xox/domain'
 import type { AgentNavigationEvent } from '@xox/contracts'
 import { newId } from '../core/security.js'
-import type { PlannerContext } from './action-draft-builder.js'
-import type { AgentActionDraft } from './action-draft-builder.js'
-import type { ReadDraft, RuntimePlannerStep } from './action-draft-builder.js'
+import type { PlannerContext } from './host-profile/xox-planned-items.js'
+import type { AgentActionDraft } from './host-profile/xox-planned-items.js'
+import type { ReadDraft, RuntimePlannerStep } from './host-profile/xox-planned-items.js'
 import { cloneModelConfig, currentDraftConfig, findEmployee, findTeamMember, finiteNumber, normalizedMemberKey } from './action-draft-utils.js'
 
 function memberWorkbenchNavigation(reason: string): AgentNavigationEvent {

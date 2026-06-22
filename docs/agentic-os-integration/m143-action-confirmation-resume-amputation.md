@@ -48,7 +48,7 @@ That is not a host peripheral. It is a second runner.
 | Responsibility | Owner after M143 |
 | --- | --- |
 | Business action row execution, domain write, audit row, plan-step status update | `apps/api/src/agent/tool-executor.ts` |
-| Action draft DTO type and planned item helpers | `apps/api/src/agent/action-draft-builder.ts` |
+| Action draft DTO type and planned item helpers | `apps/api/src/agent/host-profile/xox-planned-items.ts` |
 | Pending action HTTP confirm/cancel/edit response shape | `apps/api/src/agent/routes.ts` transport handlers |
 | Confirm action guard, audit envelope, observation validation | `@agentic-os/core` `ActionRuntime` through `createAgentHostKit()` |
 | Post-confirmation resume, provider turn, final review, obligation repair | `@agentic-os/core` `AgentRunEngine` through `createAgentHostKit().resume()` |
@@ -70,7 +70,7 @@ xox-agentic-os-host-kit.ts
   -> xox domain modules / audit / DB
 
 xox-action-graph-adapter.ts
-  -> action-draft-builder.ts
+  -> host-profile/xox-planned-items.ts
   -> tool-executor.ts
 ```
 
@@ -87,7 +87,7 @@ xox routes / adapters
 
 ## Implementation Plan
 
-1. Move `AgentActionDraft` out of the approval adapter and into `action-draft-builder.ts`.
+1. Move `AgentActionDraft` out of the approval adapter and into the xox planned-item boundary. After M158 this is `host-profile/xox-planned-items.ts`.
 2. Move `executeAgentActionRequest()` and `autoExecuteAgentActionRequest()` into `tool-executor.ts`, because they are business write/audit execution peripherals.
 3. Add a host-kit helper that reconstructs the current run/action state, calls `kit.confirmAction()`, and resumes the same Agentic OS loop with the action execution observation.
 4. Rewrite the confirm route helper so it only loads/authorizes the action, calls the host-kit confirmation/resume helper, updates thread freshness, and returns legacy DTOs.
@@ -97,7 +97,7 @@ xox routes / adapters
 
 ## Implementation Result
 
-- `AgentActionDraft` now lives in `apps/api/src/agent/action-draft-builder.ts`.
+- `AgentActionDraft` now lives in `apps/api/src/agent/host-profile/xox-planned-items.ts`.
 - `apps/api/src/agent/agentic-os/xox-action-approval-adapter.ts` has been deleted.
 - xox business action execution and audit writes now live in `apps/api/src/agent/tool-executor.ts`.
 - `xox-action-graph-adapter.ts` owns pending action row materialization beside the Agentic OS action graph store adapter and no longer imports the approval adapter.

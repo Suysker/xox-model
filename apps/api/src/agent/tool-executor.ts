@@ -47,7 +47,7 @@ import type {
   PlannerContext,
   ReadDraft,
   RuntimePlannerStep,
-} from './action-draft-builder.js'
+} from './host-profile/xox-planned-items.js'
 import {
   planGenericLedgerCreateFromStep,
   planLedgerCreateFromFields,
@@ -660,7 +660,7 @@ async function runManifestRg(_ctx: PlannerContext, step: RuntimePlannerStep): Pr
   }
 }
 
-export const runtimeIntentHandlers: ActionDraftBuilderHandlers<PlannerContext> = {
+export const xoxBusinessToolHandlers: ActionDraftBuilderHandlers<PlannerContext> = {
   'ledger.create_member_income': (ctx, step) => {
     const memberName = typeof step.memberName === 'string' && step.memberName.trim()
       ? step.memberName.trim()
@@ -745,7 +745,7 @@ export const runtimeIntentHandlers: ActionDraftBuilderHandlers<PlannerContext> =
   'memory.get': runMemoryGetTool,
   'memory.remember': rememberFromToolCall,
   'data.query_workspace': answerWorkspaceDataQuestion,
-  'sandbox.run_code': (ctx, step) => planSandboxRunCode(ctx, step, runtimeIntentHandlers),
+  'sandbox.run_code': (ctx, step) => planSandboxRunCode(ctx, step, xoxBusinessToolHandlers),
   'tool.discover': runToolDiscovery,
   'tool.rg': runManifestRg,
 }

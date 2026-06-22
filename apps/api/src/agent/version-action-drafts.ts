@@ -1,5 +1,5 @@
-import type { AgentActionDraft } from './action-draft-builder.js'
-import type { PlannerContext } from './action-draft-builder.js'
+import type { AgentActionDraft } from './host-profile/xox-planned-items.js'
+import type { PlannerContext } from './host-profile/xox-planned-items.js'
 import { getWorkspaceDraft, listVersions } from '../modules/workspace.js'
 
 function versionPanelNavigation(reason: string) {

@@ -23,10 +23,10 @@ import {
 import type { AgentNavigationEvent } from '@xox/contracts'
 import { newId } from '../core/security.js'
 import { exportWorkspaceBundle } from '../modules/workspace.js'
-import type { AgentActionDraft } from './action-draft-builder.js'
-import type { ReadDraft, RuntimePlannerStep } from './action-draft-builder.js'
+import type { AgentActionDraft } from './host-profile/xox-planned-items.js'
+import type { ReadDraft, RuntimePlannerStep } from './host-profile/xox-planned-items.js'
 import { cloneModelConfig, currentDraftConfig, finiteNumber, getConfigPath, setConfigPath } from './action-draft-utils.js'
-import type { PlannerContext } from './action-draft-builder.js'
+import type { PlannerContext } from './host-profile/xox-planned-items.js'
 import { readRuntimeGoalFacts } from './host-profile/xox-goal-facts.js'
 
 function modelWorkbenchNavigation(reason: string): AgentNavigationEvent {

@@ -2,8 +2,8 @@ import { projectModel, type ModelConfig } from '@xox/domain'
 import type { AgentNavigationEvent } from '@xox/contracts'
 import { listEntries, listPeriods, listSubjectsForPeriod } from '../modules/ledger.js'
 import { utcNow } from '../core/time.js'
-import type { AgentActionDraft } from './action-draft-builder.js'
-import type { PlannedItem, ReadDraft, RuntimePlannerStep } from './action-draft-builder.js'
+import type { AgentActionDraft } from './host-profile/xox-planned-items.js'
+import type { PlannedItem, ReadDraft, RuntimePlannerStep } from './host-profile/xox-planned-items.js'
 import {
   currentDraftConfig,
   findEmployee,
@@ -12,7 +12,7 @@ import {
   periodForMonth,
   periodOccurrenceDate,
 } from './action-draft-utils.js'
-import type { PlannerContext } from './action-draft-builder.js'
+import type { PlannerContext } from './host-profile/xox-planned-items.js'
 
 export async function planLedgerCreateFromFields(
   ctx: PlannerContext,
