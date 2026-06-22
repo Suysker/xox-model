@@ -25,7 +25,7 @@ xox：
   - 映射 xox action kind 到 `AgentToolCapability`；
   - 传入 xox 中文 copy 和 `redactSecretLikeContent()`；
   - 返回 host kit 需要的 `resumedGoalId`、`resumedRunId`、`objective`、`satisfiedActionCapabilities`。
-- `apps/api/src/agent/agentic-os/xox-agentic-os-host-kit.ts`
+- `apps/api/src/agent/host-profile/xox-agent-run-profile.ts`
   - 从 adapter folder 引入 clarification resume context。
 - `apps/api/src/agent/clarification-resume.ts`
   - 删除。

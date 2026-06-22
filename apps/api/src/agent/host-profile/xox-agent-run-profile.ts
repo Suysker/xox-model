@@ -77,7 +77,7 @@ import { parseJson } from '../../db/database.js'
 import type { Row } from '../../db/schema.js'
 import { newId } from '../../core/security.js'
 import { utcNow } from '../../core/time.js'
-import type { PlannerContext } from '../host-profile/xox-planned-items.js'
+import type { PlannerContext } from './xox-planned-items.js'
 import {
   answerWorkspaceDataQuestion,
   executeAgentActionRequest,
@@ -91,18 +91,18 @@ import {
   toolSupervisorFailureReadDraft,
   type PlannedItem,
   type PlannedItemResult,
-} from '../host-profile/xox-planned-items.js'
+} from './xox-planned-items.js'
 import {
   storePlannedActionGraph,
   type StoredActionGraph,
-} from './xox-action-graph-adapter.js'
+} from '../agentic-os/xox-action-graph-adapter.js'
 import {
   buildEvidenceLedger,
   evidenceForModel,
   isExecutedSandboxEvidenceFacts,
   type AgentEvidenceItem,
   type AgentFinalAnswerClaim,
-} from './xox-final-review-adapter.js'
+} from './xox-final-review-policy.js'
 import {
   addEvaluationResult,
   buildXoxClarificationResumeContext,
@@ -111,7 +111,7 @@ import {
   getGoalForRun,
   serializeEvaluation,
   updateGoalStatus,
-} from './xox-goal-store-adapter.js'
+} from '../agentic-os/xox-goal-store-adapter.js'
 import {
   consolidateExecutedActionMemory,
   flushThreadContextToMemoryIfNeeded,
@@ -120,7 +120,7 @@ import { runMemoryDreamingSweep } from '../memory.js'
 import {
   evaluateAssistantResponse,
   responseEvaluationSummary,
-} from './xox-final-review-adapter.js'
+} from './xox-final-review-policy.js'
 import {
   callRuntimePlanner,
   configuredRuntimePlannerSource,
@@ -128,13 +128,13 @@ import {
   type RuntimeChatMessage,
   type RuntimePlanningInput,
   type RuntimePlanResult,
-} from './xox-runtime-adapter.js'
+} from './xox-provider-runtime.js'
 import {
   mergeAgentGoalFacts,
   readRuntimeGoalFacts,
-} from '../host-profile/xox-goal-facts.js'
-import { addRunEvent } from './xox-run-event-store-adapter.js'
-import { addMessage } from './xox-thread-store-adapter.js'
+} from './xox-goal-facts.js'
+import { addRunEvent } from '../agentic-os/xox-run-event-store-adapter.js'
+import { addMessage } from '../agentic-os/xox-thread-store-adapter.js'
 import {
   AGENT_TOOL_REGISTRY,
   isHarnessManagedObservationToolName,
@@ -153,7 +153,7 @@ import {
   toolSupervisorFailureObservation,
   type AgentToolObservation,
   type XoxObservationBridge,
-} from './xox-tool-observation-adapter.js'
+} from '../agentic-os/xox-tool-observation-adapter.js'
 import { redactSecretLikeContent } from '../memory.js'
 import { normalizeAgentAutomationLevel } from '../tool-policy.js'
 import {
@@ -166,7 +166,7 @@ import {
   serializeObligationLedgerForResponseEvent,
   type AgentLoopLedgerObligation,
   type AgentLoopObligationLedger,
-} from './xox-final-review-adapter.js'
+} from './xox-final-review-policy.js'
 import { extractWorkspaceBundleArtifact } from '../workspace-bundle-artifact.js'
 
 export type AgenticOsKernelRunResult = {

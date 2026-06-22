@@ -22,7 +22,7 @@ xox 保留：
 - `apps/api/src/agent/agent-kernel.ts`
   - 当前生产入口；
   - direct answer 和 Agentic OS harness 的分流壳。
-- `apps/api/src/agent/agentic-os/xox-agentic-os-host-kit.ts`
+- `apps/api/src/agent/host-profile/xox-agent-run-profile.ts`
   - 暂时仍是 host adapter；后续 M111/M112 继续压薄。
 - `apps/api/src/agent/runtime-planning-call.ts`
   - provider planning boundary；M109 后 recovery 编排已迁入 Agentic OS。

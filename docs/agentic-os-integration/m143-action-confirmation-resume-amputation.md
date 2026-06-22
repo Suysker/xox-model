@@ -52,7 +52,7 @@ That is not a host peripheral. It is a second runner.
 | Pending action HTTP confirm/cancel/edit response shape | `apps/api/src/agent/routes.ts` transport handlers |
 | Confirm action guard, audit envelope, observation validation | `@agentic-os/core` `ActionRuntime` through `createAgentHostKit()` |
 | Post-confirmation resume, provider turn, final review, obligation repair | `@agentic-os/core` `AgentRunEngine` through `createAgentHostKit().resume()` |
-| xox row-to-Agentic-OS host wiring | `apps/api/src/agent/agentic-os/xox-agentic-os-host-kit.ts` |
+| xox row-to-Agentic-OS host wiring | `apps/api/src/agent/host-profile/xox-agent-run-profile.ts` |
 | Auto-execute from materialized action graph | Agentic OS materializer + xox business executor callback |
 
 ## Dependency Graph

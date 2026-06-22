@@ -31,7 +31,7 @@ M141 removed active-memory lifecycle callbacks, but the same problem remains acr
 
 Original audit signals:
 
-- `apps/api/src/agent/agentic-os/xox-agentic-os-host-kit.ts` is 2229 lines and still acts as a host runner.
+- `apps/api/src/agent/host-profile/xox-agent-run-profile.ts` is 2229 lines and still acts as a host runner.
 - The host kit still constructs generic lifecycle events such as `goal_contract_created`, `goal_iteration_started`, `model_planning`, `goal_evaluated`, `final_answer_candidate`, `goal_iteration_exhausted`, and `runner_obligation_*`.
 - `apps/api/src/agent/agentic-os/xox-action-approval-adapter.ts` still owns generic action lifecycle event drafts and performs post-confirmation goal evaluation.
 - `apps/api/src/agent/agentic-os/xox-runtime-planning-adapter.ts` originally owned provider retry and planning lifecycle callbacks; it was deleted in M145, with residual provider boundary wiring collapsed into `xox-runtime-adapter.ts`.
@@ -101,7 +101,7 @@ What xox deleted or collapsed:
 - Deleted `apps/api/src/agent/evidence-ledger.ts`.
 - Deleted `apps/api/src/agent/response-evaluator.ts`.
 - Deleted `apps/api/src/agent/loop-obligation-ledger.ts`.
-- Moved remaining xox domain evidence/final-review policy into `apps/api/src/agent/agentic-os/xox-final-review-adapter.ts`.
+- Moved remaining xox domain evidence/final-review policy into `apps/api/src/agent/host-profile/xox-final-review-policy.ts`.
 - `xox-final-review-adapter.ts` no longer owns the generic final gate or constructs repair obligations from response statuses. It supplies xox financial/shareholder requirements, evidence source mapping, localized copy, and product DTO projection around Agentic OS-generated obligations.
 - Architecture tests now guard the deleted root files from returning.
 
@@ -134,9 +134,9 @@ npm.cmd run test:api
 
 Remaining M142 hard targets after M142b:
 
-- `apps/api/src/agent/agentic-os/xox-agentic-os-host-kit.ts` is still too large and must continue shrinking toward HostProfile/HostAdapter wiring.
+- `apps/api/src/agent/host-profile/xox-agent-run-profile.ts` is still too large and must continue shrinking toward HostProfile/HostAdapter wiring.
 - `apps/api/src/agent/agentic-os/xox-thread-transcript-adapter.ts` and `xox-thread-timeline-adapter.ts` were directly deleted in M149. xox keeps only a thin legacy DTO compatibility mapper in `xox-thread-state-view.ts`; generic projection grouping and merge algorithms must stay Agentic OS-owned.
-- `apps/api/src/agent/agentic-os/xox-runtime-adapter.ts` must remain a concrete provider settings/DTO/runtime-boundary mapper and must not become a second runtime or regrow a standalone planning adapter.
+- `apps/api/src/agent/host-profile/xox-provider-runtime.ts` must remain a concrete provider settings/DTO/runtime-boundary mapper and must not become a second runtime or regrow a standalone planning adapter.
 
 ### M143: Deleted the Action Approval Adapter
 
@@ -216,11 +216,11 @@ M142 is not complete until all rows in this table are addressed. If a row cannot
 | Goal and plan lifecycle | Host kit creates goal contract, iteration, planning, evaluated, exhausted events and updates generic goal states around loop turns | Agentic OS owns goal lifecycle event drafts and loop-state transitions; xox provides durable goal/run row adapters |
 | Evidence and final review | xox mixes final answer hygiene, evidence requirements, obligation projection, review obligations, and financial policy | Agentic OS owns generic final review gate, evidence ledger mechanics, obligation projection, and repair obligations; xox keeps financial/shareholder requirement policy only |
 | Action lifecycle | xox writes canonical action executed/updated/cancelled/auto-execution lifecycle events and re-evaluates goal state after confirm | Agentic OS action runtime owns confirmation/edit/reject/execute lifecycle events and resume observation handoff; xox keeps business writes, audit rows, memory candidates, and product DTOs |
-| Provider planning | The standalone `xox-runtime-planning-adapter.ts` is deleted, but `xox-runtime-adapter.ts` still carries provider-boundary wiring, localized event sink, tool catalog callbacks, business budget policy, and legacy DTO projection | Agentic OS runtime/server owns provider planning lifecycle, retry event drafts, boundary repair state, and stream event projection; xox keeps only provider settings, tool catalog materialization policy, localized copy hook, and business budget policy at the concrete runtime boundary |
+| Provider planning | The standalone `xox-runtime-planning-adapter.ts` and obsolete `agentic-os/xox-runtime-adapter.ts` facade are deleted, but `host-profile/xox-provider-runtime.ts` still carries provider-boundary wiring, localized event sink, tool catalog callbacks, business budget policy, and legacy DTO projection | Agentic OS runtime/server owns provider planning lifecycle, retry event drafts, boundary repair state, and stream event projection; xox keeps only provider settings, tool catalog materialization policy, localized copy hook, and business budget policy at the HostProfile provider boundary |
 | Model continuation | xox owns `model_continuation*` events for observation-to-final-answer continuation | Agentic OS owns continuation lifecycle and canonical events; xox keeps prompt identity additions, provider settings, and persisted final message projection |
 | Memory lifecycle | xox owns memory candidate/context-flush/dreaming lifecycle event drafts | Agentic OS owns generic memory lifecycle and event drafts; xox keeps memory store, tenant scope, ranking inputs, Memory Center DTOs, and localized product copy |
 | Projection/transcript | xox builds generic transcript/timeline trees from provider/goal/action/run events | Agentic OS projection/server package owns generic run tree, grouping, visibility, provider stream grouping, and action/observation joins; xox keeps Chinese labels, navigation links, and contract DTO shape |
-| Host kit size | `xox-agentic-os-host-kit.ts` remains a large runner-like orchestration file | Collapse host kit into thin HostProfile/HostAdapter wiring. The file should stop being the loop narrative |
+| Host run profile size | `agentic-os/xox-agentic-os-host-kit.ts` has been deleted, but `host-profile/xox-agent-run-profile.ts` remains a large run-profile wiring file | Collapse run profile into thin HostProfile/HostAdapter wiring. The file should stop being the loop narrative |
 
 ## Non-Negotiable Deletions or Collapses
 
@@ -228,9 +228,15 @@ M142 implementation cuts should delete whole files where possible. If a file can
 
 Primary targets:
 
-- `apps/api/src/agent/agentic-os/xox-agentic-os-host-kit.ts`
+- `apps/api/src/agent/host-profile/xox-agent-run-profile.ts`
   - Must shrink from runner narrative to HostProfile/HostAdapter wiring.
   - Must not construct generic lifecycle event types directly.
+- `apps/api/src/agent/agentic-os/xox-agentic-os-host-kit.ts`
+  - Deleted in M159. Do not reintroduce a local harness-named host kit facade.
+- `apps/api/src/agent/agentic-os/xox-final-review-adapter.ts`
+  - Deleted in M159. Keep xox financial/shareholder policy under `host-profile/xox-final-review-policy.ts`.
+- `apps/api/src/agent/agentic-os/xox-runtime-adapter.ts`
+  - Deleted in M159. Keep provider settings and legacy DTO mapping under `host-profile/xox-provider-runtime.ts`.
 - `apps/api/src/agent/loop-obligation-ledger.ts`
   - Delete or reduce to financial/domain policy declarations consumed by Agentic OS evidence/obligation runtime.
 - `apps/api/src/agent/response-evaluator.ts`
@@ -251,7 +257,7 @@ Primary targets:
   - Deleted in M143. Do not reintroduce a host approval adapter; keep HTTP glue in routes, business execution in `tool-executor.ts`, and resume semantics in Agentic OS host kit/core.
 - `apps/api/src/agent/agentic-os/xox-runtime-planning-adapter.ts`
   - Deleted in M145. Do not reintroduce a standalone provider planning facade.
-  - Any unavoidable xox provider settings, tool catalog materialization, business budgets, localized copy hook, and legacy DTO projection must live at `xox-runtime-adapter.ts`, the concrete runtime boundary.
+  - Any unavoidable xox provider settings, tool catalog materialization, business budgets, localized copy hook, and legacy DTO projection must live at `host-profile/xox-provider-runtime.ts`, the HostProfile provider boundary.
 - `apps/api/src/agent/agentic-os/xox-tool-observation-adapter.ts`
   - Keep only xox prompt additions, provider settings, final message persistence, and product DTO mapping.
 

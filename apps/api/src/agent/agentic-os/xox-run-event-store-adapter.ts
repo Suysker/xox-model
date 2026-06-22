@@ -13,7 +13,7 @@ import { jsonString, parseJson } from '../../db/database.js'
 import { newId } from '../../core/security.js'
 import { utcNow } from '../../core/time.js'
 import { redactSecretLikeContent } from '../memory.js'
-import type { RuntimeStreamEvent } from './xox-runtime-adapter.js'
+import type { RuntimeStreamEvent } from '../host-profile/xox-provider-runtime.js'
 
 export type AgentThreadEventReason =
   | 'thread_started'

@@ -38,11 +38,11 @@ import {
 import type { Row } from '../../db/schema.js'
 import { parseJson } from '../../db/database.js'
 import type { AgentToolCapability } from '../tool-catalog.js'
-import { mergeAgentGoalFacts } from '../host-profile/xox-goal-facts.js'
+import { mergeAgentGoalFacts } from './xox-goal-facts.js'
 import {
   agenticOsObservationFromXox,
   type AgentToolObservation,
-} from './xox-tool-observation-adapter.js'
+} from '../agentic-os/xox-tool-observation-adapter.js'
 
 export type AgentEvidenceAuthority = Extract<OsAgentEvidenceAuthority, 'ambient' | 'domain_read' | 'sandbox' | 'action' | 'memory'>
 export type AgentEvidenceValidity = OsAgentEvidenceValidity

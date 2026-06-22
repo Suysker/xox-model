@@ -30,7 +30,7 @@ business tool wiring.
 
 ## Remaining Host Boundary
 
-`apps/api/src/agent/agentic-os/xox-final-review-adapter.ts` remains only because
+`apps/api/src/agent/host-profile/xox-final-review-policy.ts` remains only because
 xox still has host-specific policy and DTO responsibilities:
 
 - classify xox observations into Agentic OS evidence records;

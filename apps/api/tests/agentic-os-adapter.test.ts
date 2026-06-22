@@ -4,7 +4,7 @@ import {
   runtimePlannerResultToTurnOutput,
 } from '@agentic-os/core'
 import { validateRuntimeTurnOutputContract } from '@agentic-os/testing'
-import type { RuntimePlanResult } from '../src/agent/agentic-os/xox-runtime-adapter.js'
+import type { RuntimePlanResult } from '../src/agent/host-profile/xox-provider-runtime.js'
 
 function plan(overrides: Partial<RuntimePlanResult> = {}): RuntimePlanResult {
   return {

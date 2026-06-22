@@ -5,7 +5,7 @@
 Delete the last TypeScript runtime file under `apps/api/src/agent/runtime` by moving the remaining xox provider-selection adapter to:
 
 ```text
-apps/api/src/agent/agentic-os/xox-runtime-adapter.ts
+apps/api/src/agent/host-profile/xox-provider-runtime.ts
 ```
 
 This is intentionally not a copy of Agentic OS runtime internals. The runtime CPU is already in Agentic OS packages:
@@ -28,7 +28,7 @@ The remaining xox code is host adapter wiring:
 | OpenAI-compatible request shaping, transport, stream parsing, provider turn normalization, boundary validation | `@agentic-os/runtime-openai-compatible` |
 | OpenAI Agents SDK lifecycle and canonical tool-call capture | `@agentic-os/runtime-openai-agents` |
 | Ordered runtime route selection and no-route fail-closed behavior | `@agentic-os/core createRuntimePlanRouter()` |
-| xox provider settings policy and legacy planner-step DTO mapping | `apps/api/src/agent/agentic-os/xox-runtime-adapter.ts` |
+| xox provider settings policy and legacy planner-step DTO mapping | `apps/api/src/agent/host-profile/xox-provider-runtime.ts` |
 | xox planning/finalizer call orchestration and localized run events | `runtime-planning-call.ts`, `tool-observation-continuation.ts`, host adapters |
 
 ## Dependency Graph

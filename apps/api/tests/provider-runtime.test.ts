@@ -5,7 +5,7 @@ import {
   planWithRuntimeAdapter,
   type RuntimePlanningInput,
   type RuntimePlanResult,
-} from '../src/agent/agentic-os/xox-runtime-adapter.js'
+} from '../src/agent/host-profile/xox-provider-runtime.js'
 import {
   applyProviderRuntimeRetryPatch,
   buildProviderRuntimeRetryPatch,

@@ -5,7 +5,7 @@ Date: 2026-06-21
 
 ## 目标
 
-继续压缩 `apps/api/src/agent/agentic-os/xox-agentic-os-host-kit.ts`。
+继续压缩 `apps/api/src/agent/host-profile/xox-agent-run-profile.ts`。
 
 当前 host kit 在工具调用没有生成业务结果时仍手写 `tool_supervisor_failure` JSON payload。这不是 xox 业务逻辑，而是 Agentic OS 的 tool-call supervision 语义：runner 必须把“工具没有产生可执行动作或 observation”变成模型可见、可审计、fail-closed 的 observation。
 
@@ -29,7 +29,7 @@ xox：
 - `apps/api/src/agent/tool-observation-continuation.ts`
   - 新增 `toolSupervisorFailureObservation()`；
   - 把 core failure observation 映射成 xox `AgentToolObservation`。
-- `apps/api/src/agent/agentic-os/xox-agentic-os-host-kit.ts`
+- `apps/api/src/agent/host-profile/xox-agent-run-profile.ts`
   - 删除 `fallbackToolObservation()`；
   - 删除手写 `fallbackItem` 对象；
   - 只调用 DTO adapter。
@@ -75,5 +75,5 @@ npm.cmd run check
 - `@agentic-os/core` 新增 `buildToolSupervisorEmptyResultFailureObservation()`。
 - `apps/api/src/agent/host-profile/xox-planned-items.ts` 只把 core failure observation 映射成 `ReadDraft`。
 - `apps/api/src/agent/tool-observation-continuation.ts` 只把 core failure observation 映射成 `AgentToolObservation`。
-- `apps/api/src/agent/agentic-os/xox-agentic-os-host-kit.ts` 已删除 `fallbackToolObservation()` 和手写 fallback `PlannedItem`。
+- `apps/api/src/agent/host-profile/xox-agent-run-profile.ts` 已删除 `fallbackToolObservation()` 和手写 fallback `PlannedItem`。
 - 架构守卫防止 host kit 重新手写 `tool_supervisor_failure` JSON。

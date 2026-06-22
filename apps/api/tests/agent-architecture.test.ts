@@ -52,9 +52,9 @@ describe('Agent ADR architecture boundaries', () => {
     expect(existsSync(join(srcRoot, 'agent', 'memory-kernel.ts'))).toBe(false)
 
     const hostLifecycleFiles = [
-      'agent/agentic-os/xox-agentic-os-host-kit.ts',
+      'agent/host-profile/xox-agent-run-profile.ts',
       'agent/agentic-os/xox-action-graph-adapter.ts',
-      'agent/agentic-os/xox-runtime-adapter.ts',
+      'agent/host-profile/xox-provider-runtime.ts',
       'agent/agentic-os/xox-tool-observation-adapter.ts',
       'agent/memory.ts',
     ]
@@ -97,15 +97,20 @@ describe('Agent ADR architecture boundaries', () => {
     }
   })
 
-  it('keeps Agentic OS host kit as the single harness run-loop entrypoint and deletes the host kernel facade', () => {
-    expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-agentic-os-host-kit.ts'))).toBe(true)
+  it('keeps the xox run boundary as HostProfile wiring and deletes obsolete local harness facades', () => {
+    expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-agentic-os-host-kit.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-final-review-adapter.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-runtime-adapter.ts'))).toBe(false)
+    expect(existsSync(join(srcRoot, 'agent', 'host-profile', 'xox-agent-run-profile.ts'))).toBe(true)
+    expect(existsSync(join(srcRoot, 'agent', 'host-profile', 'xox-final-review-policy.ts'))).toBe(true)
+    expect(existsSync(join(srcRoot, 'agent', 'host-profile', 'xox-provider-runtime.ts'))).toBe(true)
     expect(existsSync(join(srcRoot, 'agent', 'run-worker.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'agent-run-engine.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'goal-run-engine.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'agent-kernel.ts'))).toBe(false)
 
     const worker = source('agent/agentic-os/xox-run-worker-adapter.ts')
-    expect(worker).toContain("from './xox-agentic-os-host-kit.js'")
+    expect(worker).toContain("from '../host-profile/xox-agent-run-profile.js'")
     expect(worker).not.toContain("from './xox-direct-answer-adapter.js'")
     expect(worker).not.toContain("from './xox-turn-intake-adapter.js'")
     expect(worker).not.toContain("from './agent-run-engine.js'")
@@ -211,7 +216,7 @@ describe('Agent ADR architecture boundaries', () => {
   it('keeps runtime adapters provider-only and free of DB, routes, approvals, and domain execution', () => {
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'runtime-adapter.ts'))).toBe(false)
     const runtimeFiles = [
-      'agent/agentic-os/xox-runtime-adapter.ts',
+      'agent/host-profile/xox-provider-runtime.ts',
     ]
     const forbidden = [
       /['"]\.\.\/\.\.\/db\//,
@@ -299,8 +304,8 @@ describe('Agent ADR architecture boundaries', () => {
   it('keeps clarification resume scaffold in Agentic OS core', () => {
     expect(existsSync(join(srcRoot, 'agent', 'clarification-resume.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-clarification-resume-adapter.ts'))).toBe(false)
-    const hostKit = source('agent/agentic-os/xox-agentic-os-host-kit.ts')
-    expect(hostKit).toContain("from './xox-goal-store-adapter.js'")
+    const hostKit = source('agent/host-profile/xox-agent-run-profile.ts')
+    expect(hostKit).toContain("from '../agentic-os/xox-goal-store-adapter.js'")
     expect(hostKit).toContain('buildXoxClarificationResumeContext')
     expect(hostKit).not.toContain("from '../clarification-resume.js'")
 
@@ -316,8 +321,8 @@ describe('Agent ADR architecture boundaries', () => {
     expect(existsSync(join(srcRoot, 'agent', 'observation-collector.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-loop-readiness-adapter.ts'))).toBe(false)
 
-    const hostKit = source('agent/agentic-os/xox-agentic-os-host-kit.ts')
-    expect(hostKit).toContain("from './xox-goal-store-adapter.js'")
+    const hostKit = source('agent/host-profile/xox-agent-run-profile.ts')
+    expect(hostKit).toContain("from '../agentic-os/xox-goal-store-adapter.js'")
     expect(hostKit).toContain('evaluateAgentGoal')
     expect(hostKit).not.toContain("from './xox-loop-readiness-adapter.js'")
     expect(hostKit).not.toContain("from '../loop-readiness-check.js'")
@@ -360,7 +365,7 @@ describe('Agent ADR architecture boundaries', () => {
     expect(actionGraph).not.toContain("from './xox-action-approval-adapter.js'")
     expect(actionGraph).not.toContain('function confirmAgentActionRequest')
 
-    const hostKit = source('agent/agentic-os/xox-agentic-os-host-kit.ts')
+    const hostKit = source('agent/host-profile/xox-agent-run-profile.ts')
     expect(hostKit).toContain('createAgentHostKit')
     expect(hostKit).toContain('confirmAction')
     expect(hostKit).toContain('resumeXoxAgenticOsRunAfterActionConfirmation')
@@ -369,7 +374,7 @@ describe('Agent ADR architecture boundaries', () => {
   it('keeps initial prerequisite observation selection in Agentic OS core', () => {
     expect(existsSync(join(srcRoot, 'agent', 'prerequisite-observations.ts'))).toBe(false)
 
-    const hostKit = source('agent/agentic-os/xox-agentic-os-host-kit.ts')
+    const hostKit = source('agent/host-profile/xox-agent-run-profile.ts')
     expect(hostKit).toContain("@agentic-os/core")
     expect(hostKit).toContain('selectAgentPrerequisiteObservations')
     expect(hostKit).toContain('ENTITY_SUMMARY_PREREQUISITE')
@@ -378,14 +383,14 @@ describe('Agent ADR architecture boundaries', () => {
   })
 
   it('keeps final review obligation projection merge in Agentic OS core', () => {
-    const hostKit = source('agent/agentic-os/xox-agentic-os-host-kit.ts')
+    const hostKit = source('agent/host-profile/xox-agent-run-profile.ts')
     expect(hostKit).toContain('serializeObligationLedgerForResponseEvent')
     expect(hostKit).not.toContain('function responseEvaluationObligationLedger')
     expect(hostKit).not.toContain('function responseEventObligationLedger')
     expect(hostKit).not.toContain('projection.openCount = projection.obligations.filter')
 
     expect(existsSync(join(srcRoot, 'agent', 'loop-obligation-ledger.ts'))).toBe(false)
-    const adapter = source('agent/agentic-os/xox-final-review-adapter.ts')
+    const adapter = source('agent/host-profile/xox-final-review-policy.ts')
     expect(adapter).toContain("@agentic-os/core")
     expect(adapter).toContain('evaluateAgentFinalResponseReview')
     expect(adapter).toContain('projectObligationLedgerWithAdditionalObligations')
@@ -393,14 +398,14 @@ describe('Agent ADR architecture boundaries', () => {
   })
 
   it('keeps runtime-boundary missing-observation repair projection out of the host kit', () => {
-    const hostKit = source('agent/agentic-os/xox-agentic-os-host-kit.ts')
+    const hostKit = source('agent/host-profile/xox-agent-run-profile.ts')
     expect(hostKit).toContain('runtimeBoundaryMissingObservationRepair')
     expect(hostKit).not.toContain('runtime_boundary_sandbox_calculation')
     expect(hostKit).not.toContain('response.sandbox_evidence_missing')
     expect(hostKit).not.toContain('Provider 已产生 sandbox_run_code 工具意图')
 
     expect(existsSync(join(srcRoot, 'agent', 'loop-obligation-ledger.ts'))).toBe(false)
-    const adapter = source('agent/agentic-os/xox-final-review-adapter.ts')
+    const adapter = source('agent/host-profile/xox-final-review-policy.ts')
     expect(adapter).toContain('projectObligationStateWithAdditionalObligations')
   })
 
@@ -414,7 +419,7 @@ describe('Agent ADR architecture boundaries', () => {
       expect(source(file), `${file} must not import the deleted loop-obligations facade`).not.toContain('loop-obligations')
     }
 
-    const adapter = source('agent/agentic-os/xox-final-review-adapter.ts')
+    const adapter = source('agent/host-profile/xox-final-review-policy.ts')
     expect(adapter).toContain("@agentic-os/core")
     expect(adapter).toContain('ledgerToObligationPlan')
     expect(adapter).toContain('projectObligationLedgerWithAdditionalObligations')
@@ -438,7 +443,7 @@ describe('Agent ADR architecture boundaries', () => {
     expect(adapter).not.toContain('function loopObligationsFromResponseEvaluation')
 
     expect(existsSync(join(srcRoot, 'agent', 'obligation-materializer.ts'))).toBe(false)
-    const hostKit = source('agent/agentic-os/xox-agentic-os-host-kit.ts')
+    const hostKit = source('agent/host-profile/xox-agent-run-profile.ts')
     expect(hostKit).toContain("@agentic-os/core")
     expect(hostKit).toContain('planObligationMaterialization')
     expect(hostKit).not.toContain("from '../obligation-materializer.js'")
@@ -453,7 +458,7 @@ describe('Agent ADR architecture boundaries', () => {
     ]) {
       expect(existsSync(join(srcRoot, file))).toBe(false)
     }
-    const adapter = source('agent/agentic-os/xox-final-review-adapter.ts')
+    const adapter = source('agent/host-profile/xox-final-review-policy.ts')
     expect(adapter).toContain("@agentic-os/core")
     expect(adapter).toContain('evidenceFactsContainKey')
     expect(adapter).not.toContain('structured-evidence-utils')
@@ -554,7 +559,7 @@ describe('Agent ADR architecture boundaries', () => {
   it('deletes the runtime plan reader facade while keeping provider boundary payloads in Agentic OS', () => {
     expect(existsSync(join(srcRoot, 'agent', 'runtime-plan-reader.ts'))).toBe(false)
     const draftBuilder = source('agent/host-profile/xox-planned-items.ts')
-    const runtimeAdapter = source('agent/agentic-os/xox-runtime-adapter.ts')
+    const runtimeAdapter = source('agent/host-profile/xox-provider-runtime.ts')
     expect(draftBuilder).toContain('providerToolCallBoundaryObservations')
     expect(draftBuilder).toContain("@agentic-os/runtime-openai-compatible")
     expect(draftBuilder).not.toContain("observationType: 'provider_tool_call_boundary'")
@@ -564,7 +569,7 @@ describe('Agent ADR architecture boundaries', () => {
 
   it('keeps OpenAI-compatible runtime turn execution in Agentic OS runtime', () => {
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'openai-compatible-chat-adapter.ts'))).toBe(false)
-    const adapter = source('agent/agentic-os/xox-runtime-adapter.ts')
+    const adapter = source('agent/host-profile/xox-provider-runtime.ts')
     expect(adapter).toContain('runOpenAICompatibleRuntimeTurn')
     expect(adapter).toContain("@agentic-os/runtime-openai-compatible")
     expect(adapter).not.toContain('requestOpenAICompatibleChatCompletion')
@@ -586,7 +591,7 @@ describe('Agent ADR architecture boundaries', () => {
 
   it('keeps OpenAI-compatible chat transport in Agentic OS runtime', () => {
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'openai-compatible-chat-adapter.ts'))).toBe(false)
-    const adapter = source('agent/agentic-os/xox-runtime-adapter.ts')
+    const adapter = source('agent/host-profile/xox-provider-runtime.ts')
     expect(adapter).toContain('runOpenAICompatibleRuntimeTurn')
     expect(adapter).toContain("@agentic-os/runtime-openai-compatible")
     expect(adapter).not.toContain('new AbortController')
@@ -598,7 +603,7 @@ describe('Agent ADR architecture boundaries', () => {
 
   it('keeps OpenAI-compatible provider turn normalization in Agentic OS runtime', () => {
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'openai-compatible-chat-adapter.ts'))).toBe(false)
-    const adapter = source('agent/agentic-os/xox-runtime-adapter.ts')
+    const adapter = source('agent/host-profile/xox-provider-runtime.ts')
     expect(adapter).toContain('runOpenAICompatibleRuntimeTurn')
     expect(adapter).toContain("@agentic-os/runtime-openai-compatible")
     expect(adapter).not.toContain('function textContentFromMessage')
@@ -611,7 +616,7 @@ describe('Agent ADR architecture boundaries', () => {
   })
 
   it('keeps runtime result to canonical turn output bridging in Agentic OS core', () => {
-    const hostKit = source('agent/agentic-os/xox-agentic-os-host-kit.ts')
+    const hostKit = source('agent/host-profile/xox-agent-run-profile.ts')
     expect(hostKit).toContain("@agentic-os/core")
     expect(hostKit).toContain('runtimePlannerResultToTurnOutput')
     expect(hostKit).not.toContain('runtimePlanResultToAgenticOsTurnOutput')
@@ -666,7 +671,7 @@ describe('Agent ADR architecture boundaries', () => {
     expect(toolObservation).toContain('createHostObservationBridge')
     expect(toolObservation).toContain('createXoxObservationBridge')
 
-    const hostKit = source('agent/agentic-os/xox-agentic-os-host-kit.ts')
+    const hostKit = source('agent/host-profile/xox-agent-run-profile.ts')
     expect(hostKit).toContain('createXoxObservationBridge')
     expect(hostKit).not.toContain('osObservationById')
     expect(hostKit).not.toContain('function rememberObservationMapping')
@@ -682,7 +687,7 @@ describe('Agent ADR architecture boundaries', () => {
   })
 
   it('keeps tool observation loop semantics in Agentic OS core', () => {
-    const hostKit = source('agent/agentic-os/xox-agentic-os-host-kit.ts')
+    const hostKit = source('agent/host-profile/xox-agent-run-profile.ts')
     expect(hostKit).toContain('parseToolObservationModelFacts')
     expect(hostKit).toContain('isActionToolObservation')
     expect(hostKit).toContain('isSandboxToolObservation')
@@ -705,7 +710,7 @@ describe('Agent ADR architecture boundaries', () => {
     expect(catalog).not.toContain('resolveProviderModelProfile')
     expect(catalog).not.toContain("tool.capability === 'sandbox'")
 
-    const hostKit = source('agent/agentic-os/xox-agentic-os-host-kit.ts')
+    const hostKit = source('agent/host-profile/xox-agent-run-profile.ts')
     expect(hostKit).toContain('inferToolAuthorityClass')
     expect(hostKit).not.toContain("input.riskLevel === 'read'")
     expect(hostKit).not.toContain("input.confirmationMode === 'always'")
@@ -719,7 +724,7 @@ describe('Agent ADR architecture boundaries', () => {
   })
 
   it('keeps tool supervisor failure envelopes out of the host kit', () => {
-    const hostKit = source('agent/agentic-os/xox-agentic-os-host-kit.ts')
+    const hostKit = source('agent/host-profile/xox-agent-run-profile.ts')
     expect(hostKit).toContain('toolSupervisorFailureReadDraft')
     expect(hostKit).toContain('toolSupervisorFailureObservation')
     expect(hostKit).not.toContain('function fallbackToolObservation')
@@ -761,7 +766,7 @@ describe('Agent ADR architecture boundaries', () => {
   it('keeps provider observation planning message assembly in Agentic OS runtime', () => {
     expect(existsSync(join(srcRoot, 'agent', 'runtime-planning-call.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-runtime-planning-adapter.ts'))).toBe(false)
-    const planningCall = source('agent/agentic-os/xox-runtime-adapter.ts')
+    const planningCall = source('agent/host-profile/xox-provider-runtime.ts')
     expect(planningCall).toContain("@agentic-os/runtime-openai-compatible")
     expect(planningCall).toContain("@agentic-os/core")
     expect(planningCall).toContain('buildProviderToolObservationTurnMessages')
@@ -772,7 +777,7 @@ describe('Agent ADR architecture boundaries', () => {
 
   it('keeps runtime planning recovery orchestration in Agentic OS runtime', () => {
     expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-runtime-planning-adapter.ts'))).toBe(false)
-    const planningCall = source('agent/agentic-os/xox-runtime-adapter.ts')
+    const planningCall = source('agent/host-profile/xox-provider-runtime.ts')
     expect(planningCall).toContain("@agentic-os/runtime-openai-compatible")
     expect(planningCall).toContain('runOpenAICompatibleRuntimePlanningRecovery')
     expect(planningCall).not.toContain('shouldRetryProviderRuntimeResult')
@@ -784,7 +789,7 @@ describe('Agent ADR architecture boundaries', () => {
 
   it('deletes the provider tool-call repair facade and keeps normalization in Agentic OS runtime', () => {
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'openai-compatible-chat-adapter.ts'))).toBe(false)
-    const adapter = source('agent/agentic-os/xox-runtime-adapter.ts')
+    const adapter = source('agent/host-profile/xox-provider-runtime.ts')
     expect(existsSync(join(srcRoot, 'agent', 'runtime', 'tool-call-repair.ts'))).toBe(false)
     expect(adapter).toContain("@agentic-os/runtime-openai-compatible")
     expect(adapter).toContain('runOpenAICompatibleRuntimeTurn')
@@ -801,7 +806,7 @@ describe('Agent ADR architecture boundaries', () => {
   })
 
   it('keeps same-thread runtime conversation replay in Agentic OS core', () => {
-    const planningCall = source('agent/agentic-os/xox-runtime-adapter.ts')
+    const planningCall = source('agent/host-profile/xox-provider-runtime.ts')
     const continuation = source('agent/agentic-os/xox-tool-observation-adapter.ts')
     expect(planningCall).toContain("@agentic-os/core")
     expect(planningCall).toContain('runtimeConversationLogFromContext')
@@ -813,7 +818,7 @@ describe('Agent ADR architecture boundaries', () => {
   })
 
   it('keeps runtime adapter routing in Agentic OS core', () => {
-    const adapter = source('agent/agentic-os/xox-runtime-adapter.ts')
+    const adapter = source('agent/host-profile/xox-provider-runtime.ts')
     expect(adapter).toContain("@agentic-os/core")
     expect(adapter).toContain('createRuntimePlanRouter')
     expect(adapter).toContain("@agentic-os/runtime-openai-agents")
@@ -936,7 +941,7 @@ describe('Agent ADR architecture boundaries', () => {
       expect(source(file), `${file} must not import the deleted final-answer claim extractor`).not.toContain('final-answer-claim-extractor')
     }
 
-    const hostKit = source('agent/agentic-os/xox-agentic-os-host-kit.ts')
+    const hostKit = source('agent/host-profile/xox-agent-run-profile.ts')
     expect(hostKit).toContain("@agentic-os/server")
     expect(hostKit).toContain('runAgentServerFinalAnswerClaimExtraction')
     expect(hostKit).toContain('XOX_FINAL_ANSWER_CLAIM_SUBJECT_TYPES')
@@ -963,8 +968,8 @@ describe('Agent ADR architecture boundaries', () => {
     expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-runtime-planning-adapter.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'context-pack.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'host-profile', 'xox-context-pack.ts'))).toBe(true)
-    const planningCall = source('agent/agentic-os/xox-runtime-adapter.ts')
-    expect(planningCall).toContain("from '../host-profile/xox-context-pack.js'")
+    const planningCall = source('agent/host-profile/xox-provider-runtime.ts')
+    expect(planningCall).toContain("from './xox-context-pack.js'")
     expect(planningCall).not.toContain("from './context-engine/index.js'")
     for (const file of sourceFilesUnder('agent')) {
       const content = source(file)

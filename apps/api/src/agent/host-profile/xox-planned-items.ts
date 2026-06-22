@@ -19,8 +19,8 @@ import { redactSecretLikeContent } from '../memory.js'
 import type { ParsedWorkspaceBundleArtifact } from '../workspace-bundle-artifact.js'
 import type { AgentAutomationLevel } from '../tool-policy.js'
 import type { AgentToolObservation } from '../agentic-os/xox-tool-observation-adapter.js'
-import type { AgentLoopObligationPlan } from '../agentic-os/xox-final-review-adapter.js'
-import type { RuntimePlanError, RuntimePlanResult } from '../agentic-os/xox-runtime-adapter.js'
+import type { AgentLoopObligationPlan } from './xox-final-review-policy.js'
+import type { RuntimePlanError, RuntimePlanResult } from './xox-provider-runtime.js'
 
 export type AgentActionDraft = {
   kind: AgentActionKind

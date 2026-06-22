@@ -17,7 +17,7 @@ The smoke command is preserved. Only its location changes because it is an opera
 | Durable run queue, lease, cancellation, fail-close DB writes | historical `apps/api/src/agent/run-worker.ts`; M137 moved this to `apps/api/src/agent/agentic-os/xox-run-worker-adapter.ts` |
 | Turn intake lane resolution | `apps/api/src/agent/agentic-os/xox-turn-intake-adapter.ts` + `@agentic-os/core` |
 | Direct answer lane | `apps/api/src/agent/agentic-os/xox-direct-answer-adapter.ts` + `@agentic-os/core` |
-| Main agent loop | `apps/api/src/agent/agentic-os/xox-agentic-os-host-kit.ts` + `@agentic-os/core` |
+| Main agent loop | `apps/api/src/agent/host-profile/xox-agent-run-profile.ts` + `@agentic-os/core` |
 | xox product prompt text | M153 keeps prompt files under `apps/api/src/agent/host-profile/prompts`; M152's generic `apps/api/src/agent/prompts` directory remains deleted |
 | Real provider smoke | `apps/api/scripts/agent-real-provider-smoke.ts` |
 

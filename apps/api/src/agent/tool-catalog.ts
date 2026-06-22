@@ -11,7 +11,7 @@ import { newId } from '../core/security.js'
 import { utcNow } from '../core/time.js'
 import type { Database } from '../db/schema.js'
 import { addRunEvent } from './agentic-os/xox-run-event-store-adapter.js'
-import type { AgentLoopObligationPlan } from './agentic-os/xox-final-review-adapter.js'
+import type { AgentLoopObligationPlan } from './host-profile/xox-final-review-policy.js'
 import type { AgentToolObservation } from './agentic-os/xox-tool-observation-adapter.js'
 import { mergeAgentGoalFacts, sanitizeAgentGoalFacts } from './host-profile/xox-goal-facts.js'
 import {

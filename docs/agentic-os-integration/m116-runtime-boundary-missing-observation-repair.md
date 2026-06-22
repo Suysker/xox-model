@@ -5,7 +5,7 @@ Date: 2026-06-20
 
 ## 目标
 
-继续压缩 `apps/api/src/agent/agentic-os/xox-agentic-os-host-kit.ts`。
+继续压缩 `apps/api/src/agent/host-profile/xox-agent-run-profile.ts`。
 
 当前 host kit 在 provider 表达 `sandbox_run_code` 工具调用意图、重试后仍没有形成 tool observation 时，手写了一整段 runner repair state：
 
@@ -36,7 +36,7 @@ xox：
   - 把 `sandbox_run_code` missing observation 映射成 xox domain obligation；
   - 调用 Agentic OS helper；
   - 返回 xox event DTO 所需的 evaluation、obligation ledger、obligation plan、goal facts 和 next brief。
-- `apps/api/src/agent/agentic-os/xox-agentic-os-host-kit.ts`
+- `apps/api/src/agent/host-profile/xox-agent-run-profile.ts`
   - 删除手写的 `runtime_boundary_sandbox_calculation` ledger/plan 对象图；
   - 只保留 event persistence 和中文 copy。
 
@@ -65,7 +65,7 @@ npm.cmd run test:api
 
 已于 2026-06-20 完成。
 
-- `apps/api/src/agent/agentic-os/xox-agentic-os-host-kit.ts` 不再包含 `runtime_boundary_sandbox_calculation` 的手写 ledger/plan 对象图。
+- `apps/api/src/agent/host-profile/xox-agent-run-profile.ts` 不再包含 `runtime_boundary_sandbox_calculation` 的手写 ledger/plan 对象图。
 - `apps/api/src/agent/loop-obligation-ledger.ts` 新增 `runtimeBoundaryMissingObservationRepair()`，只保留 `sandbox_run_code -> sandbox_calculation` 领域映射，并调用 Agentic OS core helper 生成 ledger + plan。
 - `apps/api/src/agent/loop-obligations.ts` 暴露 canonical Agentic OS plan -> xox plan DTO 的复用 adapter，避免重复转换逻辑。
 - `apps/api/tests/agent-architecture.test.ts` 已防止 host kit 重新引入这段 missing-observation repair graph。

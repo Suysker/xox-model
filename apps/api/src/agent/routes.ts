@@ -43,7 +43,7 @@ import {
 import { submitAgentMessageRun } from './agentic-os/xox-run-submission-adapter.js'
 import { addRunEvent, agentThreadEvents, listSerializedRunEvents } from './agentic-os/xox-run-event-store-adapter.js'
 import { addMessage } from './agentic-os/xox-thread-store-adapter.js'
-import { resumeXoxAgenticOsRunAfterActionConfirmation } from './agentic-os/xox-agentic-os-host-kit.js'
+import { resumeXoxAgenticOsRunAfterActionConfirmation } from './host-profile/xox-agent-run-profile.js'
 import {
   consolidateAgentMemoryCandidates,
   memoryCandidateFromCancelledAction,

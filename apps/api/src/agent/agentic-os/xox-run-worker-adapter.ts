@@ -24,7 +24,7 @@ import type { CurrentUser } from '../../modules/auth.js'
 import { redactSecretLikeContent } from '../memory.js'
 import { resolveAgentRuntimeSettings } from '../provider-settings.js'
 import type { PlannerContext } from '../host-profile/xox-planned-items.js'
-import { executeXoxAgenticOsRun } from './xox-agentic-os-host-kit.js'
+import { executeXoxAgenticOsRun } from '../host-profile/xox-agent-run-profile.js'
 import {
   AgentRunLeaseLostError,
   claimAgentRunLease,
@@ -42,7 +42,7 @@ import {
   type RuntimeChatMessage,
   type RuntimePlanError,
   type RuntimePlanResult,
-} from './xox-runtime-adapter.js'
+} from '../host-profile/xox-provider-runtime.js'
 import { storePlannedActionGraph } from './xox-action-graph-adapter.js'
 import { readDraftFromRuntimeResult } from '../host-profile/xox-planned-items.js'
 import type { AgentToolCallStep, ChatTool } from '../tool-catalog.js'
