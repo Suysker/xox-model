@@ -384,6 +384,8 @@ describe('Agent ADR architecture boundaries', () => {
   it('keeps final review obligation projection merge in Agentic OS core', () => {
     const hostKit = source('agent/host-profile/xox-agent-run-profile.ts')
     expect(hostKit).toContain('serializeObligationLedgerForResponseEvent')
+    expect(hostKit).toContain('reviewAgentServerFinalResponse')
+    expect(hostKit).not.toContain('evaluateAgentFinalResponseEvidenceGate')
     expect(hostKit).not.toContain('function responseEvaluationObligationLedger')
     expect(hostKit).not.toContain('function responseEventObligationLedger')
     expect(hostKit).not.toContain('projection.openCount = projection.obligations.filter')

@@ -37,7 +37,6 @@ import type {
 import {
   createAgentHostLoopCoordinator,
   createAgentHostKit,
-  evaluateAgentFinalResponseEvidenceGate,
   hasNonActionHostObservation,
   inferToolAuthorityClass,
   isActionResultToolObservation,
@@ -74,6 +73,7 @@ import {
   AGENT_SERVER_FINAL_ANSWER_CLAIM_EXTRACTION_TOOL_NAME,
   agentServerRunLifecycleEvents,
   decideAgentServerFinalAnswerClaimReview,
+  reviewAgentServerFinalResponse,
   runAgentServerObservationContinuation,
   runAgentServerFinalAnswerClaimExtraction,
   shouldMaterializeAgentServerFinalResponseObligations,
@@ -1243,7 +1243,7 @@ function responseRequiredEvidence(evidenceRequirements: OsAgentEvidenceRequireme
   }))
 }
 
-function reviewFinalResponseWithAgenticOs(input: {
+function reviewXoxFinalResponseWithAgenticOsServer(input: {
   finalAssistantText: string | null
   observations: AgentToolObservation[]
   evidence: AgentEvidenceItem[]
@@ -1252,76 +1252,72 @@ function reviewFinalResponseWithAgenticOs(input: {
   pendingActionCount?: number
   awaitingClarification?: boolean
 }): ResponseEvaluation {
-  return evaluateAgentFinalResponseEvidenceGate<ResponseRequiredEvidence>({
+  return reviewAgentServerFinalResponse<ResponseRequiredEvidence>({
     finalAssistantText: input.finalAssistantText,
     observationCount: input.observations.length,
     evidenceRecords: osEvidenceRecordsFromXoxEvidence(input.evidence),
     facts: input.goalFacts as Record<string, unknown>,
     finalAnswerClaims: input.finalAnswerClaims ?? [],
     buildRequiredEvidence: responseRequiredEvidence,
-    missingFinalAnswerRequiredEvidence: [{
-      authority: 'domain_read',
-      reason: '工具 observation 已产生，但还没有模型最终回答。',
-    }],
     ...(input.pendingActionCount !== undefined ? { pendingActionCount: input.pendingActionCount } : {}),
     ...(input.awaitingClarification !== undefined ? { awaitingClarification: input.awaitingClarification } : {}),
-    awaitingConfirmation: {
-      severity: 'info',
-      code: 'response.pending_confirmation_interrupt',
-      message: '运行图中仍有待确认动作，不能把说明文字判定为目标完成。',
-      confidence: 0.99,
-      nextPlannerBrief: null,
-    },
-    awaitingClarificationCopy: {
-      severity: 'info',
-      code: 'response.pending_clarification_interrupt',
-      message: '运行图中仍有待澄清问题，不能把说明文字判定为目标完成。',
-      confidence: 0.99,
-      nextPlannerBrief: null,
-    },
-    missingFinalAnswer: {
-      severity: 'fail',
-      code: 'response.final_answer_missing',
-      message: '工具结果只能作为 observation，不能替代面向用户的 assistant final answer。',
-      confidence: 0.99,
-      nextPlannerBrief: '基于已经取得的 observation 生成最终回答；不要把工具返回原文当成最终回答。',
-    },
-    providerProtocolArtifact: ({ artifactFormat }) => ({
-      severity: 'fail',
-      code: 'response.provider_tool_call_text_not_final',
-      message: `Provider 返回了 ${artifactFormat} 工具调用协议文本，不能作为面向用户的最终回答。`,
-      confidence: 0.99,
-      nextPlannerBrief: '上一轮 provider 把工具调用协议片段放进 assistant content。不要把它当最终回答；如果还需要工具，必须通过结构化 tool_calls 继续，否则基于已取得 observation 输出自然语言最终回答。',
-    }),
-    emptyFinalAnswer: {
-      severity: 'fail',
-      code: 'response.empty_final_answer',
-      message: '没有可展示的最终回答。',
-      confidence: 0.98,
-      nextPlannerBrief: '生成一个面向用户的最终回答。',
-    },
-    defaultEvidenceFailure: {
-      status: 'needs_more_evidence',
-      code: 'response.evidence_missing',
-      message: '本轮缺少必要的结构化事实 evidence。',
-      confidence: 0.9,
-      nextPlannerBrief: '补充必要的工作区事实，再基于该事实生成最终回答。',
-      evidenceIds: 'all',
-    },
-    buildPassEvaluation: ({ requiredEvidence }): ResponseEvaluation => ({
-      status: 'pass',
-      confidence: input.evidence.some((item) => item.authority === 'sandbox') ? 0.94 : 0.9,
-      requiredEvidence,
-      findings: [{
+    copy: {
+      missingFinalAnswerRequiredEvidence: [{
+        authority: 'domain_read',
+        reason: '工具 observation 已产生，但还没有模型最终回答。',
+      }],
+      awaitingConfirmation: {
         severity: 'info',
+        code: 'response.pending_confirmation_interrupt',
+        message: '运行图中仍有待确认动作，不能把说明文字判定为目标完成。',
+        confidence: 0.99,
+        nextPlannerBrief: null,
+      },
+      awaitingClarification: {
+        severity: 'info',
+        code: 'response.pending_clarification_interrupt',
+        message: '运行图中仍有待澄清问题，不能把说明文字判定为目标完成。',
+        confidence: 0.99,
+        nextPlannerBrief: null,
+      },
+      missingFinalAnswer: {
+        severity: 'fail',
+        code: 'response.final_answer_missing',
+        message: '工具结果只能作为 observation，不能替代面向用户的 assistant final answer。',
+        confidence: 0.99,
+        nextPlannerBrief: '基于已经取得的 observation 生成最终回答；不要把工具返回原文当成最终回答。',
+      },
+      providerProtocolArtifact: ({ artifactFormat }) => ({
+        severity: 'fail',
+        code: 'response.provider_tool_call_text_not_final',
+        message: `Provider 返回了 ${artifactFormat} 工具调用协议文本，不能作为面向用户的最终回答。`,
+        confidence: 0.99,
+        nextPlannerBrief: '上一轮 provider 把工具调用协议片段放进 assistant content。不要把它当最终回答；如果还需要工具，必须通过结构化 tool_calls 继续，否则基于已取得 observation 输出自然语言最终回答。',
+      }),
+      emptyFinalAnswer: {
+        severity: 'fail',
+        code: 'response.empty_final_answer',
+        message: '没有可展示的最终回答。',
+        confidence: 0.98,
+        nextPlannerBrief: '生成一个面向用户的最终回答。',
+      },
+      defaultEvidenceFailure: {
+        status: 'needs_more_evidence',
+        code: 'response.evidence_missing',
+        message: '本轮缺少必要的结构化事实 evidence。',
+        confidence: 0.9,
+        nextPlannerBrief: '补充必要的工作区事实，再基于该事实生成最终回答。',
+        evidenceIds: 'all',
+      },
+      pass: () => ({
+        confidence: input.evidence.some((item) => item.authority === 'sandbox') ? 0.94 : 0.9,
         code: 'response.evidence_accepted',
         evidenceIds: input.evidence.filter((item) => item.authority !== 'memory').map((item) => item.id),
         message: input.evidence.some((item) => item.authority === 'sandbox')
           ? '最终回答已在 sandbox/domain evidence 之后生成。'
           : '最终回答已在当前 run evidence 之后生成。',
-      }],
-      nextPlannerBrief: null,
-    }),
+      }),
+    },
   })
 }
 
@@ -2100,7 +2096,7 @@ function createXoxAgenticOsHost(
       const runtimeFacts = await readRuntimeGoalFacts(ctx.db, ctx.runId)
       const goalFacts = mergeAgentGoalFacts(goalContractFacts(state.goal), runtimeFacts)
       const pendingActionCount = state.actionRows.filter((row) => row.status === 'pending').length
-      const preReviewEvaluation = reviewFinalResponseWithAgenticOs({
+      const preReviewEvaluation = reviewXoxFinalResponseWithAgenticOsServer({
         finalAssistantText: input.assistantText,
         observations: reviewObservations,
         evidence,
@@ -2172,7 +2168,7 @@ function createXoxAgenticOsHost(
           : null
       const finalAnswerClaims = claimExtraction?.status === 'completed' ? claimExtraction.claims : []
       let evaluation = claimExtraction?.status === 'completed'
-        ? reviewFinalResponseWithAgenticOs({
+        ? reviewXoxFinalResponseWithAgenticOsServer({
             finalAssistantText: input.assistantText,
             observations: reviewObservations,
             evidence,
@@ -2270,7 +2266,7 @@ function createXoxAgenticOsHost(
             runId: ctx.runId,
             observations: reviewObservations,
           })
-          evaluation = reviewFinalResponseWithAgenticOs({
+          evaluation = reviewXoxFinalResponseWithAgenticOsServer({
             finalAssistantText: input.assistantText,
             observations: reviewObservations,
             evidence,
