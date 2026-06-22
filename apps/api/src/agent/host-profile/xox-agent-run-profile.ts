@@ -132,8 +132,9 @@ import {
 } from '../memory.js'
 import { runMemoryDreamingSweep } from '../memory.js'
 import {
-  evaluateAssistantResponse,
+  reviewXoxFinalResponse,
   responseEvaluationSummary,
+  type ResponseEvaluation,
 } from './xox-final-review-policy.js'
 import {
   callRuntimePlanner,
@@ -537,7 +538,7 @@ function finalTextMentionsSpecificShareholder(text: string): boolean {
 }
 
 function canMaterializeEvaluationObligations(input: {
-  evaluation: ReturnType<typeof evaluateAssistantResponse>
+  evaluation: ResponseEvaluation
   assistantText: string
 }): boolean {
   if (
@@ -1203,7 +1204,7 @@ function evidenceHasOrderedShareholderFacts(evidence: AgentEvidenceItem[]) {
 function shouldRunFinalAnswerClaimReview(input: {
   assistantText: string | null
   pendingActionCount: number
-  preReviewEvaluation: ReturnType<typeof evaluateAssistantResponse>
+  preReviewEvaluation: ResponseEvaluation
   evidence: AgentEvidenceItem[]
   goalFacts: AgentGoalFacts
 }) {
@@ -1992,7 +1993,7 @@ function createXoxAgenticOsHost(
       const runtimeFacts = await readRuntimeGoalFacts(ctx.db, ctx.runId)
       const goalFacts = mergeAgentGoalFacts(goalContractFacts(state.goal), runtimeFacts)
       const pendingActionCount = state.actionRows.filter((row) => row.status === 'pending').length
-      const preReviewEvaluation = evaluateAssistantResponse({
+      const preReviewEvaluation = reviewXoxFinalResponse({
         goal: state.goal,
         finalAssistantText: input.assistantText,
         observations: reviewObservations,
@@ -2065,7 +2066,7 @@ function createXoxAgenticOsHost(
           : null
       const finalAnswerClaims = claimExtraction?.status === 'completed' ? claimExtraction.claims : []
       let evaluation = claimExtraction?.status === 'completed'
-        ? evaluateAssistantResponse({
+        ? reviewXoxFinalResponse({
             goal: state.goal,
             finalAssistantText: input.assistantText,
             observations: reviewObservations,
@@ -2166,7 +2167,7 @@ function createXoxAgenticOsHost(
             runId: ctx.runId,
             observations: reviewObservations,
           })
-          evaluation = evaluateAssistantResponse({
+          evaluation = reviewXoxFinalResponse({
             goal: state.goal,
             finalAssistantText: input.assistantText,
             observations: reviewObservations,

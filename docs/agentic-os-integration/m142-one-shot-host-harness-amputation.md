@@ -227,6 +227,16 @@ Status: completed as a follow-up M142 run-profile compression cut.
 - xox now supplies only runtime context/messages, provider callback, event sink, and failed plan-step persistence for this continuation path.
 - Architecture guards now fail if the local runner or direct `agentServerRunLifecycleEvents.modelContinuation*()` calls return in xox.
 
+### M163: Collapsed Final Evidence Evaluation Into Agentic OS Gate
+
+Status: completed as a follow-up M142 final-review boundary cut.
+
+- Added Agentic OS core `AgentFinalResponseEvidencePolicy`, `buildAgentFinalResponseEvidenceRequirements()`, `evaluateAgentFinalResponseEvidenceGate()`, and `projectAgentFinalResponseEvidenceFailure()`.
+- Added generic `factsContainAny` on `AgentEvidenceRequirement`, so Agentic OS can enforce structured evidence facts such as ordered shareholder data without xox writing a local evaluator.
+- Deleted xox-local final evidence mechanics from `host-profile/xox-final-review-policy.ts`: `buildEvidenceRequirements()`, `evaluateAssistantResponse()`, `xoxEvidenceFailureEvaluation()`, sandbox/shareholder evidence failure helpers, and xox requirement-to-OS converter helpers.
+- xox now keeps only `xoxFinalEvidencePolicy`, claim subject normalization, observation classification, localized copy, and `reviewXoxFinalResponse()` as a thin HostProfile boundary into `evaluateAgentFinalResponseEvidenceGate()`.
+- Architecture guards now fail if the deleted evaluator names, local evidence failure builder, or final-answer claim requirement compiler return in xox.
+
 ## One-Shot Scope
 
 M142 is not complete until all rows in this table are addressed. If a row cannot be completed in a given implementation cut, that cut must be presented as M142-in-progress rather than M142 completion.
@@ -369,6 +379,7 @@ Required guards:
 - `agentic-os/xox-tool-observation-adapter.ts` must stay deleted; no xox file may hand-build `model_continuation*` lifecycle events or local provider assistant/tool replay.
 - `host-profile/xox-agent-run-profile.ts` must not reintroduce `continueModelAfterToolObservations()` or direct `agentServerRunLifecycleEvents.modelContinuation*()` calls; observation continuation lifecycle belongs to `@agentic-os/server`.
 - xox root files must not contain generic final review/evidence/obligation ledger runtime code.
+- `host-profile/xox-final-review-policy.ts` must not reintroduce local final-review harness mechanics such as `buildEvidenceRequirements`, `evaluateAssistantResponse`, `xoxEvidenceFailureEvaluation`, `buildEvidenceFailureEvaluation`, `evidenceRequirementsFromFinalAnswerClaims`, or xox-owned requirement-to-OS converters.
 - xox projection files must not own generic provider stream grouping or goal/action tree lifecycle logic.
 
 These guards should check semantics, not just filenames, because move-only refactors are explicitly rejected.

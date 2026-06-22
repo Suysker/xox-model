@@ -21,15 +21,16 @@ import {
   applyFinalPassToObligationLedger,
   applyObservationToObligationLedger as applyOsObservationToObligationLedger,
   buildEvidenceLedger as buildOsEvidenceLedger,
-  evaluateAgentFinalResponseReview,
+  evaluateAgentFinalResponseEvidenceGate,
   evidenceFactsContainKey,
-  evidenceRequirementsFromFinalAnswerClaims,
   initializeObligationLedger as initializeOsObligationLedger,
   ledgerToObligationPlan as osLedgerToObligationPlan,
   projectObligationLedgerWithAdditionalObligations,
   projectObligationStateWithAdditionalObligations,
   type AdditionalObligationProjectionInput,
   type AgentFinalResponseEvaluation,
+  type AgentFinalResponseEvidenceFailureCopy,
+  type AgentFinalResponseEvidencePolicy,
   type AgentFinalResponseEvaluationStatus,
   type AgentFinalResponseFinding,
   type AgentFinalResponseRequiredEvidence,
@@ -78,13 +79,6 @@ export type AgentEvidenceItem = {
 
 export type AgentFinalAnswerClaim = Omit<OsAgentFinalAnswerClaim, 'subject'> & {
   subject?: AgentEvidenceSubject['type'] | AgentEvidenceSubject
-}
-
-export type AgentEvidenceRequirement = {
-  authority: AgentEvidenceAuthority
-  subject?: AgentEvidenceSubject['type']
-  reason: string
-  source: 'goal_facts' | 'trajectory' | 'final_answer_claim'
 }
 
 export type ResponseEvaluationStatus = AgentFinalResponseEvaluationStatus
@@ -447,85 +441,199 @@ export function evidenceForModel(items: AgentEvidenceItem[]) {
   }))
 }
 
-function buildEvidenceRequirements(input: {
-  facts: AgentGoalFacts
-  evidence: AgentEvidenceItem[]
-  finalAnswerClaims?: AgentFinalAnswerClaim[]
-}): AgentEvidenceRequirement[] {
-  const requirements: AgentEvidenceRequirement[] = []
-  const claims = input.finalAnswerClaims ?? []
-  const claimRequirements = xoxEvidenceRequirementsFromFinalAnswerClaims(claims)
-  const hasSandboxTrajectory = input.evidence.some((item) => item.authority === 'sandbox' || item.source === 'sandbox_run_code')
-  const calculationClaimRequirement = claimRequirements.find((requirement) =>
-    requirement.authority === 'sandbox' && requirement.subject === 'calculation')
-  if (input.facts.requiresSandboxComputation) {
-    requirements.push({
-      authority: 'sandbox',
-      subject: 'calculation',
-      reason: '目标契约要求可复核的派生计算。',
-      source: 'goal_facts',
-    })
-  } else if (hasSandboxTrajectory) {
-    requirements.push({
-      authority: 'sandbox',
-      subject: 'calculation',
-      reason: '本轮轨迹已调用 sandbox_run_code，最终回答必须基于有效沙箱 observation。',
-      source: 'trajectory',
-    })
-  } else if (calculationClaimRequirement) {
-    requirements.push({
-      authority: 'sandbox',
-      subject: 'calculation',
-      reason: calculationClaimRequirement.reason,
-      source: 'final_answer_claim',
-    })
-  }
+type XoxFinalEvidenceRuleSource = 'goal_facts' | 'trajectory' | 'final_answer_claim'
 
-  const shareholderClaimRequirement = claimRequirements.find((requirement) =>
-    requirement.authority === 'domain_read' && requirement.subject === 'shareholder')
-  if (input.facts.requiresOrderedEntityFacts) {
-    requirements.push({
-      authority: 'domain_read',
-      subject: 'shareholder',
-      reason: '目标契约要求有序实体事实。',
-      source: 'goal_facts',
-    })
-  } else if (shareholderClaimRequirement) {
-    requirements.push({
-      authority: 'domain_read',
-      subject: 'shareholder',
-      reason: shareholderClaimRequirement.reason,
-      source: 'final_answer_claim',
-    })
-  }
-
-  return requirements
+const xoxSandboxEvidenceFailure: AgentFinalResponseEvidenceFailureCopy = {
+  status: 'needs_calculation',
+  missingCode: 'response.sandbox_evidence_missing',
+  invalidCode: 'response.sandbox_evidence_invalid',
+  missingMessage: '最终回答依赖派生计算，但本轮还没有完成的 sandbox_run_code evidence。',
+  invalidMessage: '本轮 sandbox_run_code observation 未真实完成、退出异常或缺少可读输出，不能作为计算 evidence。',
+  confidence: 0.96,
+  missingNextPlannerBrief: '继续调用 sandbox_run_code，用当前工作区事实完成可复核计算，再生成最终回答。',
+  invalidNextPlannerBrief: '继续或修复 sandbox_run_code，确保真实执行并产生可读 stdout、文本结果或 artifact，再基于 observation 生成最终回答。',
+  evidenceIds: 'invalid_or_matched',
 }
 
-function xoxEvidenceRequirementsFromFinalAnswerClaims(
-  claims: AgentFinalAnswerClaim[],
-): AgentEvidenceRequirement[] {
-  return evidenceRequirementsFromFinalAnswerClaims({
-    claims: claims.map(osClaimFromXoxClaim),
-  }).flatMap((requirement): AgentEvidenceRequirement[] => {
-    if (requirement.authority === 'sandbox' && requirement.subject?.type === 'calculation') {
-      return [{
+const xoxOrderedEntityEvidenceFailure: AgentFinalResponseEvidenceFailureCopy = {
+  status: 'needs_more_evidence',
+  code: 'response.entity_evidence_missing',
+  message: '本轮缺少可复核的有序股东事实，不能把全局口径当成个人股东口径。',
+  confidence: 0.9,
+  nextPlannerBrief: '补充包含有序股东信息的工作区事实，再基于该事实生成最终回答。',
+  evidenceIds: 'all',
+}
+
+const xoxDefaultEvidenceFailure: AgentFinalResponseEvidenceFailureCopy = {
+  status: 'needs_more_evidence',
+  code: 'response.evidence_missing',
+  message: '本轮缺少必要的结构化事实 evidence。',
+  confidence: 0.9,
+  nextPlannerBrief: '补充必要的工作区事实，再基于该事实生成最终回答。',
+  evidenceIds: 'all',
+}
+
+function xoxFinalEvidenceMetadata(input: {
+  xoxKind: AgentLoopObligationKind
+  findingCodes: string[]
+  authority: AgentEvidenceAuthority
+  subject?: AgentEvidenceSubject['type']
+  source: XoxFinalEvidenceRuleSource
+  obligationId: string
+  goalFacts?: AgentGoalFacts
+  requiredDataScopes?: string[]
+  requiredMetrics?: string[]
+}): OsJsonObject {
+  return {
+    ...xoxObligationMetadata({
+      xoxKind: input.xoxKind,
+      findingCodes: input.findingCodes,
+      authority: input.authority,
+      ...(input.subject ? { subject: input.subject } : {}),
+      ...(input.goalFacts ? { goalFacts: input.goalFacts } : {}),
+      ...(input.requiredDataScopes ? { requiredDataScopes: input.requiredDataScopes } : {}),
+      ...(input.requiredMetrics ? { requiredMetrics: input.requiredMetrics } : {}),
+    }),
+    obligationId: input.obligationId,
+    xoxRequirementSource: input.source,
+  }
+}
+
+const xoxFinalEvidencePolicy: AgentFinalResponseEvidencePolicy = {
+  rules: [
+    {
+      ruleId: 'xox.goal.sandbox_calculation',
+      requirementKey: 'sandbox:calculation',
+      condition: { kind: 'fact_truthy', path: 'requiresSandboxComputation' },
+      requirement: {
+        requirementId: 'goal_facts:sandbox:calculation',
         authority: 'sandbox',
+        source: 'sandbox_run_code',
         subject: 'calculation',
-        reason: requirement.reason,
-        source: 'final_answer_claim',
-      }]
-    }
-    if (requirement.authority === 'domain_read' && requirement.subject?.type === 'shareholder') {
-      return [{
+        toolNames: ['sandbox_run_code'],
+        capabilities: ['sandbox'],
+        reason: '目标契约要求可复核的派生计算。',
+        metadata: xoxFinalEvidenceMetadata({
+          xoxKind: 'sandbox_calculation',
+          findingCodes: ['response.sandbox_evidence_missing'],
+          authority: 'sandbox',
+          subject: 'calculation',
+          source: 'goal_facts',
+          obligationId: 'loop_obligation_sandbox_calculation',
+          goalFacts: { requiresSandboxComputation: true },
+        }),
+        failure: xoxSandboxEvidenceFailure,
+      },
+    },
+    {
+      ruleId: 'xox.trajectory.sandbox_calculation',
+      requirementKey: 'sandbox:calculation',
+      condition: { kind: 'evidence_present', match: { authority: 'sandbox' } },
+      requirement: {
+        requirementId: 'trajectory:sandbox:calculation',
+        authority: 'sandbox',
+        source: 'sandbox_run_code',
+        subject: 'calculation',
+        toolNames: ['sandbox_run_code'],
+        capabilities: ['sandbox'],
+        reason: '本轮轨迹已调用 sandbox_run_code，最终回答必须基于有效沙箱 observation。',
+        metadata: xoxFinalEvidenceMetadata({
+          xoxKind: 'sandbox_calculation',
+          findingCodes: ['response.sandbox_evidence_missing'],
+          authority: 'sandbox',
+          subject: 'calculation',
+          source: 'trajectory',
+          obligationId: 'loop_obligation_sandbox_calculation',
+          goalFacts: { requiresSandboxComputation: true },
+        }),
+        failure: xoxSandboxEvidenceFailure,
+      },
+    },
+    {
+      ruleId: 'xox.claim.sandbox_calculation',
+      requirementKey: 'sandbox:calculation',
+      condition: {
+        kind: 'claim_requirement',
+        match: { authority: 'sandbox', subjectType: 'calculation' },
+      },
+      requirement: {
+        requirementId: 'final_answer_claim:sandbox:calculation',
+        authority: 'sandbox',
+        source: 'sandbox_run_code',
+        subject: 'calculation',
+        toolNames: ['sandbox_run_code'],
+        capabilities: ['sandbox'],
+        reasonSource: 'matched_claim',
+        metadata: xoxFinalEvidenceMetadata({
+          xoxKind: 'sandbox_calculation',
+          findingCodes: ['response.sandbox_evidence_missing'],
+          authority: 'sandbox',
+          subject: 'calculation',
+          source: 'final_answer_claim',
+          obligationId: 'loop_obligation_sandbox_calculation',
+          goalFacts: { requiresSandboxComputation: true },
+        }),
+        failure: xoxSandboxEvidenceFailure,
+      },
+    },
+    {
+      ruleId: 'xox.goal.ordered_entity_fact',
+      requirementKey: 'domain_read:shareholder',
+      condition: { kind: 'fact_truthy', path: 'requiresOrderedEntityFacts' },
+      requirement: {
+        requirementId: 'goal_facts:domain_read:shareholder',
         authority: 'domain_read',
+        source: 'data_query_workspace',
         subject: 'shareholder',
-        reason: requirement.reason,
-        source: 'final_answer_claim',
-      }]
-    }
-    return []
-  })
+        toolNames: ['data_query_workspace'],
+        capabilities: ['data'],
+        factsContainAny: ['firstShareholder', 'shareholders'],
+        reason: '目标契约要求有序实体事实。',
+        metadata: xoxFinalEvidenceMetadata({
+          xoxKind: 'domain_fact',
+          findingCodes: ['response.entity_evidence_missing'],
+          authority: 'domain_read',
+          subject: 'shareholder',
+          source: 'goal_facts',
+          obligationId: 'loop_obligation_ordered_entity_fact',
+          goalFacts: { requiresOrderedEntityFacts: true },
+          requiredDataScopes: ['entity_summary'],
+          requiredMetrics: ['shareholderNames', 'shareholderInvestments'],
+        }),
+        failure: xoxOrderedEntityEvidenceFailure,
+      },
+    },
+    {
+      ruleId: 'xox.claim.ordered_entity_fact',
+      requirementKey: 'domain_read:shareholder',
+      condition: {
+        kind: 'claim_requirement',
+        match: { authority: 'domain_read', subjectType: 'shareholder' },
+      },
+      requirement: {
+        requirementId: 'final_answer_claim:domain_read:shareholder',
+        authority: 'domain_read',
+        source: 'data_query_workspace',
+        subject: 'shareholder',
+        toolNames: ['data_query_workspace'],
+        capabilities: ['data'],
+        factsContainAny: ['firstShareholder', 'shareholders'],
+        reasonSource: 'matched_claim',
+        metadata: xoxFinalEvidenceMetadata({
+          xoxKind: 'domain_fact',
+          findingCodes: ['response.entity_evidence_missing'],
+          authority: 'domain_read',
+          subject: 'shareholder',
+          source: 'final_answer_claim',
+          obligationId: 'loop_obligation_ordered_entity_fact',
+          goalFacts: { requiresOrderedEntityFacts: true },
+          requiredDataScopes: ['entity_summary'],
+          requiredMetrics: ['shareholderNames', 'shareholderInvestments'],
+        }),
+        failure: xoxOrderedEntityEvidenceFailure,
+      },
+    },
+  ],
 }
 
 function osClaimFromXoxClaim(claim: AgentFinalAnswerClaim): OsAgentFinalAnswerClaim {
@@ -564,32 +672,7 @@ function goalFactsFromRow(goal: Row<'agent_goals'>): AgentGoalFacts {
   return contract.facts && typeof contract.facts === 'object' ? contract.facts : {}
 }
 
-function sandboxEvidenceItems(evidence: AgentEvidenceItem[]) {
-  return evidence.filter((item) => item.authority === 'sandbox' || item.source === 'sandbox_run_code')
-}
-
-function invalidSandboxEvidenceItems(evidence: AgentEvidenceItem[]) {
-  return sandboxEvidenceItems(evidence).filter((item) =>
-    item.validity !== 'valid' ||
-    !isExecutedSandboxEvidenceFacts(item.facts))
-}
-
-function hasCompletedSandboxEvidence(evidence: AgentEvidenceItem[]) {
-  return evidence.some((item) =>
-    item.authority === 'sandbox' &&
-    item.validity === 'valid' &&
-    isExecutedSandboxEvidenceFacts(item.facts))
-}
-
-function hasOrderedShareholderDomainEvidence(evidence: AgentEvidenceItem[]) {
-  return evidence.some((item) =>
-    item.authority === 'domain_read' &&
-    item.validity === 'valid' &&
-    item.source === 'data_query_workspace' &&
-    (evidenceFactsContainKey(item.facts, 'firstShareholder') || evidenceFactsContainKey(item.facts, 'shareholders')))
-}
-
-export function evaluateAssistantResponse(input: {
+export function reviewXoxFinalResponse(input: {
   goal: Row<'agent_goals'>
   finalAssistantText: string | null
   observations: AgentToolObservation[]
@@ -600,19 +683,15 @@ export function evaluateAssistantResponse(input: {
   awaitingClarification?: boolean
 }): ResponseEvaluation {
   const facts = mergeAgentGoalFacts(goalFactsFromRow(input.goal), input.runtimeFacts ?? {})
-  const evidenceRequirements = buildEvidenceRequirements({
-    facts,
-    evidence: input.evidence,
-    finalAnswerClaims: input.finalAnswerClaims ?? [],
-  })
-  const requiredEvidence = responseRequiredEvidence(evidenceRequirements)
   const evidenceRecords = input.evidence.map(osRecordFromXoxEvidence)
-  return evaluateAgentFinalResponseReview<ResponseRequiredEvidence>({
+  return evaluateAgentFinalResponseEvidenceGate<ResponseRequiredEvidence>({
     finalAssistantText: input.finalAssistantText,
     observationCount: input.observations.length,
     evidenceRecords,
-    evidenceRequirements: osEvidenceRequirementsFromXoxRequirements(evidenceRequirements),
-    requiredEvidence,
+    facts: facts as Record<string, unknown>,
+    finalAnswerClaims: (input.finalAnswerClaims ?? []).map(osClaimFromXoxClaim),
+    evidencePolicy: xoxFinalEvidencePolicy,
+    buildRequiredEvidence: responseRequiredEvidence,
     missingFinalAnswerRequiredEvidence: [{
       authority: 'domain_read',
       reason: '工具 observation 已产生，但还没有模型最终回答。',
@@ -663,12 +742,8 @@ export function evaluateAssistantResponse(input: {
       confidence: 0.98,
       nextPlannerBrief: '生成一个面向用户的最终回答。',
     },
-    buildEvidenceFailureEvaluation: () => xoxEvidenceFailureEvaluation({
-      evidence: input.evidence,
-      requiredEvidence,
-      evidenceRequirements,
-    }),
-    buildPassEvaluation: (): ResponseEvaluation => {
+    defaultEvidenceFailure: xoxDefaultEvidenceFailure,
+    buildPassEvaluation: ({ requiredEvidence }): ResponseEvaluation => {
       return {
         status: 'pass',
         confidence: input.evidence.some((item) => item.authority === 'sandbox') ? 0.94 : 0.9,
@@ -687,81 +762,12 @@ export function evaluateAssistantResponse(input: {
   })
 }
 
-function responseRequiredEvidence(evidenceRequirements: AgentEvidenceRequirement[]): ResponseEvaluation['requiredEvidence'] {
+function responseRequiredEvidence(evidenceRequirements: OsAgentEvidenceRequirement[]): ResponseEvaluation['requiredEvidence'] {
   return evidenceRequirements.map((requirement) => ({
-    authority: requirement.authority,
-    ...(requirement.subject ? { subject: requirement.subject } : {}),
+    authority: requirement.authority as AgentEvidenceAuthority,
+    ...(requirement.subject ? { subject: requirement.subject.type } : {}),
     reason: requirement.reason,
   }))
-}
-
-function xoxEvidenceFailureEvaluation(input: {
-  evidence: AgentEvidenceItem[]
-  requiredEvidence: ResponseEvaluation['requiredEvidence']
-  evidenceRequirements: AgentEvidenceRequirement[]
-}): ResponseEvaluation {
-  const sandboxEvidence = sandboxEvidenceItems(input.evidence)
-  const findings: ResponseEvaluationFinding[] = []
-  const requiresSandboxEvidence = input.evidenceRequirements.some((requirement) => requirement.authority === 'sandbox')
-  const requiresShareholderEvidence = input.evidenceRequirements.some((requirement) =>
-    requirement.authority === 'domain_read' && requirement.subject === 'shareholder')
-
-  if (requiresSandboxEvidence) {
-    const completedSandbox = hasCompletedSandboxEvidence(input.evidence)
-    if (!completedSandbox) {
-      const invalidSandbox = invalidSandboxEvidenceItems(input.evidence)
-      const code = invalidSandbox.length > 0
-        ? 'response.sandbox_evidence_invalid'
-        : 'response.sandbox_evidence_missing'
-      findings.push({
-        severity: 'fail',
-        code,
-        evidenceIds: (invalidSandbox.length > 0 ? invalidSandbox : sandboxEvidence).map((item) => item.id),
-        message: invalidSandbox.length > 0
-          ? '本轮 sandbox_run_code observation 未真实完成、退出异常或缺少可读输出，不能作为计算 evidence。'
-          : '最终回答依赖派生计算，但本轮还没有完成的 sandbox_run_code evidence。',
-      })
-      return {
-        status: 'needs_calculation',
-        confidence: 0.96,
-        requiredEvidence: input.requiredEvidence,
-        findings,
-        nextPlannerBrief: invalidSandbox.length > 0
-          ? '继续或修复 sandbox_run_code，确保真实执行并产生可读 stdout、文本结果或 artifact，再基于 observation 生成最终回答。'
-          : '继续调用 sandbox_run_code，用当前工作区事实完成可复核计算，再生成最终回答。',
-      }
-    }
-  }
-
-  if (requiresShareholderEvidence &&
-    !hasOrderedShareholderDomainEvidence(input.evidence)) {
-    findings.push({
-      severity: 'fail',
-      code: 'response.entity_evidence_missing',
-      evidenceIds: input.evidence.map((item) => item.id),
-      message: '本轮缺少可复核的有序股东事实，不能把全局口径当成个人股东口径。',
-    })
-    return {
-      status: 'needs_more_evidence',
-      confidence: 0.9,
-      requiredEvidence: input.requiredEvidence,
-      findings,
-      nextPlannerBrief: '补充包含有序股东信息的工作区事实，再基于该事实生成最终回答。',
-    }
-  }
-
-  return {
-    status: 'needs_more_evidence',
-    confidence: 0.9,
-    requiredEvidence: input.requiredEvidence,
-    findings: [{
-      severity: 'fail',
-      code: 'response.evidence_missing',
-      evidenceIds: input.evidence.map((item) => item.id),
-      message: '本轮缺少必要的结构化事实 evidence。',
-    }],
-    nextPlannerBrief: '补充必要的工作区事实，再基于该事实生成最终回答。',
-  }
 }
 
 export function initializeObligationLedger(input: { runId: string; threadId?: string }): AgentLoopObligationLedger {
@@ -1085,96 +1091,4 @@ export function osEvidenceFromXoxEvidence(evidence: AgentEvidenceItem[]) {
       ...(item.invalidReasons !== undefined ? { invalidReasons: item.invalidReasons } : {}),
     }),
   }))
-}
-
-function osEvidenceRequirementsFromXoxRequirements(
-  requirements: AgentEvidenceRequirement[],
-): OsAgentEvidenceRequirement[] {
-  return requirements.map((requirement, index) =>
-    osEvidenceRequirementFromXoxRequirement(requirement, index))
-}
-
-function xoxRequirementEvidenceSource(requirement: AgentEvidenceRequirement): AgentEvidenceSource {
-  if (requirement.authority === 'sandbox') return 'sandbox_run_code'
-  if (requirement.authority === 'domain_read') return 'data_query_workspace'
-  if (requirement.authority === 'action') return 'agent_action_runtime'
-  if (requirement.authority === 'memory') return 'memory_recall'
-  return 'ambient_context'
-}
-
-function xoxRequirementObligationId(requirement: AgentEvidenceRequirement, index: number): string {
-  if (requirement.authority === 'sandbox') return `loop_obligation_${index + 1}_sandbox_calculation`
-  if (requirement.authority === 'domain_read') {
-    return `loop_obligation_${index + 1}_${requirement.subject === 'shareholder' ? 'ordered_entity_fact' : 'domain_fact'}`
-  }
-  return `loop_obligation_${index + 1}_${requirement.authority}`
-}
-
-function xoxRequirementFindingCodes(requirement: AgentEvidenceRequirement): string[] {
-  if (requirement.authority === 'sandbox') return ['response.sandbox_evidence_missing']
-  if (requirement.authority === 'domain_read' && requirement.subject === 'shareholder') {
-    return ['response.entity_evidence_missing']
-  }
-  return ['response.evidence_missing']
-}
-
-function xoxRequirementMetadata(
-  requirement: AgentEvidenceRequirement,
-  index: number,
-): OsJsonObject {
-  const shareholderFact = requirement.authority === 'domain_read' && requirement.subject === 'shareholder'
-  return {
-    ...xoxObligationMetadata({
-      xoxKind: requirement.authority === 'sandbox' ? 'sandbox_calculation' : 'domain_fact',
-      findingCodes: xoxRequirementFindingCodes(requirement),
-      authority: requirement.authority,
-      ...(requirement.subject ? { subject: requirement.subject } : {}),
-      goalFacts: requirement.authority === 'sandbox'
-        ? { requiresSandboxComputation: true }
-        : shareholderFact
-          ? { requiresOrderedEntityFacts: true }
-          : {},
-      ...(shareholderFact
-        ? {
-            requiredDataScopes: ['entity_summary'],
-            requiredMetrics: ['shareholderNames', 'shareholderInvestments'],
-          }
-        : {}),
-    }),
-    obligationId: xoxRequirementObligationId(requirement, index),
-    xoxRequirementSource: requirement.source,
-  }
-}
-
-function xoxRequirementCapabilities(requirement: AgentEvidenceRequirement): string[] {
-  if (requirement.authority === 'sandbox') return ['sandbox']
-  if (requirement.authority === 'domain_read') return ['data']
-  return []
-}
-
-function xoxRequirementToolNames(requirement: AgentEvidenceRequirement): string[] {
-  if (requirement.authority === 'sandbox') return ['sandbox_run_code']
-  if (requirement.authority === 'domain_read') return ['data_query_workspace']
-  return []
-}
-
-function osEvidenceRequirementFromXoxRequirement(
-  requirement: AgentEvidenceRequirement,
-  index = 0,
-): OsAgentEvidenceRequirement {
-  const osRequirement: OsAgentEvidenceRequirement = {
-    requirementId: `${requirement.source}:${requirement.authority}:${requirement.subject ?? 'any'}`,
-    reason: requirement.reason,
-    authority: requirement.authority,
-    source: xoxRequirementEvidenceSource(requirement),
-    metadata: xoxRequirementMetadata(requirement, index),
-  }
-  const toolNames = xoxRequirementToolNames(requirement)
-  if (toolNames.length > 0) osRequirement.toolNames = toolNames
-  const capabilities = xoxRequirementCapabilities(requirement)
-  if (capabilities.length > 0) osRequirement.capabilities = capabilities
-  if (requirement.subject !== undefined) {
-    osRequirement.subject = { type: requirement.subject }
-  }
-  return osRequirement
 }

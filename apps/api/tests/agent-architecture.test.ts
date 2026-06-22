@@ -391,9 +391,10 @@ describe('Agent ADR architecture boundaries', () => {
     expect(existsSync(join(srcRoot, 'agent', 'loop-obligation-ledger.ts'))).toBe(false)
     const adapter = source('agent/host-profile/xox-final-review-policy.ts')
     expect(adapter).toContain("@agentic-os/core")
-    expect(adapter).toContain('evaluateAgentFinalResponseReview')
+    expect(adapter).toContain('evaluateAgentFinalResponseEvidenceGate')
     expect(adapter).toContain('projectObligationLedgerWithAdditionalObligations')
     expect(adapter).not.toContain('evaluateAgentFinalResponseGate')
+    expect(adapter).not.toContain('evaluateAgentFinalResponseReview')
   })
 
   it('keeps runtime-boundary missing-observation repair projection out of the host kit', () => {
@@ -429,6 +430,8 @@ describe('Agent ADR architecture boundaries', () => {
     for (const deletedExport of [
       'evidenceContainsKey',
       'buildEvidenceRequirements',
+      'evaluateAssistantResponse',
+      'xoxEvidenceFailureEvaluation',
       'loopObligationsFromResponseEvaluation',
       'planLoopObligations',
       'activeLedgerObligations',
@@ -440,6 +443,11 @@ describe('Agent ADR architecture boundaries', () => {
       expect(adapter, `${deletedExport} must not remain as a xox public harness API`).not.toContain(`export function ${deletedExport}(`)
     }
     expect(adapter).not.toContain('function loopObligationsFromResponseEvaluation')
+    expect(adapter).not.toContain('function buildEvidenceRequirements')
+    expect(adapter).not.toContain('function xoxEvidenceFailureEvaluation')
+    expect(adapter).not.toContain('function osEvidenceRequirementFromXoxRequirement')
+    expect(adapter).not.toContain('buildEvidenceFailureEvaluation')
+    expect(adapter).not.toContain('evidenceRequirementsFromFinalAnswerClaims')
 
     expect(existsSync(join(srcRoot, 'agent', 'obligation-materializer.ts'))).toBe(false)
     const hostKit = source('agent/host-profile/xox-agent-run-profile.ts')
