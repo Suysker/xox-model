@@ -72,11 +72,10 @@ import {
 import {
   AGENT_SERVER_FINAL_ANSWER_CLAIM_EXTRACTION_TOOL_NAME,
   agentServerRunLifecycleEvents,
-  decideAgentServerFinalAnswerClaimReview,
   reviewAgentServerFinalResponse,
   runAgentServerObservationContinuation,
   runAgentServerFinalAnswerClaimExtraction,
-  shouldMaterializeAgentServerFinalResponseObligations,
+  runAgentServerFinalResponseReviewCycle,
   type AgentServerFinalAnswerClaimExtractionCopyInput,
   type AgentServerFinalAnswerClaimExtractionOptions,
   type AgentServerFinalAnswerClaimExtractionResult,
@@ -1245,7 +1244,7 @@ function responseRequiredEvidence(evidenceRequirements: OsAgentEvidenceRequireme
 
 function reviewXoxFinalResponseWithAgenticOsServer(input: {
   finalAssistantText: string | null
-  observations: AgentToolObservation[]
+  observationCount: number
   evidence: AgentEvidenceItem[]
   finalAnswerClaims?: OsFinalAnswerClaim[]
   goalFacts: AgentGoalFacts
@@ -1254,7 +1253,7 @@ function reviewXoxFinalResponseWithAgenticOsServer(input: {
 }): ResponseEvaluation {
   return reviewAgentServerFinalResponse<ResponseRequiredEvidence>({
     finalAssistantText: input.finalAssistantText,
-    observationCount: input.observations.length,
+    observationCount: input.observationCount,
     evidenceRecords: osEvidenceRecordsFromXoxEvidence(input.evidence),
     facts: input.goalFacts as Record<string, unknown>,
     finalAnswerClaims: input.finalAnswerClaims ?? [],
@@ -1319,6 +1318,49 @@ function reviewXoxFinalResponseWithAgenticOsServer(input: {
       }),
     },
   })
+}
+
+function finalResponseReviewSnapshot(input: {
+  observations: AgentToolObservation[]
+  evidence: AgentEvidenceItem[]
+}) {
+  return {
+    observationCount: input.observations.length,
+    evidence: input.evidence,
+    evidenceRecords: osEvidenceRecordsFromXoxEvidence(input.evidence),
+    responseEventData: {
+      evidence: input.evidence.map((item) => ({
+        id: item.id,
+        authority: item.authority,
+        source: item.source,
+        subject: item.subject,
+        summary: item.summary,
+      })),
+    },
+  }
+}
+
+function finalResponseReviewEventCopy(input: {
+  phase: 'initial' | 'after_materialization'
+  evaluation: ResponseEvaluation
+}) {
+  return {
+    title: input.phase === 'after_materialization' ? '最终回答证据复检' : '最终回答证据检查',
+    message: responseEvaluationSummary(input.evaluation),
+  }
+}
+
+function finalResponseRuntimeEvidenceRequest(evaluation: ResponseEvaluation) {
+  if (!evaluation.requiredEvidence.some((requirement) => requirement.authority === 'sandbox')) return null
+  return {
+    toolNames: ['sandbox_run_code'],
+    reason: 'final_answer_requires_sandbox_evidence',
+    requiredGoalFacts: { requiresSandboxComputation: true },
+    copy: {
+      title: '运行证据要求已收紧',
+      message: '最终回答需要可复核的 sandbox_run_code observation。',
+    },
+  }
 }
 
 const XOX_FINAL_ANSWER_CLAIM_SUBJECT_TYPES = [
@@ -2096,14 +2138,6 @@ function createXoxAgenticOsHost(
       const runtimeFacts = await readRuntimeGoalFacts(ctx.db, ctx.runId)
       const goalFacts = mergeAgentGoalFacts(goalContractFacts(state.goal), runtimeFacts)
       const pendingActionCount = state.actionRows.filter((row) => row.status === 'pending').length
-      const preReviewEvaluation = reviewXoxFinalResponseWithAgenticOsServer({
-        finalAssistantText: input.assistantText,
-        observations: reviewObservations,
-        evidence,
-        goalFacts,
-        finalAnswerClaims: [],
-        pendingActionCount,
-      })
       if (
         input.assistantText.trim() &&
         pendingActionCount === 0 &&
@@ -2141,122 +2175,51 @@ function createXoxAgenticOsHost(
           evidence: [],
         }
       }
-      await addRunEvent(ctx.db, agentServerRunLifecycleEvents.finalAnswerCandidate({
+      const reviewCycle = await runAgentServerFinalResponseReviewCycle<ResponseRequiredEvidence, AgentEvidenceItem, StoredActionGraph>({
         threadId: ctx.thread.id,
         runId: ctx.runId,
         goalId: state.goal.id,
-        priorObservationCount: state.xoxObservations.length,
-        copy: {
-          title: '最终回答候选已生成',
-          message: '模型已基于本轮 observation 生成最终回答候选，进入 response evaluation。',
-        },
-      }))
-      const claimReviewDecision = decideAgentServerFinalAnswerClaimReview({
         finalAssistantText: input.assistantText,
         pendingActionCount,
-        preReviewEvaluation,
-        evidenceRecords: osEvidenceRecordsFromXoxEvidence(evidence),
-      })
-      const claimExtraction = claimReviewDecision.shouldExtract
-        ? await extractXoxFinalAnswerClaims(ctx, {
+        priorObservationCount: state.xoxObservations.length,
+        initialSnapshot: finalResponseReviewSnapshot({ observations: reviewObservations, evidence }),
+        review: ({ snapshot, finalAnswerClaims }) => reviewXoxFinalResponseWithAgenticOsServer({
+          finalAssistantText: input.assistantText,
+          observationCount: snapshot.observationCount,
+          evidence: [...snapshot.evidence],
+          goalFacts,
+          finalAnswerClaims,
+          pendingActionCount,
+        }),
+        normalizeEvaluation: xoxResponseEvaluationForAgenticOs,
+        extractClaims: ({ snapshot }) => extractXoxFinalAnswerClaims(ctx, {
+          objective: state.objective,
+          finalAssistantText: input.assistantText,
+          evidence: [...snapshot.evidence],
+        }),
+        applyEvaluation: ({ evaluation }) => applyResponseEvaluationToLedger({
+          ledger: state.obligationLedger,
+          evaluation,
+          iteration: reviewIteration,
+        }),
+        projectEventState: ({ evaluation }) => ({
+          obligationLedger: serializeObligationLedgerForResponseEvent({
+            ledger: state.obligationLedger,
+            evaluation,
+          }),
+          obligationPlan: ledgerToObligationPlan({
+            ledger: state.obligationLedger,
             objective: state.objective,
-            finalAssistantText: input.assistantText,
-            evidence,
-          })
-        : input.assistantText.trim()
-          ? { status: 'skipped' as const, reason: claimReviewDecision.skipReason }
-          : null
-      const finalAnswerClaims = claimExtraction?.status === 'completed' ? claimExtraction.claims : []
-      let evaluation = claimExtraction?.status === 'completed'
-        ? reviewXoxFinalResponseWithAgenticOsServer({
-            finalAssistantText: input.assistantText,
-            observations: reviewObservations,
-            evidence,
-            goalFacts,
-            finalAnswerClaims,
-            pendingActionCount,
-          })
-        : preReviewEvaluation
-      evaluation = xoxResponseEvaluationForAgenticOs(evaluation)
-      applyResponseEvaluationToLedger({
-        ledger: state.obligationLedger,
-        evaluation,
-        iteration: reviewIteration,
-      })
-      let obligationPlan = ledgerToObligationPlan({
-        ledger: state.obligationLedger,
-        objective: state.objective,
-      })
-      let responseEventLedger = serializeObligationLedgerForResponseEvent({
-        ledger: state.obligationLedger,
-        evaluation,
-      })
-      await addRunEvent(ctx.db, agentServerRunLifecycleEvents.finalReviewed({
-        threadId: ctx.thread.id,
-        runId: ctx.runId,
-        evaluationStatus: evaluation.status,
-        confidence: evaluation.confidence,
-        evidenceCount: evidence.length,
-        findings: evaluation.findings,
-        requiredEvidence: evaluation.requiredEvidence,
-        finalAnswerClaims,
-        obligationLedger: responseEventLedger,
-        obligationPlan,
-        copy: {
-          title: '最终回答证据检查',
-          message: responseEvaluationSummary(evaluation),
-        },
-      }))
-      await addRunEvent(ctx.db, agentServerRunLifecycleEvents.responseEvaluated({
-        threadId: ctx.thread.id,
-        runId: ctx.runId,
-        goalId: state.goal.id,
-        evaluationStatus: evaluation.status,
-        confidence: evaluation.confidence,
-        evidenceCount: evidence.length,
-        findings: evaluation.findings,
-        requiredEvidence: evaluation.requiredEvidence,
-        finalAnswerClaims,
-        claimReviewStatus: claimExtraction?.status ?? null,
-        claimReviewReason: claimExtraction?.status === 'unavailable' ? claimExtraction.reason : null,
-        obligationLedger: responseEventLedger,
-        obligationPlan,
-        nextPlannerBrief: evaluation.nextPlannerBrief,
-        data: {
-          evidence: evidence.map((item) => ({
-            id: item.id,
-            authority: item.authority,
-            source: item.source,
-            subject: item.subject,
-            summary: item.summary,
-          })),
-        },
-        copy: {
-          title: '最终回答证据检查',
-          message: responseEvaluationSummary(evaluation),
-        },
-      }))
-      if (evaluation.requiredEvidence.some((requirement) => requirement.authority === 'sandbox')) {
-        await addRunEvent(ctx.db, agentServerRunLifecycleEvents.runtimeEvidenceRequired({
-          threadId: ctx.thread.id,
-          runId: ctx.runId,
-          toolNames: ['sandbox_run_code'],
-          reason: 'final_answer_requires_sandbox_evidence',
-          requiredGoalFacts: { requiresSandboxComputation: true },
-          copy: {
-            title: '运行证据要求已收紧',
-            message: '最终回答需要可复核的 sandbox_run_code observation。',
-          },
-        }))
-      }
-      if (shouldMaterializeAgentServerFinalResponseObligations({ evaluation })) {
-        const materialized = await materializeLoopObligations({
+          }),
+        }),
+        runtimeEvidenceRequired: ({ evaluation }) => finalResponseRuntimeEvidenceRequest(evaluation),
+        materialize: () => materializeLoopObligations({
           ctx,
           ledger: state.obligationLedger,
           plannerSource: state.plannerSource,
           taskCache: state.loopCoordinator.materializationTaskCache,
-        })
-        if (materialized) {
+        }),
+        afterMaterialize: async ({ materialized }) => {
           applyStoredGraph(state, materialized)
           applyNewObservationsToLedger(state, materialized.observations, reviewIteration)
           reviewObservations = state.loopCoordinator.combineObservations(input.observations)
@@ -2266,75 +2229,20 @@ function createXoxAgenticOsHost(
             runId: ctx.runId,
             observations: reviewObservations,
           })
-          evaluation = reviewXoxFinalResponseWithAgenticOsServer({
-            finalAssistantText: input.assistantText,
-            observations: reviewObservations,
-            evidence,
-            goalFacts,
-            finalAnswerClaims,
-            pendingActionCount,
-          })
-          evaluation = xoxResponseEvaluationForAgenticOs(evaluation)
-          applyResponseEvaluationToLedger({
-            ledger: state.obligationLedger,
-            evaluation,
-            iteration: reviewIteration,
-          })
-          obligationPlan = ledgerToObligationPlan({
-            ledger: state.obligationLedger,
-            objective: state.objective,
-          })
-          responseEventLedger = serializeObligationLedgerForResponseEvent({
-            ledger: state.obligationLedger,
-            evaluation,
-          })
-          await addRunEvent(ctx.db, agentServerRunLifecycleEvents.finalReviewed({
-            threadId: ctx.thread.id,
-            runId: ctx.runId,
-            evaluationStatus: evaluation.status,
-            confidence: evaluation.confidence,
-            evidenceCount: evidence.length,
-            findings: evaluation.findings,
-            requiredEvidence: evaluation.requiredEvidence,
-            finalAnswerClaims,
-            obligationLedger: responseEventLedger,
-            obligationPlan,
-            copy: {
-              title: '最终回答证据复检',
-              message: responseEvaluationSummary(evaluation),
-            },
-          }))
-          await addRunEvent(ctx.db, agentServerRunLifecycleEvents.responseEvaluated({
-            threadId: ctx.thread.id,
-            runId: ctx.runId,
-            goalId: state.goal.id,
-            evaluationStatus: evaluation.status,
-            confidence: evaluation.confidence,
-            evidenceCount: evidence.length,
-            findings: evaluation.findings,
-            requiredEvidence: evaluation.requiredEvidence,
-            finalAnswerClaims,
-            claimReviewStatus: claimExtraction?.status ?? null,
-            claimReviewReason: claimExtraction?.status === 'unavailable' ? claimExtraction.reason : null,
-            obligationLedger: responseEventLedger,
-            obligationPlan,
-            nextPlannerBrief: evaluation.nextPlannerBrief,
-            data: {
-              evidence: evidence.map((item) => ({
-                id: item.id,
-                authority: item.authority,
-                source: item.source,
-                subject: item.subject,
-                summary: item.summary,
-              })),
-            },
-            copy: {
-              title: '最终回答证据复检',
-              message: responseEvaluationSummary(evaluation),
-            },
-          }))
-        }
-      }
+          return finalResponseReviewSnapshot({ observations: reviewObservations, evidence })
+        },
+        appendRunEvent: (draft) => addRunEvent(ctx.db, draft),
+        copy: {
+          finalAnswerCandidate: () => ({
+            title: '最终回答候选已生成',
+            message: '模型已基于本轮 observation 生成最终回答候选，进入 response evaluation。',
+          }),
+          finalReviewed: finalResponseReviewEventCopy,
+          responseEvaluated: finalResponseReviewEventCopy,
+        },
+      })
+      const evaluation = reviewCycle.evaluation
+      evidence = [...reviewCycle.snapshot.evidence]
       const latestReadinessStatus = await latestGoalEvaluationStatus(ctx, state)
       if (!(evaluation.status === 'pass' && latestReadinessStatus === 'pass')) {
         await recordGoalEvaluation({
