@@ -69,6 +69,7 @@ import {
 import {
   AGENT_SERVER_FINAL_ANSWER_CLAIM_EXTRACTION_TOOL_NAME,
   agentServerRunLifecycleEvents,
+  runAgentServerObservationContinuation,
   runAgentServerFinalAnswerClaimExtraction,
   type AgentServerFinalAnswerClaimExtractionCopyInput,
   type AgentServerFinalAnswerClaimExtractionOptions,
@@ -204,14 +205,9 @@ type XoxAgenticOsRunState = {
   lastActionExecutionResult: unknown | null
 }
 
-type ToolObservationContinuationResult =
-  | { status: 'answered'; assistantText: string }
-  | { status: 'skipped'; reason: 'no_observations' | 'rules_provider' }
-  | { status: 'failed'; message: string; planStep: Row<'agent_plan_steps'> }
-
-type ToolObservationContinuationContext = Pick<
+type ObservationContinuationPersistenceContext = Pick<
   XoxAgenticOsPlannerContext,
-  'db' | 'settings' | 'workspace' | 'user' | 'threadId' | 'runId' | 'message' | 'abortSignal'
+  'db' | 'threadId' | 'runId'
 >
 
 function toolObservationFinalizerSystemPrompt() {
@@ -246,7 +242,7 @@ function observationMessages(input: {
 }
 
 async function addContinuationFailureStep(
-  ctx: ToolObservationContinuationContext,
+  ctx: ObservationContinuationPersistenceContext,
   message: string,
 ): Promise<Row<'agent_plan_steps'>> {
   const maxRow = await ctx.db
@@ -273,90 +269,6 @@ async function addContinuationFailureStep(
     })
     .execute()
   return ctx.db.selectFrom('agent_plan_steps').selectAll().where('id', '=', id).executeTakeFirstOrThrow()
-}
-
-async function continueModelAfterToolObservations(
-  ctx: ToolObservationContinuationContext,
-  observations: AgentToolObservation[],
-): Promise<ToolObservationContinuationResult> {
-  if (observations.length === 0) return { status: 'skipped', reason: 'no_observations' }
-  if (ctx.settings.llmProvider === 'rules') return { status: 'skipped', reason: 'rules_provider' }
-
-  await addRunEvent(ctx.db, agentServerRunLifecycleEvents.modelContinuation({
-    threadId: ctx.threadId,
-    runId: ctx.runId,
-    observationCount: observations.length,
-    toolNames: observations.map((observation) => observation.toolName),
-    copy: {
-      title: '模型继续生成回复',
-      message: '工具结果已作为 observation 回灌给模型，正在生成最终回复。',
-    },
-  }))
-
-  const context = {
-    mode: 'tool_observation_finalizer',
-    workspace: { id: ctx.workspace.id, name: ctx.workspace.name },
-    observationCount: observations.length,
-    toolNames: observations.map((observation) => observation.toolName),
-  }
-  const runtimeContext = await loadAgentRuntimeContext({
-    db: ctx.db,
-    workspace: ctx.workspace,
-    user: ctx.user,
-    threadId: ctx.threadId,
-  })
-  const threadConversationLog = buildThreadConversationLog({
-    recentMessages: runtimeContext.recentMessages,
-  })
-
-  const result = await planWithRuntimeAdapter({
-    settings: ctx.settings,
-    message: redactSecretLikeContent(ctx.message),
-    context,
-    tools: [],
-    messages: observationMessages({
-      settings: ctx.settings,
-      userMessage: ctx.message,
-      observations,
-      threadConversationLog,
-    }),
-    systemPrompt: toolObservationFinalizerSystemPrompt(),
-    thinkingLevel: 'off',
-    maxTokens: observations.length > 2 ? 700 : 600,
-    stream: true,
-    requestTimeoutMs: ctx.settings.agentProviderRequestTimeoutMs,
-    ...(ctx.abortSignal ? { abortSignal: ctx.abortSignal } : {}),
-    onStreamEvent: (event) => addRuntimeStreamRunEvent({ ...ctx, phase: 'final_answer' }, event),
-  })
-
-  const assistantText = result?.assistantText?.trim()
-  if (assistantText) {
-    await addRunEvent(ctx.db, agentServerRunLifecycleEvents.modelContinuationCompleted({
-      threadId: ctx.threadId,
-      runId: ctx.runId,
-      observationCount: observations.length,
-      contentLength: assistantText.length,
-      copy: {
-        title: '模型回复已完成',
-        message: '模型已基于工具结果生成最终回复。',
-      },
-    }))
-    return { status: 'answered', assistantText }
-  }
-
-  const message = result?.error?.message ?? '模型没有基于工具结果返回可展示回复。'
-  await addRunEvent(ctx.db, agentServerRunLifecycleEvents.modelContinuationFailed({
-    threadId: ctx.threadId,
-    runId: ctx.runId,
-    observationCount: observations.length,
-    errorKind: result?.error?.kind ?? null,
-    copy: {
-      title: '模型继续回复失败',
-      message,
-    },
-  }))
-  const planStep = await addContinuationFailureStep(ctx, message)
-  return { status: 'failed', message, planStep }
 }
 
 type XoxPrerequisiteObligation = {
@@ -1695,24 +1607,85 @@ function createXoxAgenticOsHost(
         }
       }
       if (completedActionText && readinessEvaluation?.status !== 'continue') {
-        if (hasNonActionHostObservation(xoxObservations)) {
-          const continuation = await continueModelAfterToolObservations({
+        if (hasNonActionHostObservation(xoxObservations) && ctx.settings.llmProvider !== 'rules') {
+          const runtimeContext = await loadAgentRuntimeContext({
             db: ctx.db,
-            settings: ctx.settings,
             workspace: ctx.workspace,
             user: ctx.user,
             threadId: ctx.thread.id,
+          })
+          const threadConversationLog = buildThreadConversationLog({
+            recentMessages: runtimeContext.recentMessages,
+          })
+          const continuation = await runAgentServerObservationContinuation<RuntimePlanResult | null>({
+            threadId: ctx.thread.id,
             runId: ctx.runId,
-            message: state.objective,
-            ...(ctx.abortSignal ? { abortSignal: ctx.abortSignal } : {}),
-          }, xoxObservations)
+            goalId: state.goal?.id ?? null,
+            observationCount: xoxObservations.length,
+            toolNames: xoxObservations.map((observation) => observation.toolName),
+            appendRunEvent: async (event) => {
+              await addRunEvent(ctx.db, event)
+            },
+            runRuntime: () => planWithRuntimeAdapter({
+              settings: ctx.settings,
+              message: redactSecretLikeContent(state.objective),
+              context: {
+                mode: 'tool_observation_finalizer',
+                workspace: { id: ctx.workspace.id, name: ctx.workspace.name },
+                observationCount: xoxObservations.length,
+                toolNames: xoxObservations.map((observation) => observation.toolName),
+              },
+              tools: [],
+              messages: observationMessages({
+                settings: ctx.settings,
+                userMessage: state.objective,
+                observations: xoxObservations,
+                threadConversationLog,
+              }),
+              systemPrompt: toolObservationFinalizerSystemPrompt(),
+              thinkingLevel: 'off',
+              maxTokens: xoxObservations.length > 2 ? 700 : 600,
+              stream: true,
+              requestTimeoutMs: ctx.settings.agentProviderRequestTimeoutMs,
+              ...(ctx.abortSignal ? { abortSignal: ctx.abortSignal } : {}),
+              onStreamEvent: (event) => addRuntimeStreamRunEvent({
+                db: ctx.db,
+                threadId: ctx.thread.id,
+                runId: ctx.runId,
+                phase: 'final_answer',
+              }, event),
+            }),
+            assistantText: (result) => result?.assistantText ?? null,
+            failureMessage: (result) => result?.error?.message ??
+              (result?.steps.length
+                ? '模型在工具结果之后仍返回了 tool call，不能作为最终回复。'
+                : '模型没有基于工具结果返回可展示回复。'),
+            failureErrorKind: (result) => result?.error?.kind ?? null,
+            copy: {
+              started: {
+                title: '模型继续生成回复',
+                message: '工具结果已作为 observation 回灌给模型，正在生成最终回复。',
+              },
+              completed: {
+                title: '模型回复已完成',
+                message: '模型已基于工具结果生成最终回复。',
+              },
+              failed: {
+                title: '模型继续回复失败',
+              },
+            },
+          })
           if (continuation.status === 'answered') {
             return {
               assistantText: continuation.assistantText,
             }
           }
           if (continuation.status === 'failed') {
-            state.planRows.push(continuation.planStep)
+            state.planRows.push(await addContinuationFailureStep({
+              db: ctx.db,
+              threadId: ctx.thread.id,
+              runId: ctx.runId,
+            }, continuation.message))
           }
         }
         return {

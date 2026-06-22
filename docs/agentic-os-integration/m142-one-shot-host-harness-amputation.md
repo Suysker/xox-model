@@ -35,7 +35,7 @@ Original audit signals:
 - The host kit still constructs generic lifecycle events such as `goal_contract_created`, `goal_iteration_started`, `model_planning`, `goal_evaluated`, `final_answer_candidate`, `goal_iteration_exhausted`, and `runner_obligation_*`.
 - `apps/api/src/agent/agentic-os/xox-action-approval-adapter.ts` still owns generic action lifecycle event drafts and performs post-confirmation goal evaluation.
 - `apps/api/src/agent/agentic-os/xox-runtime-planning-adapter.ts` originally owned provider retry and planning lifecycle callbacks; it was deleted in M145, with residual provider boundary wiring collapsed into `xox-runtime-adapter.ts`.
-- `apps/api/src/agent/agentic-os/xox-tool-observation-adapter.ts` originally owned model continuation lifecycle events; it was deleted in M161, with DTO/bridge residue collapsed into `host-profile/xox-planned-items.ts`, action observation helpers into `agentic-os/xox-action-graph-adapter.ts`, and finalizer/continuation wiring into `host-profile/xox-agent-run-profile.ts`.
+- `apps/api/src/agent/agentic-os/xox-tool-observation-adapter.ts` originally owned model continuation lifecycle events; it was deleted in M161, with DTO/bridge residue collapsed into `host-profile/xox-planned-items.ts`, action observation helpers into `agentic-os/xox-action-graph-adapter.ts`, and finalizer/continuation host wiring into `host-profile/xox-agent-run-profile.ts`. M162 then deleted the local `continueModelAfterToolObservations()` runner and moved observation continuation lifecycle into `@agentic-os/server`.
 - `apps/api/src/agent/memory-kernel.ts` still owns generic memory lifecycle event drafts.
 - `apps/api/src/agent/loop-obligation-ledger.ts`, `apps/api/src/agent/response-evaluator.ts`, and `apps/api/src/agent/evidence-ledger.ts` still mix domain policy with generic evidence/final-review harness mechanics.
 - `apps/api/src/agent/agent-transcript-projector.ts` and `apps/api/src/agent/agent-timeline-projector.ts` still implement generic event tree/projection logic.
@@ -217,6 +217,16 @@ Status: completed as a follow-up M142 whole-file deletion cut.
 - Collapsed provider observation continuation host wiring into `host-profile/xox-agent-run-profile.ts`, with Agentic OS core/runtime helpers still owning the continuation prompt, runtime conversation replay, and provider assistant/tool replay assembly.
 - Architecture guards now fail if the deleted facade returns or if xox reintroduces local action observation envelopes, observation merge maps, or provider replay message assembly.
 
+### M162: Deleted Local Observation Continuation Runner
+
+Status: completed as a follow-up M142 run-profile compression cut.
+
+- Added `@agentic-os/server` `runAgentServerObservationContinuation()`.
+- Agentic OS server now owns observation continuation lifecycle: empty-observation skip, `model_continuation*` event emission, assistant-text success classification, empty-output failure, and runtime-error redaction.
+- Deleted xox's local `continueModelAfterToolObservations()` runner from `host-profile/xox-agent-run-profile.ts`.
+- xox now supplies only runtime context/messages, provider callback, event sink, and failed plan-step persistence for this continuation path.
+- Architecture guards now fail if the local runner or direct `agentServerRunLifecycleEvents.modelContinuation*()` calls return in xox.
+
 ## One-Shot Scope
 
 M142 is not complete until all rows in this table are addressed. If a row cannot be completed in a given implementation cut, that cut must be presented as M142-in-progress rather than M142 completion.
@@ -357,6 +367,7 @@ Required guards:
 - `xox-action-approval-adapter.ts` must not construct canonical `action_*` lifecycle event drafts directly.
 - `xox-loop-readiness-adapter.ts` and `xox-runtime-planning-adapter.ts` must stay deleted; readiness priority and runtime planning recovery must be consumed through Agentic OS APIs at concrete xox peripheral boundaries.
 - `agentic-os/xox-tool-observation-adapter.ts` must stay deleted; no xox file may hand-build `model_continuation*` lifecycle events or local provider assistant/tool replay.
+- `host-profile/xox-agent-run-profile.ts` must not reintroduce `continueModelAfterToolObservations()` or direct `agentServerRunLifecycleEvents.modelContinuation*()` calls; observation continuation lifecycle belongs to `@agentic-os/server`.
 - xox root files must not contain generic final review/evidence/obligation ledger runtime code.
 - xox projection files must not own generic provider stream grouping or goal/action tree lifecycle logic.
 

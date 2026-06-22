@@ -758,6 +758,16 @@ describe('Agent ADR architecture boundaries', () => {
     expect(continuation).not.toContain('tool_calls')
   })
 
+  it('keeps observation continuation lifecycle in Agentic OS server', () => {
+    const hostKit = source('agent/host-profile/xox-agent-run-profile.ts')
+    expect(hostKit).toContain("@agentic-os/server")
+    expect(hostKit).toContain('runAgentServerObservationContinuation')
+    expect(hostKit).not.toContain('continueModelAfterToolObservations')
+    expect(hostKit).not.toContain('agentServerRunLifecycleEvents.modelContinuation(')
+    expect(hostKit).not.toContain('agentServerRunLifecycleEvents.modelContinuationCompleted(')
+    expect(hostKit).not.toContain('agentServerRunLifecycleEvents.modelContinuationFailed(')
+  })
+
   it('keeps provider observation planning message assembly in Agentic OS runtime', () => {
     expect(existsSync(join(srcRoot, 'agent', 'runtime-planning-call.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-runtime-planning-adapter.ts'))).toBe(false)
