@@ -1,19 +1,29 @@
-import { createHash } from 'node:crypto'
 import type { Kysely } from 'kysely'
 import {
-  containsSecretLikeContent,
-  normalizeSecretSafeText,
-  redactSecretLikeContent,
-} from '@agentic-os/core'
-import {
+  agentMemoryQueryHash,
   applyMmr,
   buildMemoryCitation,
   buildMemoryFlushPlan,
+  containsSecretLikeContent,
+  decideAgentMemoryCandidate,
   formatMemoryCitation,
   lexicalRelevance,
+  normalizeAgentMemoryConfidence,
+  normalizeAgentMemoryKey,
+  normalizeAgentMemoryKind,
+  normalizeAgentMemoryLane,
+  normalizeAgentMemoryScopeType,
+  normalizeAgentMemorySensitivity,
+  normalizeAgentMemoryStatus,
+  normalizeAgentMemoryType,
+  normalizeAgentMemoryValue,
+  rankAgentMemoryRecords,
   rankShortTermPromotionCandidates,
+  redactSecretLikeContent,
+  type AgentMemoryCandidate,
+  type AgentMemoryRecordLike,
   type ShortTermRecallSignal,
-} from '@xox/agent-memory-core'
+} from '@agentic-os/core'
 import { agentServerRunLifecycleEvents } from '@agentic-os/server'
 import type { Database, Row } from '../db/schema.js'
 import { jsonString, parseJson } from '../db/database.js'
@@ -26,14 +36,6 @@ import { addRunEvent } from './agentic-os/xox-run-event-store-adapter.js'
 
 const COMPACTION_MESSAGE_THRESHOLD = 10
 const COMPACTION_MESSAGE_STEP = 6
-const MEMORY_VALUE_LIMIT = 500
-const MEMORY_KEY_LIMIT = 120
-const MEMORY_KINDS = new Set(['preference', 'fact', 'business_fact', 'business_rule', 'workflow', 'episode', 'correction', 'diagnostic'])
-const MEMORY_SCOPE_TYPES = new Set(['thread', 'workspace', 'user', 'procedural', 'commitment'])
-const MEMORY_TYPES = new Set(['working', 'episodic', 'semantic', 'procedural', 'commitment'])
-const MEMORY_LANES = new Set(['working', 'session', 'semantic', 'procedural', 'episodic', 'diagnostic', 'archived'])
-const MEMORY_STATUSES = new Set(['candidate', 'active', 'promoted', 'archived', 'rejected', 'expired', 'superseded'])
-const MEMORY_SENSITIVITIES = new Set(['normal', 'private', 'restricted'])
 
 export type AgentRuntimeContext = {
   memories: Row<'agent_memories'>[]
@@ -41,220 +43,7 @@ export type AgentRuntimeContext = {
   recentMessages: Row<'agent_messages'>[]
 }
 
-export type AgentMemoryLane =
-  | 'working'
-  | 'session'
-  | 'semantic'
-  | 'procedural'
-  | 'episodic'
-  | 'diagnostic'
-  | 'archived'
-
-export type AgentMemoryStatus =
-  | 'candidate'
-  | 'active'
-  | 'promoted'
-  | 'archived'
-  | 'rejected'
-  | 'expired'
-  | 'superseded'
-
-export type AgentMemoryKind =
-  | 'preference'
-  | 'fact'
-  | 'business_fact'
-  | 'business_rule'
-  | 'workflow'
-  | 'episode'
-  | 'correction'
-  | 'diagnostic'
-
-export type MemoryCandidateDecision =
-  | 'store_candidate'
-  | 'activate'
-  | 'promote'
-  | 'archive'
-  | 'reject'
-  | 'expire'
-  | 'merge'
-  | 'diagnostic_only'
-
-export type MemoryPolicyInput = {
-  kind: AgentMemoryKind
-  scopeType: string
-  memoryType: string
-  lane?: AgentMemoryLane
-  status?: AgentMemoryStatus
-  injectable?: boolean
-  sourceKind?: string | null
-  key: string
-  value: string
-  confidence: number
-  evidenceScore?: number | null
-  expiresAt?: string | null
-}
-
-export type MemoryPolicyDecision = {
-  kind: AgentMemoryKind
-  lane: AgentMemoryLane
-  status: AgentMemoryStatus
-  injectable: boolean
-  normalizedHash: string
-  evidenceScore: number
-  sourceKind: string
-  expiresAt: string | null
-  decision: MemoryCandidateDecision
-  reason: string
-  scoreBreakdown: {
-    usefulness: number
-    stability: number
-    specificity: number
-    safety: number
-    evidence: number
-    novelty: number
-  }
-}
-
 export { redactSecretLikeContent } from '@agentic-os/core'
-
-const PROMPT_INJECTABLE_LANES = new Set<AgentMemoryLane>(['working', 'semantic', 'procedural'])
-const PROMPT_INJECTABLE_STATUSES = new Set<AgentMemoryStatus>(['active', 'promoted'])
-const NON_INJECTABLE_STATUSES = new Set<AgentMemoryStatus>(['candidate', 'archived', 'rejected', 'expired', 'superseded'])
-
-function clamp01(value: number) {
-  if (!Number.isFinite(value)) return 0
-  return Math.max(0, Math.min(1, value))
-}
-
-function stableHash(value: string) {
-  return createHash('sha256').update(value).digest('hex').slice(0, 40)
-}
-
-export function normalizedMemoryHash(input: Pick<MemoryPolicyInput, 'kind' | 'scopeType' | 'key' | 'value'>) {
-  const normalized = normalizeSecretSafeText(`${input.kind}:${input.scopeType}:${input.key}:${input.value}`, 800)
-    .toLowerCase()
-    .replace(/\s+/g, ' ')
-    .trim()
-  return stableHash(normalized)
-}
-
-export function deriveMemoryLane(input: Pick<MemoryPolicyInput, 'kind' | 'memoryType' | 'lane' | 'sourceKind' | 'key' | 'value'>): AgentMemoryLane {
-  if (input.lane) return input.lane
-  if (input.kind === 'diagnostic' || input.sourceKind === 'evaluator_result' || input.key.startsWith('agent.evaluator.finding.')) return 'diagnostic'
-  if (input.key.startsWith('agent.goal.completed.')) return 'episodic'
-  if (input.key.startsWith('workspace.recent_related_entity.')) return 'working'
-  if (input.memoryType === 'semantic' || input.memoryType === 'procedural' || input.memoryType === 'working' || input.memoryType === 'episodic') return input.memoryType
-  if (input.kind === 'preference' || input.kind === 'business_fact' || input.kind === 'business_rule') return 'semantic'
-  if (input.kind === 'workflow') return 'procedural'
-  if (input.kind === 'episode' || input.kind === 'correction') return 'episodic'
-  return 'semantic'
-}
-
-export function deriveMemoryStatus(input: Pick<MemoryPolicyInput, 'status' | 'kind' | 'lane' | 'memoryType' | 'sourceKind'> & { lane: AgentMemoryLane }): AgentMemoryStatus {
-  if (input.status) return input.status
-  if (input.lane === 'diagnostic') return 'active'
-  if (input.lane === 'working') return 'active'
-  if (input.lane === 'episodic') return 'archived'
-  if (input.memoryType === 'semantic' || input.memoryType === 'procedural' || input.lane === 'semantic' || input.lane === 'procedural') return 'promoted'
-  return 'candidate'
-}
-
-export function isMemoryPromptInjectable(row: Row<'agent_memories'>, options: { threadId?: string | null; now?: string } = {}) {
-  const lane = row.lane as AgentMemoryLane
-  const status = row.status as AgentMemoryStatus
-  if (Number(row.injectable) !== 1) return false
-  if (!PROMPT_INJECTABLE_LANES.has(lane)) return false
-  if (!PROMPT_INJECTABLE_STATUSES.has(status)) return false
-  if (NON_INJECTABLE_STATUSES.has(status)) return false
-  if (lane === 'working') {
-    if (!options.threadId || row.thread_id !== options.threadId) return false
-    if (row.expires_at && Date.parse(row.expires_at) <= Date.parse(options.now ?? utcNow())) return false
-  }
-  return true
-}
-
-export function decideMemoryCandidate(input: MemoryPolicyInput): MemoryPolicyDecision {
-  const lane = deriveMemoryLane(input)
-  const status = deriveMemoryStatus({ ...input, lane })
-  const sourceKind =
-    input.sourceKind ??
-    (lane === 'diagnostic'
-      ? 'evaluator_result'
-      : lane === 'episodic'
-        ? 'confirmed_action'
-        : lane === 'working'
-          ? 'working_context'
-          : 'manual_memory')
-  const safety = containsSecretLikeContent(input.value) ? 0 : 1
-  const evidence = clamp01(input.evidenceScore ?? (sourceKind === 'manual_memory' ? 0.9 : sourceKind === 'confirmed_action' ? 0.75 : 0.45))
-  const stability =
-    lane === 'semantic' || lane === 'procedural'
-      ? 0.85
-      : lane === 'working'
-        ? 0.25
-        : lane === 'diagnostic'
-          ? 0.1
-          : 0.35
-  const specificity = normalizeSecretSafeText(input.value, 600).length >= 12 ? 0.8 : 0.35
-  const usefulness = lane === 'semantic' || lane === 'procedural' ? 0.8 : lane === 'working' ? 0.55 : 0.35
-  const novelty = 0.7
-  const injectable =
-    input.injectable ??
-    (safety === 1 &&
-      PROMPT_INJECTABLE_LANES.has(lane) &&
-      PROMPT_INJECTABLE_STATUSES.has(status) &&
-      sourceKind !== 'evaluator_result')
-
-  let decision: MemoryCandidateDecision = 'store_candidate'
-  let reason = 'stored as governed candidate'
-  if (safety === 0) {
-    decision = 'reject'
-    reason = 'secret-like content is not eligible for memory'
-  } else if (lane === 'diagnostic') {
-    decision = 'diagnostic_only'
-    reason = 'diagnostics are retained for audit but never injected into ordinary planning context'
-  } else if (lane === 'episodic') {
-    decision = 'archive'
-    reason = 'episode is searchable evidence but not prompt-injectable by default'
-  } else if (lane === 'working') {
-    decision = 'activate'
-    reason = 'working memory is scoped to the current thread and expiry'
-  } else if (status === 'promoted') {
-    decision = 'promote'
-    reason = 'stable semantic/procedural memory is eligible for relevant recall'
-  }
-
-  return {
-    kind: input.kind,
-    lane,
-    status,
-    injectable,
-    normalizedHash: normalizedMemoryHash(input),
-    evidenceScore: evidence,
-    sourceKind,
-    expiresAt: input.expiresAt ?? null,
-    decision,
-    reason,
-    scoreBreakdown: { usefulness, stability, specificity, safety, evidence, novelty },
-  }
-}
-
-export type AgentMemoryCandidate = {
-  kind: AgentMemoryKind
-  scopeType: 'thread' | 'workspace' | 'user' | 'procedural' | 'commitment'
-  memoryType: 'working' | 'episodic' | 'semantic' | 'procedural' | 'commitment'
-  lane?: AgentMemoryLane
-  status?: AgentMemoryStatus
-  injectable?: boolean
-  sensitivity?: 'normal' | 'private' | 'restricted'
-  key: string
-  value: string
-  confidence: number
-  evidenceScore?: number
-  sourceKind?: string
-  expiresAt?: string | null
-  evidence: Record<string, unknown>
-}
 
 const WORKING_MEMORY_TTL_MS = 6 * 60 * 60 * 1000
 
@@ -506,55 +295,6 @@ export function serializeMemoryEvent(row: Row<'agent_memory_events'>) {
   }
 }
 
-function normalizeMemoryValue(value: string) {
-  return normalizeSecretSafeText(value, MEMORY_VALUE_LIMIT)
-}
-
-function normalizeMemoryKind(value: string | null | undefined) {
-  const kind = typeof value === 'string' ? value.trim() : ''
-  return (MEMORY_KINDS.has(kind) ? kind : 'preference') as AgentMemoryKind
-}
-
-function normalizeMemoryScopeType(value: string | null | undefined) {
-  const scopeType = typeof value === 'string' ? value.trim() : ''
-  return MEMORY_SCOPE_TYPES.has(scopeType) ? scopeType : 'workspace'
-}
-
-function normalizeMemoryType(value: string | null | undefined) {
-  const memoryType = typeof value === 'string' ? value.trim() : ''
-  return MEMORY_TYPES.has(memoryType) ? memoryType : 'semantic'
-}
-
-function normalizeMemoryStatus(value: string | null | undefined, memoryType: string) {
-  const status = typeof value === 'string' ? value.trim() : ''
-  if (MEMORY_STATUSES.has(status)) return status as AgentMemoryStatus
-  return (memoryType === 'semantic' || memoryType === 'procedural' ? 'promoted' : 'active') as AgentMemoryStatus
-}
-
-function normalizeMemoryLane(value: string | null | undefined, memoryType: string): AgentMemoryLane | undefined {
-  const lane = typeof value === 'string' ? value.trim() : ''
-  if (MEMORY_LANES.has(lane)) return lane as AgentMemoryLane
-  if (memoryType === 'working' || memoryType === 'episodic' || memoryType === 'semantic' || memoryType === 'procedural') return memoryType as AgentMemoryLane
-  return undefined
-}
-
-function normalizeMemorySensitivity(value: string | null | undefined) {
-  const sensitivity = typeof value === 'string' ? value.trim() : ''
-  return MEMORY_SENSITIVITIES.has(sensitivity) ? sensitivity : 'normal'
-}
-
-function normalizeMemoryKey(value: string | null | undefined, fallbackValue: string, kind: string) {
-  const key = typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, MEMORY_KEY_LIMIT) : ''
-  if (key && !containsSecretLikeContent(key)) return key
-  return `user.${kind}.${fallbackValue.slice(0, 32)}`
-}
-
-function normalizeConfidence(value: number | null | undefined) {
-  return typeof value === 'number' && Number.isFinite(value)
-    ? Math.min(1, Math.max(0, value))
-    : 0.85
-}
-
 export type RememberAgentMemoryResult =
   | { memory: Row<'agent_memories'>; rejectedReason: null }
   | { memory: null; rejectedReason: 'empty' | 'secret' }
@@ -584,23 +324,28 @@ export async function rememberAgentMemory(input: {
   evidence?: Record<string, unknown> | null
   metadata?: Record<string, unknown> | null
 }): Promise<RememberAgentMemoryResult> {
-  const value = normalizeMemoryValue(input.value)
+  const value = normalizeAgentMemoryValue(input.value)
   if (!value || value.length < 3) return { memory: null, rejectedReason: 'empty' }
   if (containsSecretLikeContent(value)) return { memory: null, rejectedReason: 'secret' }
-  const kind = normalizeMemoryKind(input.kind)
-  const scopeType = normalizeMemoryScopeType(input.scopeType)
-  const memoryType = normalizeMemoryType(input.memoryType)
-  const lane = input.lane ? normalizeMemoryLane(input.lane, memoryType) : undefined
-  const status = input.status ? normalizeMemoryStatus(input.status, memoryType) : undefined
-  const sensitivity = normalizeMemorySensitivity(input.sensitivity)
-  const key = normalizeMemoryKey(input.key, value, kind)
-  const policy = decideMemoryCandidate({
+  const kind = normalizeAgentMemoryKind(input.kind)
+  const scopeType = normalizeAgentMemoryScopeType(input.scopeType)
+  const memoryType = normalizeAgentMemoryType(input.memoryType)
+  const lane = input.lane ? normalizeAgentMemoryLane(input.lane, memoryType) : undefined
+  const status = input.status ? normalizeAgentMemoryStatus(input.status, memoryType) : undefined
+  const sensitivity = normalizeAgentMemorySensitivity(input.sensitivity)
+  const key = normalizeAgentMemoryKey({
+    fallbackValue: value,
+    kind,
+    ...(input.key !== undefined ? { key: input.key } : {}),
+  })
+  const confidence = normalizeAgentMemoryConfidence(input.confidence)
+  const policy = decideAgentMemoryCandidate({
     kind,
     scopeType,
     memoryType,
     key,
     value,
-    confidence: normalizeConfidence(input.confidence),
+    confidence,
     expiresAt: input.expiresAt ?? null,
     ...(status ? { status } : {}),
     ...(lane ? { lane } : {}),
@@ -625,7 +370,7 @@ export async function rememberAgentMemory(input: {
       status: policy.status,
       key,
       value,
-      confidence: normalizeConfidence(input.confidence),
+      confidence,
       evidence_score: policy.evidenceScore,
       sensitivity,
       injectable: policy.injectable ? 1 : 0,
@@ -685,7 +430,7 @@ export async function storeMemoryCandidates(input: {
 }) {
   const stored: Row<'agent_memories'>[] = []
   for (const candidate of input.candidates) {
-    const decision = decideMemoryCandidate({
+    const decision = decideAgentMemoryCandidate({
       kind: candidate.kind,
       scopeType: candidate.scopeType,
       memoryType: candidate.memoryType,
@@ -822,78 +567,24 @@ export type AgentMemoryRetrievalResult = {
   reasons: string[]
 }
 
-type SearchableMemoryStatus = AgentMemoryStatus
-
-const SEARCHABLE_MEMORY_STATUSES = new Set<SearchableMemoryStatus>(['candidate', 'active', 'promoted', 'archived', 'expired', 'superseded'])
-const DEFAULT_PROMPT_LANE_LIMITS: Record<string, number> = {
-  working: 3,
-  semantic: 4,
-  procedural: 3,
-  episodic: 0,
-  diagnostic: 0,
-  archived: 0,
-}
-
-function normalizeMemorySearchText(value: string) {
-  return redactSecretLikeContent(value).toLowerCase().replace(/\s+/g, ' ').trim()
-}
-
-function memoryAgeBoost(row: Row<'agent_memories'>) {
-  const anchor = Date.parse(row.last_used_at ?? row.updated_at ?? row.created_at)
-  if (!Number.isFinite(anchor)) return 0
-  const days = Math.max(0, (Date.parse(utcNow()) - anchor) / 86_400_000)
-  if (days <= 1) return 0.08
-  if (days <= 7) return 0.04
-  if (days <= 30) return 0.02
-  return 0
-}
-
-function memoryStatusBoost(row: Row<'agent_memories'>) {
-  if (row.status === 'promoted') return 0.16
-  if (row.status === 'active') return 0.1
-  return 0
-}
-
-function memoryTypeBoost(row: Row<'agent_memories'>) {
-  if (row.lane === 'semantic' || row.lane === 'procedural') return 0.14
-  if (row.lane === 'working') return 0.1
-  if (row.lane === 'episodic') return 0.02
-  return 0
-}
-
-function memoryScopeBoost(row: Row<'agent_memories'>) {
-  if (row.scope_type === 'workspace') return 0.08
-  if (row.scope_type === 'user' || row.scope_type === 'procedural') return 0.04
-  if (row.scope_type === 'thread') return 0.02
-  return 0
-}
-
-function scoreMemory(row: Row<'agent_memories'>, query: string): AgentMemoryRetrievalResult {
-  const relevance = lexicalRelevance(query, `${row.key} ${row.kind} ${row.scope_type} ${row.memory_type} ${row.lane} ${row.value}`)
-  const keyHit = normalizeMemorySearchText(row.key).includes(normalizeMemorySearchText(query)) && query.trim().length >= 3 ? 0.12 : 0
-  const confidence = Math.max(0, Math.min(1, row.confidence)) * 0.18
-  const score = relevance.score + keyHit + confidence + memoryStatusBoost(row) + memoryTypeBoost(row) + memoryScopeBoost(row) + memoryAgeBoost(row)
-  const reasons = [
-    ...relevance.reasons,
-    keyHit > 0 ? 'key_match' : null,
-    row.status === 'candidate' ? 'candidate_memory' : `${row.status}_memory`,
-    row.injectable ? 'injectable' : 'non_injectable',
-    row.lane,
-    row.memory_type,
-  ].filter((item): item is string => Boolean(item))
-  return { memory: row, score: Number(score.toFixed(4)), reasons }
-}
-
-function applyPromptLaneBudgets(results: AgentMemoryRetrievalResult[]) {
-  const counts = new Map<string, number>()
-  return results.filter((result) => {
-    const lane = result.memory.lane as AgentMemoryLane
-    const limit = DEFAULT_PROMPT_LANE_LIMITS[lane] ?? 0
-    const current = counts.get(lane) ?? 0
-    if (current >= limit) return false
-    counts.set(lane, current + 1)
-    return true
-  })
+function agentMemoryRecordFromRow(row: Row<'agent_memories'>): AgentMemoryRecordLike {
+  return {
+    id: row.id,
+    key: row.key,
+    value: row.value,
+    kind: row.kind,
+    scopeType: row.scope_type,
+    memoryType: row.memory_type,
+    lane: row.lane,
+    status: row.status,
+    confidence: row.confidence,
+    injectable: Number(row.injectable) === 1,
+    threadId: row.thread_id,
+    lastUsedAt: row.last_used_at,
+    updatedAt: row.updated_at,
+    createdAt: row.created_at,
+    expiresAt: row.expires_at,
+  }
 }
 
 export async function retrieveAgentMemories(input: {
@@ -918,26 +609,23 @@ export async function retrieveAgentMemories(input: {
     .limit(80)
     .execute()
 
-  const scored = rows
-    .filter((row) => SEARCHABLE_MEMORY_STATUSES.has(row.status as SearchableMemoryStatus))
-    .filter((row) => input.includeCandidates === true || row.status !== 'candidate')
-    .filter((row) => input.includeArchived === true || !['archived', 'expired', 'superseded'].includes(row.status))
-    .filter((row) => input.includeDiagnostics === true || row.lane !== 'diagnostic')
-    .filter((row) => input.includeNonInjectable === true || input.forPrompt === true || Number(row.injectable) === 1)
-    .filter((row) => !input.forPrompt || isMemoryPromptInjectable(row, { now: utcNow(), ...(input.threadId !== undefined ? { threadId: input.threadId } : {}) }))
-    .map((row) => scoreMemory(row, input.query))
-    .filter((result) => result.score >= 0.32 || result.reasons.some((reason) => reason.startsWith('token_overlap:')))
-    .sort((left, right) => right.score - left.score)
-  const ranked = applyMmr(
-    (input.forPrompt ? applyPromptLaneBudgets(scored) : scored).map((result) => ({
-      ...result,
-      id: result.memory.id,
-      key: result.memory.key,
-      value: result.memory.value,
-    })),
-  )
-    .map(({ id: _id, key: _key, value: _value, ...result }) => result)
-    .slice(0, Math.max(1, Math.min(50, input.limit ?? 6)))
+  const rowsById = new Map(rows.map((row) => [row.id, row]))
+  const ranked = rankAgentMemoryRecords({
+    records: rows.map(agentMemoryRecordFromRow),
+    query: input.query,
+    now: utcNow(),
+    ...(input.limit !== undefined ? { limit: input.limit } : {}),
+    ...(input.includeCandidates !== undefined ? { includeCandidates: input.includeCandidates } : {}),
+    ...(input.includeArchived !== undefined ? { includeArchived: input.includeArchived } : {}),
+    ...(input.includeNonInjectable !== undefined ? { includeNonInjectable: input.includeNonInjectable } : {}),
+    ...(input.includeDiagnostics !== undefined ? { includeDiagnostics: input.includeDiagnostics } : {}),
+    ...(input.forPrompt !== undefined ? { forPrompt: input.forPrompt } : {}),
+    ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
+  }).map((result) => ({
+    memory: rowsById.get(result.record.id)!,
+    score: result.score,
+    reasons: result.reasons,
+  }))
 
   return ranked
 }
@@ -1254,10 +942,6 @@ export async function listDailyMemoryNotes(input: {
     .execute()
 }
 
-function queryHash(query: string) {
-  return createHash('sha256').update(query.replace(/\s+/g, ' ').trim().toLowerCase()).digest('hex').slice(0, 32)
-}
-
 function uniqueLimited(values: string[], limit: number) {
   return [...new Set(values)].slice(-limit)
 }
@@ -1271,7 +955,7 @@ export async function recordMemoryRecallSignals(input: {
 }) {
   const now = utcNow()
   const day = now.slice(0, 10)
-  const hash = queryHash(input.query)
+  const hash = agentMemoryQueryHash(input.query)
   for (const item of input.retrieval) {
     const memory = item.memory
     if (memory.workspace_id !== input.workspace.id || memory.user_id !== input.user.id) continue

@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 
 const testDir = dirname(fileURLToPath(import.meta.url))
 const apiRoot = resolve(testDir, '..')
+const repoRoot = resolve(apiRoot, '..', '..')
 const srcRoot = join(apiRoot, 'src')
 
 function source(path: string) {
@@ -1123,7 +1124,8 @@ describe('Agent ADR architecture boundaries', () => {
     expect(existsSync(join(srcRoot, 'agent', 'prompts', 'memory.system.md'))).toBe(false)
     const memory = source('agent/memory.ts')
     expect(memory).toContain("@agentic-os/core")
-    expect(memory).toContain('normalizeSecretSafeText')
+    expect(memory).toContain('normalizeAgentMemoryValue')
+    expect(memory).toContain('rankAgentMemoryRecords')
     expect(memory).not.toContain("from './memory-safety.js'")
     const contextPack = source('agent/host-profile/xox-context-pack.ts')
     expect(contextPack).toContain("@agentic-os/core")
@@ -1180,6 +1182,36 @@ describe('Agent ADR architecture boundaries', () => {
       /runtime\//,
     ]
     for (const file of memoryFiles) expectNoImports(file, forbidden)
+  })
+
+  it('keeps generic memory kernel algorithms in Agentic OS core instead of xox packages', () => {
+    expect(existsSync(join(repoRoot, 'packages', 'agent-memory-core'))).toBe(false)
+    expect(existsSync(join(testDir, 'agent-memory-core.test.ts'))).toBe(false)
+
+    const apiPackage = readFileSync(join(apiRoot, 'package.json'), 'utf8')
+    const packageLock = readFileSync(join(repoRoot, 'package-lock.json'), 'utf8')
+    expect(apiPackage).not.toContain('@xox/agent-memory-core')
+    expect(packageLock).not.toContain('@xox/agent-memory-core')
+    expect(packageLock).not.toContain('packages/agent-memory-core')
+
+    const memory = source('agent/memory.ts')
+    expect(memory).toContain("@agentic-os/core")
+    expect(memory).toContain('decideAgentMemoryCandidate')
+    expect(memory).toContain('rankAgentMemoryRecords')
+    expect(memory).toContain('agentMemoryQueryHash')
+    for (const forbidden of [
+      'function decideMemoryCandidate',
+      'function deriveMemoryLane',
+      'function deriveMemoryStatus',
+      'function scoreMemory',
+      'function applyPromptLaneBudgets',
+      'function queryHash',
+      'normalizedMemoryHash',
+      "from '@xox/agent-memory-core'",
+      "import { createHash } from 'node:crypto'",
+    ]) {
+      expect(memory, `${forbidden} must not return to xox memory.ts`).not.toContain(forbidden)
+    }
   })
 
   it('keeps sandbox runtime in Agentic OS instead of a host-owned runtime subtree', () => {

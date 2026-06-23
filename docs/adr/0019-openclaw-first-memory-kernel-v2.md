@@ -8,7 +8,9 @@ Revised: 2026-05-31
 
 Refines: ADR 0007 OpenClaw-Inspired Tenant-Scoped Memory Kernel, ADR 0018 AgentRunEngine v2 Single-Loop Harness Upgrade
 
-Implementation note: first implementation completed on 2026-05-31. It adds `packages/agent-memory-core` for OpenClaw-derived pure memory logic, `memory_search / memory_get` as provider-native read tools, SaaS DB adapters for daily notes / recall signals / dreaming reports, OpenClaw-style pre-compaction flush into daily notes, and Memory Center API/UI visibility for durable memories, daily notes, recall signals and dream reports.
+Implementation note: first implementation completed on 2026-05-31. It originally added `packages/agent-memory-core` for OpenClaw-derived pure memory logic, `memory_search / memory_get` as provider-native read tools, SaaS DB adapters for daily notes / recall signals / dreaming reports, OpenClaw-style pre-compaction flush into daily notes, and Memory Center API/UI visibility for durable memories, daily notes, recall signals and dream reports.
+
+Supersession note (M168, 2026-06-23): `packages/agent-memory-core` was a transition layer and has been deleted from xox-model. The generic memory kernel now belongs to `@agentic-os/core`; xox keeps tenant-scoped DB rows, Memory Center DTOs, memory tool wiring, and xox business candidate plugins.
 
 ## Context
 

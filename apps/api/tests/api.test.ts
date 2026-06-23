@@ -20,9 +20,9 @@ import {
 import { buildRuntimeToolCatalogProjection } from '../src/agent/tool-catalog.js'
 import { sanitizeAgentGoalFacts } from '../src/agent/host-profile/xox-goal-facts.js'
 import { createProductDefaultModel, projectModel } from '@xox/domain'
+import { decideAgentMemoryCandidate } from '@agentic-os/core'
 import { recoverRunningAgentRuns } from '../src/agent/agentic-os/xox-run-worker-adapter.js'
 import {
-  decideMemoryCandidate,
   memoryCandidateFromCompletedGoal,
   memoryCandidateFromEvaluatorFinding,
   memoryCandidatesFromExecutedActions,
@@ -4422,7 +4422,7 @@ describe('xox TypeScript API', () => {
   }, 10_000)
 
   it('applies Memory Kernel v2 lane, capture, recall, and cleanup gates', async () => {
-    const diagnosticDecision = decideMemoryCandidate({
+    const diagnosticDecision = decideAgentMemoryCandidate({
       kind: 'diagnostic',
       scopeType: 'procedural',
       memoryType: 'episodic',

@@ -18,7 +18,6 @@
     "@agentic-os/server": "^0.1.0",
     "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^11.1.0",
-    "@xox/agent-memory-core": "file:../../packages/agent-memory-core",
     "@xox/contracts": "file:../../packages/contracts",
     "@xox/domain": "file:../../packages/domain",
     "argon2": "^0.44.0",
