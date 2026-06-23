@@ -4,7 +4,7 @@ import {
   buildOpenAICompatibleEffectiveToolInventorySnapshot,
   type OpenAICompatibleEffectiveToolInventoryToolInput,
 } from '@agentic-os/runtime-openai-compatible'
-import type { AgentGoalFacts, AgentToolInventorySnapshot, AgentTurnLane, AgentTurnLaneReasonCode } from '@xox/contracts'
+import type { AgentGoalFacts, AgentToolInventorySnapshot } from '@xox/contracts'
 import type { ModelConfig } from '@xox/domain'
 import type { Settings } from '../core/settings.js'
 import { newId } from '../core/security.js'
@@ -232,10 +232,6 @@ export type AgentToolCallStep = {
   id?: string
   memoryId?: string
   confidence?: number
-  lane?: AgentTurnLane
-  requiresTools?: boolean
-  reasonCode?: AgentTurnLaneReasonCode
-  missingContext?: string[]
   goalFacts?: unknown
   scope?: WorkspaceDataQueryScope
   metrics?: string[]
@@ -1433,8 +1429,6 @@ export const AGENT_TOOL_REGISTRY: AgentToolRegistryEntry[] = AGENT_TOOL_CATALOG.
 
 export function toolCallToPlannerStep(toolName: string, args: Record<string, unknown>): AgentToolCallStep | null {
   switch (toolName) {
-    case 'turn_lane_resolve':
-      return { intent: 'turn_lane.resolve', ...args }
     case 'tool_catalog_select_capabilities':
       return { intent: 'tool_catalog.select_capabilities', ...args }
     case 'tool_discover':

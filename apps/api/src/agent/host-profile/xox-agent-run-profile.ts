@@ -37,34 +37,21 @@ import type {
 import {
   createAgentHostLoopCoordinator,
   createAgentHostKit,
-  hasNonActionHostObservation,
   inferToolAuthorityClass,
-  isActionResultToolObservation,
-  isActionToolObservation,
-  isCompletedValidToolObservation,
-  isFinalizableHostBusinessObservation,
-  isRepairableToolObservation,
-  isSandboxToolObservation,
   ledgerToReviewObligations,
   obligationMaterializationCompletedEventPayload,
   parseToolObservationModelFacts,
   planObligationMaterialization,
   runtimePlannerResultToTurnOutput,
-  runtimeMessagesFromConversationLog,
   sandboxExecutionModeFromFacts,
   sandboxExecutionStatusFromFacts,
-  selectCompletedReadObservation,
-  selectAgentPrerequisiteObservations,
   selectReadinessObservation,
-  selectSandboxFinalizerObservation,
-  toolObservationContinuationSystemPrompt,
   type AgentHostLoopCoordinator,
   type AgentActionPort,
   type AgentCompletionPort,
   type AgentContextPort,
   type AgentHostAdapter,
   type AgentLoopObligationMaterializationCache,
-  type AgentPrerequisiteObservationSpec,
   type AgentSandboxPort,
   type AgentStorePort,
   type AgentToolRegistryPort,
@@ -73,24 +60,18 @@ import {
   AGENT_SERVER_FINAL_ANSWER_CLAIM_EXTRACTION_TOOL_NAME,
   agentServerRunLifecycleEvents,
   reviewAgentServerFinalResponse,
-  runAgentServerObservationContinuation,
   runAgentServerFinalAnswerClaimExtraction,
   runAgentServerFinalResponseReviewCycle,
   type AgentServerFinalAnswerClaimExtractionCopyInput,
   type AgentServerFinalAnswerClaimExtractionOptions,
   type AgentServerFinalAnswerClaimExtractionResult,
 } from '@agentic-os/server'
-import {
-  buildProviderToolObservationContinuationMessages,
-  resolveProviderRuntimeProfile,
-} from '@agentic-os/runtime-openai-compatible'
 import type { AgentGoalFacts, AgentGoalStatus, AgentNavigationEvent, AgentPlannerSource } from '@xox/contracts'
 import { parseJson } from '../../db/database.js'
 import type { Row } from '../../db/schema.js'
 import { newId } from '../../core/security.js'
 import { utcNow } from '../../core/time.js'
 import type { PlannerContext } from './xox-planned-items.js'
-import { buildThreadConversationLog } from './xox-context-pack.js'
 import {
   answerWorkspaceDataQuestion,
   executeAgentActionRequest,
@@ -132,7 +113,6 @@ import {
 import {
   consolidateExecutedActionMemory,
   flushThreadContextToMemoryIfNeeded,
-  loadAgentRuntimeContext,
 } from '../memory.js'
 import { runMemoryDreamingSweep } from '../memory.js'
 import { responseEvaluationSummary, type ResponseEvaluation } from './xox-final-review-policy.js'
@@ -148,7 +128,7 @@ import {
   mergeAgentGoalFacts,
   readRuntimeGoalFacts,
 } from './xox-goal-facts.js'
-import { addRunEvent, addRuntimeStreamRunEvent } from '../agentic-os/xox-run-event-store-adapter.js'
+import { addRunEvent } from '../agentic-os/xox-run-event-store-adapter.js'
 import { addMessage } from '../agentic-os/xox-thread-store-adapter.js'
 import {
   AGENT_TOOL_REGISTRY,
@@ -169,7 +149,6 @@ import {
   initializeObligationLedger,
   ledgerToObligationPlan,
   osEvidenceFromXoxEvidence,
-  runtimeBoundaryMissingObservationRepair,
   serializeObligationLedgerForResponseEvent,
   type AgentLoopLedgerObligation,
   type AgentLoopObligationLedger,
@@ -177,6 +156,7 @@ import {
 import { extractWorkspaceBundleArtifact } from '../workspace-bundle-artifact.js'
 
 export type AgenticOsKernelRunResult = {
+  agenticOsResult: OsRunResult
   plannerSource: AgentPlannerSource
   assistantMessage: Row<'agent_messages'> | null
   navigationEvents: AgentNavigationEvent[]
@@ -204,97 +184,6 @@ type XoxAgenticOsRunState = {
   lastToolSelection: OsToolSelectionHint | null
   finishedResult: OsRunResult | null
   lastActionExecutionResult: unknown | null
-}
-
-type ObservationContinuationPersistenceContext = Pick<
-  XoxAgenticOsPlannerContext,
-  'db' | 'threadId' | 'runId'
->
-
-function toolObservationFinalizerSystemPrompt() {
-  return toolObservationContinuationSystemPrompt({
-    platformName: 'xox-model SaaS 平台',
-    agentName: 'Agent OS',
-    extraRules: ['你是 xox-model Agent OS，不要自称 DeepSeek、Qwen、OpenAI 或其他模型。'],
-  })
-}
-
-function observationMessages(input: {
-  settings: XoxAgenticOsPlannerContext['settings']
-  userMessage: string
-  observations: AgentToolObservation[]
-  threadConversationLog?: ReturnType<typeof buildThreadConversationLog>
-}): RuntimeChatMessage[] {
-  const providerRuntime = resolveProviderRuntimeProfile({
-    provider: input.settings.openaiCompatibleProvider,
-    model: input.settings.openaiCompatibleModel,
-  })
-  return buildProviderToolObservationContinuationMessages({
-    profile: providerRuntime.profile,
-    capability: providerRuntime.capability,
-    thinkingLevel: providerRuntime.thinkingLevel,
-    systemPrompt: toolObservationFinalizerSystemPrompt(),
-    priorMessages: runtimeMessagesFromConversationLog(input.threadConversationLog),
-    userMessage: input.userMessage,
-    observations: input.observations,
-    suffix: 'finalizer_observation',
-    redact: redactSecretLikeContent,
-  }) as RuntimeChatMessage[]
-}
-
-async function addContinuationFailureStep(
-  ctx: ObservationContinuationPersistenceContext,
-  message: string,
-): Promise<Row<'agent_plan_steps'>> {
-  const maxRow = await ctx.db
-    .selectFrom('agent_plan_steps')
-    .select(({ fn }) => fn.max<number>('sequence_no').as('maxSequence'))
-    .where('run_id', '=', ctx.runId)
-    .executeTakeFirst()
-  const now = utcNow()
-  const id = newId()
-  await ctx.db
-    .insertInto('agent_plan_steps')
-    .values({
-      id,
-      thread_id: ctx.threadId,
-      run_id: ctx.runId,
-      action_request_id: null,
-      sequence_no: Number(maxRow?.maxSequence ?? 0) + 1,
-      title: '模型回复失败',
-      description: redactSecretLikeContent(message).slice(0, 500) || '模型没有基于工具结果返回可展示回复。',
-      status: 'failed',
-      navigation_json: null,
-      created_at: now,
-      updated_at: now,
-    })
-    .execute()
-  return ctx.db.selectFrom('agent_plan_steps').selectAll().where('id', '=', id).executeTakeFirstOrThrow()
-}
-
-type XoxPrerequisiteObligation = {
-  requiredDataScopes?: string[]
-}
-
-const ENTITY_SUMMARY_TOOL_ARGUMENTS = {
-  question: '当前工作区有序成员、股东、员工和成本对象列表',
-  scope: 'entity_summary',
-  metrics: ['shareholderNames', 'shareholderInvestments'],
-} satisfies WorkspaceDataQueryStep
-
-const ENTITY_SUMMARY_PREREQUISITE: AgentPrerequisiteObservationSpec<
-  AgentGoalFacts,
-  AgentToolObservation,
-  XoxPrerequisiteObligation
-> = {
-  id: 'entity_summary',
-  requiredDataScopes: ['entity_summary'],
-  isRequiredByGoal: (goalFacts) => goalFacts?.requiresOrderedEntityFacts === true,
-  isSatisfiedByObservation: (observation) => {
-    if (observation.toolName !== 'data_query_workspace' || observation.status !== 'completed') return false
-    const facts = parseXoxObservationContent(observation)
-    return facts?.scope === 'entity_summary' && Array.isArray(facts.shareholders)
-  },
 }
 
 function createXoxRunState(input: {
@@ -357,25 +246,6 @@ function osRunRecord(ctx: PlannerContext, run: Row<'agent_runs'> | null): OsRunR
     status: 'running',
     createdAt: run?.created_at ?? utcNow(),
   }
-}
-
-function shouldCollectPendingActionsBeforePause(
-  objective: string,
-  _goalFacts: AgentGoalFacts,
-): boolean {
-  const normalized = objective.toLowerCase()
-  return /[；;]\s*(把|帮|再|并|然后)/.test(objective) ||
-    objective.includes('预测结果为空') ||
-    objective.includes('继续修复') ||
-    normalized.includes('operating model')
-}
-
-function maxPendingActionsForObjective(objective: string, collectPendingActionsBeforePause: boolean): number {
-  const explicitParts = /[；;]\s*(把|帮|再|并|然后)/.test(objective)
-    ? objective.split(/[；;]/).map((part) => part.trim()).filter(Boolean).length
-    : 0
-  if (explicitParts > 1) return explicitParts
-  return collectPendingActionsBeforePause ? 2 : 1
 }
 
 function obligationMetadataValue(obligation: AgentLoopLedgerObligation, key: string): unknown {
@@ -584,9 +454,7 @@ async function materializeLoopObligations(input: {
   }
 }
 
-function osRunInput(ctx: PlannerContext, objective: string, goalFacts: AgentGoalFacts): OsRunInput {
-  const collectPendingActionsBeforePause = shouldCollectPendingActionsBeforePause(objective, goalFacts)
-  const maxPendingActionsToCollect = maxPendingActionsForObjective(objective, collectPendingActionsBeforePause)
+function osRunInput(ctx: PlannerContext, objective: string): OsRunInput {
   return {
     threadId: ctx.threadId,
     scope: osScope(ctx),
@@ -597,8 +465,6 @@ function osRunInput(ctx: PlannerContext, objective: string, goalFacts: AgentGoal
       host: 'xox-model',
       harness: 'agentic-os',
       xoxRunId: ctx.runId,
-      collectPendingActionsBeforePause,
-      maxPendingActionsToCollect,
     },
   }
 }
@@ -615,40 +481,6 @@ function applyStoredGraph(state: XoxAgenticOsRunState, graph: StoredActionGraph)
   for (const observation of graph.observations) {
     state.xoxObservations.push(observation)
   }
-}
-
-async function runInitialPrerequisiteObservations(
-  ctx: XoxAgenticOsPlannerContext,
-  input: {
-    goalFacts: AgentGoalFacts
-    observations: AgentToolObservation[]
-    plannerSource: AgentPlannerSource
-  },
-): Promise<StoredActionGraph | null> {
-  const prerequisites = selectAgentPrerequisiteObservations({
-    specs: [ENTITY_SUMMARY_PREREQUISITE],
-    goalFacts: input.goalFacts,
-    observations: input.observations,
-  })
-  if (!prerequisites.some((prerequisite) => prerequisite.id === ENTITY_SUMMARY_PREREQUISITE.id)) {
-    return null
-  }
-
-  const read = await answerWorkspaceDataQuestion(ctx, ENTITY_SUMMARY_TOOL_ARGUMENTS)
-  if (!read) return null
-
-  return storePlannedActionGraph(ctx, {
-    plannerSource: input.plannerSource,
-    items: [{
-      ...read,
-      toolName: 'data_query_workspace',
-      toolCallId: `runner_evidence_${ctx.runId}_entity_summary`,
-      toolArguments: ENTITY_SUMMARY_TOOL_ARGUMENTS,
-      observationLane: 'runner_evidence',
-      syntheticObservation: true,
-    }],
-    emitPlanReady: false,
-  })
 }
 
 function applyNewObservationsToLedger(
@@ -726,10 +558,15 @@ function agenticOsToolDefinition(
     }),
   }
 
-  if (authorityClass === 'read') {
+  if (entry.name === 'workspace_update_online_factor') {
+    definition.resolveAuthorityClass = (input) =>
+      input.mode === 'forecast' ? 'read' : authorityClass
+  }
+
+  if (authorityClass === 'read' || entry.name === 'workspace_update_online_factor') {
     definition.executeRead = async (input): Promise<OsToolHandlerResult> => {
       const rawStep = plannerStepFromToolCall(entry.name, input.toolCall.toolCallId, input.input)
-      const step = rawStep ? normalizeToolStepForObjective(state, rawStep) : null
+      const step = rawStep ? normalizeToolStepForObjective(rawStep) : null
       if (!step) {
         return {
           content: {
@@ -788,21 +625,10 @@ function toolStepName(step: AgentToolCallStep): string {
   return step.providerToolName ?? step.intent ?? ''
 }
 
-function objectiveImpliesForecastOnly(objective: string): boolean {
-  return objective.includes('如果') ||
-    objective.includes('试算') ||
-    objective.includes('会怎样') ||
-    objective.includes('会怎么样') ||
-    objective.toLowerCase().includes('what if')
-}
-
-function normalizeToolStepForObjective(
-  state: XoxAgenticOsRunState,
-  step: AgentToolCallStep,
-): AgentToolCallStep {
+function normalizeToolStepForObjective(step: AgentToolCallStep): AgentToolCallStep {
   if (toolStepName(step) !== 'workspace_update_online_factor') return step
   if (step.mode === 'write') return step
-  if (step.mode === 'forecast' || objectiveImpliesForecastOnly(state.objective)) {
+  if (step.mode === 'forecast') {
     return {
       ...step,
       mode: 'forecast',
@@ -1002,190 +828,6 @@ function runtimePlannerContext(
   if (loopObligationPlan !== undefined) nextContext.loopObligationPlan = loopObligationPlan
   if (state.goal) nextContext.goalFacts = goalContractFacts(state.goal)
   return nextContext
-}
-
-function parseXoxObservationContent(observation: AgentToolObservation): Record<string, unknown> | null {
-  return parseToolObservationModelFacts(observation)
-}
-
-function completedActionAssistantText(
-  state: XoxAgenticOsRunState,
-  observations: AgentToolObservation[],
-): string | null {
-  const pendingActionCount = state.actionRows.filter((row) => row.status === 'pending').length
-  const executedActionCount = state.actionRows.filter((row) => row.status === 'executed').length
-  if (pendingActionCount > 0 || executedActionCount === 0) return null
-  const actionObservations = observations
-    .filter(isActionResultToolObservation)
-  const lastActionObservation = actionObservations.at(-1)
-  return lastActionObservation?.displayPreview?.trim() || null
-}
-
-function isFinalizableBusinessObservation(observation: AgentToolObservation): boolean {
-  return isFinalizableHostBusinessObservation(observation, {
-    readToolName: 'data_query_workspace',
-  })
-}
-
-function hasFinalAnswerSupportingObservation(
-  state: XoxAgenticOsRunState,
-  observations: AgentToolObservation[],
-): boolean {
-  const requiresWriteCapability = stateRequiresWriteCapability(state)
-  return observations.some((observation) => {
-    if (isActionToolObservation(observation)) return true
-    if (isSandboxToolObservation(observation)) return isCompletedValidToolObservation(observation)
-    if (!isFinalizableBusinessObservation(observation)) return false
-    return observation.toolName !== 'data_query_workspace' || !requiresWriteCapability
-  })
-}
-
-function money(value: unknown): string {
-  const numeric = typeof value === 'number' && Number.isFinite(value) ? value : 0
-  return `¥${Math.round(numeric).toLocaleString('zh-CN')}`
-}
-
-function readableObservationText(observation: AgentToolObservation): string {
-  const data = parseXoxObservationContent(observation)
-  if (!data) return observation.displayPreview.trim()
-  if (data.scope === 'period_summary') {
-    return `${data.monthLabel ?? ''}计划收入 ${money(data.plannedRevenue)}，计划成本 ${money(data.plannedCost)}。`
-  }
-  if (data.scope === 'team_summary') {
-    const names = Array.isArray(data.names) && data.names.length > 0 ? `，分别是：${data.names.join('、')}` : ''
-    return `当前工作区共有 ${data.memberCount ?? 0} 个成员${names}。`
-  }
-  if (data.scope === 'entity_summary') {
-    const shareholders = Array.isArray(data.shareholders)
-      ? data.shareholders.map((shareholder) => {
-          const item = shareholder as Record<string, unknown>
-          return `${item.index ?? ''}. ${item.name ?? ''} ${money(item.investmentAmount)}`
-        }).join('、')
-      : ''
-    return `当前工作区有 ${data.memberCount ?? 0} 个成员、${data.shareholderCount ?? 0} 个股东。${shareholders ? `股东：${shareholders}。` : ''}`
-  }
-  if (data.scope === 'workspace_summary') {
-    return `基准场景总收入 ${money(data.grossSales)}，总成本 ${money(data.totalCost)}，总利润 ${money(data.totalProfit)}，期末现金 ${money(data.netCashAfterInvestment)}，回本周期 ${data.paybackMonthLabel ?? '未回本'}。`
-  }
-  if (data.scope === 'ledger_history') {
-    const preview = Array.isArray(data.preview) && data.preview.length > 0 ? `：${data.preview.join('；')}` : ''
-    return `已按“${data.filterText ?? ''}”筛选账本历史，命中 ${data.count ?? 0} 笔${preview}。`
-  }
-  if (data.scope === 'variance_detail') {
-    const lines = Array.isArray(data.lines) && data.lines.length > 0
-      ? ` ${(data.lines as Array<Record<string, unknown>>).map((line) =>
-          `${line.subjectName ?? line.subjectKey ?? '科目'} 差异 ${money(line.varianceAmount)}`).join('；')}。`
-      : ''
-    return `${data.monthLabel ?? ''}收入差异 ${money(data.revenueVarianceAmount)}，成本差异 ${money(data.costVarianceAmount)}。${lines}`
-  }
-  if (data.observationType === 'sandbox_execution') {
-    const result = data.result && typeof data.result === 'object' && !Array.isArray(data.result)
-      ? data.result as Record<string, unknown>
-      : null
-    const extraction = data.extraction && typeof data.extraction === 'object' && !Array.isArray(data.extraction)
-      ? data.extraction as Record<string, unknown>
-      : null
-    const summary = typeof result?.summary === 'string'
-      ? result.summary
-      : typeof extraction?.summary === 'string'
-        ? extraction.summary
-        : typeof data.outputText === 'string'
-          ? data.outputText
-          : ''
-    if (summary.trim()) {
-      const structured = result?.structured && typeof result.structured === 'object' && !Array.isArray(result.structured)
-        ? result.structured as Record<string, unknown>
-        : null
-      const shareholder = structured?.shareholder && typeof structured.shareholder === 'object' && !Array.isArray(structured.shareholder)
-        ? structured.shareholder as Record<string, unknown>
-        : structured?.firstShareholder && typeof structured.firstShareholder === 'object' && !Array.isArray(structured.firstShareholder)
-          ? structured.firstShareholder as Record<string, unknown>
-          : null
-      const shareholderName = typeof shareholder?.name === 'string' && shareholder.name.trim().length > 0
-        ? shareholder.name.trim()
-        : null
-      return shareholderName && !summary.includes(shareholderName)
-        ? `沙箱结果：${summary.trim()}，${shareholderName}。`
-        : `沙箱结果：${summary.trim()}`
-    }
-  }
-  return observation.displayPreview.trim()
-}
-
-function objectiveRequiresActionWrite(objectiveText: string): boolean {
-  const objective = objectiveText.toLowerCase()
-  const isLedgerStatusFilter =
-    objectiveText.includes('已作废') &&
-    /账本历史|筛选|过滤|查询|查看|查一下/.test(objectiveText)
-  return objectiveText.includes('入账') ||
-    objectiveText.includes('记账') ||
-    objectiveText.includes('并保存') ||
-    objectiveText.includes('保存') ||
-    objectiveText.includes('改成') ||
-    objectiveText.includes('修改') ||
-    objectiveText.includes('新增') ||
-    objectiveText.includes('删除') ||
-    objectiveText.includes('注资') ||
-    objectiveText.includes('发布') ||
-    objectiveText.includes('分享') ||
-    objectiveText.includes('导入') ||
-    objectiveText.includes('覆盖') ||
-    objectiveText.includes('锁账') ||
-    (!isLedgerStatusFilter && objectiveText.includes('作废')) ||
-    objectiveText.includes('恢复') ||
-    objectiveText.includes('确认卡') ||
-    objective.includes('save') ||
-    objective.includes('update') ||
-    objective.includes('delete') ||
-    objective.includes('import')
-}
-
-function stateRequiresActionWriteCapability(state: XoxAgenticOsRunState): boolean {
-  const facts = state.goal ? goalContractFacts(state.goal) : {}
-  return (
-    (Array.isArray(facts.requiredActionCapabilities) && facts.requiredActionCapabilities.length > 0) ||
-    objectiveRequiresActionWrite(state.objective)
-  )
-}
-
-function stateRequiresWriteCapability(state: XoxAgenticOsRunState): boolean {
-  const facts = state.goal ? goalContractFacts(state.goal) : {}
-  const objective = state.objective.toLowerCase()
-  const objectiveRequiresSandbox =
-    objective.includes('sandbox') ||
-    objective.includes('沙箱') ||
-    (
-      (objective.includes('roi') || objective.includes('回报率') || objective.includes('投资回报')) &&
-      (objective.includes('贷款') || objective.includes('利率') || objective.includes('通胀') || objective.includes('股东'))
-    )
-  return (
-    stateRequiresActionWriteCapability(state) ||
-    facts.requiresSandboxComputation === true ||
-    facts.requiresOrderedEntityFacts === true ||
-    objectiveRequiresSandbox
-  )
-}
-
-function completedReadObservationAssistantText(
-  state: XoxAgenticOsRunState,
-  observations: AgentToolObservation[],
-): { text: string; observations: AgentToolObservation[] } | null {
-  if (state.actionRows.some((row) => row.status === 'pending')) return null
-  const requiresWriteCapability = stateRequiresWriteCapability(state)
-  const selected = selectCompletedReadObservation({
-    observations,
-    requiresWriteCapability,
-    readToolName: 'data_query_workspace',
-    isFinalizableBusinessObservation,
-  })
-  if (!selected) return null
-  const lastReadObservation = selected.observation
-  return {
-    text: lastReadObservation.toolName === 'data_query_workspace' || isFinalizableBusinessObservation(lastReadObservation)
-      ? readableObservationText(lastReadObservation)
-      : lastReadObservation.displayPreview.trim(),
-    observations: selected.observations,
-  }
 }
 
 function goalContractFacts(goal: Row<'agent_goals'>) {
@@ -1570,56 +1212,6 @@ async function recordGoalEvaluation(input: {
   return evaluation
 }
 
-async function addPendingWriteReadinessEvaluation(input: {
-  ctx: XoxAgenticOsPlannerContext
-  state: XoxAgenticOsRunState
-  iteration: number
-}): Promise<ReturnType<typeof serializeEvaluation> | null> {
-  if (!input.state.goal) return null
-  const finding = {
-    id: 'graph.required_write_after_observation',
-    criterionId: 'graph.visible_steps',
-    severity: 'blocking' as const,
-    message: '目标已取得读取 observation，但仍需要继续规划写入动作或确认卡。',
-    evidence: { observationCount: input.state.xoxObservations.length },
-  }
-  const row = await addEvaluationResult(input.ctx.db, input.state.goal, {
-    iteration: input.iteration,
-    status: 'continue',
-    confidence: 0.86,
-    satisfiedCriteria: ['graph.visible_steps'],
-    unsatisfiedCriteria: [finding],
-    policyFindings: [],
-    nextPlannerBrief: finding.message,
-    userQuestion: null,
-    blocker: null,
-  })
-  const evaluation = serializeEvaluation(row)
-  await updateGoalStatus(input.ctx.db, input.state.goal, 'repairing')
-  await addRunEvent(input.ctx.db, agentServerRunLifecycleEvents.goalEvaluated({
-    threadId: input.ctx.thread.id,
-    runId: input.ctx.runId,
-    goalId: input.state.goal.id,
-    iteration: input.iteration,
-    evaluationStatus: evaluation.status,
-    satisfiedCriteria: evaluation.satisfiedCriteria,
-    unsatisfiedCount: evaluation.unsatisfiedCriteria.length,
-    nextPlannerBrief: evaluation.nextPlannerBrief,
-    copy: {
-      title: 'Loop Readiness Check 已运行',
-      message: loopReadinessSummary(evaluation),
-      status: 'running',
-    },
-  }))
-  const updatedGoal = await input.ctx.db
-    .selectFrom('agent_goals')
-    .selectAll()
-    .where('id', '=', input.state.goal.id)
-    .executeTakeFirst()
-  if (updatedGoal) input.state.goal = updatedGoal
-  return evaluation
-}
-
 function createXoxAgenticOsHost(
   ctx: XoxAgenticOsPlannerContext,
   options: { beforeStateWrite: () => Promise<boolean> },
@@ -1728,8 +1320,6 @@ function createXoxAgenticOsHost(
       const xoxObservations = state.loopCoordinator.combineObservations(input.observations)
       applyNewObservationsToLedger(state, xoxObservations, input.iteration)
 
-      const completedActionText = completedActionAssistantText(state, xoxObservations)
-      let readinessEvaluation: ReturnType<typeof serializeEvaluation> | null = null
       const readinessObservation = selectReadinessObservation(xoxObservations)
       if (
         readinessObservation &&
@@ -1738,146 +1328,11 @@ function createXoxAgenticOsHost(
           observation: readinessObservation,
         })
       ) {
-        if (
-          !isRepairableToolObservation(readinessObservation) &&
-          stateRequiresWriteCapability(state) &&
-          state.actionRows.length === 0
-        ) {
-          readinessEvaluation = await addPendingWriteReadinessEvaluation({ ctx, state, iteration: input.iteration })
-        } else {
-          readinessEvaluation = await addReadinessEvaluation({
-            ctx,
-            state,
-            iteration: input.iteration,
-          })
-        }
-      }
-      if (completedActionText && readinessEvaluation?.status !== 'continue') {
-        if (hasNonActionHostObservation(xoxObservations) && ctx.settings.llmProvider !== 'rules') {
-          const runtimeContext = await loadAgentRuntimeContext({
-            db: ctx.db,
-            workspace: ctx.workspace,
-            user: ctx.user,
-            threadId: ctx.thread.id,
-          })
-          const threadConversationLog = buildThreadConversationLog({
-            recentMessages: runtimeContext.recentMessages,
-          })
-          const continuation = await runAgentServerObservationContinuation<RuntimePlanResult | null>({
-            threadId: ctx.thread.id,
-            runId: ctx.runId,
-            goalId: state.goal?.id ?? null,
-            observationCount: xoxObservations.length,
-            toolNames: xoxObservations.map((observation) => observation.toolName),
-            appendRunEvent: async (event) => {
-              await addRunEvent(ctx.db, event)
-            },
-            runRuntime: () => planWithRuntimeAdapter({
-              settings: ctx.settings,
-              message: redactSecretLikeContent(state.objective),
-              context: {
-                mode: 'tool_observation_finalizer',
-                workspace: { id: ctx.workspace.id, name: ctx.workspace.name },
-                observationCount: xoxObservations.length,
-                toolNames: xoxObservations.map((observation) => observation.toolName),
-              },
-              tools: [],
-              messages: observationMessages({
-                settings: ctx.settings,
-                userMessage: state.objective,
-                observations: xoxObservations,
-                threadConversationLog,
-              }),
-              systemPrompt: toolObservationFinalizerSystemPrompt(),
-              thinkingLevel: 'off',
-              maxTokens: xoxObservations.length > 2 ? 700 : 600,
-              stream: true,
-              requestTimeoutMs: ctx.settings.agentProviderRequestTimeoutMs,
-              ...(ctx.abortSignal ? { abortSignal: ctx.abortSignal } : {}),
-              onStreamEvent: (event) => addRuntimeStreamRunEvent({
-                db: ctx.db,
-                threadId: ctx.thread.id,
-                runId: ctx.runId,
-                phase: 'final_answer',
-              }, event),
-            }),
-            assistantText: (result) => result?.assistantText ?? null,
-            failureMessage: (result) => result?.error?.message ??
-              (result?.steps.length
-                ? '模型在工具结果之后仍返回了 tool call，不能作为最终回复。'
-                : '模型没有基于工具结果返回可展示回复。'),
-            failureErrorKind: (result) => result?.error?.kind ?? null,
-            copy: {
-              started: {
-                title: '模型继续生成回复',
-                message: '工具结果已作为 observation 回灌给模型，正在生成最终回复。',
-              },
-              completed: {
-                title: '模型回复已完成',
-                message: '模型已基于工具结果生成最终回复。',
-              },
-              failed: {
-                title: '模型继续回复失败',
-              },
-            },
-          })
-          if (continuation.status === 'answered') {
-            return {
-              assistantText: continuation.assistantText,
-            }
-          }
-          if (continuation.status === 'failed') {
-            state.planRows.push(await addContinuationFailureStep({
-              db: ctx.db,
-              threadId: ctx.thread.id,
-              runId: ctx.runId,
-            }, continuation.message))
-          }
-        }
-        return {
-          assistantText: completedActionText,
-        }
-      }
-      const sandboxFinalizerObservation = selectSandboxFinalizerObservation({
-        observations: xoxObservations,
-        claim: (observation) => state.loopCoordinator.claimObservation({
-          namespace: 'sandbox_finalizer',
-          observation,
-        }),
-      })
-      if (sandboxFinalizerObservation) {
-        await addRunEvent(ctx.db, agentServerRunLifecycleEvents.observationContinuationRequested({
-          threadId: ctx.thread.id,
-          runId: ctx.runId,
-          goalId: state.goal?.id ?? null,
+        await addReadinessEvaluation({
+          ctx,
+          state,
           iteration: input.iteration,
-          observationCount: xoxObservations.length,
-          toolNames: xoxObservations.map((observation) => observation.toolName),
-          assistantOnly: true,
-          copy: {
-            title: '基于工具结果生成回复',
-            message: '工具 observation 已满足当前 runner obligations，下一步用无工具 assistant continuation 生成最终回答候选。',
-          },
-        }))
-        return {
-          assistantText: readableObservationText(sandboxFinalizerObservation),
-        }
-      }
-      const completedRead = completedReadObservationAssistantText(state, xoxObservations)
-      if (completedRead) {
-        await addRunEvent(ctx.db, agentServerRunLifecycleEvents.observationContinuationRequested({
-          threadId: ctx.thread.id,
-          runId: ctx.runId,
-          observationCount: completedRead.observations.length,
-          toolNames: completedRead.observations.map((observation) => observation.toolName),
-          copy: {
-            title: '继续基于工具结果规划',
-            message: '工具结果已作为 observation 回到 Agentic OS harness，本轮 read observation 可直接进入最终回答证据检查。',
-          },
-        }))
-        return {
-          assistantText: completedRead.text,
-        }
+        })
       }
       await addRunEvent(ctx.db, agentServerRunLifecycleEvents.modelPlanning({
         threadId: ctx.thread.id,
@@ -1901,51 +1356,6 @@ function createXoxAgenticOsHost(
           emitPlanReady: false,
         })
         applyStoredGraph(state, graph)
-        const boundaryToolNames = [
-          ...(result.error.toolCallBoundary?.toolNames ?? []),
-          ...(result.error.toolNames ?? []),
-        ].filter((toolName, index, values) => toolName && values.indexOf(toolName) === index)
-        const missingObservationRepair = runtimeBoundaryMissingObservationRepair({
-          ledger: state.obligationLedger,
-          objective: state.objective,
-          toolNames: boundaryToolNames,
-        })
-        if (missingObservationRepair) {
-          await addRunEvent(ctx.db, agentServerRunLifecycleEvents.runtimeEvidenceRequired({
-            threadId: ctx.thread.id,
-            runId: ctx.runId,
-            toolNames: missingObservationRepair.toolNames,
-            reason: 'provider_tool_call_without_observation_after_retry',
-            requiredGoalFacts: missingObservationRepair.requiredGoalFacts,
-            copy: {
-              title: '需要补齐工具证据',
-              message: 'Provider 已产生 sandbox_run_code 工具调用意图，但没有形成对应工具 observation；最终回答前必须补齐 sandbox evidence 或失败关闭。',
-            },
-          }))
-          await addRunEvent(ctx.db, agentServerRunLifecycleEvents.responseEvaluated({
-            threadId: ctx.thread.id,
-            runId: ctx.runId,
-            goalId: state.goal?.id ?? null,
-            evaluationStatus: missingObservationRepair.evaluation.status,
-            confidence: missingObservationRepair.evaluation.confidence,
-            evidenceCount: 0,
-            findings: missingObservationRepair.evaluation.findings,
-            requiredEvidence: missingObservationRepair.evaluation.requiredEvidence,
-            finalAnswerClaims: [],
-            claimReviewStatus: null,
-            claimReviewReason: null,
-            obligationLedger: missingObservationRepair.obligationLedger,
-            obligationPlan: missingObservationRepair.obligationPlan,
-            nextPlannerBrief: missingObservationRepair.nextPlannerBrief,
-            data: {
-              evidence: [],
-            },
-            copy: {
-              title: '最终回答证据检查',
-              message: '最终回答还缺少可复核计算 evidence。',
-            },
-          }))
-        }
       }
       return runtimePlannerResultToTurnOutput(result, {
         unknownToolNamePrefix: 'xox_unknown_tool_',
@@ -1979,7 +1389,7 @@ function createXoxAgenticOsHost(
   const actions: AgentActionPort = {
     previewAction: async (input) => {
       const rawStep = plannerStepFromToolCall(input.tool.name, input.toolCall.toolCallId, input.input)
-      const step = rawStep ? normalizeToolStepForObjective(state, rawStep) : null
+      const step = rawStep ? normalizeToolStepForObjective(rawStep) : null
       if (!step) throw new Error(`No xox planner step mapping exists for tool ${input.tool.name}.`)
       const graph = await storeSingleToolStep(ctx, state, step, {
         forceManualApproval: true,
@@ -2085,7 +1495,7 @@ function createXoxAgenticOsHost(
   const sandbox: AgentSandboxPort = {
     executeSandbox: async (input): Promise<OsSandboxExecutionResult> => {
       const rawStep = plannerStepFromToolCall(input.tool.name, input.toolCall.toolCallId, input.input)
-      const step = rawStep ? normalizeToolStepForObjective(state, rawStep) : null
+      const step = rawStep ? normalizeToolStepForObjective(rawStep) : null
       if (!step) {
         return {
           content: {
@@ -2138,43 +1548,6 @@ function createXoxAgenticOsHost(
       const runtimeFacts = await readRuntimeGoalFacts(ctx.db, ctx.runId)
       const goalFacts = mergeAgentGoalFacts(goalContractFacts(state.goal), runtimeFacts)
       const pendingActionCount = state.actionRows.filter((row) => row.status === 'pending').length
-      if (
-        input.assistantText.trim() &&
-        pendingActionCount === 0 &&
-        state.actionRows.length === 0 &&
-        stateRequiresActionWriteCapability(state) &&
-        !hasFinalAnswerSupportingObservation(state, reviewObservations)
-      ) {
-        if (reviewIteration >= 2) {
-          const reason = '缺少必要的工具调用或确认卡，模型连续返回普通文本，已停止重复修复。'
-          await addRunEvent(ctx.db, {
-            threadId: ctx.thread.id,
-            runId: ctx.runId,
-            type: 'tool_loop_guardrail',
-            title: '工具循环保护已触发',
-            message: reason,
-            status: 'failed',
-            data: {
-              pattern: 'missing_required_tool_call_after_repair',
-              goalId: state.goal.id,
-              iteration: reviewIteration,
-              harness: 'agentic-os',
-            },
-          })
-          return {
-            pass: false,
-            reason,
-            repairable: false,
-            evidence: [],
-          }
-        }
-        return {
-          pass: false,
-          reason: '模型返回了普通文本，但当前目标仍需要工具调用生成写入确认卡或可验证 observation。',
-          repairable: true,
-          evidence: [],
-        }
-      }
       const reviewCycle = await runAgentServerFinalResponseReviewCycle<ResponseRequiredEvidence, AgentEvidenceItem, StoredActionGraph>({
         threadId: ctx.thread.id,
         runId: ctx.runId,
@@ -2352,8 +1725,6 @@ async function finalizeAgenticOsResult(
     if (!(await options.beforeStateWrite())) return null
     assistantMessage = await addMessage(ctx.db, ctx.thread.id, 'assistant', result.assistantText)
   } else if (result.status === 'awaiting_confirmation') {
-    const accountStep = state.planRows.find((row) =>
-      row.title.includes('账号') || row.description.includes('账号登录、退出、注销'))
     const pendingActionCount = state.actionRows.filter((row) => row.status === 'pending').length
     if (pendingActionCount > 0 && state.goal) {
       await recordGoalEvaluation({
@@ -2363,41 +1734,11 @@ async function finalizeAgenticOsResult(
         allowComplete: false,
       })
     }
-    if (accountStep || pendingActionCount > 0) {
-      if (!(await options.beforeStateWrite())) return null
-      assistantMessage = await addMessage(
-        ctx.db,
-        ctx.thread.id,
-        'assistant',
-        accountStep?.description ?? `已生成 ${pendingActionCount} 张待确认动作卡，请检查后确认或编辑。`,
-      )
-    }
   } else if (result.status === 'awaiting_clarification') {
     if (!(await options.beforeStateWrite())) return null
     assistantMessage = await addMessage(ctx.db, ctx.thread.id, 'assistant', result.question)
   } else if (result.status === 'blocked' || result.status === 'failed') {
-    const reason = result.reason || 'Agentic OS harness did not complete the run.'
-    if (state.goal) await updateGoalStatus(ctx.db, state.goal, 'failed', { blockedReason: reason })
-    if (result.status === 'blocked' && reason.includes('Iteration budget exhausted')) {
-      await addRunEvent(ctx.db, agentServerRunLifecycleEvents.goalIterationExhausted({
-        threadId: ctx.thread.id,
-        runId: ctx.runId,
-        goalId: state.goal?.id ?? null,
-        maxIterations: 5,
-        reason,
-        copy: {
-          title: '目标循环已耗尽',
-          message: `Agent 已达到本轮最大修复次数，但目标仍未完成：${reason}`,
-        },
-      }))
-    }
-    const providerConfigurationFailure = state.planRows.some((row) =>
-      row.status === 'failed' &&
-      (row.title.includes('模型') || row.description.includes('API key') || row.description.includes('认证失败')))
-    if (!providerConfigurationFailure) {
-      if (!(await options.beforeStateWrite())) return null
-      assistantMessage = await addMessage(ctx.db, ctx.thread.id, 'assistant', `这轮没有完成所有目标：${reason}`)
-    }
+    if (state.goal) await updateGoalStatus(ctx.db, state.goal, 'failed', { blockedReason: result.reason })
   } else if (result.status === 'cancelled') {
     const reason = result.reason || 'Run was cancelled.'
     if (state.goal) await updateGoalStatus(ctx.db, state.goal, 'cancelled', { blockedReason: reason })
@@ -2447,6 +1788,7 @@ async function finalizeAgenticOsResult(
   ])
   if (!(await options.beforeStateWrite())) return null
   return {
+    agenticOsResult: result,
     plannerSource: state.plannerSource,
     assistantMessage,
     navigationEvents: state.navigationEvents,
@@ -2514,9 +1856,13 @@ export async function resumeXoxAgenticOsRunAfterActionConfirmation(input: {
   const kit = createAgentHostKit(host, {
     engineOptions: {
       defaultMaxIterations: 5,
+      pendingActionCollection: {
+        enabledByDefault: true,
+        maxActions: 8,
+      },
     },
   })
-  const request = osRunInput(planningCtx, objective, goalFacts)
+  const request = osRunInput(planningCtx, objective)
   const osRun: OsRunRecord = {
     ...osRunRecord(planningCtx, run),
     status: 'awaiting_confirmation',
@@ -2628,33 +1974,26 @@ export async function executeXoxAgenticOsRun(
     goalFacts: goalContractFacts(goal),
     ...(providedWorkspaceBundle ? { providedWorkspaceBundle } : {}),
   }
-  const initialPrerequisites = await runInitialPrerequisiteObservations(planningCtx, {
-    goalFacts: goalContractFacts(goal),
-    observations: state.xoxObservations,
-    plannerSource: state.plannerSource,
-  })
-  if (!(await options.beforeStateWrite())) return null
-  if (initialPrerequisites) applyStoredGraph(state, initialPrerequisites)
-
-  const initialOsObservations = state.xoxObservations.map((observation, index) => {
-    return state.observationBridge.toCanonical(observation, index)
-  })
   const run = await ctx.db
     .selectFrom('agent_runs')
     .selectAll()
     .where('id', '=', ctx.runId)
     .executeTakeFirst()
-  const request = osRunInput(planningCtx, objective, goalContractFacts(goal))
+  const request = osRunInput(planningCtx, objective)
   const host = createXoxAgenticOsHost(planningCtx, options, state)
   const kit = createAgentHostKit(host, {
     engineOptions: {
       defaultMaxIterations: 5,
+      pendingActionCollection: {
+        enabledByDefault: true,
+        maxActions: 8,
+      },
     },
   })
   const resumeInput = {
     run: osRunRecord(ctx, run ?? null),
     request,
-    observations: initialOsObservations,
+    observations: [],
     ...(request.maxIterations !== undefined ? { maxIterations: request.maxIterations } : {}),
   }
   const result = await kit.resume(resumeInput, {

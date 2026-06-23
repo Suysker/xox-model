@@ -255,49 +255,61 @@ describe('Agent ADR architecture boundaries', () => {
       /context-pack/,
       /action-graph-store/,
     ])
+    const worker = source('agent/agentic-os/xox-run-worker-adapter.ts')
+    expect(worker).toContain('projectAgentServerRunCompletion')
+    expect(worker).not.toContain('goalFailed')
+    expect(worker).not.toContain('addAssistantMessage')
+    expect(worker).not.toContain('运行失败')
+    expect(worker).not.toContain('pendingActionCount = runResult.actionRows.filter')
+    expect(worker).not.toContain('executedActionCount = runResult.actionRows.filter')
+    expect(worker).not.toContain('目标循环未能完成所有要求')
+    expect(worker).not.toContain('模型规划已完成，等待用户处理确认卡')
+    expect(worker).not.toContain('模型规划和自动执行已完成')
+    expect(worker).not.toContain('模型规划和只读回答已完成')
   })
 
-  it('keeps turn intake protocol in Agentic OS core', () => {
+  it('keeps turn intake protocol out of xox worker control flow', () => {
     expect(existsSync(join(srcRoot, 'agent', 'turn-intake-resolver.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-turn-intake-adapter.ts'))).toBe(false)
     const worker = source('agent/agentic-os/xox-run-worker-adapter.ts')
-    expect(worker).toContain("@agentic-os/core")
-    expect(worker).toContain('resolveAgentTurnIntake')
-    expect(worker).toContain('AGENT_TURN_LANE_RESOLUTION_TOOL_SCHEMA')
+    expect(worker).not.toContain("@agentic-os/core")
+    expect(worker).not.toContain('resolveAgentTurnIntake')
+    expect(worker).not.toContain('AGENT_TURN_LANE_RESOLUTION_TOOL_SCHEMA')
+    expect(worker).not.toContain('xox-turn-lane-policy.md')
     expect(worker).not.toContain("from './xox-turn-intake-adapter.js'")
     expect(worker).not.toContain("name: 'turn_lane_resolve'")
     expect(worker).not.toContain("enum: ['direct_answer', 'agent_goal']")
     expect(worker).not.toContain("reasonCode: 'provider_unavailable'")
+    expect(worker).not.toContain("resolution.lane === 'direct_answer'")
   })
 
-  it('keeps direct answer lane state machine in Agentic OS core', () => {
+  it('keeps direct answer lane execution out of xox worker control flow', () => {
     expect(existsSync(join(srcRoot, 'agent', 'direct-answer-runtime.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-direct-answer-adapter.ts'))).toBe(false)
     const worker = source('agent/agentic-os/xox-run-worker-adapter.ts')
-    expect(worker).toContain("@agentic-os/core")
-    expect(worker).toContain('runDirectAnswerLane')
+    expect(worker).not.toContain("@agentic-os/core")
+    expect(worker).not.toContain('runDirectAnswerLane')
+    expect(worker).not.toContain('executeXoxDirectAnswerLane')
+    expect(worker).not.toContain('xox-direct-answer-policy.md')
     expect(worker).not.toContain("from './xox-direct-answer-adapter.js'")
     expect(worker).not.toContain("from './direct-answer-runtime.js'")
+    expect(worker).not.toContain('direct_answer_provider_failed')
+    expect(worker).not.toContain('turn_intake_resolved')
     expect(worker).not.toContain('function usableAssistantText')
     expect(worker).not.toContain('result?.steps.length === 0')
     expect(worker).not.toContain('if (!assistantText)')
   })
 
-  it('keeps ambient session context facts in Agentic OS core', () => {
+  it('keeps ambient session context facts out of xox worker control flow', () => {
     expect(existsSync(join(srcRoot, 'agent', 'ambient-context.ts'))).toBe(false)
 
     for (const file of sourceFilesUnder('agent')) {
       expect(source(file), `${file} must not import the deleted ambient-context helper`).not.toContain('ambient-context')
     }
 
-    for (const file of [
-      'agent/agentic-os/xox-run-worker-adapter.ts',
-    ]) {
-      const content = source(file)
-      expect(content).toContain("@agentic-os/core")
-      expect(content).toContain('buildAgentAmbientSessionContext')
-      expect(content).toContain('agentAmbientSessionContextFacts')
-    }
+    const worker = source('agent/agentic-os/xox-run-worker-adapter.ts')
+    expect(worker).not.toContain('buildAgentAmbientSessionContext')
+    expect(worker).not.toContain('agentAmbientSessionContextFacts')
   })
 
   it('keeps clarification resume scaffold in Agentic OS core', () => {
@@ -370,15 +382,65 @@ describe('Agent ADR architecture boundaries', () => {
     expect(hostKit).toContain('resumeXoxAgenticOsRunAfterActionConfirmation')
   })
 
-  it('keeps initial prerequisite observation selection in Agentic OS core', () => {
+  it('does not keep a host-side prerequisite observation runner', () => {
     expect(existsSync(join(srcRoot, 'agent', 'prerequisite-observations.ts'))).toBe(false)
 
     const hostKit = source('agent/host-profile/xox-agent-run-profile.ts')
     expect(hostKit).toContain("@agentic-os/core")
-    expect(hostKit).toContain('selectAgentPrerequisiteObservations')
-    expect(hostKit).toContain('ENTITY_SUMMARY_PREREQUISITE')
     expect(hostKit).not.toContain("from '../prerequisite-observations.js'")
+    expect(hostKit).not.toContain('selectAgentPrerequisiteObservations')
+    expect(hostKit).not.toContain('ENTITY_SUMMARY_PREREQUISITE')
     expect(hostKit).not.toContain('runPrerequisiteObservations')
+    expect(hostKit).not.toContain('runInitialPrerequisiteObservations')
+  })
+
+  it('keeps host run profile free of text-enum harness heuristics', () => {
+    const hostKit = source('agent/host-profile/xox-agent-run-profile.ts')
+    for (const forbidden of [
+      'objectiveImpliesForecastOnly',
+      'shouldCollectPendingActionsBeforePause',
+      'ENTITY_SUMMARY_TOOL_ARGUMENTS',
+      'readableObservationText',
+      'objectiveRequiresActionWrite',
+      'collectPendingActionsBeforePause',
+      'maxPendingActionsToCollect',
+      "row.title.includes('账号')",
+      "row.description.includes('账号登录、退出、注销')",
+      "row.description.includes('API key')",
+      "row.description.includes('认证失败')",
+      "reason.includes('Iteration budget exhausted')",
+      'goalIterationExhausted(',
+      'toolObservationFinalizerSystemPrompt',
+      'observationMessages',
+      'addContinuationFailureStep',
+      'ObservationContinuationPersistenceContext',
+      'runAgentServerObservationContinuation',
+      'completedActionAssistantText',
+      'completedReadObservationAssistantText',
+      'hasFinalAnswerSupportingObservation',
+      'stateRequiresActionWriteCapability',
+      'stateRequiresWriteCapability',
+      'addPendingWriteReadinessEvaluation',
+      'runtimeBoundaryMissingObservationRepair',
+      'selectSandboxFinalizerObservation',
+      'selectCompletedReadObservation',
+      'selectAgentPrerequisiteObservations',
+      'missing_required_tool_call_after_repair',
+      '已生成 ${pendingActionCount} 张待确认动作卡',
+      '这轮没有完成所有目标',
+      'Agentic OS harness did not complete the run',
+    ]) {
+      expect(hostKit, `${forbidden} must not return to the host run profile`).not.toContain(forbidden)
+    }
+
+    const threadStore = source('agent/agentic-os/xox-thread-store-adapter.ts')
+    for (const forbidden of [
+      "event.type.includes('tool')",
+      "message.content.includes('待确认动作卡')",
+      "osContentSummary(item.content).includes('待确认动作卡')",
+    ]) {
+      expect(threadStore, `${forbidden} must not return to thread projection`).not.toContain(forbidden)
+    }
   })
 
   it('keeps final review obligation projection merge in Agentic OS core', () => {
@@ -404,16 +466,18 @@ describe('Agent ADR architecture boundaries', () => {
     expect(adapter).not.toContain('reviewXoxFinalResponse')
   })
 
-  it('keeps runtime-boundary missing-observation repair projection out of the host kit', () => {
+  it('keeps runtime-boundary missing-observation repair out of xox harness code', () => {
     const hostKit = source('agent/host-profile/xox-agent-run-profile.ts')
-    expect(hostKit).toContain('runtimeBoundaryMissingObservationRepair')
+    expect(hostKit).not.toContain('runtimeBoundaryMissingObservationRepair')
     expect(hostKit).not.toContain('runtime_boundary_sandbox_calculation')
     expect(hostKit).not.toContain('response.sandbox_evidence_missing')
     expect(hostKit).not.toContain('Provider 已产生 sandbox_run_code 工具意图')
 
     expect(existsSync(join(srcRoot, 'agent', 'loop-obligation-ledger.ts'))).toBe(false)
     const adapter = source('agent/host-profile/xox-final-review-policy.ts')
-    expect(adapter).toContain('projectObligationStateWithAdditionalObligations')
+    expect(adapter).not.toContain('projectObligationStateWithAdditionalObligations')
+    expect(adapter).not.toContain('runtimeBoundaryMissingObservationRepair')
+    expect(adapter).not.toContain('runtime_boundary_sandbox_calculation')
   })
 
   it('deletes the local loop-obligations facade and keeps obligation runtime in Agentic OS core', () => {
@@ -430,7 +494,7 @@ describe('Agent ADR architecture boundaries', () => {
     expect(adapter).toContain("@agentic-os/core")
     expect(adapter).toContain('ledgerToObligationPlan')
     expect(adapter).toContain('projectObligationLedgerWithAdditionalObligations')
-    expect(adapter).toContain('projectObligationStateWithAdditionalObligations')
+    expect(adapter).not.toContain('projectObligationStateWithAdditionalObligations')
     expect(adapter).not.toContain('  projectObligationLedger,')
     expect(adapter).not.toContain('projectObligationLedger(ledger')
 
@@ -715,8 +779,8 @@ describe('Agent ADR architecture boundaries', () => {
   it('keeps tool observation loop semantics in Agentic OS core', () => {
     const hostKit = source('agent/host-profile/xox-agent-run-profile.ts')
     expect(hostKit).toContain('parseToolObservationModelFacts')
-    expect(hostKit).toContain('isActionToolObservation')
-    expect(hostKit).toContain('isSandboxToolObservation')
+    expect(hostKit).not.toContain('isActionToolObservation')
+    expect(hostKit).not.toContain('isSandboxToolObservation')
     expect(hostKit).not.toContain('JSON.parse(observation.modelContent)')
 
     expect(existsSync(join(srcRoot, 'agent', 'tool-runtime', 'tool-loop-guardrails.ts'))).toBe(false)
@@ -763,31 +827,29 @@ describe('Agent ADR architecture boundaries', () => {
     expect(draftBuilder).not.toContain('did not produce an action or observation')
   })
 
-  it('deletes the prompt registry facade and keeps the tool observation continuation prompt in Agentic OS core', () => {
+  it('deletes the prompt registry facade and keeps observation continuation prompts out of xox', () => {
     expect(existsSync(join(srcRoot, 'agent', 'prompt-registry.ts'))).toBe(false)
     for (const file of sourceFilesUnder('agent')) {
       expect(source(file), `${file} must not import the deleted prompt registry facade`).not.toContain('prompt-registry')
     }
     const continuation = source('agent/host-profile/xox-agent-run-profile.ts')
-    expect(continuation).toContain("@agentic-os/core")
-    expect(continuation).toContain('toolObservationContinuationSystemPrompt')
+    expect(continuation).not.toContain('toolObservationContinuationSystemPrompt')
+    expect(continuation).not.toContain('toolObservationFinalizerSystemPrompt')
     expect(continuation).not.toContain('tool-observation-finalizer.system.md')
     expect(existsSync(join(srcRoot, 'agent', 'prompts', 'tool-observation-finalizer.system.md'))).toBe(false)
   })
 
-  it('keeps provider observation continuation message assembly in Agentic OS runtime', () => {
+  it('keeps provider observation continuation message assembly out of xox host profile', () => {
     const continuation = source('agent/host-profile/xox-agent-run-profile.ts')
-    expect(continuation).toContain("@agentic-os/runtime-openai-compatible")
-    expect(continuation).toContain('buildProviderToolObservationContinuationMessages')
+    expect(continuation).not.toContain('buildProviderToolObservationContinuationMessages')
     expect(continuation).not.toContain('providerToolObservationReplayMessages')
     expect(continuation).not.toContain("role: 'tool'")
     expect(continuation).not.toContain('tool_calls:')
   })
 
-  it('keeps observation continuation lifecycle in Agentic OS server', () => {
+  it('keeps observation continuation lifecycle out of xox host profile', () => {
     const hostKit = source('agent/host-profile/xox-agent-run-profile.ts')
-    expect(hostKit).toContain("@agentic-os/server")
-    expect(hostKit).toContain('runAgentServerObservationContinuation')
+    expect(hostKit).not.toContain('runAgentServerObservationContinuation')
     expect(hostKit).not.toContain('continueModelAfterToolObservations')
     expect(hostKit).not.toContain('agentServerRunLifecycleEvents.modelContinuation(')
     expect(hostKit).not.toContain('agentServerRunLifecycleEvents.modelContinuationCompleted(')
@@ -844,7 +906,7 @@ describe('Agent ADR architecture boundaries', () => {
     expect(planningCall).toContain('runtimeMessagesFromConversationLog')
     expect(planningCall).toContain('contextWithoutRuntimeConversationLog')
     expect(continuation).toContain("@agentic-os/core")
-    expect(continuation).toContain('runtimeMessagesFromConversationLog')
+    expect(continuation).not.toContain('runtimeMessagesFromConversationLog')
     expect(existsSync(join(srcRoot, 'agent', 'runtime-conversation-log.ts'))).toBe(false)
   })
 

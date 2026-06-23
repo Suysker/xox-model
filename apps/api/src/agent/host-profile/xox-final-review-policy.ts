@@ -23,7 +23,6 @@ import {
   initializeObligationLedger as initializeOsObligationLedger,
   ledgerToObligationPlan as osLedgerToObligationPlan,
   projectObligationLedgerWithAdditionalObligations,
-  projectObligationStateWithAdditionalObligations,
   type AdditionalObligationProjectionInput,
   type AgentFinalResponseEvaluation,
   type AgentFinalResponseEvaluationStatus,
@@ -126,15 +125,6 @@ export type AgentLoopObligationLedgerProjection = {
     evidenceIds: string[]
     invalidReasons: string[]
   }>
-}
-
-export type RuntimeBoundaryMissingObservationRepair = {
-  toolNames: string[]
-  requiredGoalFacts: AgentGoalFacts
-  evaluation: ResponseEvaluation
-  obligationLedger: AgentLoopObligationLedgerProjection
-  obligationPlan: AgentLoopObligationPlan
-  nextPlannerBrief: string
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -691,74 +681,6 @@ export function serializeObligationLedgerForResponseEvent(input: {
     ledger: input.ledger,
     obligations: additionalObligationsFromResponseEvaluation(input.evaluation),
   }))
-}
-
-function uniqueStrings(values: readonly string[]): string[] {
-  return [...new Set(values.filter((value) => value.length > 0))]
-}
-
-function runtimeBoundaryMissingObservationObligations(toolNames: readonly string[]): OsAgentLoopObligation[] {
-  if (!toolNames.includes('sandbox_run_code')) return []
-  return [{
-    obligationId: 'runtime_boundary_sandbox_calculation',
-    kind: 'tool_observation',
-    reason: 'Provider 已产生 sandbox_run_code 工具意图，但本轮没有形成可执行 sandbox observation。',
-    toolNames: ['sandbox_run_code'],
-    capabilities: ['sandbox'],
-    requiredOutcomes: ['completed_valid'],
-    metadata: xoxObligationMetadata({
-      xoxKind: 'sandbox_calculation',
-      findingCodes: ['response.sandbox_evidence_missing'],
-      authority: 'sandbox',
-      subject: 'calculation',
-      goalFacts: { requiresSandboxComputation: true },
-    }),
-  }]
-}
-
-export function runtimeBoundaryMissingObservationRepair(input: {
-  ledger: AgentLoopObligationLedger
-  objective: string
-  toolNames: readonly string[]
-}): RuntimeBoundaryMissingObservationRepair | null {
-  const toolNames = uniqueStrings(input.toolNames)
-  const obligations = runtimeBoundaryMissingObservationObligations(toolNames)
-  if (obligations.length === 0) return null
-  const state = projectObligationStateWithAdditionalObligations({
-    ledger: input.ledger,
-    objective: input.objective,
-    obligations: obligations.map((obligation) => additionalObligationFromOsObligation({ obligation })),
-  })
-  if (state.obligationPlan === null) return null
-  const obligationPlan = xoxPlanFromOsPlan({
-    objective: input.objective,
-    osPlan: state.obligationPlan,
-  })
-  const requiredGoalFacts: AgentGoalFacts = { requiresSandboxComputation: true }
-  const nextPlannerBrief = '继续调用 sandbox_run_code，用当前工作区事实完成可复核计算，再生成最终回答。'
-  return {
-    toolNames: uniqueStrings(obligations.flatMap((obligation) => obligation.toolNames ?? [])),
-    requiredGoalFacts,
-    evaluation: {
-      status: 'needs_calculation',
-      confidence: 0.96,
-      findings: [{
-        severity: 'fail',
-        code: 'response.sandbox_evidence_missing',
-        evidenceIds: [],
-        message: 'Provider 已产生 sandbox_run_code 工具意图，但本轮没有形成可执行 sandbox observation。',
-      }],
-      requiredEvidence: [{
-        authority: 'sandbox',
-        subject: 'calculation',
-        reason: '最终回答依赖派生计算，但本轮还没有完成的 sandbox_run_code evidence。',
-      }],
-      nextPlannerBrief,
-    },
-    obligationLedger: xoxProjectionFromOsProjection(state.obligationLedger),
-    obligationPlan,
-    nextPlannerBrief,
-  }
 }
 
 export function osEvidenceFromXoxEvidence(evidence: AgentEvidenceItem[]) {

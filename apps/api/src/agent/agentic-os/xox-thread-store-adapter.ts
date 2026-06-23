@@ -362,7 +362,7 @@ function xoxRunEventTypeToOs(event: AgentRunEvent): OsRunEventType {
   if (event.type === 'action_executed' || event.type === 'action_auto_executed') return 'action.executed'
   if (event.type === 'action_cancelled') return 'action.rejected'
   if (event.type === 'action_updated') return 'action.previewed'
-  if (event.type.includes('tool')) return 'tool.observed'
+  if (event.channel === 'tool') return 'tool.observed'
   if (event.status === 'completed' || event.status === 'failed' || event.status === 'cancelled') return 'run.finished'
   return 'turn.started'
 }
@@ -442,9 +442,7 @@ function buildXoxThreadStateView(input: XoxThreadStateViewInput): AgentThreadSta
 
 export function buildXoxProjectionViews(input: XoxProjectionViewInput): XoxProjectionViews {
   const actionById = new Map(input.actionRequests.map((action) => [action.id, action]))
-  const productMessages = input.messages.filter((message) =>
-    !(message.role === 'assistant' && input.actionRequests.length > 0 && message.content.includes('待确认动作卡'))
-  )
+  const productMessages = input.messages
   const messageItems = productMessages.map((message, index): AgentTranscriptItem => ({
     id: `transcript-message-${message.id}`,
     threadId: message.threadId,
@@ -461,9 +459,6 @@ export function buildXoxProjectionViews(input: XoxProjectionViewInput): XoxProje
   const messageKeys = new Set(productMessages.map((message) => `${message.role}:${message.content}`))
   const osItems = input.osTranscriptItems
     .filter((item) => !messageKeys.has(`${item.role}:${osContentSummary(item.content)}`))
-    .filter((item) =>
-      !(item.role === 'assistant' && input.actionRequests.length > 0 && osContentSummary(item.content).includes('待确认动作卡'))
-    )
     .map((item, index) => xoxTranscriptItemFromOs(item, {
       sequence: messageItems.length + index + 1,
       actionById,

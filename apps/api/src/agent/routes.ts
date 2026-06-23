@@ -487,7 +487,7 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
       if (run.user_id !== user.id) throw forbidden()
       const thread = await getThreadForUser(db, workspace, user, run.thread_id)
       if (run.status === 'running') {
-        await cancelRunningAgentRun(db, thread, run.id, '已取消当前 Agent 运行。', true)
+        await cancelRunningAgentRun(db, thread, run.id, '已取消当前 Agent 运行。')
         await recordAudit(db, {
           workspaceId: workspace.id,
           actorId: user.id,
