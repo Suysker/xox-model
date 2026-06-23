@@ -35,8 +35,7 @@ import type {
   SandboxToolSdkEntry,
 } from '@agentic-os/sandbox'
 import { SandboxBroker } from '@agentic-os/sandbox'
-import { AGENT_TOOL_REGISTRY, toolCallToPlannerStep, type AgentToolRiskLevel } from './tool-catalog.js'
-import { buildToolManifests } from './tool-surface-manifest.js'
+import { AGENT_TOOL_REGISTRY, toolCallToPlannerStep, type AgentToolRegistryEntry, type AgentToolRiskLevel } from './tool-catalog.js'
 
 type SandboxExpectedOutput = NonNullable<SandboxRunCodeInput['expectedOutputs']>[number]
 
@@ -414,16 +413,22 @@ function serializeToolManifestDocument(input: { title: string; tools: SandboxToo
   ].join('\n')
 }
 
+function toolSchemaParameterNames(schema: AgentToolRegistryEntry['tool']['function']['parameters']): string[] {
+  const properties = schema.properties
+  return properties && typeof properties === 'object' && !Array.isArray(properties)
+    ? Object.keys(properties)
+    : []
+}
+
 function buildSandboxToolSdk(): { tools: SandboxToolSdkEntry[]; documents: SandboxToolDocument[] } {
-  const manifests = buildToolManifests(AGENT_TOOL_REGISTRY)
-  const tools = manifests.map((manifest): SandboxToolSdkEntry => ({
-    name: manifest.name,
-    capability: manifest.capability,
-    riskLevel: manifest.riskLevel,
-    confirmationMode: manifest.confirmationMode,
-    navigationTarget: manifest.navigationTarget,
-    parameterNames: manifest.parameterNames,
-    summary: manifest.summary,
+  const tools = AGENT_TOOL_REGISTRY.map((entry): SandboxToolSdkEntry => ({
+    name: entry.name,
+    capability: entry.capability,
+    riskLevel: entry.riskLevel,
+    confirmationMode: entry.confirmationMode,
+    navigationTarget: entry.navigationTarget,
+    parameterNames: toolSchemaParameterNames(entry.tool.function.parameters),
+    summary: entry.tool.function.description,
   }))
   const manifestText = serializeToolManifestDocument({ title: 'xox-model Agent Tool Manifest', tools })
   return {

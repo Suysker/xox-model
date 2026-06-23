@@ -1,24 +1,4 @@
-import type { Kysely } from 'kysely'
-import { redactSecretLikeContent } from '@agentic-os/core'
-import {
-  buildOpenAICompatibleEffectiveToolInventorySnapshot,
-  type OpenAICompatibleEffectiveToolInventoryToolInput,
-} from '@agentic-os/runtime-openai-compatible'
-import type { AgentGoalFacts, AgentToolInventorySnapshot } from '@xox/contracts'
 import type { ModelConfig } from '@xox/domain'
-import type { Settings } from '../core/settings.js'
-import { newId } from '../core/security.js'
-import { utcNow } from '../core/time.js'
-import type { Database } from '../db/schema.js'
-import { addRunEvent } from './agentic-os/xox-run-event-store-adapter.js'
-import type { AgentLoopObligationPlan } from './host-profile/xox-final-review-policy.js'
-import type { AgentToolObservation } from './host-profile/xox-planned-items.js'
-import { mergeAgentGoalFacts, sanitizeAgentGoalFacts } from './host-profile/xox-goal-facts.js'
-import {
-  buildToolContextPack,
-  canonicalToolNamesForCapabilities,
-  type ToolContextPack,
-} from './tool-surface-manifest.js'
 
 export type AgentToolCapability =
   | 'account'
@@ -31,7 +11,6 @@ export type AgentToolCapability =
   | 'navigation'
   | 'sandbox'
   | 'share'
-  | 'tooling'
   | 'version'
 
 export const WORKSPACE_DATA_QUERY_SCOPE = {
@@ -476,65 +455,11 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
   {
     type: 'function',
     function: {
-      name: 'tool_discover',
-      description:
-        'Search the current scoped tool inventory when the visible tools are not enough. Returns short descriptors only; the next Agentic OS harness turn may materialize the real tool schemas. Use this instead of guessing hidden tool names.',
-      parameters: objectSchema({
-        query: {
-          type: 'string',
-          description: 'A concise natural-language description of the capability or operation needed next.',
-        },
-        toolNames: {
-          type: 'array',
-          description: 'Optional exact tool names if the model already knows which deferred tools it wants materialized.',
-          items: { type: 'string' },
-        },
-        maxResults: {
-          type: 'number',
-          description: 'Maximum descriptors to return. The server enforces a small upper bound.',
-        },
-      }, ['query']),
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'rg',
-      description:
-        'Manifest-scoped read-only search over authorized tool documents and same-run observation documents. Use it to inspect available sandbox SDK functions, tool contracts, parameter names, or observation text. It cannot search repository files, env, DB, logs, memory stores, absolute paths, or other tenants.',
-      parameters: objectSchema({
-        pattern: {
-          type: 'string',
-          description: 'Search text or regex pattern. Literal, case-insensitive search is used unless regex=true.',
-        },
-        paths: {
-          type: 'array',
-          description: 'Optional allowed document paths such as tools/agent-tool-manifest.md or tools/effective-tool-manifest.md.',
-          items: { type: 'string' },
-        },
-        contextLines: {
-          type: 'number',
-          description: 'Number of context lines before and after each match. Server clamps to a small bound.',
-        },
-        maxMatches: {
-          type: 'number',
-          description: 'Maximum matches to return. Server clamps to a small bound.',
-        },
-        regex: {
-          type: 'boolean',
-          description: 'Set true only when pattern should be treated as a regular expression.',
-        },
-      }, ['pattern']),
-    },
-  },
-  {
-    type: 'function',
-    function: {
       name: 'ledger_create_member_income',
       description: '为某个月的某个成员规划一笔线下/线上销售收入入账确认卡。',
       parameters: objectSchema({
         monthLabel: { ...monthLabel, description: '目标账期，例如 5月；如果用户说今天/今日，可根据上下文 currentDate 推导。' },
-        memberName: { type: 'string', description: '成员名称或成员 id；当用户说默认成员/默认记账成员时，从 tenantScopedMemory 中解析具体成员名后填写。' },
+        memberName: { type: 'string', description: '成员名称或成员 id；当用户说默认成员/默认记账成员时，可先用 memory_search 查找明确记忆后填写。' },
         offlineUnits: { type: 'number', description: '线下销售张数。' },
         onlineUnits: { type: 'number', description: '线上销售张数。' },
         occurredAt: { type: 'string', description: '业务发生时间 ISO 字符串；用户说今天/今日时可填写上下文 currentDate。' },
@@ -1026,7 +951,7 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
         code: {
           type: 'string',
           description:
-            '要在受控沙箱里运行的代码。不要访问网络、内部 API、生产数据库、任意文件系统路径或安装包。Python 优先 `import xox_sandbox` 后调用与 provider tools 同名的函数，例如 `xox_sandbox.data_query_workspace(scope="workspace_summary", metrics=["roi"])`、`xox_sandbox.rg(pattern="data_query_workspace")`、`xox_sandbox.workspace_patch_config(patches=[...])`；JavaScript 从 `./xox_sandbox.mjs` 导入 snake_case 或 camelCase 函数。`load_structured/load_rows` 仅是低层 helper。结构化输出用 `xox_sandbox.emit({...})` 或写 XOX_SANDBOX_OUTPUT_DIR/result.json。',
+            '要在受控沙箱里运行的代码。不要访问网络、内部 API、生产数据库、任意文件系统路径或安装包。Python 优先 `import xox_sandbox` 后调用与 provider tools 同名的函数，例如 `xox_sandbox.data_query_workspace(scope="workspace_summary", metrics=["roi"])`、`xox_sandbox.workspace_patch_config(patches=[...])`；JavaScript 从 `./xox_sandbox.mjs` 导入 snake_case 或 camelCase 函数。`load_structured/load_rows` 仅是低层 helper。结构化输出用 `xox_sandbox.emit({...})` 或写 XOX_SANDBOX_OUTPUT_DIR/result.json。',
         },
         dataRequest: objectSchema({
           scope: {
@@ -1190,18 +1115,6 @@ const TOOL_METADATA: Record<string, Omit<AgentToolMetadata, 'name'>> = {
   },
   data_query_workspace: {
     capability: 'data',
-    riskLevel: 'read',
-    confirmationMode: 'never',
-    navigationTarget: null,
-  },
-  tool_discover: {
-    capability: 'tooling',
-    riskLevel: 'read',
-    confirmationMode: 'never',
-    navigationTarget: null,
-  },
-  rg: {
-    capability: 'tooling',
     riskLevel: 'read',
     confirmationMode: 'never',
     navigationTarget: null,
@@ -1429,12 +1342,6 @@ export const AGENT_TOOL_REGISTRY: AgentToolRegistryEntry[] = AGENT_TOOL_CATALOG.
 
 export function toolCallToPlannerStep(toolName: string, args: Record<string, unknown>): AgentToolCallStep | null {
   switch (toolName) {
-    case 'tool_catalog_select_capabilities':
-      return { intent: 'tool_catalog.select_capabilities', ...args }
-    case 'tool_discover':
-      return { intent: 'tool.discover', ...args }
-    case 'rg':
-      return { intent: 'tool.rg', ...args }
     case 'ledger_create_member_income':
       return { intent: 'ledger.create_member_income', ...args }
     case 'ledger_create_entry':
@@ -1720,330 +1627,4 @@ export function buildAgentWritableConfigContext(config: ModelConfig) {
     })),
     manualCapabilityCoverage: AGENT_MANUAL_CAPABILITY_COVERAGE,
   }
-}
-
-type ToolCatalogContext = {
-  db: Kysely<Database>
-  threadId: string
-  runId: string
-  settings?: Settings
-  message?: string
-  context?: unknown
-  abortSignal?: AbortSignal
-  userId?: string
-  workspaceId?: string
-  automationLevel?: 'manual' | 'low' | 'medium' | 'high'
-  loopObligationPlan?: AgentLoopObligationPlan
-  goalFacts?: AgentGoalFacts
-  priorObservations?: AgentToolObservation[]
-}
-
-export type ToolCatalogProjectionStrategy =
-  | 'full_registry'
-  | 'model_selected_capabilities'
-  | 'progressive_tool_discovery'
-
-export type RuntimeToolCatalogProjection = {
-  strategy: ToolCatalogProjectionStrategy
-  tools: ChatTool[]
-  toolCount: number
-  toolNames: string[]
-  toolCapabilities: AgentToolMetadata[]
-  selectedCapabilities: AgentToolCapability[]
-  requiredActionCapabilities: AgentToolCapability[]
-  goalFacts: AgentGoalFacts
-  inventorySnapshot: AgentToolInventorySnapshot
-  effectiveCatalog: ToolContextPack['effectiveCatalog']
-  visibleTools: ToolContextPack['visibleTools']
-  visibleToolNames: ToolContextPack['visibleToolNames']
-  kernelToolNames: ToolContextPack['kernelToolNames']
-  materializableToolNames: ToolContextPack['materializableToolNames']
-  deferredCatalog: ToolContextPack['deferredCatalog']
-  replayAllowedToolNames: ToolContextPack['replayAllowedToolNames']
-  autoAddedControlNames: ToolContextPack['autoAddedControlNames']
-  emptySurfaceStatus: ToolContextPack['emptySurfaceStatus'] | null
-  budget: ToolContextPack['budget'] | null
-  surfacePlan: ToolContextPack['surfacePlan'] | null
-  toolDescriptors: ToolContextPack['toolDescriptors']
-  discoveryTrace: ToolContextPack['discoveryTrace'] | null
-  routerReason?: string
-}
-
-const ESSENTIAL_CAPABILITIES: AgentToolCapability[] = ['account', 'clarification', 'tooling']
-const ROUTABLE_CAPABILITIES: AgentToolCapability[] = ['data', 'draft', 'import_export', 'ledger', 'memory', 'navigation', 'sandbox', 'share', 'version']
-const ALL_CAPABILITIES = new Set<AgentToolCapability>([...ESSENTIAL_CAPABILITIES, ...ROUTABLE_CAPABILITIES])
-const OBLIGATION_CONTROL_TOOL_NAMES = new Set([
-  'tool_discover',
-  'rg',
-  'ask_user_clarification',
-  'account_forbidden',
-])
-
-function safeCapabilities(value: unknown) {
-  const values = Array.isArray(value) ? value : typeof value === 'string' ? [value] : []
-  const selected: AgentToolCapability[] = []
-  for (const item of values) {
-    if (typeof item !== 'string') continue
-    if (!ALL_CAPABILITIES.has(item as AgentToolCapability)) continue
-    if (!selected.includes(item as AgentToolCapability)) selected.push(item as AgentToolCapability)
-  }
-  return selected
-}
-
-function toolMetadata(entry: (typeof AGENT_TOOL_REGISTRY)[number]): AgentToolMetadata {
-  return {
-    name: entry.name,
-    capability: entry.capability,
-    riskLevel: entry.riskLevel,
-    confirmationMode: entry.confirmationMode,
-    navigationTarget: entry.navigationTarget,
-  }
-}
-
-function toolMetadataFromManifest(manifest: ToolContextPack['effectiveCatalog'][number]): AgentToolMetadata {
-  return {
-    name: manifest.name,
-    capability: manifest.capability,
-    riskLevel: manifest.riskLevel,
-    confirmationMode: manifest.confirmationMode,
-    navigationTarget: manifest.navigationTarget,
-  }
-}
-
-function agenticOsInventoryToolInput(
-  tool: AgentToolMetadata,
-): OpenAICompatibleEffectiveToolInventoryToolInput<'xox', AgentToolNavigationTarget> {
-  return {
-    name: tool.name,
-    capability: tool.capability,
-    riskLevel: tool.riskLevel,
-    confirmationMode: tool.confirmationMode,
-    navigationTarget: tool.navigationTarget,
-    manualBoundaryNotice: isManualBoundaryNoticeToolName(tool.name),
-    harnessManagedObservation: isHarnessManagedObservationToolName(tool.name),
-  }
-}
-
-export function materializedToolInventorySnapshot(
-  projection: RuntimeToolCatalogProjection,
-  toolNames: readonly string[],
-) {
-  const metadataByName = new Map<string, AgentToolMetadata>()
-  for (const metadata of projection.toolCapabilities) metadataByName.set(metadata.name, metadata)
-  for (const manifest of projection.effectiveCatalog) {
-    if (!metadataByName.has(manifest.name)) metadataByName.set(manifest.name, toolMetadataFromManifest(manifest))
-  }
-  const toolCapabilities = toolNames
-    .map((name) => metadataByName.get(name))
-    .filter((metadata): metadata is AgentToolMetadata => Boolean(metadata))
-
-  return buildOpenAICompatibleEffectiveToolInventorySnapshot({
-    snapshotId: newId(),
-    userId: projection.inventorySnapshot.userId,
-    workspaceId: projection.inventorySnapshot.workspaceId,
-    automationLevel: projection.inventorySnapshot.automationLevel,
-    provider: projection.inventorySnapshot.provider,
-    model: projection.inventorySnapshot.model,
-    source: projection.strategy,
-    tools: toolCapabilities.map(agenticOsInventoryToolInput),
-    provenance: 'xox',
-    ...(projection.routerReason ? { routerReason: projection.routerReason } : {}),
-    createdAt: utcNow(),
-  })
-}
-
-export function buildRuntimeToolCatalogProjection(input?: {
-  selectedCapabilities?: AgentToolCapability[] | null
-  requiredActionCapabilities?: AgentToolCapability[] | null
-  requiredToolNames?: string[] | null
-  goalFacts?: AgentGoalFacts | null
-  strategy?: ToolCatalogProjectionStrategy
-  routerReason?: string
-  message?: string
-  settings?: Settings
-  userId?: string
-  workspaceId?: string
-  automationLevel?: 'manual' | 'low' | 'medium' | 'high'
-}): RuntimeToolCatalogProjection {
-  const selectedCapabilities = safeCapabilities(input?.selectedCapabilities)
-  const requiredActionCapabilities = safeCapabilities(input?.requiredActionCapabilities)
-  const requiredToolNames = [...new Set((input?.requiredToolNames ?? []).filter((name): name is string =>
-    typeof name === 'string' && name.trim().length > 0,
-  ))]
-  const goalFacts = sanitizeAgentGoalFacts(input?.goalFacts)
-  const hasModelSelection = input?.selectedCapabilities !== undefined && input.selectedCapabilities !== null
-  const requestedStrategy: ToolCatalogProjectionStrategy = input?.strategy ?? (hasModelSelection ? 'model_selected_capabilities' : 'full_registry')
-  const toolContext = requestedStrategy === 'full_registry'
-    ? null
-    : buildToolContextPack({
-        registry: AGENT_TOOL_REGISTRY,
-        selectedCapabilities,
-        requiredActionCapabilities,
-        ...(input?.message !== undefined ? { message: input.message } : {}),
-        ...(input?.routerReason !== undefined ? { routerReason: input.routerReason } : {}),
-        ...(input?.automationLevel !== undefined ? { automationLevel: input.automationLevel } : {}),
-      })
-  const byName = new Map(AGENT_TOOL_REGISTRY.map((entry) => [entry.name, entry]))
-  const baseEntries = toolContext
-    ? toolContext.toolNames.map((name) => byName.get(name)).filter((entry): entry is (typeof AGENT_TOOL_REGISTRY)[number] => Boolean(entry))
-    : AGENT_TOOL_REGISTRY
-  const strictObligationTools = input?.routerReason === 'runner-obligation-plan' && requiredToolNames.length > 0
-  const allowedObligationToolNames = new Set([
-    ...requiredToolNames,
-    ...canonicalToolNamesForCapabilities(selectedCapabilities),
-    ...OBLIGATION_CONTROL_TOOL_NAMES,
-  ])
-  const entries = strictObligationTools
-    ? baseEntries.filter((entry) => allowedObligationToolNames.has(entry.name))
-    : [...baseEntries]
-  for (const name of requiredToolNames) {
-    const entry = byName.get(name)
-    if (!entry || entries.some((item) => item.name === entry.name)) continue
-    entries.push(entry)
-  }
-  const strategy: ToolCatalogProjectionStrategy = toolContext ? 'progressive_tool_discovery' : requestedStrategy
-  const visibleToolNames = entries.map((entry) => entry.name)
-  const visibleToolNameSet = new Set(visibleToolNames)
-
-  const toolCapabilities = entries.map(toolMetadata)
-  const settings = input?.settings
-  const inventorySnapshot = buildOpenAICompatibleEffectiveToolInventorySnapshot({
-    snapshotId: newId(),
-    userId: input?.userId ?? 'unknown_user',
-    workspaceId: input?.workspaceId ?? 'unknown_workspace',
-    automationLevel: input?.automationLevel ?? 'manual',
-    provider: settings?.openaiCompatibleProvider ?? 'unknown',
-    model: settings?.openaiCompatibleModel ?? 'unknown',
-    source: strategy,
-    tools: toolCapabilities.map(agenticOsInventoryToolInput),
-    provenance: 'xox',
-    ...(input?.routerReason ? { routerReason: redactSecretLikeContent(input.routerReason).slice(0, 300) } : {}),
-    createdAt: utcNow(),
-  })
-
-  return {
-    strategy,
-    tools: entries.map((entry) => entry.tool),
-    toolCount: entries.length,
-    toolNames: visibleToolNames,
-    toolCapabilities,
-    selectedCapabilities,
-    requiredActionCapabilities,
-    goalFacts,
-    inventorySnapshot,
-    effectiveCatalog: toolContext?.effectiveCatalog ?? [],
-    visibleTools: entries.map((entry) => entry.tool),
-    visibleToolNames,
-    kernelToolNames: (toolContext?.kernelToolNames ?? []).filter((name) => visibleToolNameSet.has(name)),
-    materializableToolNames: (toolContext?.materializableToolNames ?? []).filter((name) => !visibleToolNameSet.has(name)),
-    deferredCatalog: (toolContext?.deferredCatalog ?? []).filter((manifest) => !visibleToolNameSet.has(manifest.name)),
-    replayAllowedToolNames: visibleToolNames,
-    autoAddedControlNames: toolContext?.autoAddedControlNames ?? [],
-    emptySurfaceStatus: toolContext?.emptySurfaceStatus ?? null,
-    budget: toolContext?.budget ?? null,
-    surfacePlan: toolContext?.surfacePlan ?? null,
-    toolDescriptors: toolContext?.toolDescriptors ?? [],
-    discoveryTrace: toolContext?.discoveryTrace ?? null,
-    ...(input?.routerReason ? { routerReason: redactSecretLikeContent(input.routerReason).slice(0, 300) } : {}),
-  }
-}
-
-function localToolDiscoverySelection() {
-  return {
-    selectedCapabilities: [],
-    requiredActionCapabilities: [],
-    goalFacts: {},
-    routerReason: 'local-progressive-discovery',
-  } satisfies {
-    selectedCapabilities: AgentToolCapability[]
-    requiredActionCapabilities: AgentToolCapability[]
-    goalFacts: AgentGoalFacts
-    routerReason: string
-  }
-}
-
-function parseObservationContent(observation: AgentToolObservation) {
-  try {
-    const parsed = JSON.parse(observation.modelContent)
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? parsed as Record<string, unknown>
-      : null
-  } catch {
-    return null
-  }
-}
-
-function discoveredToolNamesFromObservations(observations: readonly AgentToolObservation[] | undefined) {
-  const names: string[] = []
-  for (const observation of observations ?? []) {
-    if (observation.toolName !== 'tool_discover' || observation.status !== 'completed') continue
-    const content = parseObservationContent(observation)
-    if (content?.observationType !== 'tool_discovery') continue
-    const matched = Array.isArray(content.matchedToolNames) ? content.matchedToolNames : []
-    for (const name of matched) {
-      if (typeof name === 'string' && name.trim().length > 0) names.push(name.trim())
-    }
-  }
-  return [...new Set(names)]
-}
-
-export async function provideRuntimeToolCatalog(ctx: ToolCatalogContext) {
-  const baseGoalFacts = sanitizeAgentGoalFacts(ctx.goalFacts)
-  const selection = ctx.loopObligationPlan
-    ? {
-        selectedCapabilities: ctx.loopObligationPlan.selectedCapabilities,
-        requiredActionCapabilities: [
-          ...ctx.loopObligationPlan.requiredActionCapabilities,
-          ...(baseGoalFacts.requiredActionCapabilities ?? []),
-        ],
-        requiredToolNames: ctx.loopObligationPlan.requiredToolNames,
-        goalFacts: mergeAgentGoalFacts(baseGoalFacts, ctx.loopObligationPlan.goalFacts),
-        routerReason: 'runner-obligation-plan',
-      }
-    : {
-        ...localToolDiscoverySelection(),
-        requiredActionCapabilities: baseGoalFacts.requiredActionCapabilities ?? [],
-        goalFacts: baseGoalFacts,
-        requiredToolNames: discoveredToolNamesFromObservations(ctx.priorObservations),
-      }
-  const projection = buildRuntimeToolCatalogProjection({
-    ...selection,
-    ...(ctx.settings ? { settings: ctx.settings } : {}),
-    ...(ctx.message ? { message: ctx.message } : {}),
-    ...(ctx.userId ? { userId: ctx.userId } : {}),
-    ...(ctx.workspaceId ? { workspaceId: ctx.workspaceId } : {}),
-    ...(ctx.automationLevel ? { automationLevel: ctx.automationLevel } : {}),
-  })
-  await addRunEvent(ctx.db, {
-    threadId: ctx.threadId,
-    runId: ctx.runId,
-    type: 'tool_catalog_ready',
-    title: '工具目录已提供',
-    message: `本轮向模型提供 ${projection.toolCount} 个 provider-native 工具，由模型通过 tool_calls 选择。`,
-    status: 'running',
-    data: {
-      projectionStrategy: projection.strategy,
-      toolCount: projection.toolCount,
-      toolNames: projection.toolNames,
-      toolCapabilities: projection.toolCapabilities,
-      selectedCapabilities: projection.selectedCapabilities,
-      requiredActionCapabilities: projection.requiredActionCapabilities,
-      requiredToolNames: ctx.loopObligationPlan?.requiredToolNames ?? [],
-      goalFacts: projection.goalFacts,
-      inventorySnapshot: projection.inventorySnapshot,
-      visibleToolNames: projection.visibleToolNames,
-      kernelToolNames: projection.kernelToolNames,
-      materializableToolNames: projection.materializableToolNames,
-      deferredToolNames: projection.deferredCatalog.map((manifest) => manifest.name),
-      replayAllowedToolNames: projection.replayAllowedToolNames,
-      autoAddedControlNames: projection.autoAddedControlNames,
-      emptySurfaceStatus: projection.emptySurfaceStatus,
-      budget: projection.budget,
-      surfacePlan: projection.surfacePlan,
-      toolDescriptors: projection.toolDescriptors,
-      discoveryTrace: projection.discoveryTrace,
-      routerReason: projection.routerReason ?? null,
-    },
-  })
-  return projection
 }

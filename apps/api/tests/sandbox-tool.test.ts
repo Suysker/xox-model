@@ -2,8 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { SandboxBroker } from '@agentic-os/sandbox'
 import { createProductDefaultModel, projectModel } from '@xox/domain'
 import type { SandboxManifest, SandboxRunCodeInput } from '@xox/contracts'
-import { buildRuntimeToolCatalogProjection } from '../src/agent/tool-catalog.js'
-import { AGENT_TOOL_CATALOG, toolCallToPlannerStep } from '../src/agent/tool-catalog.js'
+import { AGENT_TOOL_CATALOG, AGENT_TOOL_REGISTRY, toolCallToPlannerStep } from '../src/agent/tool-catalog.js'
 import {
   inspectSandboxUploadedFile,
   normalizeSandboxArtifactKinds,
@@ -53,9 +52,7 @@ describe('manifest-scoped sandbox tool', () => {
       purpose: '校验表格',
     })
 
-    const projection = buildRuntimeToolCatalogProjection({ selectedCapabilities: ['sandbox'] })
-    expect(projection.toolNames).toContain('sandbox_run_code')
-    expect(projection.toolCapabilities.find((tool) => tool.name === 'sandbox_run_code')).toMatchObject({
+    expect(AGENT_TOOL_REGISTRY.find((tool) => tool.name === 'sandbox_run_code')).toMatchObject({
       capability: 'sandbox',
       riskLevel: 'read',
       confirmationMode: 'never',
@@ -356,20 +353,18 @@ describe('manifest-scoped sandbox tool', () => {
     })
   })
 
-  it('generates same-name sandbox SDK tools from the provider registry and scopes rg to tool docs', async () => {
+  it('generates same-name sandbox SDK tools from the provider registry', async () => {
     const input: SandboxRunCodeInput = {
       purpose: '同名工具 SDK 校验',
       language: 'python',
       code: [
         'import xox_sandbox',
         'summary = xox_sandbox.data_query_workspace(scope="workspace_summary", metrics=["roi", "payback"])',
-        'matches = xox_sandbox.rg(pattern="data_query_workspace", paths=["tools/agent-tool-manifest.md"], max_matches=3)',
         'xox_sandbox.emit({',
         '  "summary": "SDK ok",',
         '  "structured": {',
         '    "roi": summary["roi"],',
-        '    "paybackMonthLabel": summary["paybackMonthLabel"],',
-        '    "matchCount": len(matches["matches"])',
+        '    "paybackMonthLabel": summary["paybackMonthLabel"]',
         '  }',
         '})',
       ].join('\n'),
@@ -410,11 +405,9 @@ describe('manifest-scoped sandbox tool', () => {
         structured: {
           roi: 0.2,
           paybackMonthLabel: '4月',
-          matchCount: expect.any(Number),
         },
       },
     })
-    expect((result.extraction.parsedOutput as any).structured.matchCount).toBeGreaterThan(0)
   })
 
   it('records sandbox write-capable SDK calls for aggregate Tool Runtime approval', async () => {

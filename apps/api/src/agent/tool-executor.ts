@@ -1,7 +1,3 @@
-import {
-  buildToolSurfaceDiscoveryObservation,
-  buildToolSurfaceManifestSearchObservation,
-} from '@agentic-os/core'
 import type { Kysely } from 'kysely'
 import { createProductDefaultModel, hydrateModelConfig, projectModel } from '@xox/domain'
 import type { AgentNavigationEvent } from '@xox/contracts'
@@ -87,7 +83,6 @@ import {
 } from './workspace-action-drafts.js'
 import { planSandboxRunCode } from './sandbox-service.js'
 import {
-  AGENT_TOOL_REGISTRY,
   isWorkspaceDataQueryMetric,
   isWorkspaceDataQueryScope,
   isWorkspaceDataQueryTopMonthMetric,
@@ -100,7 +95,6 @@ import {
   type WorkspaceDataQueryScope,
   type WorkspaceDataQueryTopMonthMetric,
 } from './tool-catalog.js'
-import { buildToolManifests } from './tool-surface-manifest.js'
 
 function numericAlias(...values: unknown[]) {
   for (const value of values) {
@@ -117,12 +111,6 @@ function stringAlias(...values: unknown[]) {
     if (trimmed.length > 0) return trimmed
   }
   return ''
-}
-
-function stringArray(value: unknown) {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0).map((item) => item.trim())
-    : []
 }
 
 type WorkspaceDataQueryContext = Pick<PlannerContext, 'db' | 'workspace'>
@@ -599,65 +587,6 @@ async function rememberFromToolCall(ctx: PlannerContext, step: RuntimePlannerSte
   }
 }
 
-async function runToolDiscovery(_ctx: PlannerContext, step: RuntimePlannerStep): Promise<ReadDraft> {
-  const input: Parameters<typeof buildToolSurfaceDiscoveryObservation>[0] = {
-    manifests: buildToolManifests(AGENT_TOOL_REGISTRY),
-  }
-  const query = stringAlias(step.query, step.question)
-  const toolNames = stringArray(step.toolNames)
-  const maxResults = numericAlias(step.maxResults, step.limit)
-  if (query) input.query = query
-  if (toolNames.length > 0) input.toolNames = toolNames
-  if (maxResults !== null) input.maxResults = maxResults
-
-  const observation = buildToolSurfaceDiscoveryObservation(input)
-  const displayPreview = observation.matchedToolNames.length > 0
-    ? `找到 ${observation.matchedToolNames.length} 个可物化工具：${observation.matchedToolNames.join('、')}`
-    : '没有找到匹配的可物化工具。'
-
-  return {
-    title: '查找可用工具',
-    message: displayPreview,
-    readKind: 'tool_observation',
-    status: 'executed',
-    displayPreview,
-    modelContent: JSON.stringify(observation),
-    observationStatus: 'completed',
-    observationOutcome: 'completed_valid',
-  }
-}
-
-async function runManifestRg(_ctx: PlannerContext, step: RuntimePlannerStep): Promise<ReadDraft> {
-  const input: Parameters<typeof buildToolSurfaceManifestSearchObservation>[0] = {
-    manifests: buildToolManifests(AGENT_TOOL_REGISTRY),
-  }
-  const pattern = stringAlias(step.pattern, step.query)
-  const maxMatches = numericAlias(step.maxMatches, step.max_matches, step.limit)
-  const contextLines = numericAlias(step.contextLines, step.context_lines)
-  const paths = stringArray(step.paths)
-  if (pattern) input.pattern = pattern
-  if (step.regex === true) input.regex = true
-  if (maxMatches !== null) input.maxMatches = maxMatches
-  if (contextLines !== null) input.contextLines = contextLines
-  if (paths.length > 0) input.paths = paths
-
-  const observation = buildToolSurfaceManifestSearchObservation(input)
-  const displayPreview = observation.matches.length > 0
-    ? `找到 ${observation.matches.length} 个工具文档匹配。`
-    : '没有找到匹配的工具文档。'
-
-  return {
-    title: '搜索工具文档',
-    message: displayPreview,
-    readKind: 'tool_observation',
-    status: 'executed',
-    displayPreview,
-    modelContent: JSON.stringify(observation),
-    observationStatus: 'completed',
-    observationOutcome: 'completed_valid',
-  }
-}
-
 export const xoxBusinessToolHandlers: ActionDraftBuilderHandlers<PlannerContext> = {
   'ledger.create_member_income': (ctx, step) => {
     const memberName = typeof step.memberName === 'string' && step.memberName.trim()
@@ -744,8 +673,6 @@ export const xoxBusinessToolHandlers: ActionDraftBuilderHandlers<PlannerContext>
   'memory.remember': rememberFromToolCall,
   'data.query_workspace': answerWorkspaceDataQuestion,
   'sandbox.run_code': (ctx, step) => planSandboxRunCode(ctx, step, xoxBusinessToolHandlers),
-  'tool.discover': runToolDiscovery,
-  'tool.rg': runManifestRg,
 }
 
 export function safeAgentActionErrorMessage(error: unknown) {

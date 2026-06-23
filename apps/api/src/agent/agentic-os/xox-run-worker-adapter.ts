@@ -14,7 +14,7 @@ import type { CurrentUser } from '../../modules/auth.js'
 import { redactSecretLikeContent } from '../memory.js'
 import { resolveAgentRuntimeSettings } from '../provider-settings.js'
 import type { PlannerContext } from '../host-profile/xox-planned-items.js'
-import { executeXoxAgenticOsRun } from '../host-profile/xox-agent-run-profile.js'
+import { executeXoxAgentRun } from '../host-profile/xox-host-profile.js'
 import {
   AgentRunLeaseLostError,
   claimAgentRunLease,
@@ -41,7 +41,7 @@ async function executeAgentRun(
   ctx: PlannerContext & { thread: Row<'agent_threads'> },
   options: { beforeStateWrite: () => Promise<boolean> },
 ): Promise<CompletedAgentRun | null> {
-  return executeXoxAgenticOsRun(ctx, options)
+  return executeXoxAgentRun(ctx, options)
 }
 
 function getExistingAgentRunScheduler(db: Kysely<Database>) {

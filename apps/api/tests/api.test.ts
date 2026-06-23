@@ -17,15 +17,10 @@ import {
   agentWritableConfigPatterns,
   buildAgentWritableConfigCatalog,
 } from '../src/agent/tool-catalog.js'
-import { buildRuntimeToolCatalogProjection } from '../src/agent/tool-catalog.js'
-import { sanitizeAgentGoalFacts } from '../src/agent/host-profile/xox-goal-facts.js'
 import { createProductDefaultModel, projectModel } from '@xox/domain'
 import { decideAgentMemoryCandidate } from '@agentic-os/core'
 import { recoverRunningAgentRuns } from '../src/agent/agentic-os/xox-run-worker-adapter.js'
 import {
-  memoryCandidateFromCompletedGoal,
-  memoryCandidateFromEvaluatorFinding,
-  memoryCandidatesFromExecutedActions,
   rememberAgentMemory,
   retrieveAgentMemories,
 } from '../src/agent/memory.js'
@@ -1100,32 +1095,6 @@ describe('xox TypeScript API', () => {
     await closeHarness(harness)
   })
 
-  it('sanitizes model-provided goal facts without parsing prose locally', () => {
-    const facts = sanitizeAgentGoalFacts({
-      workspaceName: '星河 50 期启动测算',
-      expectedMemberCount: 50,
-      expectedShareholderCount: 5,
-      expectedHorizonMonths: 12,
-      expectedStartMonth: 3,
-      requiresForecastSummary: true,
-      requiresSandboxComputation: true,
-      forbiddenActions: ['publish_release', 'unknown'],
-      ignored: 'not persisted',
-    })
-    expect(facts).toEqual({
-      workspaceName: '星河 50 期启动测算',
-      expectedMemberCount: 50,
-      expectedShareholderCount: 5,
-      expectedHorizonMonths: 12,
-      expectedStartMonth: 3,
-      requiresForecastSummary: true,
-      requiresSandboxComputation: true,
-      forbiddenActions: ['publish_release'],
-    })
-
-    expect(sanitizeAgentGoalFacts('我们几个月才能回本？帮我第一个股东注资100w')).toEqual({})
-  })
-
   it('creates agent navigation events, confirmation cards, and executes confirmed ledger writes', async () => {
     await withFakeOpenAICompatibleProvider(() => fakeToolResponse('ledger_create_member_income', {
       monthLabel: '3月',
@@ -1701,11 +1670,6 @@ describe('xox TypeScript API', () => {
 
       expect(response.statusCode).toBe(200)
       const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
-      expect(state.json.runEvents.some((event: any) =>
-        event.type === 'runtime_evidence_required' &&
-        event.data?.toolNames?.includes('sandbox_run_code') &&
-        event.data?.requiredGoalFacts?.requiresSandboxComputation === true,
-      )).toBe(true)
       expect(state.json.planSteps.some((step: any) =>
         step.toolName === 'sandbox_run_code' &&
         step.status === 'failed' &&
@@ -2339,12 +2303,6 @@ describe('xox TypeScript API', () => {
       expect(planned.json.planner).toBe('openai_compatible_tool_calls')
       expect(planned.json.actionRequests[0].kind).toBe('ledger.create_entry')
       expect(planned.json.actionRequests[0].payload.amount).toBe(176)
-      expect(planned.json.runEvents.some((event: any) =>
-        event.type === 'tool_catalog_ready' &&
-        event.data.projectionStrategy === 'progressive_tool_discovery' &&
-        event.data.routerReason === 'local-progressive-discovery' &&
-        event.data.toolNames.includes('ledger_create_member_income'),
-      )).toBe(true)
       await closeHarness(harness)
     })
   })
@@ -2358,146 +2316,6 @@ describe('xox TypeScript API', () => {
     expect(names).toContain('memory_remember')
     expect(names).toContain('account_forbidden')
     expect(names).not.toContain('agent_reply')
-
-    const projection = buildRuntimeToolCatalogProjection()
-    expect(projection.strategy).toBe('full_registry')
-    expect(projection.toolNames).toEqual(names)
-    expect(projection.tools).toEqual(AGENT_TOOL_CATALOG)
-
-    const ledgerProjection = buildRuntimeToolCatalogProjection({ selectedCapabilities: ['ledger'] })
-    expect(ledgerProjection.strategy).toBe('progressive_tool_discovery')
-    expect(ledgerProjection.selectedCapabilities).toEqual(['ledger'])
-    expect(ledgerProjection.toolNames).toContain('ledger_create_member_income')
-    expect(ledgerProjection.toolNames).toContain('data_query_workspace')
-    expect(ledgerProjection.toolNames).toContain('account_forbidden')
-    expect(ledgerProjection.toolNames).toContain('ask_user_clarification')
-    expect(ledgerProjection.toolNames).not.toContain('ui_navigate')
-    expect(ledgerProjection.toolNames).not.toContain('workspace_publish_release')
-    expect(ledgerProjection.toolNames).not.toContain('workspace_patch_config')
-
-    const navigationProjection = buildRuntimeToolCatalogProjection({ selectedCapabilities: ['navigation'] })
-    expect(navigationProjection.toolNames).toContain('ui_navigate')
-    expect(navigationProjection.toolNames).toContain('account_forbidden')
-    expect(navigationProjection.toolNames).not.toContain('ledger_create_member_income')
-
-    const dataProjection = buildRuntimeToolCatalogProjection({ selectedCapabilities: ['data'] })
-    expect(dataProjection.toolNames).toContain('data_query_workspace')
-    expect(dataProjection.toolNames).not.toContain('workspace_patch_config')
-
-    const draftProjection = buildRuntimeToolCatalogProjection({ selectedCapabilities: ['draft'] })
-    expect(draftProjection.toolNames).toContain('workspace_patch_config')
-    expect(draftProjection.toolNames).toContain('data_query_workspace')
-    expect(draftProjection.toolNames).not.toContain('workspace_publish_release')
-
-    const memoryProjection = buildRuntimeToolCatalogProjection({ selectedCapabilities: ['memory'] })
-    expect(memoryProjection.toolNames).toContain('memory_remember')
-    expect(memoryProjection.toolNames).toContain('account_forbidden')
-    expect(memoryProjection.toolNames).toContain('ask_user_clarification')
-    expect(memoryProjection.toolNames).not.toContain('ledger_create_entry')
-
-    const restrictedProjection = buildRuntimeToolCatalogProjection({
-      selectedCapabilities: [],
-      routerReason: 'router-empty-restricted-surface',
-    })
-    expect(restrictedProjection.strategy).toBe('progressive_tool_discovery')
-    expect(restrictedProjection.selectedCapabilities).toEqual([])
-    expect(restrictedProjection.toolNames).toEqual(expect.arrayContaining([
-      'account_forbidden',
-      'ask_user_clarification',
-      'data_query_workspace',
-      'sandbox_run_code',
-    ]))
-    expect(restrictedProjection.kernelToolNames).toEqual(expect.arrayContaining([
-      'account_forbidden',
-      'ask_user_clarification',
-      'data_query_workspace',
-      'sandbox_run_code',
-    ]))
-    expect(restrictedProjection.toolNames).not.toContain('workspace_patch_config')
-    expect(restrictedProjection.toolNames).not.toContain('ledger_create_member_income')
-    expect(restrictedProjection.emptySurfaceStatus).toBe('has_callable_tools')
-  })
-
-  it('projects task-relevant tools through local progressive discovery', async () => {
-    await withFakeOpenAICompatibleProvider((body) => {
-      const toolNames = new Set(body.tools.map((tool: any) => tool.function.name))
-      expect(body.tool_choice).toBe('auto')
-      expect(toolNames.has('ledger_create_member_income')).toBe(true)
-      expect(toolNames.has('workspace_publish_release')).toBe(false)
-      expect(toolNames.has('workspace_patch_config')).toBe(false)
-      expect(toolNames.has('account_forbidden')).toBe(true)
-      expect(toolNames.has('ask_user_clarification')).toBe(true)
-      expect(toolNames.has('ui_navigate')).toBe(false)
-      return fakeToolResponse('ledger_create_member_income', {
-        monthLabel: '3月',
-        memberName: '成员 A',
-        offlineUnits: 1,
-        onlineUnits: 0,
-      })
-    }, async (baseUrl) => {
-      const harness = await buildHarness('agent-tool-router-projection', {
-        llmProvider: 'openai-compatible',
-        openaiCompatibleProvider: 'test-compatible',
-        openaiCompatibleBaseUrl: baseUrl,
-        openaiCompatibleApiKey: 'test-key',
-      })
-      const client = new Client(harness.app)
-      await registerUser(client, 'agent-tool-router-projection@example.com')
-
-      const planned = await client.post('/api/v1/agent/messages', {
-        message: '把 3 月成员 A 线下 1 张入账',
-      })
-
-      expect(planned.statusCode).toBe(200)
-      expect(planned.json.actionRequests[0].kind).toBe('ledger.create_entry')
-      const event = planned.json.runEvents.find((item: any) => item.type === 'tool_catalog_ready')
-      expect(event.data.projectionStrategy).toBe('progressive_tool_discovery')
-      expect(event.data.selectedCapabilities).toEqual([])
-      expect(event.data.routerReason).toBe('local-progressive-discovery')
-      expect(event.data.toolNames).toContain('ledger_create_member_income')
-      expect(event.data.toolNames).not.toContain('workspace_publish_release')
-      await closeHarness(harness)
-    }, { autoSelectCapabilities: false })
-  })
-
-  it('materializes a registered deferred tool and replans instead of executing outside the visible surface', async () => {
-    let planningCalls = 0
-    await withFakeOpenAICompatibleProvider((body) => {
-      planningCalls += 1
-      const toolNames = body.tools.map((tool: any) => tool.function.name)
-      if (planningCalls === 1) {
-        expect(toolNames).toContain('data_query_workspace')
-        expect(toolNames).toContain('sandbox_run_code')
-        expect(toolNames).not.toContain('workspace_publish_release')
-        return fakeToolResponse('workspace_publish_release', { createShare: false })
-      }
-
-      expect(body.stream).toBe(false)
-      expect(toolNames).toContain('workspace_publish_release')
-      return fakeToolResponse('workspace_publish_release', { createShare: false })
-    }, async (baseUrl) => {
-      const harness = await buildHarness('agent-deferred-tool-materialize', {
-        llmProvider: 'openai-compatible',
-        openaiCompatibleProvider: 'test-compatible',
-        openaiCompatibleBaseUrl: baseUrl,
-        openaiCompatibleApiKey: 'test-key',
-      })
-      const client = new Client(harness.app)
-      await registerUser(client, 'agent-deferred-tool-materialize@example.com')
-
-      const planned = await client.post('/api/v1/agent/messages', {
-        message: '查看当前工作区数据',
-      })
-
-      expect(planned.statusCode).toBe(200)
-      expect(planningCalls).toBe(2)
-      expect(planned.json.actionRequests[0].kind).toBe('workspace.publish_release')
-      expect(planned.json.runEvents.some((item: any) => item.type === 'tool_catalog_materializing')).toBe(true)
-      const catalogEvent = planned.json.runEvents.find((item: any) => item.type === 'tool_catalog_ready')
-      expect(catalogEvent.data.visibleToolNames).not.toContain('workspace_publish_release')
-      expect(catalogEvent.data.materializableToolNames).toContain('workspace_publish_release')
-      await closeHarness(harness)
-    }, { autoSelectCapabilities: false })
   })
 
   it('keeps provider tool registry metadata in sync with the catalog', async () => {
@@ -2718,12 +2536,6 @@ describe('xox TypeScript API', () => {
         maxTokens: 48000,
         requestTimeoutMs: 360_000,
       })
-      expect(planned.json.runEvents.some((event: any) =>
-        event.type === 'tool_catalog_ready' &&
-        event.data?.projectionStrategy === 'progressive_tool_discovery' &&
-        event.data?.toolCount <= 10 &&
-        event.data?.toolNames.includes('workspace_configure_operating_model'),
-      )).toBe(true)
       await closeHarness(harness)
     })
   })
@@ -4300,7 +4112,7 @@ describe('xox TypeScript API', () => {
     })
   })
 
-  it('keeps agent memory scoped by user and workspace and compacts long thread context', async () => {
+  it('keeps agent memory scoped by user and workspace', async () => {
     const secretValue = ['sk', 'memorysecretvalue123456'].join('-')
     await withFakeOpenAICompatibleProvider(scriptedProvider([
       () => fakeToolResponse('memory_remember', {
@@ -4392,26 +4204,6 @@ describe('xox TypeScript API', () => {
       expect(memoriesAfterSecret.json.memories.some((memory: any) => memory.value.includes('成员 A'))).toBe(true)
       expect(JSON.stringify(memoriesAfterSecret.json.memories)).not.toContain(secretValue)
 
-      for (let index = 0; index < 5; index += 1) {
-        const response = await firstClient.post('/api/v1/agent/messages', { threadId, message: `看测算 ${index}` })
-        expect(response.statusCode).toBe(200)
-      }
-      const snapshots = await harness.db
-        .selectFrom('agent_context_snapshots')
-        .selectAll()
-        .where('thread_id', '=', threadId)
-        .where('user_id', '=', firstUser.id)
-        .execute()
-      expect(snapshots.length).toBeGreaterThan(0)
-      expect(snapshots[0]?.summary).toContain('user:')
-      expect(snapshots[0]?.summary).not.toContain(secretValue)
-      expect(snapshots[0]?.summary).toContain('[redacted-api-key]')
-      const memoryCenterAfterFlush = await firstClient.get('/api/v1/agent/memories')
-      expect(memoryCenterAfterFlush.statusCode).toBe(200)
-      expect(memoryCenterAfterFlush.json.dailyNotes.length).toBeGreaterThan(0)
-      expect(memoryCenterAfterFlush.json.dailyNotes[0].content).toContain('user:')
-      expect(memoryCenterAfterFlush.json.dailyNotes[0].content).not.toContain(secretValue)
-
       expect((await firstClient.delete(`/api/v1/agent/memories/${firstMemories.json.memories[0].id}`)).statusCode).toBe(200)
       const afterDelete = await firstClient.get('/api/v1/agent/memories')
       const archivedMemory = afterDelete.json.memories.find((memory: any) => memory.id === firstMemories.json.memories[0].id)
@@ -4433,47 +4225,6 @@ describe('xox TypeScript API', () => {
     expect(diagnosticDecision.lane).toBe('diagnostic')
     expect(diagnosticDecision.injectable).toBe(false)
     expect(diagnosticDecision.decision).toBe('diagnostic_only')
-
-    const actionCandidates = memoryCandidatesFromExecutedActions({
-      runId: 'run-memory-v2',
-      actionRows: [{
-        id: 'action-operating-model',
-        status: 'executed',
-        kind: 'workspace.update_draft',
-        title: '确认修改模型草稿',
-        target_label: '星河 50 期启动测算',
-        payload_json: JSON.stringify({
-          source: 'workspace_configure_operating_model',
-          workspaceName: '星河 50 期启动测算',
-          config: {
-            teamMembers: Array.from({ length: 50 }, (_, index) => ({ id: `m-${index}`, name: `成员 ${index + 1}` })),
-            months: Array.from({ length: 12 }, (_, index) => ({ id: `month-${index}`, label: `${index + 1}月` })),
-            shareholders: Array.from({ length: 5 }, (_, index) => ({ id: `s-${index}`, name: `股东 ${index + 1}` })),
-          },
-        }),
-      } as any],
-    })
-    const draftEpisode = actionCandidates.find((candidate) => candidate.key === 'workspace.episode.action-operating-model')
-    expect(draftEpisode?.lane).toBe('episodic')
-    expect(draftEpisode?.status).toBe('archived')
-    expect(draftEpisode?.injectable).toBe(false)
-    const reusableWorkflow = actionCandidates.find((candidate) => candidate.key === 'agent.workflow.operating_model_configured_by_high_level_tool')
-    expect(reusableWorkflow?.lane).toBe('procedural')
-    expect(reusableWorkflow?.status).toBe('promoted')
-    expect(reusableWorkflow?.injectable).toBe(true)
-
-    const evaluatorCandidate = memoryCandidateFromEvaluatorFinding({
-      runId: 'run-memory-v2',
-      evaluation: {
-        id: 'evaluation-memory-v2',
-        status: 'fail',
-        unsatisfied_json: JSON.stringify([{ message: '运行图存在失败动作。' }]),
-        iteration_no: 1,
-      } as any,
-    })
-    expect(evaluatorCandidate?.lane).toBe('diagnostic')
-    expect(evaluatorCandidate?.injectable).toBe(false)
-    expect(memoryCandidateFromCompletedGoal({ goal: {} as any })).toBeNull()
 
     const harness = await buildHarness('memory-kernel-v2')
     try {
@@ -4730,8 +4481,7 @@ describe('xox TypeScript API', () => {
       },
       (body) => {
         const prompt = body.messages.map((message: any) => message.content).join('\n')
-        expect(prompt).toContain('默认记账成员是 成员 A')
-        expect(prompt).toContain('tenantScopedMemory')
+        expect(prompt).not.toContain('tenantScopedMemory')
         expect(prompt).not.toContain(secretValue)
         expectProviderTools(body, ['ledger_create_member_income'])
         return {
@@ -6002,8 +5752,7 @@ describe('xox TypeScript API', () => {
 
       const defaultMemberLedger = await send('把 3 月默认成员线下 1 张入账', (body) => {
         const prompt = body.messages.map((message: any) => message.content).join('\n')
-        expect(prompt).toContain('默认记账成员是 成员 A')
-        expect(prompt).toContain('tenantScopedMemory')
+        expect(prompt).not.toContain('tenantScopedMemory')
         return fakeToolResponse('ledger_create_member_income', {
           monthLabel: '3月',
           memberName: '成员 A',

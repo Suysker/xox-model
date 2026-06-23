@@ -43,12 +43,7 @@ import {
 import { submitAgentMessageRun } from './agentic-os/xox-run-submission-adapter.js'
 import { addRunEvent, agentThreadEvents, listSerializedRunEvents } from './agentic-os/xox-run-event-store-adapter.js'
 import { addMessage } from './agentic-os/xox-thread-store-adapter.js'
-import { resumeXoxAgenticOsRunAfterActionConfirmation } from './host-profile/xox-agent-run-profile.js'
-import {
-  consolidateAgentMemoryCandidates,
-  memoryCandidateFromCancelledAction,
-  memoryCandidateFromEditedAction,
-} from './memory.js'
+import { resumeXoxAgentRunAfterActionConfirmation } from './host-profile/xox-host-profile.js'
 import {
   assertActionUpdateAllowed,
   coerceAgentActionKind,
@@ -200,7 +195,7 @@ async function confirmAgentActionRequest(db: Kysely<Database>, settings: Setting
   const action = await getActionRequest(db, actionRequestId)
   const workspace = await getWorkspaceForUser(db, user)
   assertActionOwnedByWorkspace(action, workspace, user)
-  const resumed = await resumeXoxAgenticOsRunAfterActionConfirmation({
+  const resumed = await resumeXoxAgentRunAfterActionConfirmation({
     db,
     settings,
     user,
@@ -264,16 +259,6 @@ async function cancelAgentActionRequest(db: Kysely<Database>, workspace: Row<'wo
       message: `已取消：${action.title}`,
     },
   }))
-  await consolidateAgentMemoryCandidates({
-    db,
-    workspace,
-    user,
-    threadId: action.thread_id,
-    runId: action.run_id,
-    candidates: [memoryCandidateFromCancelledAction({ runId: action.run_id, action: updated })],
-    title: '取消动作已进入记忆候选',
-    message: '用户取消确认卡的事实已作为带证据的纠错记忆候选保存。',
-  })
   return {
     actionRequest: updated,
     messages: [assistant],
@@ -336,16 +321,6 @@ async function updateAgentActionRequest(
       message: `确认卡已编辑：${updated.title}`,
     },
   }))
-  await consolidateAgentMemoryCandidates({
-    db,
-    workspace,
-    user,
-    threadId: action.thread_id,
-    runId: action.run_id,
-    candidates: [memoryCandidateFromEditedAction({ runId: action.run_id, action: updated })],
-    title: '编辑动作已进入记忆候选',
-    message: '用户编辑确认卡的事实已作为带证据的纠错记忆候选保存。',
-  })
   return {
     actionRequest: updated,
     runEvents: await listSerializedRunEvents(db, action.run_id),

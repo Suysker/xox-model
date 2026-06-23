@@ -18,8 +18,12 @@ import { AgentServerThreadStateProjector, projectAgentServerAgUiEvents } from '@
 import type {
   AgentActionRequest,
   AgentAgUiEvent,
+  AgentEvaluationFinding,
   AgentEvaluationResult,
+  AgentEvaluationStatus,
+  AgentGoalContract,
   AgentGoalRecord,
+  AgentGoalStatus,
   AgentMessage,
   AgentNavigationEvent,
   AgentPlannerSource,
@@ -38,7 +42,6 @@ import { parseJson } from '../../db/database.js'
 import { forbidden, notFound } from '../../core/http.js'
 import { newId } from '../../core/security.js'
 import { utcNow } from '../../core/time.js'
-import { normalizeGoalStatus, serializeEvaluation, serializeGoal } from './xox-goal-store-adapter.js'
 import { coerceAgentActionKind } from '../tool-policy.js'
 import { serializeRunEvent } from './xox-run-event-store-adapter.js'
 
@@ -107,6 +110,97 @@ function plannerSource(value: string | null): AgentPlannerSource | null {
   return value === 'openai_agents' || value === 'openai_compatible_tool_calls' || value === 'rules'
     ? value
     : null
+}
+
+const LEGACY_GOAL_PAGES: AgentGoalContract['scope']['pages'] = ['model', 'ledger', 'variance', 'versions', 'share']
+const LEGACY_GOAL_CAPABILITIES = ['data', 'draft', 'import_export', 'ledger', 'memory', 'share', 'version']
+
+function legacyGoalContract(row: Row<'agent_goals'>): AgentGoalContract {
+  return {
+    goalId: row.id,
+    threadId: row.thread_id,
+    runId: row.run_id,
+    userId: row.user_id,
+    workspaceId: row.workspace_id,
+    objective: row.objective,
+    scope: {
+      workspace: 'current',
+      pages: LEGACY_GOAL_PAGES,
+      allowedCapabilities: LEGACY_GOAL_CAPABILITIES,
+    },
+    acceptanceCriteria: [],
+    facts: {},
+    forbiddenActions: [],
+    humanCheckpoints: [],
+    automationLevel: 'manual',
+    maxIterations: 5,
+    contextStrategy: { memoryScopes: ['user', 'workspace', 'thread'], compactionMode: 'summary' },
+  }
+}
+
+export function normalizeGoalStatus(value: string | null): AgentGoalStatus | null {
+  if (
+    value === 'interpreting' ||
+    value === 'planning' ||
+    value === 'waiting_for_confirmation' ||
+    value === 'evaluating' ||
+    value === 'repairing' ||
+    value === 'completed' ||
+    value === 'needs_clarification' ||
+    value === 'blocked' ||
+    value === 'failed' ||
+    value === 'cancelled'
+  ) {
+    return value
+  }
+  return null
+}
+
+function normalizeEvaluationStatus(value: string): AgentEvaluationStatus {
+  if (
+    value === 'pass' ||
+    value === 'continue' ||
+    value === 'needs_confirmation' ||
+    value === 'needs_clarification' ||
+    value === 'blocked' ||
+    value === 'failed'
+  ) {
+    return value
+  }
+  return 'failed'
+}
+
+export function serializeGoal(row: Row<'agent_goals'>): AgentGoalRecord {
+  return {
+    id: row.id,
+    threadId: row.thread_id,
+    runId: row.run_id,
+    status: normalizeGoalStatus(row.status) ?? 'failed',
+    contract: parseJson<AgentGoalContract>(row.contract_json, legacyGoalContract(row)),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    completedAt: row.completed_at,
+    blockedReason: row.blocked_reason,
+  }
+}
+
+export function serializeEvaluation(row: Row<'agent_evaluations'>): AgentEvaluationResult {
+  return {
+    id: row.id,
+    goalId: row.goal_id,
+    threadId: row.thread_id,
+    runId: row.run_id,
+    iteration: row.iteration_no,
+    status: normalizeEvaluationStatus(row.status),
+    confidence: row.confidence,
+    satisfiedCriteria: parseJson<string[]>(row.satisfied_json, []),
+    unsatisfiedCriteria: parseJson<AgentEvaluationFinding[]>(row.unsatisfied_json, []),
+    policyFindings: parseJson<AgentEvaluationFinding[]>(row.policy_json, []),
+    nextPlannerBrief: row.next_planner_brief,
+    userQuestion: row.user_question,
+    blocker: row.blocker,
+    createdAt: row.created_at,
+  }
 }
 
 function runStatus(value: string): AgentRunRecord['status'] {

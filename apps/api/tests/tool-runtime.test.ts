@@ -1,7 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentToolInventorySnapshot } from '@xox/contracts'
-import type { Settings } from '../src/core/settings.js'
-import { buildRuntimeToolCatalogProjection } from '../src/agent/tool-catalog.js'
 import {
   resolveProviderModelProfile,
   sanitizeOpenAICompatibleRequestBody,
@@ -14,59 +12,7 @@ import {
 } from '@agentic-os/core'
 import type { AgentToolObservation } from '../src/agent/host-profile/xox-planned-items.js'
 
-function settings(provider = 'deepseek', model = 'deepseek-v4-pro'): Settings {
-  return {
-    databaseUrl: 'sqlite:///:memory:',
-    sessionCookieName: 'xox_session',
-    sessionTtlDays: 14,
-    corsOrigin: 'http://127.0.0.1:5173',
-    llmProvider: provider,
-    openaiBaseUrl: 'https://api.openai.com/v1',
-    openaiModel: 'gpt-5.4-mini',
-    openaiApiKey: null,
-    openaiCompatibleProvider: provider,
-    openaiCompatibleBaseUrl: 'https://provider.example/v1',
-    openaiCompatibleModel: model,
-    openaiCompatibleApiKey: 'test-key',
-    agentProviderKeyEncryptionSecret: null,
-    agentWorkerId: 'test-worker',
-    agentRunLeaseTtlMs: 10_000,
-    agentRunWorkerPollMs: 10_000,
-    agentProviderRequestTimeoutMs: 10_000,
-  }
-}
-
 describe('Tool Runtime Maturity Layer', () => {
-  it('builds effective tool inventory snapshots with authority classes and provenance', () => {
-    const projection = buildRuntimeToolCatalogProjection({
-      userId: 'user_1',
-      workspaceId: 'workspace_1',
-      automationLevel: 'high',
-      settings: settings(),
-      strategy: 'full_registry',
-      routerReason: 'model-selected data and draft for test',
-    })
-    const snapshot = projection.inventorySnapshot
-
-    expect(snapshot).toMatchObject({
-      source: 'full_registry',
-      freshness: 'fresh',
-      provider: 'deepseek',
-      model: 'deepseek-v4-pro',
-      automationLevel: 'high',
-    })
-    expect(snapshot.capabilities).toEqual(expect.arrayContaining(['data', 'sandbox', 'draft', 'account', 'memory']))
-    expect(Object.fromEntries(snapshot.tools.map((tool) => [tool.name, tool.authorityClass]))).toMatchObject({
-      data_query_workspace: 'read',
-      sandbox_run_code: 'sandbox_compute',
-      workspace_patch_config: 'confirmation_write',
-      account_forbidden: 'read',
-      memory_remember: 'read',
-    })
-    expect(snapshot.tools.every((tool) => tool.provenance === 'xox')).toBe(true)
-    expect(snapshot.tools[0]?.providerCompatibility).toContain('tools')
-  })
-
   it('sanitizes strict provider payloads without changing business tool schemas', () => {
     const profile = resolveProviderModelProfile({ provider: 'deepseek', model: 'deepseek-reasoner' })
     const body = sanitizeOpenAICompatibleRequestBody({

@@ -8,13 +8,13 @@ import {
   isAgentServerSqliteUniqueConstraintError,
   type AgentServerSignal,
   type AgentServerRuntimeStreamRunEventCopyInput,
+  type AgentServerRuntimeStreamEvent,
 } from '@agentic-os/server'
 import type { Database, Row } from '../../db/schema.js'
 import { jsonString, parseJson } from '../../db/database.js'
 import { newId } from '../../core/security.js'
 import { utcNow } from '../../core/time.js'
 import { redactSecretLikeContent } from '../memory.js'
-import type { RuntimeStreamEvent } from '../host-profile/xox-provider-runtime.js'
 
 export type AgentThreadEventReason =
   | 'thread_started'
@@ -344,7 +344,7 @@ function xoxRuntimeStreamCopy(input: AgentServerRuntimeStreamRunEventCopyInput) 
 
 export async function addRuntimeStreamRunEvent(
   ctx: { db: Kysely<Database>; threadId: string; runId: string; phase?: 'planning' | 'final_answer' },
-  event: RuntimeStreamEvent,
+  event: AgentServerRuntimeStreamEvent,
 ) {
   await addAgentServerRuntimeStreamRunEvent({
     threadId: ctx.threadId,

@@ -1,8 +1,27 @@
 # xox-model Agentic OS Integration Plan
 
-Status: Draft (M142 host harness amputation in progress)
+Status: Draft (M169 host harness pillar deletion in progress)
 
 Date: 2026-06-21
+
+## Latest Status: M169
+
+M169 supersedes the older M142-M168 incremental notes below where they still mention deleted host harness files.
+
+Current production entry is `apps/api/src/agent/host-profile/xox-host-profile.ts`. The old xox host harness pillars are deleted:
+
+- `host-profile/xox-agent-run-profile.ts`
+- `host-profile/xox-provider-runtime.ts`
+- `host-profile/xox-final-review-policy.ts`
+- `host-profile/xox-goal-facts.ts`
+- `agentic-os/xox-goal-store-adapter.ts`
+- `tests/provider-runtime.test.ts`
+
+This cut also removed xox-local memory lifecycle orchestration, local progressive tool runtime projection, and local goal/obligation context fields. xox now keeps tool definitions, business execution, context/prompt assets, provider settings, memory store/Memory Center display, sandbox bundles, SQL/SSE adapters, and product DTO projection. Agent loop, provider execution/recovery, final review, goal/readiness, memory lifecycle, and tool-surface runtime are Agentic OS responsibilities.
+
+Current validation: targeted architecture/build/tool/sandbox checks pass; full `npm run test:api` has 109 passing tests and 27 failures that must be handled as stale local-harness expectations or Agentic OS parity follow-up, not by restoring deleted xox harness code.
+
+See [M169 Delete Host Harness Pillars](m169-delete-host-harness-pillars.md) for the current boundary, deletion list, and validation evidence.
 
 ## Purpose
 
@@ -150,28 +169,27 @@ Current integration is no longer compatibility-only:
 - xox ambient session context now stays out of the worker control flow. Local `apps/api/src/agent/ambient-context.ts` has been deleted; ambient facts belong to Agentic OS-owned intake/direct-answer/runtime context assembly rather than a downstream worker lane.
 - xox `clarification-resume.ts` and `agentic-os/xox-clarification-resume-adapter.ts` have both been removed. Clarification resume scaffold assembly comes from `@agentic-os/core`; xox `agentic-os/xox-goal-store-adapter.ts` only loads prior goal/evaluation/action rows, maps xox action kinds to capabilities, and supplies localized copy plus redaction.
 - xox `loop-readiness-check.ts` and `agentic-os/xox-loop-readiness-adapter.ts` have both been removed. Readiness status priority now comes from `@agentic-os/core` `decideAgentReadiness()`; xox `agentic-os/xox-goal-store-adapter.ts` only loads DB rows, produces xox domain findings, supplies localized copy, and persists xox goal status.
-- xox `runtime-plan-reader.ts` has been deleted; `host-profile/xox-planned-items.ts` consumes `@agentic-os/runtime-openai-compatible` `providerToolCallBoundaryObservations()` for provider boundary failure model payloads, while xox keeps only the `ReadDraft` wrapper, Chinese display copy, and product status mapping.
+- xox `runtime-plan-reader.ts` has been deleted, and M170 removes the remaining `RuntimePlanResult` / provider-error-to-read-draft DTO bridge from `host-profile/xox-planned-items.ts`. Provider boundary repair and failure observation semantics belong to Agentic OS runtime/server packages; xox keeps only business action/read DTOs.
 - xox tool observation outcome classification now consumes `@agentic-os/core` `classifyToolObservationOutcome()` and related helpers. `apps/api/src/agent/tool-observation-outcome.ts` has been removed; provider boundary, sandbox execution, action preview, and action result outcome branches are no longer maintained in xox.
 - xox action observation payloads now consume `@agentic-os/core` `buildActionPreviewObservation()` and `buildActionResultObservation()`. Root `apps/api/src/agent/tool-observation-continuation.ts` and the standalone `apps/api/src/agent/agentic-os/xox-tool-observation-adapter.ts` facade have both been removed. `apps/api/src/agent/agentic-os/xox-action-graph-adapter.ts` keeps only action row mapping, details parsing, localized copy, business result summaries, and durable persistence at the concrete action graph boundary; it no longer hand-writes `action_preview` or `action_result` model payloads.
 - xox observation loop role checks now consume `@agentic-os/core` `parseToolObservationModelFacts()` and `is*ToolObservation()` helpers. `apps/api/src/agent/host-profile/xox-agent-run-profile.ts` still owns xox readable text and business finalization policy, but no longer directly parses `observation.modelContent` for action/sandbox/provider boundary/tool supervisor/tool discovery/clarification semantics; `tool-runtime/tool-loop-guardrails.ts` also uses core helpers for completed action-result detection.
 - xox tool observation continuation/finalizer system prompt now consumes `@agentic-os/core` `toolObservationContinuationSystemPrompt()`. `apps/api/src/agent/prompt-registry.ts` has been deleted; concrete adapters load their xox prompt assets directly and only inject platform identity, agent name, and provider identity rules at the consuming boundary.
 - xox provider observation turn message assembly now consumes `@agentic-os/runtime-openai-compatible` `buildProviderToolObservationTurnMessages()` for planning turns and `buildProviderToolObservationContinuationMessages()` for finalizer/continuation turns. `apps/api/src/agent/host-profile/xox-provider-runtime.ts` builds xox context/tool catalog/budget inputs, while `apps/api/src/agent/host-profile/xox-agent-run-profile.ts` now calls `@agentic-os/server` `runAgentServerObservationContinuation()` for finalizer/continuation lifecycle. No xox file hand-assembles OpenAI-compatible assistant `tool_calls` and matching `tool` replay messages.
-- xox progressive tool surface runtime now consumes `@agentic-os/core` `buildToolSurfacePack()` / `buildToolSurfaceManifests()` and search helpers. Local `apps/api/src/agent/tool-context-engine/*` algorithm files have been removed; xox keeps only `apps/api/src/agent/tool-surface-manifest.ts` for business manifest overrides, kernel tool names, canonical capability map, fact-dependent capability hints, and legacy xox DTO mapping.
+- M170 deletes the remaining xox progressive tool surface file `apps/api/src/agent/tool-surface-manifest.ts` and removes xox-visible `tool_discover` / `rg` provider tools. Agentic OS owns tool surface runtime and materialization; xox only declares business tools in `tool-catalog.ts` and generates sandbox SDK docs directly from that registry.
 - M154 deletes the misleading root `apps/api/src/agent/tool-gateway.ts` facade. Runtime tool catalog projection, effective inventory snapshot creation, and `tool_catalog_ready` product event wiring now live in `apps/api/src/agent/tool-catalog.ts`, the real xox tool registry/catalog boundary. Agentic OS still owns provider execution, tool-call normalization, inventory snapshot shape, and progressive tool surface algorithms.
 - xox tool loop progress guardrails now consume `@agentic-os/core` `evaluateToolLoopGuardrails()`. Local guardrail algorithm branches for repeated failures, no-progress turns, and executed-write reapply have been removed; `apps/api/src/agent/tool-runtime/tool-loop-guardrails.ts` is now only a Row/DTO adapter. Local `approval-policy-composer.ts` has also been removed; production xox code no longer calls a local `resolveActionAuthority()` or `composeAgentWriteApprovalPolicy()` wrapper.
 - xox tool-call supervision and runtime event payloads now consume `@agentic-os/core` `runToolCallSupervisor()`. Agentic OS owns the sequential runner, started/completed callback order, inventory-miss fail-closed path, empty-result failure path, observation summary, and event payload facts. `apps/api/src/agent/tool-runtime/tool-call-supervisor.ts` now only maps xox planner steps/results, adapts failure copy, and persists product run events; the obsolete local `tool-runtime/tool-execution-events.ts` adapter has been deleted.
 - xox action graph materialization now consumes `@agentic-os/server` `materializeAgentServerActionGraph()`. Agentic OS owns sequence cursor traversal, action/read/status/assistant/observation-only item materialization, stored action observation collection, summary, and provider-neutral event drafts. Root `apps/api/src/agent/action-graph-store.ts` has been deleted; the remaining xox durable adapter now lives at `apps/api/src/agent/agentic-os/xox-action-graph-adapter.ts` and maps `PlannedItem` values into server planned items, Kysely rows, pending action previews, navigation/product run-event copy, and `@xox/contracts` compatibility.
 - M167 removes the last xox-owned auto-execution decision path. `apps/api/src/agent/tool-policy.ts` no longer exports `normalizeAgentAutomationLevel()` or `resolveActionAuthority()`, `apps/api/src/agent/tool-executor.ts` no longer exports `autoExecuteAgentActionRequest()`, and `apps/api/src/agent/agentic-os/xox-action-graph-adapter.ts` no longer decides `auto_execute` / `forbidden`. Agentic OS core owns automation normalization, write approval policy, and standard `action.*` lifecycle events; xox implements the business `actions.executeAction` port and localizes those standard events in its run-event store adapter.
-- xox active memory recall now consumes `@agentic-os/core` `createAgentActiveMemoryRecallRuntime()` and `buildAgentActiveMemoryPromptPack()`. Agentic OS owns active recall cache, timeout, circuit breaker, prompt budget, citation formatting and untrusted memory context rendering. Root `apps/api/src/agent/active-memory-recall.ts` and `apps/api/src/agent/memory/active-memory-subagent.ts` have been deleted; after M157, xox `host-profile/xox-context-pack.ts` wires DB retrieval, recall-signal persistence, Chinese run-event copy and context DTO projection.
+- M170 deletes `host-profile/xox-context-pack.ts` and removes xox-local active memory recall from context assembly. Agentic OS owns active recall/cache/prompt lifecycle; xox retains Memory Center routes and explicit `memory_search` / `memory_get` / `memory_remember` business tool adapters in `memory.ts`.
 - xox's unused local memory prompt `apps/api/src/agent/prompts/memory.system.md` has been deleted. Active-memory prompt assembly belongs to Agentic OS core; xox keeps only retrieval and persistence peripherals.
 - M168 deletes the xox-local generic memory package `packages/agent-memory-core` and `apps/api/tests/agent-memory-core.test.ts`. `@agentic-os/core` now owns OpenClaw-derived memory budget, flush plan, citations, lexical/MMR retrieval, short-term promotion scoring, SaaS memory candidate policy, prompt injection eligibility, recall ranking, prompt lane budgets, and query hashing. xox `apps/api/src/agent/memory.ts` remains only a durable store / Memory Center / tool peripheral adapter plus xox business candidate plugins.
 - M152 deletes the generic production `apps/api/src/agent/prompts` directory: `planner.system.md`, `turn-lane.system.md`, and `direct-answer.system.md` are gone. M153 corrects the overreach by restoring xox prompt text as host-profile assets under `apps/api/src/agent/host-profile/prompts` with product-policy names. Lane protocol and direct-answer state remain Agentic OS-owned; xox keeps business/product prompt policy as host profile content, not a reusable-looking local harness prompt framework.
-- M155 deletes the misleading root `apps/api/src/agent/runtime-goal-facts.ts` file. xox goal fact parsing/merging now lives under `apps/api/src/agent/host-profile/xox-goal-facts.ts`, because the vocabulary is host product policy, not a generic runtime facts subsystem.
+- M155 deleted the misleading root `apps/api/src/agent/runtime-goal-facts.ts` file. M169 then deleted the remaining `host-profile/xox-goal-facts.ts`; xox no longer maintains a local goal-facts harness subsystem.
 - M156 deletes the misleading root `apps/api/src/agent/runtime-intent-handlers.ts` facade. Provider-normalized tool step handling now lives in `apps/api/src/agent/tool-executor.ts`, because it is xox business tool execution/read wiring, not a downstream runtime intent layer.
-- M141 continues that cut: the xox context pack no longer implements `onStarted` / `onSkipped` / `onCompleted` / `onInjected` or constructs `memory_recall_*` / `memory_injected` event payloads. Agentic OS owns active-memory lifecycle event drafts; xox only supplies `appendRunEvent` and `recordRecalledMemories` peripherals. M157 then deletes the root `context-pack.ts` facade and moves the remaining host input adapter to `host-profile/xox-context-pack.ts`.
-- M157 deletes the misleading root `apps/api/src/agent/context-pack.ts` file. Provider runtime and observation continuation now consume `apps/api/src/agent/host-profile/xox-context-pack.ts`, because remaining context assembly is HostProfile input wiring, not a downstream context harness.
+- M141/M157 removed the root context-pack facade and lifecycle event construction. M170 finishes the cut by deleting `host-profile/xox-context-pack.ts`; host context is now plain xox facts assembled inside the HostAdapter, with no memory recall lifecycle or standalone context harness file.
 - M158 deletes the misleading root `apps/api/src/agent/action-draft-builder.ts` facade. Planned-item DTOs and helper wrappers now live in `apps/api/src/agent/host-profile/xox-planned-items.ts`, and the business tool registry is named `xoxBusinessToolHandlers` instead of `runtimeIntentHandlers`.
-- M159 deletes the obsolete local harness-named Agentic OS facades from `apps/api/src/agent/agentic-os`: `xox-agentic-os-host-kit.ts`, `xox-final-review-adapter.ts`, and `xox-runtime-adapter.ts`. The remaining xox-specific run wiring, evidence classification/DTO mapping, and provider boundary now live under `apps/api/src/agent/host-profile` as `xox-agent-run-profile.ts`, `xox-final-review-policy.ts`, and `xox-provider-runtime.ts`. Architecture guards assert the old files remain absent.
+- M159 deletes the obsolete local harness-named Agentic OS facades from `apps/api/src/agent/agentic-os`: `xox-agentic-os-host-kit.ts`, `xox-final-review-adapter.ts`, and `xox-runtime-adapter.ts`. M169/M170 then delete `xox-agent-run-profile.ts`, `xox-provider-runtime.ts`, `xox-final-review-policy.ts`, `xox-goal-facts.ts`, and `xox-context-pack.ts`; the remaining host-profile surface is `xox-host-profile.ts`, prompts, and xox business DTO helpers.
 - M147 deletes the misleading xox memory root facades: `memory-events.ts`, `memory-retriever.ts`, `memory-candidate-detector.ts`, `memory-promotion-policy.ts`, and `memory-consolidator.ts`. M151 finishes that shape by deleting the remaining `memory/*` helper subdirectory. M168 removes the xox-local generic memory package as well: memory candidate policy, recall scoring, prompt injection eligibility, prompt lane budgets, query hashing, flush planning, citations, MMR retrieval, and short-term promotion scoring now live in `@agentic-os/core`. xox memory SQL row/event persistence, tenant retrieval, recall marking, xox domain candidate generation, Memory Center DTOs, memory tools, daily notes, and context flush storage remain in `memory.ts`.
 - M142 is the current hard gate: [M142 One-Shot Host Harness Amputation](m142-one-shot-host-harness-amputation.md) defines the required coordinated cuts for the remaining goal/plan/memory/action/provider/evidence/projection harness residues. The root evidence/final-review/projection facades and old local tests are deleted; the milestone remains incomplete until the host-kit and remaining adapter boundaries stop reading like a local runner.
 - M161 deletes the standalone `apps/api/src/agent/agentic-os/xox-tool-observation-adapter.ts` facade. The surviving `AgentToolObservation` DTO and `createHostObservationBridge()` mapping live in `host-profile/xox-planned-items.ts`, action preview/result/failure observation helpers live in `agentic-os/xox-action-graph-adapter.ts`, and provider finalizer/continuation wiring lives only at `host-profile/xox-agent-run-profile.ts` until the remaining lifecycle can move further into Agentic OS. Architecture guards now assert the old facade remains absent.
@@ -293,12 +311,9 @@ Implementation files should live outside this documentation folder. Candidate so
 
 ```text
 apps/api/src/agent/host-profile/
-  xox-agent-run-profile.ts
-  xox-provider-runtime.ts
-  xox-final-review-policy.ts
-  xox-context-pack.ts
+  xox-host-profile.ts
   xox-planned-items.ts
-  xox-goal-facts.ts
+  prompts/
 
 apps/api/src/agent/agentic-os/
   xox-run-worker-adapter.ts
@@ -307,19 +322,15 @@ apps/api/src/agent/agentic-os/
   xox-run-submission-adapter.ts
   xox-thread-store-adapter.ts
   xox-action-graph-adapter.ts
-  xox-goal-store-adapter.ts
 ```
 
 Tests should live beside existing agent tests:
 
 ```text
-apps/api/tests/agentic-os-adapter.test.ts
-apps/api/tests/agentic-os-runtime-contract.test.ts
-apps/api/tests/agentic-os-host-kit.test.ts
-apps/api/tests/agentic-os-parity.test.ts
+apps/api/tests/agent-architecture.test.ts
 ```
 
-The exact file names can change if the existing xox module structure suggests a cleaner split.
+Deleted host harness files must not be restored to satisfy stale local-runner tests.
 
 ## Phase 1: Release-Ready Agentic OS Dependency
 
