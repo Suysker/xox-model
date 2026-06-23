@@ -138,9 +138,9 @@ Current responsibility remains:
 
 New responsibility:
 
-- support `createOrAutoExecuteActionRequest(...)`
+- support Agentic OS `ToolRuntime`-owned auto-execution after action preview
 - always persist an action request before auto execution
-- write an `action_auto_executed` run event only after domain execution succeeds
+- let Agentic OS write standard `action.executed` / `action.audited` lifecycle events; xox may project them as product `action_executed` run events
 - re-use `assertActionExecutionAllowed` for both manual confirmations and auto-executed actions
 
 Auto-execution must be a lifecycle branch of the same confirmation-card path, not a second business execution path.

@@ -1,5 +1,6 @@
 import type {
   AgentActionKind,
+  AgentAutomationLevel,
   AgentGoalFacts,
   AgentNavigationEvent,
   AgentPlanStepStatus,
@@ -24,7 +25,6 @@ import type { Settings } from '../../core/settings.js'
 import type { CurrentUser } from '../../modules/auth.js'
 import { redactSecretLikeContent } from '../memory.js'
 import type { ParsedWorkspaceBundleArtifact } from '../workspace-bundle-artifact.js'
-import type { AgentAutomationLevel } from '../tool-policy.js'
 import type { AgentLoopObligationPlan } from './xox-final-review-policy.js'
 import type { RuntimePlanError, RuntimePlanResult } from './xox-provider-runtime.js'
 

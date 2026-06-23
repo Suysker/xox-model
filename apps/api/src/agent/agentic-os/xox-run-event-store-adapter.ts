@@ -1,4 +1,5 @@
 import type { Kysely } from 'kysely'
+import type { AgentRunEvent as OsRunEvent } from '@agentic-os/contracts'
 import type { AgentRunEvent, AgentRunEventStatus, AgentRuntimeChannel } from '@xox/contracts'
 import {
   AgentServerSignalBus,
@@ -102,9 +103,7 @@ function inferredRunEventChannel(input: {
     input.type === 'tool_call_failed' ||
     input.type === 'action_updated' ||
     input.type === 'action_executed' ||
-    input.type === 'action_auto_executed' ||
     input.type === 'action_execution_failed' ||
-    input.type === 'action_auto_execution_failed' ||
     input.type === 'action_cancelled'
   ) {
     return 'tool'
@@ -191,6 +190,105 @@ export async function addRunEvent(
   })
   agentThreadEvents.publish(input.threadId, 'run_trace')
   return row
+}
+
+export async function addAgenticOsActionRunEvent(
+  db: Kysely<Database>,
+  input: {
+    threadId: string
+    runId: string
+    event: OsRunEvent
+  },
+) {
+  const payload = input.event.payload as Record<string, unknown>
+  if (input.event.type === 'action.previewed') {
+    const actionTitle = actionEventTitle(payload, '待确认动作')
+    await addRunEvent(db, {
+      threadId: input.threadId,
+      runId: input.runId,
+      type: 'tool_plan_ready',
+      title: '模型工具调用已解析',
+      message: '模型规划生成 1 个待确认写入动作。',
+      status: 'blocked',
+      channel: 'tool',
+      data: {
+        ...payload,
+        pendingActionCount: 1,
+        harness: 'agentic-os',
+      },
+    })
+    await addRunEvent(db, {
+      threadId: input.threadId,
+      runId: input.runId,
+      type: 'confirmation_ready',
+      title: '确认卡已生成',
+      message: `已生成待确认动作卡：${actionTitle}`,
+      status: 'blocked',
+      channel: 'tool',
+      data: {
+        ...payload,
+        harness: 'agentic-os',
+      },
+    })
+    return
+  }
+  if (input.event.type === 'action.executed') {
+    const actionTitle = actionEventTitle(payload, 'Agent 动作')
+    const failed = payload.status === 'failed'
+    await addRunEvent(db, {
+      threadId: input.threadId,
+      runId: input.runId,
+      type: failed ? 'action_execution_failed' : 'action_executed',
+      title: failed ? '动作执行失败' : '动作已执行',
+      message: failed ? `${actionTitle}：执行失败` : `已执行：${actionTitle}`,
+      status: failed ? 'failed' : 'completed',
+      channel: 'tool',
+      data: {
+        ...payload,
+        harness: 'agentic-os',
+      },
+    })
+    return
+  }
+  if (input.event.type === 'action.edited') {
+    const actionTitle = actionEventTitle(payload, '确认卡')
+    await addRunEvent(db, {
+      threadId: input.threadId,
+      runId: input.runId,
+      type: 'action_updated',
+      title: '确认卡已更新',
+      message: `已更新：${actionTitle}`,
+      status: 'info',
+      channel: 'tool',
+      data: {
+        ...payload,
+        harness: 'agentic-os',
+      },
+    })
+    return
+  }
+  if (input.event.type === 'action.rejected') {
+    const actionTitle = actionEventTitle(payload, '确认卡')
+    await addRunEvent(db, {
+      threadId: input.threadId,
+      runId: input.runId,
+      type: 'action_cancelled',
+      title: '确认卡已取消',
+      message: `已取消：${actionTitle}`,
+      status: 'cancelled',
+      channel: 'tool',
+      data: {
+        ...payload,
+        harness: 'agentic-os',
+      },
+    })
+  }
+}
+
+function actionEventTitle(payload: Record<string, unknown>, fallback: string): string {
+  if (typeof payload.actionTitle === 'string' && payload.actionTitle.length > 0) return payload.actionTitle
+  if (typeof payload.toolName === 'string' && payload.toolName.length > 0) return payload.toolName
+  return fallback
 }
 
 export async function listSerializedRunEvents(db: Kysely<Database>, runId: string): Promise<AgentRunEvent[]> {

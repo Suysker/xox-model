@@ -39,6 +39,7 @@ import {
   createAgentHostKit,
   inferToolAuthorityClass,
   ledgerToReviewObligations,
+  normalizeAgentAutomationLevel,
   obligationMaterializationCompletedEventPayload,
   parseToolObservationModelFacts,
   planObligationMaterialization,
@@ -75,6 +76,7 @@ import type { PlannerContext } from './xox-planned-items.js'
 import {
   answerWorkspaceDataQuestion,
   executeAgentActionRequest,
+  safeAgentActionErrorMessage,
   xoxBusinessToolHandlers,
   type WorkspaceDataQueryStep,
 } from '../tool-executor.js'
@@ -91,6 +93,7 @@ import {
   type XoxObservationBridge,
 } from './xox-planned-items.js'
 import {
+  actionFailureObservation,
   actionExecutionObservation,
   storePlannedActionGraph,
   type StoredActionGraph,
@@ -128,7 +131,7 @@ import {
   mergeAgentGoalFacts,
   readRuntimeGoalFacts,
 } from './xox-goal-facts.js'
-import { addRunEvent } from '../agentic-os/xox-run-event-store-adapter.js'
+import { addAgenticOsActionRunEvent, addRunEvent } from '../agentic-os/xox-run-event-store-adapter.js'
 import { addMessage } from '../agentic-os/xox-thread-store-adapter.js'
 import {
   AGENT_TOOL_REGISTRY,
@@ -142,7 +145,6 @@ import {
   type ChatTool,
 } from '../tool-catalog.js'
 import { redactSecretLikeContent } from '../memory.js'
-import { normalizeAgentAutomationLevel } from '../tool-policy.js'
 import {
   applyObservationToLedger,
   applyResponseEvaluationToLedger,
@@ -1253,6 +1255,13 @@ function createXoxAgenticOsHost(
           },
         }))
       }
+      if (event.type.startsWith('action.')) {
+        await addAgenticOsActionRunEvent(ctx.db, {
+          threadId: ctx.thread.id,
+          runId: ctx.runId,
+          event,
+        })
+      }
       if (event.type === 'tool.observed') {
         const payload = event.payload as Record<string, unknown>
         const outcome = typeof payload.outcome === 'string' ? payload.outcome : null
@@ -1393,7 +1402,7 @@ function createXoxAgenticOsHost(
       if (!step) throw new Error(`No xox planner step mapping exists for tool ${input.tool.name}.`)
       const graph = await storeSingleToolStep(ctx, state, step, {
         forceManualApproval: true,
-        emitPlanReady: input.approvalPolicy?.mode === 'auto_execute' ? false : true,
+        emitPlanReady: false,
       })
       const action = graph.actionRows.at(-1)
       if (!action) {
@@ -1407,37 +1416,59 @@ function createXoxAgenticOsHost(
         .selectAll()
         .where('id', '=', input.actionRequest.actionRequestId)
         .executeTakeFirstOrThrow()
-      const result = await executeAgentActionRequest(ctx.db, ctx.settings, ctx.user, action)
+      let result: unknown
+      try {
+        result = await executeAgentActionRequest(ctx.db, ctx.settings, ctx.user, action)
+      } catch (executionError) {
+        if (input.reason === undefined) {
+          throw executionError
+        }
+        const message = safeAgentActionErrorMessage(executionError)
+        await ctx.db.updateTable('agent_action_requests')
+          .set({ status: 'failed', executed_at: null, error_message: message })
+          .where('id', '=', action.id)
+          .execute()
+          .catch(() => undefined)
+        await ctx.db.updateTable('agent_plan_steps')
+          .set({ status: 'failed', updated_at: utcNow() })
+          .where('action_request_id', '=', action.id)
+          .execute()
+          .catch(() => undefined)
+        const failed = await ctx.db
+          .selectFrom('agent_action_requests')
+          .selectAll()
+          .where('id', '=', action.id)
+          .executeTakeFirstOrThrow()
+        state.lastActionExecutionResult = null
+        replaceActionRow(state, failed)
+        const xoxObservation = actionFailureObservation({
+          action: failed,
+          reason: input.reason ?? 'Action execution failed.',
+          error: message,
+        })
+        state.xoxObservations.push(xoxObservation)
+        const observation = state.observationBridge.toCanonical(xoxObservation, state.xoxObservations.length - 1)
+        return {
+          actionRequest: osActionRequest(failed, input.actionRequest.toolCallId),
+          observation,
+          audit: osAudit({
+            runId: failed.run_id,
+            threadId: failed.thread_id,
+            actionRequestId: failed.id,
+            toolCallId: input.actionRequest.toolCallId,
+            toolName: failed.kind,
+            actorId: ctx.user.id,
+            outcome: 'failed',
+            reason: message,
+          }),
+        }
+      }
       const updated = await ctx.db
         .selectFrom('agent_action_requests')
         .selectAll()
         .where('id', '=', action.id)
         .executeTakeFirstOrThrow()
       state.lastActionExecutionResult = result
-      await addRunEvent(ctx.db, input.reason === undefined
-        ? agentServerRunLifecycleEvents.actionExecuted({
-            threadId: updated.thread_id,
-            runId: updated.run_id,
-            actionRequestId: updated.id,
-            actionKind: updated.kind,
-            actionTitle: updated.title,
-            copy: {
-              title: '确认卡已执行',
-              message: `已执行：${updated.title}`,
-            },
-          })
-        : agentServerRunLifecycleEvents.actionAutoExecuted({
-            threadId: updated.thread_id,
-            runId: updated.run_id,
-            actionRequestId: updated.id,
-            actionKind: updated.kind,
-            actionTitle: updated.title,
-            reason: input.reason,
-            copy: {
-              title: '动作已自动执行',
-              message: `已自动执行：${updated.title}`,
-            },
-          }))
       replaceActionRow(state, updated)
       const xoxObservation = actionExecutionObservation({ action: updated, result })
       state.xoxObservations.push(xoxObservation)

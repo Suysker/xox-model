@@ -12,6 +12,7 @@ import type {
   AgentTranscriptItem as OsTranscriptItem,
   JsonObject as OsJsonObject,
 } from '@agentic-os/contracts'
+import { normalizeAgentAutomationLevel } from '@agentic-os/core'
 import type { AgentServerThreadRunState, AgentServerThreadSnapshot } from '@agentic-os/server'
 import { AgentServerThreadStateProjector, projectAgentServerAgUiEvents } from '@agentic-os/server'
 import type {
@@ -38,7 +39,7 @@ import { forbidden, notFound } from '../../core/http.js'
 import { newId } from '../../core/security.js'
 import { utcNow } from '../../core/time.js'
 import { normalizeGoalStatus, serializeEvaluation, serializeGoal } from './xox-goal-store-adapter.js'
-import { coerceAgentActionKind, normalizeAgentAutomationLevel } from '../tool-policy.js'
+import { coerceAgentActionKind } from '../tool-policy.js'
 import { serializeRunEvent } from './xox-run-event-store-adapter.js'
 
 export type AgentThreadUser = {
@@ -359,7 +360,7 @@ function xoxRunEventChannelToOs(channel: AgentRunEvent['channel']): OsRunEventCh
 function xoxRunEventTypeToOs(event: AgentRunEvent): OsRunEventType {
   if (event.type === 'run_queued') return 'run.created'
   if (event.type === 'assistant_final_message' || event.type === 'final_answer_candidate') return 'model.completed'
-  if (event.type === 'action_executed' || event.type === 'action_auto_executed') return 'action.executed'
+  if (event.type === 'action_executed') return 'action.executed'
   if (event.type === 'action_cancelled') return 'action.rejected'
   if (event.type === 'action_updated') return 'action.previewed'
   if (event.channel === 'tool') return 'tool.observed'

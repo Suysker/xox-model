@@ -19,7 +19,6 @@ import {
 } from '../src/agent/tool-catalog.js'
 import { buildRuntimeToolCatalogProjection } from '../src/agent/tool-catalog.js'
 import { sanitizeAgentGoalFacts } from '../src/agent/host-profile/xox-goal-facts.js'
-import { resolveActionAuthority } from '../src/agent/tool-policy.js'
 import { createProductDefaultModel, projectModel } from '@xox/domain'
 import { recoverRunningAgentRuns } from '../src/agent/agentic-os/xox-run-worker-adapter.js'
 import {
@@ -1127,29 +1126,6 @@ describe('xox TypeScript API', () => {
     expect(sanitizeAgentGoalFacts('我们几个月才能回本？帮我第一个股东注资100w')).toEqual({})
   })
 
-  it('treats automation level as execution authority instead of planner effort', () => {
-    expect(resolveActionAuthority({
-      automationLevel: 'manual',
-      kind: 'ledger.create_entry',
-      riskLevel: 'medium',
-    })).toMatchObject({ mode: 'require_confirmation' })
-    expect(resolveActionAuthority({
-      automationLevel: 'medium',
-      kind: 'ledger.create_entry',
-      riskLevel: 'medium',
-    })).toMatchObject({ mode: 'auto_execute' })
-    expect(resolveActionAuthority({
-      automationLevel: 'high',
-      kind: 'workspace.update_draft',
-      riskLevel: 'high',
-    })).toMatchObject({ mode: 'require_confirmation' })
-    expect(resolveActionAuthority({
-      automationLevel: 'high',
-      kind: 'account.delete',
-      riskLevel: 'high',
-    })).toMatchObject({ mode: 'forbidden' })
-  })
-
   it('creates agent navigation events, confirmation cards, and executes confirmed ledger writes', async () => {
     await withFakeOpenAICompatibleProvider(() => fakeToolResponse('ledger_create_member_income', {
       monthLabel: '3月',
@@ -1240,7 +1216,7 @@ describe('xox TypeScript API', () => {
       expect(response.json.actionRequests[0].kind).toBe('ledger.create_entry')
       expect(response.json.actionRequests[0].status).toBe('executed')
       expect(response.json.planSteps.find((step: any) => step.actionRequestId === response.json.actionRequests[0].id)?.status).toBe('executed')
-      expect(response.json.runEvents.some((event: any) => event.type === 'action_auto_executed')).toBe(true)
+      expect(response.json.runEvents.some((event: any) => event.type === 'action_executed')).toBe(true)
       expect(response.json.runEvents.some((event: any) => event.type === 'confirmation_ready')).toBe(false)
 
       const periodId = response.json.actionRequests[0].payload.ledgerPeriodId
@@ -1400,7 +1376,7 @@ describe('xox TypeScript API', () => {
       const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
       expect(state.json.evaluations.map((evaluation: any) => evaluation.status)).toEqual(['pass', 'pass'])
       expect(response.json.runEvents.filter((event: any) => event.type === 'memory_recall_started')).toHaveLength(1)
-      expect(response.json.runEvents.filter((event: any) => event.type === 'action_auto_executed')).toHaveLength(2)
+      expect(response.json.runEvents.filter((event: any) => event.type === 'action_executed')).toHaveLength(2)
       expect(response.json.messages.at(-1).content).toContain('成员入账')
       expect(response.json.messages.at(-1).content).toContain('股东注资')
 
@@ -3633,7 +3609,7 @@ describe('xox TypeScript API', () => {
       expect(response.json.planSteps.map((step: any) => step.toolName)).toContain('data_query_workspace')
       expect(response.json.planSteps.some((step: any) => step.actionRequestId === response.json.actionRequests[0].id)).toBe(true)
       expect(response.json.runEvents.filter((event: any) => event.type === 'memory_recall_started')).toHaveLength(1)
-      expect(response.json.runEvents.some((event: any) => event.type === 'action_auto_executed')).toBe(true)
+      expect(response.json.runEvents.some((event: any) => event.type === 'action_executed')).toBe(true)
       expect(response.json.messages.map((message: any) => message.role)).toEqual(['user'])
       await closeHarness(harness)
     }, {
@@ -4300,7 +4276,10 @@ describe('xox TypeScript API', () => {
 
         expect(events.length).toBeGreaterThanOrEqual(2)
         const initialEvent = events[0]!
-        const updateEvent = events.find((event) => event.data.state.actionRequests.some((action: any) => action.kind === 'ledger.create_entry')) ?? events.at(-1)!
+        const updateEvent = events.find((event) =>
+          event.data.state.actionRequests.some((action: any) => action.kind === 'ledger.create_entry') &&
+          event.data.state.runEvents.some((runEvent: any) => runEvent.type === 'tool_plan_ready'),
+        ) ?? events.at(-1)!
         expect(initialEvent.event).toBe('thread_state')
         expect(initialEvent.data.threadId).toBe(initial.json.threadId)
         expect(initialEvent.data.state.thread.id).toBe(initial.json.threadId)
@@ -5247,7 +5226,7 @@ describe('xox TypeScript API', () => {
       expect(autoPlanned.json.actionRequests).toHaveLength(1)
       expect(autoPlanned.json.actionRequests[0].status).toBe('pending')
       expect(autoPlanned.json.planSteps.find((step: any) => step.actionRequestId === autoPlanned.json.actionRequests[0].id)?.status).toBe('ready')
-      expect(autoPlanned.json.runEvents.some((event: any) => event.type === 'action_auto_executed')).toBe(false)
+      expect(autoPlanned.json.runEvents.some((event: any) => event.type === 'action_executed')).toBe(false)
       const autoDraft = (await client.get('/api/v1/workspace/draft')).json
       expect(autoDraft.workspaceName).toBe('星河 50 期启动测算')
       expect(autoDraft.config.teamMembers).toHaveLength(50)
@@ -5408,7 +5387,7 @@ describe('xox TypeScript API', () => {
       expect(planned.json.actionRequests[0].kind).toBe('workspace.rename')
       expect(planned.json.actionRequests[0].status).toBe('executed')
       expect(planned.json.runEvents.some((event: any) => event.type === 'provider_tool_call_repaired')).toBe(true)
-      expect(planned.json.runEvents.some((event: any) => event.type === 'action_auto_executed')).toBe(true)
+      expect(planned.json.runEvents.some((event: any) => event.type === 'action_executed')).toBe(true)
       const draft = (await client.get('/api/v1/workspace/draft')).json
       expect(draft.workspaceName).toBe('流式修复工作区')
       await closeHarness(harness)
@@ -5514,7 +5493,7 @@ describe('xox TypeScript API', () => {
       expect(planned.json.actionRequests[0].status).toBe('pending')
       expect(planned.json.actionRequests[0].payload.workspaceName).toBe('星河 50 期启动测算')
       expect(planned.json.runEvents.some((event: any) =>
-        event.type === 'action_auto_execution_failed',
+        event.type === 'action_execution_failed',
       )).toBe(false)
       const draft = (await client.get('/api/v1/workspace/draft')).json
       expect(draft.workspaceName).not.toBe('星河 50 期启动测算')

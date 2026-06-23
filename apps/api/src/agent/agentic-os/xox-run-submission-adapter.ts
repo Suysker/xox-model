@@ -2,12 +2,14 @@ import type { Kysely } from 'kysely'
 import { projectAgentServerAgUiEvents, projectAgentServerRunSubmissionView } from '@agentic-os/server'
 import type {
   AgentActionRequest,
+  AgentAutomationLevel,
   AgentAgUiEvent,
   AgentNavigationEvent,
   AgentPlanStep,
   AgentSendResponse,
   AgentThreadState,
 } from '@xox/contracts'
+import { normalizeAgentAutomationLevel } from '@agentic-os/core'
 import type { Database, Row } from '../../db/schema.js'
 import type { Settings } from '../../core/settings.js'
 import { newId } from '../../core/security.js'
@@ -32,7 +34,6 @@ import {
   xoxRunToOsRunRecord,
 } from './xox-thread-store-adapter.js'
 import { completeAgentRun, createAgentRunController, scheduleAgentRunQueueDrain } from './xox-run-worker-adapter.js'
-import { normalizeAgentAutomationLevel, type AgentAutomationLevel } from '../tool-policy.js'
 
 export type SubmitAgentMessageRunInput = {
   db: Kysely<Database>

@@ -4,7 +4,6 @@ import {
 } from '@agentic-os/core'
 import type { Kysely } from 'kysely'
 import { createProductDefaultModel, hydrateModelConfig, projectModel } from '@xox/domain'
-import { agentServerRunLifecycleEvents } from '@agentic-os/server'
 import type { AgentNavigationEvent } from '@xox/contracts'
 import type { Database, Row } from '../db/schema.js'
 import { parseJson } from '../db/database.js'
@@ -41,7 +40,6 @@ import {
   runMemorySearchTool,
 } from './memory.js'
 import { assertActionExecutionAllowed } from './tool-policy.js'
-import { addRunEvent } from './agentic-os/xox-run-event-store-adapter.js'
 import type {
   ActionDraftBuilderHandlers,
   PlannerContext,
@@ -784,59 +782,6 @@ export async function executeAgentActionRequest(
     meta: { kind: action.kind, provider: settings.llmProvider },
   })
   return result
-}
-
-export async function autoExecuteAgentActionRequest(
-  db: Kysely<Database>,
-  settings: Settings,
-  user: CurrentUser,
-  action: Row<'agent_action_requests'>,
-  reason: string,
-) {
-  try {
-    const result = await executeAgentActionRequest(db, settings, user, action)
-    const updated = await db.selectFrom('agent_action_requests').selectAll().where('id', '=', action.id).executeTakeFirstOrThrow()
-    await addRunEvent(db, agentServerRunLifecycleEvents.actionAutoExecuted({
-      threadId: action.thread_id,
-      runId: action.run_id,
-      actionRequestId: action.id,
-      actionKind: action.kind,
-      actionTitle: action.title,
-      reason,
-      copy: {
-        title: '动作已自动执行',
-        message: `已自动执行：${action.title}`,
-      },
-    }))
-    return { actionRequest: updated, result, error: null as string | null }
-  } catch (executionError) {
-    const message = safeAgentActionErrorMessage(executionError)
-    await db.updateTable('agent_action_requests')
-      .set({ status: 'failed', executed_at: null, error_message: message })
-      .where('id', '=', action.id)
-      .execute()
-      .catch(() => undefined)
-    await db.updateTable('agent_plan_steps')
-      .set({ status: 'failed', updated_at: utcNow() })
-      .where('action_request_id', '=', action.id)
-      .execute()
-      .catch(() => undefined)
-    await addRunEvent(db, agentServerRunLifecycleEvents.actionAutoExecutionFailed({
-      threadId: action.thread_id,
-      runId: action.run_id,
-      actionRequestId: action.id,
-      actionKind: action.kind,
-      actionTitle: action.title,
-      reason,
-      errorMessage: message,
-      copy: {
-        title: '自动执行失败',
-        message: `${action.title}：${message}`,
-      },
-    })).catch(() => undefined)
-    const updated = await db.selectFrom('agent_action_requests').selectAll().where('id', '=', action.id).executeTakeFirstOrThrow()
-    return { actionRequest: updated, result: null as unknown, error: message }
-  }
 }
 
 export async function executeAgentTool(

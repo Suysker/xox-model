@@ -53,7 +53,6 @@ describe('Agent ADR architecture boundaries', () => {
 
     const hostLifecycleFiles = [
       'agent/host-profile/xox-agent-run-profile.ts',
-      'agent/agentic-os/xox-action-graph-adapter.ts',
       'agent/host-profile/xox-provider-runtime.ts',
       'agent/memory.ts',
     ]
@@ -94,6 +93,33 @@ describe('Agent ADR architecture boundaries', () => {
         expect(content, `${file} must not construct ${type} directly`).not.toContain(`type: '${type}'`)
       }
     }
+  })
+
+  it('keeps automation authority and auto-execution decisions inside Agentic OS', () => {
+    const toolPolicy = source('agent/tool-policy.ts')
+    expect(toolPolicy).not.toContain('resolveActionAuthority')
+    expect(toolPolicy).not.toContain('composeAgentWriteApprovalPolicy')
+    expect(toolPolicy).not.toContain('auto_execute')
+    expect(toolPolicy).not.toContain('automationLevel')
+
+    const actionGraph = source('agent/agentic-os/xox-action-graph-adapter.ts')
+    expect(actionGraph).not.toContain('resolveActionAuthority')
+    expect(actionGraph).not.toContain('autoExecuteAgentActionRequest')
+    expect(actionGraph).not.toContain('composeAgentWriteApprovalPolicy')
+    expect(actionGraph).not.toContain("authority.mode === 'auto_execute'")
+    expect(actionGraph).not.toContain("authority.mode === 'forbidden'")
+
+    const toolExecutor = source('agent/tool-executor.ts')
+    expect(toolExecutor).not.toContain('autoExecuteAgentActionRequest')
+    expect(toolExecutor).not.toContain('actionAutoExecuted')
+    expect(toolExecutor).not.toContain('actionAutoExecutionFailed')
+
+    const hostProfile = source('agent/host-profile/xox-agent-run-profile.ts')
+    expect(hostProfile).not.toContain("approvalPolicy?.mode === 'auto_execute'")
+    expect(hostProfile).not.toContain('actionAutoExecuted')
+    expect(hostProfile).not.toContain('actionAutoExecutionFailed')
+    expect(hostProfile).not.toContain('action_auto_executed')
+    expect(hostProfile).not.toContain('action_auto_execution_failed')
   })
 
   it('keeps the xox run boundary as HostProfile wiring and deletes obsolete local harness facades', () => {
@@ -272,7 +298,6 @@ describe('Agent ADR architecture boundaries', () => {
     expect(existsSync(join(srcRoot, 'agent', 'turn-intake-resolver.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-turn-intake-adapter.ts'))).toBe(false)
     const worker = source('agent/agentic-os/xox-run-worker-adapter.ts')
-    expect(worker).not.toContain("@agentic-os/core")
     expect(worker).not.toContain('resolveAgentTurnIntake')
     expect(worker).not.toContain('AGENT_TURN_LANE_RESOLUTION_TOOL_SCHEMA')
     expect(worker).not.toContain('xox-turn-lane-policy.md')
@@ -287,7 +312,6 @@ describe('Agent ADR architecture boundaries', () => {
     expect(existsSync(join(srcRoot, 'agent', 'direct-answer-runtime.ts'))).toBe(false)
     expect(existsSync(join(srcRoot, 'agent', 'agentic-os', 'xox-direct-answer-adapter.ts'))).toBe(false)
     const worker = source('agent/agentic-os/xox-run-worker-adapter.ts')
-    expect(worker).not.toContain("@agentic-os/core")
     expect(worker).not.toContain('runDirectAnswerLane')
     expect(worker).not.toContain('executeXoxDirectAnswerLane')
     expect(worker).not.toContain('xox-direct-answer-policy.md')
@@ -371,8 +395,8 @@ describe('Agent ADR architecture boundaries', () => {
     }
 
     const actionGraph = source('agent/agentic-os/xox-action-graph-adapter.ts')
-    expect(actionGraph).toContain("from '../tool-executor.js'")
     expect(actionGraph).toContain("from '../host-profile/xox-planned-items.js'")
+    expect(actionGraph).not.toContain("from '../tool-executor.js'")
     expect(actionGraph).not.toContain("from './xox-action-approval-adapter.js'")
     expect(actionGraph).not.toContain('function confirmAgentActionRequest')
 

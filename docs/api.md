@@ -162,7 +162,7 @@
   - 取消待确认动作，不写业务数据
   - 返回取消后的确认卡、assistant message、最新 `runEvents` 和该 run 的 `planSteps`
 
-Agent 写入动作统一遵循 `preview -> authority decision -> execute or confirm -> audit -> refresh`。当前支持通用记账、批量记账 action request、历史分录修改、精确作废、恢复作废、草稿修改、团队成员/运营员工/股东新增删除、基础成本项新增删除、专项成本类型新增删除、工作区改名、保存快照、发布当前草稿、把指定快照发布为正式版、恢复版本、删除版本、重置草稿、工作区 bundle 导入、创建 / 撤销分享、锁账 / 解锁；所有写入都先生成 server-owned action request 和可编辑确认卡，再按 ADR 0015 的 Automation Policy Engine 自动执行或等待用户确认。工作区 bundle 导出为只读工具，Agent 会打开版本管理面板并提示通过 `/api/v1/workspace/bundle` 获取完整 JSON。
+Agent 写入动作统一遵循 Agentic OS `preview -> authority decision -> execute or confirm -> audit -> observation -> refresh` lifecycle。当前支持通用记账、批量记账 action request、历史分录修改、精确作废、恢复作废、草稿修改、团队成员/运营员工/股东新增删除、基础成本项新增删除、专项成本类型新增删除、工作区改名、保存快照、发布当前草稿、把指定快照发布为正式版、恢复版本、删除版本、重置草稿、工作区 bundle 导入、创建 / 撤销分享、锁账 / 解锁；所有写入都先生成 server-owned action request 和可编辑确认卡，再由 Agentic OS 根据 run `automationLevel` 自动执行或等待用户确认。工作区 bundle 导出为只读工具，Agent 会打开版本管理面板并提示通过 `/api/v1/workspace/bundle` 获取完整 JSON。
 
 Agent 只读数据问答通过模型选择 `data_query_workspace` 工具完成，支持整体工作区、单月汇总、成员汇总、团队成员数量/名单、月份排行、预实科目差异深度追问和账本历史筛选。该工具只返回 `planSteps / messages / navigationEvents`，不生成 `actionRequests`，不修改业务数据；账本历史筛选会在导航事件中携带 `ledgerFilters`，前端据此打开账本页并应用方向、状态、日期和关键词过滤器。
 

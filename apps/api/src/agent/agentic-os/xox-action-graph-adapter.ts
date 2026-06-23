@@ -11,7 +11,6 @@ import {
   classifyToolObservationOutcome,
 } from '@agentic-os/core'
 import {
-  agentServerRunLifecycleEvents,
   materializeAgentServerActionGraph,
   type AgentServerActionGraphEventDraft,
   type AgentServerActionGraphPlanStepItem,
@@ -24,7 +23,7 @@ import {
   type AgentServerActionPlanStepDraft,
   type AgentServerActionPlanStepStatus,
 } from '@agentic-os/server'
-import type { AgentNavigationEvent, AgentPlannerSource, AgentPlanStepStatus } from '@xox/contracts'
+import type { AgentAutomationLevel, AgentNavigationEvent, AgentPlannerSource, AgentPlanStepStatus } from '@xox/contracts'
 import type { Database, Row } from '../../db/schema.js'
 import { jsonString } from '../../db/database.js'
 import type { Settings } from '../../core/settings.js'
@@ -40,10 +39,9 @@ import {
   type ReadDraft,
   type XoxObservationBridge,
 } from '../host-profile/xox-planned-items.js'
-import { autoExecuteAgentActionRequest } from '../tool-executor.js'
 import { addRunEvent, agentThreadEvents } from './xox-run-event-store-adapter.js'
 import { assertAgentRunLease } from './xox-run-lease-store-adapter.js'
-import { assertActionDraftAllowed, resolveActionAuthority, type AgentAutomationLevel } from '../tool-policy.js'
+import { assertActionDraftAllowed } from '../tool-policy.js'
 
 type ActionGraphContext = {
   db: Kysely<Database>
@@ -147,7 +145,7 @@ export function actionFailureObservation(input: {
   error?: string | null
 }): AgentToolObservation {
   const displayPreview = input.error
-    ? `自动执行失败：${input.action.title}：${input.error}`
+    ? `动作执行失败：${input.action.title}：${input.error}`
     : `动作被策略阻止：${input.action.title}`
   return buildActionResultObservation({
     actionRequestId: input.action.id,
@@ -417,60 +415,10 @@ async function addAgentPlanStep(ctx: ActionGraphContext, input: AddAgentPlanStep
   return ctx.db.selectFrom('agent_plan_steps').selectAll().where('id', '=', id).executeTakeFirstOrThrow()
 }
 
-async function settleStoredAction(
-  ctx: ActionGraphContext,
-  input: {
-    draft: AgentActionDraft
-    action: Row<'agent_action_requests'>
-  },
-): Promise<StoredActionResult> {
-  const authority = resolveActionAuthority({
-    automationLevel: ctx.automationLevel,
-    kind: input.draft.kind,
-    riskLevel: input.draft.riskLevel,
-  })
-
-  if (authority.mode === 'auto_execute') {
-    const executed = await autoExecuteAgentActionRequest(ctx.db, ctx.settings, ctx.user, input.action, authority.reason)
-    return {
-      action: executed.actionRequest,
-      observation: executed.error
-        ? actionFailureObservation({ action: executed.actionRequest, reason: authority.reason, error: executed.error })
-        : actionExecutionObservation({ action: executed.actionRequest, result: executed.result }),
-    }
-  }
-
-  if (authority.mode === 'forbidden') {
-    await ctx.db.updateTable('agent_action_requests')
-      .set({ status: 'failed', error_message: authority.reason })
-      .where('id', '=', input.action.id)
-      .execute()
-    await ctx.db.updateTable('agent_plan_steps')
-      .set({ status: 'failed', updated_at: utcNow() })
-      .where('action_request_id', '=', input.action.id)
-      .execute()
-    await addRunEvent(ctx.db, agentServerRunLifecycleEvents.actionAutoExecutionFailed({
-      threadId: ctx.threadId,
-      runId: ctx.runId,
-      actionRequestId: input.action.id,
-      actionKind: input.action.kind,
-      actionTitle: input.draft.title,
-      reason: authority.reason,
-      copy: {
-        title: '动作被策略阻止',
-        message: `${input.draft.title}：${authority.reason}`,
-      },
-    }))
-    const action = await ctx.db.selectFrom('agent_action_requests').selectAll().where('id', '=', input.action.id).executeTakeFirstOrThrow()
-    return {
-      action,
-      observation: actionFailureObservation({ action, reason: authority.reason }),
-    }
-  }
-
+function storedActionPreview(action: Row<'agent_action_requests'>): StoredActionResult {
   return {
-    action: input.action,
-    observation: actionPreviewObservation({ action: input.action }),
+    action,
+    observation: actionPreviewObservation({ action }),
   }
 }
 
@@ -605,7 +553,7 @@ async function addLocalizedActionGraphEvent(
   const failedCount = input.summary.failedStepCount
   const visibleStepCount = input.summary.stepCount + input.summary.assistantMessageCount
   const actionSummary = actionCount > 0
-    ? `，其中 ${pendingActionCount} 个写入动作需要确认，${executedActionCount} 个已按自动化策略执行。`
+    ? `，其中 ${pendingActionCount} 个写入动作需要确认，${executedActionCount} 个已执行。`
     : '。'
   await addRunEvent(ctx.db, {
     threadId: ctx.threadId,
@@ -655,7 +603,7 @@ export async function storePlannedActionGraph(
       const draft = actionDrafts.get(actionInput.actionRequest.actionRequestId)
       if (!draft) throw new Error(`Missing xox action draft for ${actionInput.actionRequest.actionRequestId}`)
       const createdAction = await addAgentActionRequest(ctx, draft)
-      const settled = await settleStoredAction(ctx, { draft, action: createdAction })
+      const settled = storedActionPreview(createdAction)
       actionRows.push(settled.action)
       navigationEvents.push(draft.navigation)
       const osObservation = observationBridge.toCanonical(settled.observation, actionRows.length - 1)

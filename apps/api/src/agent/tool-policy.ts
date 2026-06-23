@@ -2,18 +2,10 @@ import type { AgentActionKind, AgentNavigationEvent } from '@xox/contracts'
 import type { Kysely } from 'kysely'
 import type { Database, Row } from '../db/schema.js'
 import { conflict, forbidden, unprocessable } from '../core/http.js'
-import { composeAgentWriteApprovalPolicy } from '@agentic-os/core'
 
 type RiskLevel = 'low' | 'medium' | 'high'
-export type AgentAutomationLevel = 'manual' | RiskLevel
 
 const riskRank: Record<RiskLevel, number> = { low: 1, medium: 2, high: 3 }
-const autoExecutableHighRiskActions = new Set<AgentActionKind>()
-
-export type AgentActionAuthorityDecision =
-  | { mode: 'auto_execute'; reason: string }
-  | { mode: 'require_confirmation'; reason: string }
-  | { mode: 'forbidden'; reason: string }
 
 type AgentActionPolicy = {
   kind: AgentActionKind
@@ -29,10 +21,6 @@ type DraftLike = {
 }
 
 type ActionRowLike = Pick<Row<'agent_action_requests'>, 'kind' | 'status' | 'workspace_id' | 'user_id' | 'payload_json' | 'navigation_json' | 'risk_level'>
-
-export function normalizeAgentAutomationLevel(value: unknown): AgentAutomationLevel {
-  return value === 'low' || value === 'medium' || value === 'high' ? value : 'manual'
-}
 
 const ACTION_POLICIES: Record<AgentActionKind, AgentActionPolicy> = {
   'ledger.create_entry': { kind: 'ledger.create_entry', minRiskLevel: 'medium', requiredMainTab: 'bookkeeping' },
@@ -64,27 +52,6 @@ function actionPolicy(kind: AgentActionKind) {
 export function coerceAgentActionKind(kind: string): AgentActionKind {
   if (!(kind in ACTION_POLICIES)) throw unprocessable(`Unsupported agent action: ${kind}`)
   return kind as AgentActionKind
-}
-
-export function resolveActionAuthority(input: {
-  automationLevel: AgentAutomationLevel
-  kind: AgentActionKind | string
-  riskLevel: RiskLevel | string
-}): AgentActionAuthorityDecision {
-  const kind = String(input.kind)
-  if (kind.startsWith('account.')) {
-    return { mode: 'forbidden', reason: '账号影响类动作不能由 Agent 执行。' }
-  }
-
-  const actionKind = coerceAgentActionKind(kind)
-  assertRisk(actionKind, input.riskLevel)
-  const riskLevel = input.riskLevel as RiskLevel
-
-  return composeAgentWriteApprovalPolicy({
-    automationLevel: input.automationLevel,
-    riskLevel,
-    highRiskAutoAllowed: autoExecutableHighRiskActions.has(actionKind),
-  })
 }
 
 function parsePayload(value: string) {

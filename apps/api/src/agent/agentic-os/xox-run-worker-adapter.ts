@@ -1,5 +1,6 @@
 import type { Kysely } from 'kysely'
 import type { AgentRunResult } from '@agentic-os/contracts'
+import { normalizeAgentAutomationLevel } from '@agentic-os/core'
 import {
   createAgentServerRunScheduler,
   projectAgentServerRunCompletion,
@@ -23,7 +24,6 @@ import {
 } from './xox-run-lease-store-adapter.js'
 import { addRunEvent, agentThreadEvents } from './xox-run-event-store-adapter.js'
 import { addMessage, touchThreadAfterRun } from './xox-thread-store-adapter.js'
-import { normalizeAgentAutomationLevel } from '../tool-policy.js'
 
 const agentRunSchedulers = new WeakMap<Kysely<Database>, AgentServerRunScheduler>()
 
