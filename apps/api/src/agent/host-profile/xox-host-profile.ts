@@ -11,30 +11,25 @@ import type {
   AgentRunResult as OsRunResult,
   AgentScope as OsScope,
   AgentToolDefinition as OsToolDefinition,
-  AgentToolAuthorityClass as OsToolAuthorityClass,
-  AgentToolConfirmationMode as OsToolConfirmationMode,
-  AgentToolRiskLevel as OsToolRiskLevel,
   JsonObject as OsJsonObject,
 } from '@agentic-os/contracts'
 import {
   createAgentHostToolObservationBridge,
-  inferToolAuthorityClass,
   normalizeAgentAutomationLevel,
   type AgentStorePort,
   type HostObservationBridge,
 } from '@agentic-os/core'
 import {
   agentServerRuntimeUserContent,
-  createAgentServerSaaSHostExecutionPorts,
-  createAgentServerSaaSHostProfile,
-  createAgentServerSaaSRuntimeEventHandlers,
+  createAgentServerSaaSHostComputer,
+  createAgentServerSaaSToolDefinition,
   confirmAgentServerSaaSProfileActionAndResume,
   projectAgentServerSaaSRunEventDrafts,
   runAgentServerSaaSProfileRun,
   type AgentServerSaaSHostProfile,
 } from '@agentic-os/server'
 import {
-  createOpenAISaaSRuntimeAdapter,
+  createOpenAISaaSHostRuntimeAdapter,
 } from '@agentic-os/runtime-openai-agents'
 import type { AgentNavigationEvent, AgentPlannerSource } from '@xox/contracts'
 import { hydrateModelConfig } from '@xox/domain'
@@ -70,14 +65,10 @@ import {
   isManualBoundaryNoticeToolName,
   toolCallToPlannerStep,
   type AgentToolCallStep,
-  type AgentToolCapability,
-  type AgentToolConfirmationMode,
-  type AgentToolRiskLevel,
   type ChatTool,
 } from '../tool-catalog.js'
 import { buildAgentWritableConfigContext } from '../tool-catalog.js'
 import {
-  createXoxActiveMemoryProfileInput,
   redactSecretLikeContent,
 } from '../memory.js'
 import { extractWorkspaceBundleArtifact } from '../workspace-bundle-artifact.js'
@@ -273,21 +264,6 @@ function applyStoredGraph(state: XoxHostState, graph: StoredActionGraph): void {
   state.xoxObservations.push(...graph.observations)
 }
 
-function agenticOsAuthorityClass(input: {
-  toolName: string
-  capability: AgentToolCapability
-  riskLevel: AgentToolRiskLevel
-  confirmationMode: AgentToolConfirmationMode
-}): OsToolAuthorityClass {
-  return inferToolAuthorityClass({
-    capability: input.capability,
-    riskLevel: input.riskLevel,
-    confirmationMode: input.confirmationMode,
-    manualBoundaryNotice: isManualBoundaryNoticeToolName(input.toolName),
-    harnessManagedObservation: isHarnessManagedObservationToolName(input.toolName),
-  })
-}
-
 function toolSchema(tool: ChatTool): OsJsonObject {
   return compactJsonObject(tool.function.parameters)
 }
@@ -329,33 +305,26 @@ function agenticOsToolDefinition(
   entry: (typeof AGENT_TOOL_REGISTRY)[number],
   executeRead?: OsToolDefinition['executeRead'],
 ): OsToolDefinition {
-  const authorityClass = agenticOsAuthorityClass({
-    toolName: entry.name,
-    capability: entry.capability,
-    riskLevel: entry.riskLevel,
-    confirmationMode: entry.confirmationMode,
-  })
-  const definition: OsToolDefinition = {
+  return createAgentServerSaaSToolDefinition({
     name: entry.name,
     title: entry.name,
     description: entry.tool.function.description,
     inputJsonSchema: toolSchema(entry.tool),
     capability: entry.capability,
-    riskLevel: entry.riskLevel as OsToolRiskLevel,
-    confirmationMode: entry.confirmationMode as OsToolConfirmationMode,
-    authorityClass,
+    riskLevel: entry.riskLevel,
+    confirmationMode: entry.confirmationMode,
+    manualBoundaryNotice: isManualBoundaryNoticeToolName(entry.name),
+    harnessManagedObservation: isHarnessManagedObservationToolName(entry.name),
     navigationTarget: entry.navigationTarget,
     validate: (input) => ({ value: compactJsonObject(input) }),
-  }
-
-  if (entry.name === 'workspace_update_online_factor') {
-    definition.resolveAuthorityClass = (input) =>
-      input.mode === 'forecast' ? 'read' : authorityClass
-  }
-
-  if (executeRead !== undefined) definition.executeRead = executeRead
-
-  return definition
+    ...(entry.name === 'workspace_update_online_factor'
+      ? {
+          resolveAuthorityClassWithDefault: (input, defaultAuthorityClass) =>
+            input.mode === 'forecast' ? 'read' : defaultAuthorityClass,
+        }
+      : {}),
+    ...(executeRead !== undefined ? { executeRead } : {}),
+  })
 }
 
 function xoxObservationIndex(state: XoxHostState, observation: AgentToolObservation): number {
@@ -432,35 +401,9 @@ function createXoxHostProfile(
     },
   }
 
-  const runtimeEvents = createAgentServerSaaSRuntimeEventHandlers({
-    threadId: ctx.thread.id,
-    runId: ctx.runId,
-    source: () => state.plannerSource,
-    provider: () => ctx.settings.llmProvider,
-    preferredRetryToolName: 'sandbox_run_code',
-    appendRunEvent: async (draft) => {
-      await addRunEvent(ctx.db, draft)
-    },
-    copy: {
-      modelPlanning: {
-        title: '模型运行中',
-        message: 'Agentic OS 正在通过 runtime port 调用配置的模型。',
-      },
-      planningRecovery: {
-        providerRetrying: {
-          title: 'Provider 调用重试',
-          message: 'Agentic OS runtime 已切换为更稳定的同轮重试形态。',
-        },
-        runtimeEvidenceRequired: {
-          title: 'Runtime evidence required',
-          message: 'Provider 重试后仍未生成可执行工具 observation，Agentic OS 要求继续补齐证据。',
-        },
-      },
-    },
-  })
   const provider = ctx.settings.openaiCompatibleProvider || ctx.settings.llmProvider
   const model = ctx.settings.openaiCompatibleModel
-  const runtime = createOpenAISaaSRuntimeAdapter<AgentToolObservation>({
+  const runtime = createOpenAISaaSHostRuntimeAdapter<AgentToolObservation>({
     compatible: {
       provider,
       model,
@@ -484,8 +427,6 @@ function createXoxHostProfile(
       redact: redactSecretLikeContent,
       stream: (input) => input.observations.length === 0,
       requestTimeoutMs: ctx.settings.agentProviderRequestTimeoutMs,
-      onRuntimeEvent: (event) => runtimeEvents.onRuntimeEvent(event),
-      onPlanningRecoveryEvent: (event) => runtimeEvents.onPlanningRecoveryEvent(event),
     },
     agents: {
       model: () => ctx.settings.openaiModel || ctx.settings.openaiCompatibleModel,
@@ -516,14 +457,24 @@ function createXoxHostProfile(
       state.plannerSource = plannerSource(ctx.settings)
       return state.plannerSource === 'openai_agents' ? 'openai_agents' : 'openai_compatible'
     },
-    beforeRunTurn: ({ turn }) => runtimeEvents.beforeRunTurn({ turn }),
   })
-  const executionPorts = createAgentServerSaaSHostExecutionPorts<
+
+  return createAgentServerSaaSHostComputer<
     (typeof AGENT_TOOL_REGISTRY)[number],
     AgentToolCallStep,
     Row<'agent_action_requests'>,
-    AgentToolObservation
+    AgentToolObservation,
+    {
+      id: string
+      key: string
+      value: string
+      kind: string
+      lane: string
+      status: string
+    }
   >({
+    store,
+    runtime,
     tools: AGENT_TOOL_REGISTRY,
     toolName: (entry) => entry.name,
     createTool: ({ entry, executeRead }) => agenticOsToolDefinition(entry, executeRead),
@@ -567,42 +518,6 @@ function createXoxHostProfile(
       actorId: input.actorId,
       outcome: 'rejected',
       ...(input.reason !== undefined ? { reason: input.reason } : {}),
-    }),
-  })
-
-  return createAgentServerSaaSHostProfile<{
-    id: string
-    key: string
-    value: string
-    kind: string
-    lane: string
-    status: string
-  }>({
-    store,
-    runtime,
-    tools: executionPorts.tools,
-    actions: executionPorts.actions,
-    sandbox: executionPorts.sandbox,
-    ...createXoxActiveMemoryProfileInput({
-      db: ctx.db,
-      workspace: ctx.workspace,
-      user: ctx.user,
-      threadId: ctx.thread.id,
-      runId: ctx.runId,
-      appendRunEvent: async (draft) => {
-        await addRunEvent(ctx.db, {
-          threadId: ctx.thread.id,
-          runId: ctx.runId,
-          type: draft.type,
-          title: draft.title,
-          message: draft.message,
-          status: draft.status,
-          data: {
-            ...draft.data,
-            harness: 'agentic-os',
-          },
-        })
-      },
     }),
     baseContext: async (input): Promise<Partial<OsAgentContext>> => {
       const facts = await buildXoxHostContextFacts(ctx, input.request.userMessage)

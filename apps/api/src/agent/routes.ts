@@ -42,9 +42,9 @@ import {
 } from './agentic-os/xox-thread-store-adapter.js'
 import {
   cancelRunningAgentRun,
+  createXoxDurableRunStore,
   safeRunErrorMessage,
-  startAgentRunQueueWorker,
-} from './agentic-os/xox-run-worker-adapter.js'
+} from './agentic-os/xox-run-store-adapter.js'
 import { submitAgentMessageRun } from './agentic-os/xox-run-submission-adapter.js'
 import { addRunEvent, agentThreadEvents, listSerializedRunEvents } from './agentic-os/xox-run-event-store-adapter.js'
 import { addMessage } from './agentic-os/xox-thread-store-adapter.js'
@@ -474,7 +474,7 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
       if (run.user_id !== user.id) throw forbidden()
       const thread = await getThreadForUser(db, workspace, user, run.thread_id)
       if (run.status === 'running') {
-        await cancelRunningAgentRun(db, thread, run.id, '已取消当前 Agent 运行。')
+        await cancelRunningAgentRun(db, settings, thread, run.id, '已取消当前 Agent 运行。')
         await recordAudit(db, {
           workspaceId: workspace.id,
           actorId: user.id,
@@ -593,6 +593,6 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
     }
   })
 
-  const stopAgentRunQueueWorker = startAgentRunQueueWorker(db, settings)
+  const stopAgentRunQueueWorker = createXoxDurableRunStore(db, settings).startQueue()
   app.addHook('onClose', async () => stopAgentRunQueueWorker())
 }

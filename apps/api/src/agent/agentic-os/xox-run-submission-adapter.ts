@@ -36,7 +36,7 @@ import {
   xoxRunInputToOs,
   xoxRunToOsRunRecord,
 } from './xox-thread-store-adapter.js'
-import { completeAgentRun, scheduleAgentRunQueueDrain } from './xox-run-worker-adapter.js'
+import { createXoxDurableRunStore } from './xox-run-store-adapter.js'
 
 export type SubmitAgentMessageRunInput = {
   db: Kysely<Database>
@@ -196,7 +196,7 @@ export async function submitAgentMessageRun(input: SubmitAgentMessageRunInput): 
     if (input.background === true) {
       await touchThreadAfterRun(input.db, thread, input.message)
       agentThreadEvents.publish(thread.id, 'thread_started')
-      scheduleAgentRunQueueDrain(input.db, input.settings)
+      createXoxDurableRunStore(input.db, input.settings).scheduleReady()
       const messages = [serializeMessage(userMessage)]
       const runEvents = [serializeRunEvent(queuedEvent)]
       return buildSubmittedRunResponse({
@@ -217,17 +217,7 @@ export async function submitAgentMessageRun(input: SubmitAgentMessageRunInput): 
       })
     }
 
-    const completed = await completeAgentRun({
-      db: input.db,
-      settings: input.settings,
-      user: input.user,
-      workspace: input.workspace,
-      thread,
-      threadId: thread.id,
-      runId,
-      message: input.message,
-      automationLevel,
-    })
+    const completed = await createXoxDurableRunStore(input.db, input.settings).runSubmitted({ runId })
     if (!completed) return buildThreadState(input.db, input.workspace, input.user, thread.id)
     const runEvents = await listSerializedRunEvents(input.db, runId)
     const messages = [

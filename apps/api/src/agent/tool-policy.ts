@@ -1,6 +1,5 @@
 import type { AgentActionKind, AgentNavigationEvent } from '@xox/contracts'
 import type { Kysely } from 'kysely'
-import { executeAgenticSandboxAggregateAction } from '@agentic-os/sandbox'
 import type { Database, Row } from '../db/schema.js'
 import { conflict, forbidden, unprocessable } from '../core/http.js'
 
@@ -181,28 +180,7 @@ export async function assertActionExecutionAllowed(
     case 'workspace.import_bundle':
       return
     case 'sandbox.aggregate_tool_calls': {
-      await executeAgenticSandboxAggregateAction({
-        aggregateAction: action,
-        payload,
-        aggregateKind: 'sandbox.aggregate_tool_calls',
-        invalid: unprocessable,
-        actionKind: (nestedAction) => nestedAction.kind,
-        createNestedAction: ({ aggregateAction, nested, kind }) => {
-          const navigation = isRecord(nested.navigation) ? nested.navigation as AgentNavigationEvent : null
-          if (!navigation) throw unprocessable('Sandbox nested action navigation is required')
-          return {
-            ...aggregateAction,
-            kind: coerceAgentActionKind(kind),
-            risk_level: typeof nested.riskLevel === 'string' ? nested.riskLevel : '',
-            payload_json: JSON.stringify(nested.payload ?? {}),
-            navigation_json: JSON.stringify(navigation),
-          }
-        },
-        executeNestedAction: async (nestedAction) => {
-          await assertActionExecutionAllowed(db, workspace, user, nestedAction)
-          return null
-        },
-      })
+      if (!Array.isArray(payload.nestedActions)) throw unprocessable('Sandbox aggregate action requires nested actions')
       return
     }
     default:

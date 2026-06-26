@@ -3,7 +3,8 @@ import type { AgentRunInput, AgentRunRecord, AgentScope } from '@agentic-os/cont
 import { normalizeAgentAutomationLevel } from '@agentic-os/core'
 import {
   applyAgentServerRunInterruptionProjection,
-  createAgentServerDurableRunWorker,
+  createAgentServerDurableRunCoordinatorRegistry,
+  createAgentServerSaaSDurableRunHost,
   hasAgentServerRunPartialOutput,
   projectAgentServerInterruptedRunCompletion,
   projectAgentServerRunRecoveryFailClosedInterruption,
@@ -13,7 +14,6 @@ import {
   type AgentServerQueuedRun,
   type AgentServerRunExecutor,
   type AgentServerRunRecoveryCandidate,
-  type AgentServerRunWorker,
 } from '@agentic-os/server'
 import type { AgentPlannerSource } from '@xox/contracts'
 import type { Database, Row } from '../../db/schema.js'
@@ -33,7 +33,7 @@ import {
 import { addRunEvent, agentThreadEvents } from './xox-run-event-store-adapter.js'
 import { addMessage, touchThreadAfterRun } from './xox-thread-store-adapter.js'
 
-const agentRunWorkers = new WeakMap<Kysely<Database>, AgentServerRunWorker>()
+const xoxRunCoordinators = createAgentServerDurableRunCoordinatorRegistry<Kysely<Database>>()
 
 type XoxRunLoad =
   | {
@@ -180,11 +180,12 @@ async function recordRunFailureFromError(
 
 export async function cancelRunningAgentRun(
   db: Kysely<Database>,
+  settings: Settings,
   thread: Row<'agent_threads'>,
   runId: string,
   message: string,
 ) {
-  agentRunWorkers.get(db)?.cancelRun(runId, message)
+  xoxRunCoordinator(db, settings).cancelRun(runId, message)
   await persistRunInterruptionProjection(db, thread, projectAgentServerInterruptedRunCompletion({
     runId,
     threadId: thread.id,
@@ -470,22 +471,17 @@ function createXoxRunQueueStore(
   }
 }
 
-function getAgentRunWorker(db: Kysely<Database>, settings: Settings) {
-  let worker = agentRunWorkers.get(db)
-  if (!worker) {
-    worker = createAgentServerDurableRunWorker({
-      server: createXoxRunExecutor(db, settings),
-      store: createXoxRunQueueStore(db, settings),
-      queueOptions: { recoverRunningRuns: true },
-      workerOptions: {
-        workerId: settings.agentWorkerId,
-        batchSize: 1,
-        pollIntervalMs: settings.agentRunWorkerPollMs,
-      },
-    })
-    agentRunWorkers.set(db, worker)
-  }
-  return worker
+function xoxRunCoordinator(db: Kysely<Database>, settings: Settings) {
+  return xoxRunCoordinators.forHost(db, () => ({
+    server: createXoxRunExecutor(db, settings),
+    store: createXoxRunQueueStore(db, settings),
+    queueOptions: { recoverRunningRuns: true },
+    workerOptions: {
+      workerId: settings.agentWorkerId,
+      batchSize: 1,
+      pollIntervalMs: settings.agentRunWorkerPollMs,
+    },
+  }))
 }
 
 async function queuedRunForRunId(db: Kysely<Database>, settings: Settings, runId: string) {
@@ -499,22 +495,23 @@ async function queuedRunForRunId(db: Kysely<Database>, settings: Settings, runId
   return queuedRunFromLoad(load)
 }
 
-export async function completeAgentRun(input: PlannerContext & { thread: Row<'agent_threads'> }): Promise<AgenticOsKernelRunResult | null> {
-  const worker = getAgentRunWorker(input.db, input.settings)
-  const queuedRun = await queuedRunForRunId(input.db, input.settings, input.runId)
-  if (!queuedRun) return null
-  const execution = await worker.runQueuedRun(queuedRun)
-  if (execution.status === 'failed') throw execution.error
-  if (execution.status === 'skipped_active') return null
-  const run = await input.db.selectFrom('agent_runs').selectAll().where('id', '=', input.runId).executeTakeFirstOrThrow()
-  const load = await loadXoxRun(input.db, run)
+async function materializeXoxRunResult(
+  db: Kysely<Database>,
+  settings: Settings,
+  input: {
+    queuedRun: AgentServerQueuedRun
+    result: AgenticOsKernelRunResult['agenticOsResult']
+  },
+): Promise<AgenticOsKernelRunResult | null> {
+  const run = await db.selectFrom('agent_runs').selectAll().where('id', '=', input.queuedRun.run.runId).executeTakeFirstOrThrow()
+  const load = await loadXoxRun(db, run)
   if (!load.ok) return null
-  const actionRows = await input.db.selectFrom('agent_action_requests').selectAll().where('run_id', '=', input.runId).orderBy('created_at', 'asc').execute()
-  const planRows = await input.db.selectFrom('agent_plan_steps').selectAll().where('run_id', '=', input.runId).orderBy('sequence_no', 'asc').execute()
-  const assistantMessage = await input.db.selectFrom('agent_messages').selectAll().where('thread_id', '=', input.thread.id).where('role', '=', 'assistant').orderBy('created_at', 'desc').executeTakeFirst()
+  const actionRows = await db.selectFrom('agent_action_requests').selectAll().where('run_id', '=', run.id).orderBy('created_at', 'asc').execute()
+  const planRows = await db.selectFrom('agent_plan_steps').selectAll().where('run_id', '=', run.id).orderBy('sequence_no', 'asc').execute()
+  const assistantMessage = await db.selectFrom('agent_messages').selectAll().where('thread_id', '=', input.queuedRun.run.threadId).where('role', '=', 'assistant').orderBy('created_at', 'desc').executeTakeFirst()
   return {
-    agenticOsResult: execution.result,
-    plannerSource: (run.planner_source as AgentPlannerSource | null) ?? xoxPlannerSource(input.settings),
+    agenticOsResult: input.result,
+    plannerSource: (run.planner_source as AgentPlannerSource | null) ?? xoxPlannerSource(settings),
     assistantMessage: assistantMessage ?? null,
     navigationEvents: [],
     actionRows,
@@ -522,15 +519,10 @@ export async function completeAgentRun(input: PlannerContext & { thread: Row<'ag
   }
 }
 
-export async function recoverRunningAgentRuns(db: Kysely<Database>, settings: Settings) {
-  const result = await getAgentRunWorker(db, settings).startReadyRuns()
-  return result.started
-}
-
-export function scheduleAgentRunQueueDrain(db: Kysely<Database>, settings: Settings) {
-  getAgentRunWorker(db, settings).scheduleStartReadyRuns()
-}
-
-export function startAgentRunQueueWorker(db: Kysely<Database>, settings: Settings) {
-  return getAgentRunWorker(db, settings).start()
+export function createXoxDurableRunStore(db: Kysely<Database>, settings: Settings) {
+  return createAgentServerSaaSDurableRunHost<AgenticOsKernelRunResult>({
+    coordinator: xoxRunCoordinator(db, settings),
+    loadQueuedRun: (runId) => queuedRunForRunId(db, settings, runId),
+    materializeResult: (input) => materializeXoxRunResult(db, settings, input),
+  })
 }

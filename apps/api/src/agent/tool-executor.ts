@@ -10,8 +10,8 @@ import type {
   JsonValue,
 } from '@agentic-os/contracts'
 import {
-  createAgentServerSaaSHostToolResultPort,
-  createAgentServerTenantMemoryToolHandlers,
+  agentServerSaaSTenantMemoryToolHandlers,
+  planAgentServerSaaSBusinessToolStep,
 } from '@agentic-os/server'
 import type { AgentServerTenantMemoryToolItem } from '@agentic-os/server'
 import { executeAgenticSandboxAggregateAction } from '@agentic-os/sandbox'
@@ -56,7 +56,6 @@ import type {
   ActionDraftBuilderHandlers,
   AgentToolObservation,
   PlannedItem,
-  PlannedItemResult,
   PlannerContext,
   ReadDraft,
   RuntimePlannerStep,
@@ -107,24 +106,6 @@ import {
   actionFailureObservation,
 } from './agentic-os/xox-action-graph-adapter.js'
 
-const agenticOsToolResults = createAgentServerSaaSHostToolResultPort<
-  PlannerContext,
-  RuntimePlannerStep,
-  AgentActionDraft,
-  ReadDraft,
-  NonNullable<ReadDraft['navigation']>
->({
-  isAction: (item): item is AgentActionDraft =>
-    isAgentHostToolActionDraft<AgentActionDraft, ReadDraft>(item),
-  locale: 'zh-CN',
-  createNavigation: xoxNavigationFromTabs,
-})
-
-function flattenPlannedItems(result: PlannedItemResult): PlannedItem[] {
-  if (!result) return []
-  return Array.isArray(result) ? result : [result]
-}
-
 function numericAlias(...values: unknown[]) {
   for (const value of values) {
     if (typeof value !== 'number') continue
@@ -133,7 +114,7 @@ function numericAlias(...values: unknown[]) {
   return null
 }
 
-const memoryToolHandlers = createAgentServerTenantMemoryToolHandlers<
+const memoryToolHandlers = agentServerSaaSTenantMemoryToolHandlers<
   PlannerContext,
   RuntimePlannerStep,
   AgentServerTenantMemoryToolItem,
@@ -156,15 +137,7 @@ const memoryToolHandlers = createAgentServerTenantMemoryToolHandlers<
     user: ctx.user,
     memoryId,
   }),
-  copy: {
-    searchTitle: '搜索记忆',
-    searchEmpty: '没有找到相关记忆。',
-    searchFound: (count) => `找到 ${count} 条相关记忆。`,
-    getTitle: '读取记忆',
-    getMissingId: '缺少 memoryId，无法读取记忆。',
-    getMissing: '没有找到这条记忆，或当前用户/工作区无权读取。',
-    getMissingPreview: '未找到记忆。',
-  },
+  locale: 'zh-CN',
   remember: {
     capture: ({ ctx, memory }) => captureTenantMemory({
       db: ctx.db,
@@ -174,13 +147,6 @@ const memoryToolHandlers = createAgentServerTenantMemoryToolHandlers<
       ...memory,
     }),
     memoryValue: (memory) => memory.value,
-    copy: {
-      savedTitle: '已保存记忆',
-      savedMessage: ({ value }) => `已保存当前工作区记忆：${redactSecretLikeContent(value)}`,
-      rejectedTitle: '未保存记忆',
-      rejectedSecretMessage: '这条内容看起来包含 API key、token、密码或验证码，已拒绝写入长期记忆。',
-      rejectedEmptyMessage: '没有识别到可保存的长期记忆内容。',
-    },
   },
 })
 
@@ -276,9 +242,21 @@ export async function planXoxBusinessToolStep(
   ctx: PlannerContext,
   step: RuntimePlannerStep,
 ): Promise<PlannedItem[]> {
-  const result = await agenticOsToolResults.runStep(ctx, step, xoxBusinessToolHandlers)
-  const items = flattenPlannedItems(result)
-  return items.length > 0 ? items : [agenticOsToolResults.emptyResultRead(step)]
+  return planAgentServerSaaSBusinessToolStep<
+    PlannerContext,
+    RuntimePlannerStep,
+    AgentActionDraft,
+    ReadDraft,
+    NonNullable<ReadDraft['navigation']>
+  >({
+    ctx,
+    step,
+    handlers: xoxBusinessToolHandlers,
+    isAction: (item): item is AgentActionDraft =>
+      isAgentHostToolActionDraft<AgentActionDraft, ReadDraft>(item),
+    locale: 'zh-CN',
+    createNavigation: xoxNavigationFromTabs,
+  })
 }
 
 export type XoxOsActionExecutionState = {
@@ -498,7 +476,10 @@ export async function executeAgentTool(
         navigation_json: JSON.stringify(nested.navigation ?? {}),
         details_json: JSON.stringify(nested.details ?? []),
       }) as Row<'agent_action_requests'>,
-      executeNestedAction: (nestedAction): Promise<unknown> => executeAgentTool(db, workspace, user, nestedAction),
+      executeNestedAction: async (nestedAction): Promise<unknown> => {
+        await assertActionExecutionAllowed(db, workspace, user, nestedAction)
+        return executeAgentTool(db, workspace, user, nestedAction)
+      },
       onNestedActionExecuted: async ({ kind, index }) => {
         await recordAudit(db, {
         workspaceId: workspace.id,

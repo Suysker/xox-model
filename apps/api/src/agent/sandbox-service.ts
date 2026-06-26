@@ -32,9 +32,7 @@ import type {
   SandboxToolSdkEntry,
 } from '@agentic-os/sandbox'
 import {
-  createAgenticSandboxSaaSHostToolPeripheral,
-  runAgenticSandboxPeripheralRead,
-  type AgenticSandboxObservationReadProjection,
+  runAgenticSandboxSaaSPeripheralRead,
 } from '@agentic-os/sandbox'
 import { AGENT_TOOL_REGISTRY, toolCallToPlannerStep, type AgentToolRegistryEntry, type AgentToolRiskLevel } from './tool-catalog.js'
 
@@ -730,34 +728,33 @@ function buildManifest(ctx: SandboxServiceContext, input: SandboxRunCodeInput, b
   }
 }
 
-async function runSandboxPeripheralCode(
+async function readSandboxPeripheral(
   ctx: PlannerContext,
   step: RuntimePlannerStep,
   handlers?: ActionDraftBuilderHandlers<PlannerContext>,
-): Promise<{
-  observation: SandboxObservation
-  aggregateActions: AgentActionDraft[]
-  projection: AgenticSandboxObservationReadProjection<AgentActionDraft['riskLevel']>
-}> {
+) {
   const input = normalizeSandboxInput(step)
   const toolCallId = step.providerToolCallId ?? `sandbox_${shortHash(`${ctx.runId}:${input.purpose}`)}`
   const bundle = await buildSandboxDataBundle(ctx, input)
   const manifest = buildManifest(ctx, input, bundle, toolCallId)
   const toolSdk = buildSandboxToolSdk()
-  const peripheral = await runAgenticSandboxPeripheralRead<RuntimePlannerStep, PlannedItem, AgentActionDraft, AgentActionDraft['riskLevel'], SandboxObservation>({
+  const peripheral = await runAgenticSandboxSaaSPeripheralRead<
+    PlannerContext,
+    RuntimePlannerStep,
+    AgentActionDraft,
+    ReadDraft,
+    NonNullable<ReadDraft['navigation']>,
+    AgentActionDraft['riskLevel'],
+    SandboxObservation,
+    'sandbox.aggregate_tool_calls'
+  >({
     manifest,
     toolInput: input,
     bundle,
     toolSdk,
     ...(handlers
-      ? createAgenticSandboxSaaSHostToolPeripheral<
-          PlannerContext,
-          RuntimePlannerStep,
-          AgentActionDraft,
-          ReadDraft,
-          NonNullable<ReadDraft['navigation']>,
-          AgentActionDraft['riskLevel']
-        >({
+      ? {
+          hostTools: {
           ctx,
           handlers,
           mapToolCall: toolCallToPlannerStep,
@@ -768,36 +765,21 @@ async function runSandboxPeripheralCode(
           riskLevelForTool: writableRiskLevelForTool,
           actionRiskLevel: (action) => action.riskLevel,
           riskRank: (riskLevel) => riskRank[riskLevel],
-          createAggregateAction: ({ observationId, actions, riskLevel }) => {
-            const firstNavigation = actions[0]?.navigation
-            return {
+          aggregateAction: {
               kind: 'sandbox.aggregate_tool_calls',
               title: '确认沙箱工具写入',
-              summary: `沙箱请求执行 ${actions.length} 个写入动作。`,
+              summary: '沙箱请求执行写入动作。',
               targetLabel: ctx.workspace.name,
-              riskLevel,
-              details: actions.map((action, index) => ({
-                label: `${index + 1}. ${action.title}`,
-                value: action.summary,
-              })),
-              navigation: firstNavigation ?? {
+              fallbackNavigation: {
                 type: 'navigation',
                 route: { mainTab: 'dashboard' },
                 reason: '沙箱写入聚合确认需要打开相关工作台页面核对。',
               },
-              payload: {
-                sandboxRunId: observationId,
-                nestedActions: actions.map(serializableNestedAction),
-              },
-            }
+            },
           },
-        })
+        }
       : {}),
     ...(process.env.XOX_SANDBOX_BACKEND ? { preferredBackendId: process.env.XOX_SANDBOX_BACKEND } : {}),
-    readProjection: {
-      shouldIncludeToolCall: shouldBridgeSandboxToolCall,
-      riskLevel: writableRiskLevelForTool,
-    },
     toObservation: ({ execution, nestedToolObservations }) => ({
       runId: ctx.runId,
       sandboxRunId: execution.sessionId,
@@ -849,25 +831,12 @@ function shouldBridgeSandboxToolCall(name: string) {
   return entry.riskLevel !== 'read' || entry.confirmationMode !== 'never'
 }
 
-function serializableNestedAction(action: AgentActionDraft) {
-  return {
-    kind: action.kind,
-    title: action.title,
-    summary: action.summary,
-    targetLabel: action.targetLabel,
-    riskLevel: action.riskLevel,
-    details: action.details,
-    navigation: action.navigation,
-    payload: action.payload,
-  }
-}
-
 export async function planSandboxPeripheralRead(
   ctx: PlannerContext,
   step: RuntimePlannerStep,
   handlers?: ActionDraftBuilderHandlers<PlannerContext>,
 ): Promise<ReadDraft | PlannedItem[]> {
-  const { observation, aggregateActions, projection } = await runSandboxPeripheralCode(ctx, step, handlers)
+  const { observation, aggregateActions, projection } = await readSandboxPeripheral(ctx, step, handlers)
   const readDraft: ReadDraft = {
     title: observation.status === 'completed' ? '受控沙箱执行完成' : '受控沙箱执行被阻断',
     message: projection.displayPreview,

@@ -1,12 +1,12 @@
 # xox-model Agentic OS Integration Plan
 
-Status: Draft (M182 tool-result runtime amputation implemented; full API parity still open)
+Status: Draft (M185 host worker/runtime amputation in progress; full API parity still open)
 
 Date: 2026-06-21
 
-## Latest Status: M182
+## Latest Status: M185
 
-M182 supersedes the older M142-M181 incremental notes below where they still mention deleted host harness files or xox-owned final-review/runtime/projection/tool-result helpers.
+M185 supersedes the older M142-M184 incremental notes below where they still mention deleted host harness files or xox-owned final-review/runtime/projection/tool-result/sandbox-aggregate helpers.
 
 Current production entry is `apps/api/src/agent/host-profile/xox-host-profile.ts`. The old xox host harness pillars are deleted:
 
@@ -15,11 +15,42 @@ Current production entry is `apps/api/src/agent/host-profile/xox-host-profile.ts
 - `host-profile/xox-final-review-policy.ts`
 - `host-profile/xox-goal-facts.ts`
 - `agentic-os/xox-goal-store-adapter.ts`
+- `agentic-os/xox-run-worker-adapter.ts`
 - `tests/provider-runtime.test.ts`
 
 This cut also removed xox-local memory lifecycle orchestration, local progressive tool runtime projection, and local goal/obligation context fields. xox now keeps tool definitions, business execution, context/prompt assets, provider settings, memory store/Memory Center display, sandbox bundles, SQL/SSE adapters, and product DTO projection. Agent loop, provider execution/recovery, final review, goal/readiness, memory lifecycle, and tool-surface runtime are Agentic OS responsibilities.
 
 Current correction: `xox-run-event-store-adapter.ts` must remain a pure event store/stream adapter. A temporary goal/evaluation/final-review projection expansion was removed; reusable final review completion behavior now belongs in `@agentic-os/server`. The follow-up three-file audit also removed `xox-action-graph-adapter.ts` hard-coded business-tool de-dupe, removed `xox-host-profile.ts` tool-name-driven provider stable mode, and shifted `xox-run-worker-adapter.ts` partial-output fail-closed classification back to Agentic OS durable queue recovery.
+
+Current M185 cut:
+
+- `@agentic-os/server` now exposes `createAgentServerSaaSDurableRunHost()`, so xox no longer exports `runXoxSubmittedRun()`, `startXoxReadyRuns()`, `requestXoxRunQueueDrain()`, or `startXoxRunQueue()`.
+- `apps/api/src/agent/agentic-os/xox-run-worker-adapter.ts` has been deleted. The remaining host code is `xox-run-store-adapter.ts`, which supplies SQL row loading/effects and consumes the Agentic OS durable run host facade.
+- `@agentic-os/server` now exposes `createAgentServerSaaSToolDefinition()`, so `xox-host-profile.ts` no longer imports `inferToolAuthorityClass()` or locally computes tool authority classes.
+- Architecture tests now assert the worker file stays deleted and that old worker lifecycle function names do not return to `apps/api/src/agent`.
+
+Still open after M185: `xox-run-store-adapter.ts` still contains SQL recovery/loading/effect callbacks; `tool-executor.ts` / `tool-policy.ts` still expose sandbox aggregate execution and memory tool wiring. These should be cut next only through stronger Agentic OS APIs, not by moving code into another xox file.
+
+Current M184 cut:
+
+- `@agentic-os/server` now exposes `createAgentServerSaaSHostComputer()`, so `xox-host-profile.ts` no longer directly calls `createAgentServerSaaSHostExecutionPorts()`, `createAgentServerSaaSRuntimeEventHandlers()`, or `createAgentServerSaaSHostProfile()`.
+- `@agentic-os/runtime-openai-agents` now exposes `createOpenAISaaSHostRuntimeAdapter()`, so xox no longer imports the lower-level `createOpenAISaaSRuntimeAdapter()` symbol.
+- `@agentic-os/server` now exposes `createAgentServerDurableRunCoordinatorRegistry()`, so `xox-run-worker-adapter.ts` no longer directly creates `createAgentServerDurableRunWorker()` or exports `completeAgentRun()` / `recoverRunningAgentRuns()` / `scheduleAgentRunQueueDrain()`.
+- `@agentic-os/server` now exposes `createAgentServerSaaSTenantMemoryRepository()`, so `memory.ts` no longer imports capture runtime, ranking, search, get, promote, or archive projector primitives directly. The xox active-memory profile function was removed.
+- `@agentic-os/sandbox` now exposes `runAgenticSandboxSaaSPeripheralRead()`, so `sandbox-service.ts` no longer imports direct peripheral read, SaaS host tool peripheral, or aggregate action draft primitives.
+- `@agentic-os/server` now exposes `planAgentServerSaaSBusinessToolStep()` and `agentServerSaaSTenantMemoryToolHandlers()`, so `tool-executor.ts` no longer constructs local SaaS business tool planner or explicit `create*TenantMemoryToolHandlers()` objects.
+- Architecture tests now guard these deleted CPU-level symbols from returning to `apps/api/src/agent`.
+
+Still open after M184: xox still owns business tool handlers, business write execution, SQL run/action/message stores, route transport, provider settings, prompts, workspace bundles, Memory Center DTOs, and product display projection. These are host peripherals, not harness loop ownership.
+
+Current M183 cut:
+
+- `@agentic-os/server` now exposes `createAgentServerSaaSBusinessToolPlanner()`, so `tool-executor.ts` no longer constructs a local SaaS tool-result port or local empty-result fallback planner.
+- `@agentic-os/server` now exposes `createAgentServerSaaSTenantMemoryToolHandlers()`, so `tool-executor.ts` no longer repeats memory search/get/remember product copy or calls the lower-level tenant memory tool handler directly.
+- `@agentic-os/sandbox` now exposes `createAgenticSandboxAggregateActionDraft()`, so `sandbox-service.ts` no longer serializes nested sandbox actions or constructs aggregate confirmation details/payloads locally.
+- Architecture tests now guard `createAgentServerSaaSHostToolResultPort`, `createAgentServerTenantMemoryToolHandlers`, `serializableNestedAction`, `nestedActions: actions.map`, and `details: actions.map` from returning to `apps/api/src/agent`.
+
+M183 left `xox-host-profile.ts`, `xox-run-worker-adapter.ts`, and `memory.ts` with CPU-shaped assembly seams. M184 removes those visible low-level seams by raising the Agentic OS API boundary.
 
 Current M182 cut:
 
@@ -76,9 +107,9 @@ Current M174-M176 background:
 - `sandbox-service.ts` no longer owns generic sandbox proof/hash/model-readable/status helpers, structured nested tool-call projection, nested tool runtime bridge, or aggregate action loop. Those are now `@agentic-os/sandbox` helpers; xox keeps workspace bundle construction, business SDK policy predicates, and localized aggregate action copy.
 - `tool-catalog.ts` no longer exposes `final_answer_extract_claims` as a xox provider tool. Final-answer claim extraction is a server harness concern.
 
-Current validation: `npm run build -w @agentic-os/core`, `npm run build -w @agentic-os/server`, `npm run build -w @agentic-os/sandbox`, `npm run test -w @agentic-os/core`, `npm run test -w @agentic-os/server`, and `npm run test -w @agentic-os/sandbox` pass in `agentic-os`. `npm run build:api`, `npx vitest run tests/agent-architecture.test.ts tests/action-observation.test.ts tests/sandbox-tool.test.ts`, and `npx vitest run tests/api.test.ts -t "asks for clarification through a model-selected tool"` pass in `xox-model/apps/api`. Full `npx vitest run tests/api.test.ts` was last rerun in M174 and still reported 62 passed / 27 failed; the failures remain broad legacy parity expectations around navigation projection, old goal/evaluation/status events, provider failure plan-step shapes, memory recall signals, redundant action de-duplication, and complex-goal pacing. They must be fixed by product projection adapters or Agentic OS-owned reusable projection/runtime behavior, not by restoring local xox harness code.
+Current validation: `npm run build -w @agentic-os/server`, `npm run build -w @agentic-os/sandbox`, `npm run test -w @agentic-os/server`, and `npm run test -w @agentic-os/sandbox` pass in `agentic-os`. `npm run build:api` and `npx vitest run tests/agent-architecture.test.ts tests/action-observation.test.ts tests/sandbox-tool.test.ts` pass in `xox-model/apps/api`. Full `npx vitest run tests/api.test.ts` was last rerun in M174 and still reported 62 passed / 27 failed; the failures remain broad legacy parity expectations around navigation projection, old goal/evaluation/status events, provider failure plan-step shapes, memory recall signals, redundant action de-duplication, and complex-goal pacing. They must be fixed by product projection adapters or Agentic OS-owned reusable projection/runtime behavior, not by restoring local xox harness code.
 
-See [M182 Tool Result Runtime Amputation](m182-tool-result-runtime-amputation.md) for the current boundary, implementation notes, and validation evidence. See [M181 HostProfile Port Amputation](m181-host-profile-port-amputation.md) for the previous boundary, implementation notes, and validation evidence.
+See [M184 Host CPU Amputation](m184-host-cpu-amputation.md) for the current boundary. See [M183 Five File CPU Amputation](m183-five-file-cpu-amputation.md) and [M182 Tool Result Runtime Amputation](m182-tool-result-runtime-amputation.md) for previous boundary notes and validation evidence.
 
 ## Purpose
 

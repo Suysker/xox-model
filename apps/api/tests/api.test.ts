@@ -19,7 +19,7 @@ import {
 } from '../src/agent/tool-catalog.js'
 import { createProductDefaultModel, projectModel } from '@xox/domain'
 import { decideAgentMemoryCandidate } from '@agentic-os/core'
-import { recoverRunningAgentRuns } from '../src/agent/agentic-os/xox-run-worker-adapter.js'
+import { createXoxDurableRunStore } from '../src/agent/agentic-os/xox-run-store-adapter.js'
 import {
   captureTenantMemory,
   retrieveAgentMemories,
@@ -3642,7 +3642,7 @@ describe('xox TypeScript API', () => {
         heartbeatAt: new Date().toISOString(),
       })
 
-      await recoverRunningAgentRuns(harness.db, harness.settings)
+      await createXoxDurableRunStore(harness.db, harness.settings).startReady()
       await sleep(50)
 
       expect(providerCalls).toBe(0)
@@ -3690,7 +3690,7 @@ describe('xox TypeScript API', () => {
         heartbeatAt: new Date(Date.now() - 60_000).toISOString(),
       })
 
-      await recoverRunningAgentRuns(harness.db, harness.settings)
+      await createXoxDurableRunStore(harness.db, harness.settings).startReady()
       const claimed = await harness.db.selectFrom('agent_runs').select(['worker_id', 'lease_expires_at']).where('id', '=', run.runId).executeTakeFirstOrThrow()
       expect(claimed.worker_id).toBe('recover-worker')
       expect(new Date(claimed.lease_expires_at ?? 0).getTime()).toBeGreaterThan(Date.now())
@@ -3852,7 +3852,7 @@ describe('xox TypeScript API', () => {
         message: '3 月计划收入和计划成本是多少？',
       })
 
-      await recoverRunningAgentRuns(harness.db, harness.settings)
+      await createXoxDurableRunStore(harness.db, harness.settings).startReady()
       const runningState = await client.get(`/api/v1/agent/threads/${run.threadId}`)
       expect(runningState.statusCode).toBe(200)
       expect(runningState.json.runs[0].status).toBe('running')
@@ -3887,7 +3887,7 @@ describe('xox TypeScript API', () => {
       partialOutput: true,
     })
 
-    await recoverRunningAgentRuns(harness.db, harness.settings)
+    await createXoxDurableRunStore(harness.db, harness.settings).startReady()
     const state = await client.get(`/api/v1/agent/threads/${run.threadId}`)
     expect(state.statusCode).toBe(200)
     expect(state.json.runs[0].status).toBe('failed')

@@ -78,6 +78,7 @@ describe('Agentic OS downstream boundary', () => {
       'agent/agentic-os/xox-runtime-planning-adapter.ts',
       'agent/agentic-os/xox-tool-observation-adapter.ts',
       'agent/agentic-os/xox-action-approval-adapter.ts',
+      'agent/agentic-os/xox-run-worker-adapter.ts',
       'agent/xox-tool-result-config.ts',
     ])
 
@@ -88,12 +89,13 @@ describe('Agentic OS downstream boundary', () => {
     expect(existsSync(join(srcRoot, 'agent', 'tool-executor.ts'))).toBe(true)
   })
 
-  it('routes worker and action confirmation through the thin host profile only', () => {
-    const worker = source('agent/agentic-os/xox-run-worker-adapter.ts')
+  it('routes durable run storage and action confirmation through Agentic OS host APIs only', () => {
+    const runStore = source('agent/agentic-os/xox-run-store-adapter.ts')
     const routes = source('agent/routes.ts')
 
-    expect(worker).toContain("from '../host-profile/xox-host-profile.js'")
-    expect(worker).toContain('executeXoxAgentRun')
+    expect(runStore).toContain("from '../host-profile/xox-host-profile.js'")
+    expect(runStore).toContain('executeXoxAgentRun')
+    expect(runStore).toContain('createAgentServerSaaSDurableRunHost')
     expect(routes).toContain("from './host-profile/xox-host-profile.js'")
     expect(routes).toContain('resumeXoxAgentRunAfterActionConfirmation')
     expect(routes).toContain('projectAgentServerActionCancellation')
@@ -101,7 +103,7 @@ describe('Agentic OS downstream boundary', () => {
     expect(routes).not.toContain('agentServerRunLifecycleEvents.actionCancelled')
     expect(routes).not.toContain('agentServerRunLifecycleEvents.actionUpdated')
 
-    for (const content of [worker, routes]) {
+    for (const content of [runStore, routes]) {
       expect(content).not.toContain('xox-agent-run-profile')
       expect(content).not.toContain('xox-provider-runtime')
       expect(content).not.toContain('evaluateAgentGoal')
@@ -115,12 +117,13 @@ describe('Agentic OS downstream boundary', () => {
   it('keeps xox-host-profile as ports and DTO projection, not a harness loop owner', () => {
     const host = source('agent/host-profile/xox-host-profile.ts')
 
-    expect(host).toContain('createAgentServerSaaSHostProfile')
-    expect(host).toContain('createAgentServerSaaSHostExecutionPorts')
-    expect(host).toContain('createAgentServerSaaSRuntimeEventHandlers')
-    expect(host).toContain('createOpenAISaaSRuntimeAdapter')
+    expect(host).toContain('createAgentServerSaaSHostComputer')
+    expect(host).toContain('createOpenAISaaSHostRuntimeAdapter')
     expect(host).toContain('confirmAgentServerSaaSProfileActionAndResume')
     expect(host).toContain('runAgentServerSaaSProfileRun')
+    expect(host).not.toContain('createAgentServerSaaSHostExecutionPorts')
+    expect(host).not.toContain('createAgentServerSaaSRuntimeEventHandlers')
+    expect(host).not.toContain('createOpenAISaaSRuntimeAdapter')
     expect(host).not.toContain('createOpenAICompatiblePlanningRuntimeAdapter')
     expect(host).not.toContain('createOpenAIAgentsRuntimeAdapter')
     expect(host).not.toContain('createAgentServerSaaSRunPlane')
@@ -240,6 +243,7 @@ describe('Agentic OS downstream boundary', () => {
       'xox-runtime-planning-adapter',
       'xox-tool-observation-adapter',
       'xox-action-approval-adapter',
+      'xox-run-worker-adapter',
       'xox-tool-result-config',
       'createXoxToolObservationBridge',
       'runXoxBusinessToolStep',
@@ -252,6 +256,8 @@ describe('Agentic OS downstream boundary', () => {
       'rememberAgentMemory',
       'createAgentHostToolResultRuntime',
       'createAgentServerHostToolResultPort',
+      'createAgentServerSaaSHostToolResultPort',
+      'createAgentServerTenantMemoryToolHandlers',
       'createAgentMemoryToolRuntime',
       'createSandboxToolRuntimeBridge',
       'createAgenticSandboxHostToolPeripheral',
@@ -294,13 +300,20 @@ describe('Agentic OS downstream boundary', () => {
       'emptyResultMessage',
       'readStatus:',
       'resultRuntime:',
+      'serializableNestedAction',
+      'nestedActions: actions.map',
+      'details: actions.map',
+      'runXoxSubmittedRun',
+      'startXoxReadyRuns',
+      'requestXoxRunQueueDrain',
+      'startXoxRunQueue',
     ])
   })
 
   it('keeps provider mechanics and run-plane primitives sourced from Agentic OS packages', () => {
     const host = source('agent/host-profile/xox-host-profile.ts')
     const runEvents = source('agent/agentic-os/xox-run-event-store-adapter.ts')
-    const runWorker = source('agent/agentic-os/xox-run-worker-adapter.ts')
+    const runStore = source('agent/agentic-os/xox-run-store-adapter.ts')
     const runLease = source('agent/agentic-os/xox-run-lease-store-adapter.ts')
     const threadStore = source('agent/agentic-os/xox-thread-store-adapter.ts')
 
@@ -308,28 +321,41 @@ describe('Agentic OS downstream boundary', () => {
     expect(host).toContain("@agentic-os/server")
     expect(host).not.toContain("@agentic-os/runtime-openai-compatible")
     expect(host).toContain("@agentic-os/runtime-openai-agents")
-    expect(host).toContain('createAgentServerSaaSHostExecutionPorts')
+    expect(host).toContain('createAgentServerSaaSHostComputer')
+    expect(host).toContain('createOpenAISaaSHostRuntimeAdapter')
+    expect(host).not.toContain('createAgentServerSaaSHostExecutionPorts')
+    expect(host).not.toContain('createAgentServerSaaSRuntimeEventHandlers')
+    expect(host).not.toContain('createOpenAISaaSRuntimeAdapter')
     expect(host).toContain('runAgentServerSaaSProfileRun')
     expect(host).not.toContain('createAgentHostAdapterFromProfile')
     expect(runEvents).toContain('@agentic-os/server')
     expect(runEvents).toContain('addAgentServerRuntimeStreamRunEvent')
-    expect(runWorker).toContain('@agentic-os/server')
-    expect(runWorker).toContain('createAgentServerDurableRunWorker')
-    expect(runWorker).not.toContain('createAgentServerRunWorker')
-    expect(runWorker).not.toContain('createDurableRunQueuePort')
-    expect(runWorker).toContain('startReadyRuns')
-    expect(runWorker).toContain('projectAgentServerInterruptedRunCompletion')
-    expect(runWorker).toContain('projectAgentServerRunRecoveryFailClosedInterruption')
-    expect(runWorker).toContain('projectAgentServerQueuedRunCompletion')
-    expect(runWorker).not.toContain('projectAgentServerRunFailureCompletion')
-    expect(runWorker).not.toContain('projectAgentServerRunCancellationCompletion')
-    expect(runWorker).toContain('hasAgentServerRunPartialOutput')
-    expect(runWorker).not.toContain('agentServerRunRecoveryFailClosedMessage')
-    expect(runWorker).not.toContain('projectAgentServerRunCompletion')
-    expect(runWorker).not.toContain('failInterruptedAgentRun')
-    expect(runWorker).not.toContain('createAgentServerRunScheduler')
-    expect(runWorker).not.toContain('agent_goals')
-    expect(runWorker).not.toContain('goal_status')
+    expect(runStore).toContain('@agentic-os/server')
+    expect(runStore).toContain('createAgentServerSaaSDurableRunHost')
+    expect(runStore).toContain('createAgentServerDurableRunCoordinatorRegistry')
+    expect(runStore).not.toContain('createAgentServerDurableRunWorker')
+    expect(runStore).not.toContain('createAgentServerRunWorker')
+    expect(runStore).not.toContain('createDurableRunQueuePort')
+    expect(runStore).not.toContain('runXoxSubmittedRun')
+    expect(runStore).not.toContain('startXoxReadyRuns')
+    expect(runStore).not.toContain('requestXoxRunQueueDrain')
+    expect(runStore).not.toContain('startXoxRunQueue')
+    expect(runStore).not.toContain('completeAgentRun')
+    expect(runStore).not.toContain('recoverRunningAgentRuns')
+    expect(runStore).not.toContain('scheduleAgentRunQueueDrain')
+    expect(runStore).not.toContain('getAgentRunWorker')
+    expect(runStore).toContain('projectAgentServerInterruptedRunCompletion')
+    expect(runStore).toContain('projectAgentServerRunRecoveryFailClosedInterruption')
+    expect(runStore).toContain('projectAgentServerQueuedRunCompletion')
+    expect(runStore).not.toContain('projectAgentServerRunFailureCompletion')
+    expect(runStore).not.toContain('projectAgentServerRunCancellationCompletion')
+    expect(runStore).toContain('hasAgentServerRunPartialOutput')
+    expect(runStore).not.toContain('agentServerRunRecoveryFailClosedMessage')
+    expect(runStore).not.toContain('projectAgentServerRunCompletion')
+    expect(runStore).not.toContain('failInterruptedAgentRun')
+    expect(runStore).not.toContain('createAgentServerRunScheduler')
+    expect(runStore).not.toContain('agent_goals')
+    expect(runStore).not.toContain('goal_status')
     expect(runLease).toContain('@agentic-os/server')
     expect(threadStore).toContain('@agentic-os/server')
     expect(threadStore).toContain('AgentServerThreadStateProjector')
@@ -364,8 +390,12 @@ describe('Agentic OS downstream boundary', () => {
     const sandbox = source('agent/sandbox-service.ts')
     const toolExecutor = source('agent/tool-executor.ts')
 
-    expect(toolExecutor).toContain('createAgentServerTenantMemoryToolHandlers')
-    expect(toolExecutor).toContain('createAgentServerSaaSHostToolResultPort')
+    expect(toolExecutor).toContain('agentServerSaaSTenantMemoryToolHandlers')
+    expect(toolExecutor).toContain('planAgentServerSaaSBusinessToolStep')
+    expect(toolExecutor).not.toContain('createAgentServerSaaSTenantMemoryToolHandlers')
+    expect(toolExecutor).not.toContain('createAgentServerSaaSBusinessToolPlanner')
+    expect(toolExecutor).not.toContain('createAgentServerTenantMemoryToolHandlers')
+    expect(toolExecutor).not.toContain('createAgentServerSaaSHostToolResultPort')
     expect(toolExecutor).not.toContain('createAgentServerHostToolResultPort')
     expect(toolExecutor).not.toContain('createAgentServerMemoryToolHandlers')
     expect(toolExecutor).not.toContain('rememberFromToolCall')
@@ -376,11 +406,13 @@ describe('Agentic OS downstream boundary', () => {
     expect(toolExecutor).not.toContain('resultRuntime:')
     expect(toolExecutor).toContain('planWorkspaceDataQueryRead')
     expect(toolExecutor).not.toContain('answerWorkspaceDataQuestion')
-    expect(memory).toContain('createAgentServerTenantMemoryCaptureRuntime')
+    expect(memory).toContain('createAgentServerSaaSTenantMemoryRepository')
+    expect(memory).not.toContain('createAgentServerTenantMemoryCaptureRuntime')
     expect(memory).not.toContain('createAgentMemoryCaptureRuntime')
-    expect(memory).toContain('rankAgentServerTenantMemoryRecords')
-    expect(memory).toContain('projectAgentServerTenantMemorySearch')
-    expect(memory).toContain('projectAgentServerTenantMemoryGet')
+    expect(memory).not.toContain('rankAgentServerTenantMemoryRecords')
+    expect(memory).not.toContain('projectAgentServerTenantMemorySearch')
+    expect(memory).not.toContain('projectAgentServerTenantMemoryGet')
+    expect(memory).not.toContain('createXoxActiveMemoryProfileInput')
     expect(memory).not.toContain('summarizeAgentMemoryToolItems')
     expect(memory).not.toContain('runMemorySearchTool')
     expect(memory).not.toContain('runMemoryGetTool')
@@ -402,9 +434,14 @@ describe('Agentic OS downstream boundary', () => {
       expect(memory, `${forbidden} must not return to xox memory peripheral`).not.toContain(forbidden)
     }
 
-    expect(sandbox).toContain('runAgenticSandboxPeripheralRead')
-    expect(sandbox).toContain('createAgenticSandboxSaaSHostToolPeripheral')
+    expect(sandbox).toContain('runAgenticSandboxSaaSPeripheralRead')
+    expect(sandbox).not.toContain('runAgenticSandboxPeripheralRead')
+    expect(sandbox).not.toContain('createAgenticSandboxSaaSHostToolPeripheral')
+    expect(sandbox).not.toContain('createAgenticSandboxAggregateActionDraft')
     expect(sandbox).not.toContain('createAgenticSandboxHostToolPeripheral')
+    expect(sandbox).not.toContain('function serializableNestedAction')
+    expect(sandbox).not.toContain('nestedActions: actions.map')
+    expect(sandbox).not.toContain('details: actions.map')
     expect(sandbox).not.toContain('clarificationTitle')
     expect(sandbox).not.toContain('accountForbiddenTitle')
     expect(sandbox).not.toContain('emptyResultTitle')

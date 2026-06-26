@@ -1,12 +1,6 @@
 import type { Kysely } from 'kysely'
-import type { AgentRunEventStatus } from '@xox/contracts'
 import {
-  createAgentServerTenantMemoryCaptureRuntime,
-  projectAgentServerTenantMemoryArchive,
-  projectAgentServerTenantMemoryGet,
-  projectAgentServerTenantMemoryPromotion,
-  projectAgentServerTenantMemorySearch,
-  rankAgentServerTenantMemoryRecords,
+  createAgentServerSaaSTenantMemoryRepository,
   type AgentServerTenantMemoryRecordLike,
   type AgentServerTenantMemoryToolItem,
 } from '@agentic-os/server'
@@ -83,7 +77,9 @@ export type CaptureTenantMemoryInput = {
   metadata?: Record<string, unknown> | null
 }
 
-const tenantMemoryCaptureRuntime = createAgentServerTenantMemoryCaptureRuntime<CaptureTenantMemoryInput, Row<'agent_memories'>>({
+const tenantMemoryRepository = createAgentServerSaaSTenantMemoryRepository<CaptureTenantMemoryInput, Row<'agent_memories'>>({
+  toRecordLike: agentMemoryRecordFromRow,
+  now: utcNow,
   persist: async ({ ctx: input, original, prepared }) => {
     const now = utcNow()
     const id = newId()
@@ -150,7 +146,7 @@ const tenantMemoryCaptureRuntime = createAgentServerTenantMemoryCaptureRuntime<C
 })
 
 export async function captureTenantMemory(input: CaptureTenantMemoryInput): Promise<CaptureTenantMemoryResult> {
-  const result = await tenantMemoryCaptureRuntime.capture(input, input)
+  const result = await tenantMemoryRepository.capture(input, input)
   return result.memory
     ? { memory: result.memory, rejectedReason: null }
     : { memory: null, rejectedReason: result.rejectedReason }
@@ -215,9 +211,8 @@ export async function retrieveAgentMemories(input: {
     .limit(80)
     .execute()
 
-  const ranked = rankAgentServerTenantMemoryRecords({
+  const ranked = tenantMemoryRepository.rank({
     records: rows,
-    toRecordLike: agentMemoryRecordFromRow,
     query: input.query,
     now: utcNow(),
     ...(input.limit !== undefined ? { limit: input.limit } : {}),
@@ -240,7 +235,7 @@ export async function archiveAgentMemory(db: Kysely<Database>, workspace: Row<'w
   const memory = await db.selectFrom('agent_memories').selectAll().where('id', '=', memoryId).executeTakeFirst()
   if (!memory) throw notFound('Agent memory not found')
   if (memory.workspace_id !== workspace.id || memory.user_id !== user.id) throw forbidden()
-  const projected = projectAgentServerTenantMemoryArchive()
+  const projected = tenantMemoryRepository.archive()
   const now = utcNow()
   await db.updateTable('agent_memories').set({
     status: projected.status,
@@ -263,7 +258,7 @@ export async function promoteAgentMemory(db: Kysely<Database>, workspace: Row<'w
   const memory = await db.selectFrom('agent_memories').selectAll().where('id', '=', memoryId).executeTakeFirst()
   if (!memory) throw notFound('Agent memory not found')
   if (memory.workspace_id !== workspace.id || memory.user_id !== user.id) throw forbidden()
-  const projected = projectAgentServerTenantMemoryPromotion({
+  const projected = tenantMemoryRepository.promote({
     status: memory.status,
     lane: memory.lane,
     kind: memory.kind,
@@ -361,72 +356,6 @@ function rowEvidenceRefs(row: Row<'agent_memories'>) {
   ].filter((item): item is string => Boolean(item))
 }
 
-export function createXoxActiveMemoryProfileInput(input: {
-  db: Kysely<Database>
-  workspace: Row<'workspaces'>
-  user: CurrentUser
-  threadId: string
-  runId: string
-  appendRunEvent: (draft: {
-    type: string
-    title: string
-    message: string
-    status: AgentRunEventStatus
-    data?: Record<string, unknown>
-  }) => Promise<void>
-}) {
-  return {
-    activeMemory: {
-      getScopeKey: () => `${input.user.id}:${input.workspace.id}`,
-      getRunCacheKey: (context: { run: { runId: string } }) => `${input.user.id}:${input.workspace.id}:${context.run.runId}`,
-      getQuery: (context: { request: { userMessage: string } }) => context.request.userMessage,
-      scope: () => ({
-        tenantId: input.user.id,
-        workspaceId: input.workspace.id,
-        userId: input.user.id,
-      }),
-      retrieve: async (context: { request: { userMessage: string } }) => {
-        const recalled = await retrieveAgentMemories({
-          db: input.db,
-          workspace: input.workspace,
-          user: input.user,
-          query: context.request.userMessage,
-          limit: 6,
-          forPrompt: true,
-          includeCandidates: false,
-          includeArchived: false,
-          includeNonInjectable: false,
-        })
-        return recalled.map((item) => ({
-          memory: {
-            id: item.memory.id,
-            key: item.memory.key,
-            value: item.memory.value,
-            kind: item.memory.kind,
-            lane: item.memory.lane,
-            status: item.memory.status,
-          },
-          memoryId: item.memory.id,
-          text: `${item.memory.key}: ${item.memory.value}`,
-          score: item.score,
-          reasons: item.reasons,
-          layer: layerForMemory(item.memory),
-          evidenceRefs: rowEvidenceRefs(item.memory),
-        }))
-      },
-      appendRunEvent: async (_context: unknown, draft: {
-        type: string
-        title: string
-        message: string
-        status: AgentRunEventStatus
-        data?: Record<string, unknown>
-      }) => {
-        await input.appendRunEvent(draft)
-      },
-    },
-  }
-}
-
 export async function searchTenantMemory(input: {
   db: Kysely<Database>
   workspace: Row<'workspaces'>
@@ -464,7 +393,7 @@ export async function searchTenantMemory(input: {
           .execute(),
   ])
 
-  return projectAgentServerTenantMemorySearch({
+  return tenantMemoryRepository.search({
     query: input.query,
     maxResults,
     durable: {
@@ -503,7 +432,7 @@ export async function getTenantMemory(input: {
     .where('user_id', '=', input.user.id)
     .executeTakeFirst()
   if (memory) {
-    return projectAgentServerTenantMemoryGet({
+    return tenantMemoryRepository.get({
       durable: {
         record: memory,
         id: (row) => row.id,
@@ -523,7 +452,7 @@ export async function getTenantMemory(input: {
     .where('user_id', '=', input.user.id)
     .where('archived_at', 'is', null)
     .executeTakeFirst()
-  return projectAgentServerTenantMemoryGet({
+  return tenantMemoryRepository.get({
     daily: {
       note,
       id: (row) => row.id,
