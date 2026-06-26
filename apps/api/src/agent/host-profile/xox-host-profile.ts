@@ -1,14 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import type {
-  AgentActionAuditRecord as OsActionAuditRecord,
-  AgentActionEditInput as OsActionEditInput,
-  AgentActionEditResult as OsActionEditResult,
-  AgentActionExecutionInput as OsActionExecutionInput,
-  AgentActionExecutionResult as OsActionExecutionResult,
-  AgentActionRejectionInput as OsActionRejectionInput,
-  AgentActionRejectionResult as OsActionRejectionResult,
-  AgentActionRequest as OsActionRequest,
   AgentContext as OsAgentContext,
   AgentObservation as OsObservation,
   AgentRunEvent as OsRunEvent,
@@ -17,87 +9,60 @@ import type {
   AgentRunLeaseCheck as OsRunLeaseCheck,
   AgentRunRecord as OsRunRecord,
   AgentRunResult as OsRunResult,
-  AgentSandboxExecutionResult as OsSandboxExecutionResult,
   AgentScope as OsScope,
-  AgentToolCall as OsToolCall,
   AgentToolDefinition as OsToolDefinition,
-  AgentToolHandlerResult as OsToolHandlerResult,
   AgentToolAuthorityClass as OsToolAuthorityClass,
   AgentToolConfirmationMode as OsToolConfirmationMode,
   AgentToolRiskLevel as OsToolRiskLevel,
   JsonObject as OsJsonObject,
-  JsonValue as OsJsonValue,
-  RuntimeAdapter as OsRuntimeAdapter,
-  RuntimeToolDescriptor as OsRuntimeToolDescriptor,
-  RuntimeTurnInput as OsRuntimeTurnInput,
-  RuntimeTurnOutput as OsRuntimeTurnOutput,
 } from '@agentic-os/contracts'
 import {
-  contextWithoutRuntimeConversationLog,
+  createAgentHostToolObservationBridge,
   inferToolAuthorityClass,
   normalizeAgentAutomationLevel,
-  parseToolObservationModelFacts,
-  runtimeConversationLogFromContext,
-  runtimeMessagesFromConversationLog,
-  sandboxExecutionModeFromFacts,
-  sandboxExecutionStatusFromFacts,
-  type AgentActionPort,
-  type AgentCompletionPort,
-  type AgentContextPort,
-  type AgentHostAdapter,
-  type AgentSandboxPort,
   type AgentStorePort,
-  type AgentToolRegistryPort,
+  type HostObservationBridge,
 } from '@agentic-os/core'
 import {
-  agentServerRunLifecycleEvents,
-  createAgentServer,
-  type AgentServerRuntimeStreamEvent,
+  agentServerRuntimeUserContent,
+  createAgentServerSaaSHostExecutionPorts,
+  createAgentServerSaaSHostProfile,
+  createAgentServerSaaSRuntimeEventHandlers,
+  confirmAgentServerSaaSProfileActionAndResume,
+  projectAgentServerSaaSRunEventDrafts,
+  runAgentServerSaaSProfileRun,
+  type AgentServerSaaSHostProfile,
 } from '@agentic-os/server'
 import {
-  buildProviderToolObservationTurnMessages,
-  resolveProviderRuntimeProfile,
-  runOpenAICompatibleRuntimeTurn,
-  type NormalizedProviderToolCall,
-  type OpenAiCompatibleFunctionToolDescriptor,
-  type OpenAICompatibleRuntimeTurnError,
-  type OpenAICompatibleRuntimeTurnEvent,
-} from '@agentic-os/runtime-openai-compatible'
-import {
-  runOpenAIAgentsTurn,
-  type OpenAIAgentsRuntimeEvent,
+  createOpenAISaaSRuntimeAdapter,
 } from '@agentic-os/runtime-openai-agents'
-import type { AgentGoalStatus, AgentNavigationEvent, AgentPlannerSource } from '@xox/contracts'
+import type { AgentNavigationEvent, AgentPlannerSource } from '@xox/contracts'
 import { hydrateModelConfig } from '@xox/domain'
 import { parseJson } from '../../db/database.js'
 import type { Row } from '../../db/schema.js'
-import { newId } from '../../core/security.js'
 import { utcNow } from '../../core/time.js'
 import { listPeriods, listSubjectsForPeriod } from '../../modules/ledger.js'
 import { getWorkspaceDraft, listVersions } from '../../modules/workspace.js'
-import type { PlannerContext } from './xox-planned-items.js'
 import {
-  executeAgentActionRequest,
-  safeAgentActionErrorMessage,
-  xoxBusinessToolHandlers,
+  executeXoxConfirmedBusinessActionForOs,
+  planXoxBusinessToolStep,
+  xoxOsActionAudit,
+  xoxOsActionRequest,
 } from '../tool-executor.js'
 import {
-  buildPlannedItemFromRuntimeStep,
-  createXoxObservationBridge,
-  toolSupervisorFailureObservation,
-  toolSupervisorFailureReadDraft,
   type AgentToolObservation,
-  type PlannedItem,
-  type PlannedItemResult,
-  type XoxObservationBridge,
+  type PlannerContext,
+  type ReadDraft,
+  type RuntimePlannerStep,
 } from './xox-planned-items.js'
 import {
-  actionExecutionObservation,
-  actionFailureObservation,
   storePlannedActionGraph,
   type StoredActionGraph,
 } from '../agentic-os/xox-action-graph-adapter.js'
-import { addAgenticOsActionRunEvent, addRunEvent, addRuntimeStreamRunEvent } from '../agentic-os/xox-run-event-store-adapter.js'
+import {
+  addAgenticOsActionRunEvent,
+  addRunEvent,
+} from '../agentic-os/xox-run-event-store-adapter.js'
 import { addMessage } from '../agentic-os/xox-thread-store-adapter.js'
 import {
   AGENT_TOOL_REGISTRY,
@@ -111,7 +76,10 @@ import {
   type ChatTool,
 } from '../tool-catalog.js'
 import { buildAgentWritableConfigContext } from '../tool-catalog.js'
-import { redactSecretLikeContent } from '../memory.js'
+import {
+  createXoxActiveMemoryProfileInput,
+  redactSecretLikeContent,
+} from '../memory.js'
 import { extractWorkspaceBundleArtifact } from '../workspace-bundle-artifact.js'
 
 export type AgenticOsKernelRunResult = {
@@ -121,7 +89,6 @@ export type AgenticOsKernelRunResult = {
   navigationEvents: AgentNavigationEvent[]
   actionRows: Row<'agent_action_requests'>[]
   planRows: Row<'agent_plan_steps'>[]
-  goalStatus: AgentGoalStatus | null
 }
 
 type XoxAgentRunContext = PlannerContext & {
@@ -134,7 +101,7 @@ type XoxHostState = {
   actionRows: Row<'agent_action_requests'>[]
   planRows: Row<'agent_plan_steps'>[]
   xoxObservations: AgentToolObservation[]
-  observationBridge: XoxObservationBridge
+  observationBridge: HostObservationBridge<AgentToolObservation>
   finishedResult: OsRunResult | null
   lastActionExecutionResult: unknown | null
 }
@@ -158,7 +125,9 @@ function createXoxHostState(input: {
     actionRows: input.actionRows ?? [],
     planRows: input.planRows ?? [],
     xoxObservations: [],
-    observationBridge: createXoxObservationBridge(),
+    observationBridge: createAgentHostToolObservationBridge<AgentToolObservation>({
+      contentKey: 'xoxObservation',
+    }),
     finishedResult: null,
     lastActionExecutionResult: null,
   }
@@ -167,11 +136,6 @@ function createXoxHostState(input: {
 function compactJsonObject(value: unknown): OsJsonObject {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
   return JSON.parse(JSON.stringify(value)) as OsJsonObject
-}
-
-function compactJsonValue(value: unknown): OsJsonValue {
-  if (value === undefined) return null
-  return JSON.parse(JSON.stringify(value)) as OsJsonValue
 }
 
 function compactMessageContent(content: string) {
@@ -301,11 +265,6 @@ function plannerSource(settings: PlannerContext['settings']): AgentPlannerSource
   return settings.llmProvider === 'openai' ? 'openai_agents' : 'openai_compatible_tool_calls'
 }
 
-function flattenPlannedItems(result: PlannedItemResult): PlannedItem[] {
-  if (!result) return []
-  return Array.isArray(result) ? result : [result]
-}
-
 function applyStoredGraph(state: XoxHostState, graph: StoredActionGraph): void {
   state.plannerSource = graph.plannerSource ?? state.plannerSource
   state.navigationEvents.push(...graph.navigationEvents)
@@ -353,12 +312,11 @@ async function storeSingleToolStep(
   step: AgentToolCallStep,
   options: { forceManualApproval?: boolean; emitPlanReady?: boolean } = {},
 ): Promise<StoredActionGraph> {
-  const result = await buildPlannedItemFromRuntimeStep(ctx, step, xoxBusinessToolHandlers)
-  const items = flattenPlannedItems(result)
+  const items = await planXoxBusinessToolStep(ctx, step)
   const graph = await storePlannedActionGraph(
     options.forceManualApproval ? { ...ctx, automationLevel: 'manual' } : ctx,
     {
-      items: items.length > 0 ? items : [toolSupervisorFailureReadDraft(step)],
+      items,
       plannerSource: state.plannerSource,
       ...(options.emitPlanReady !== undefined ? { emitPlanReady: options.emitPlanReady } : {}),
     },
@@ -368,9 +326,8 @@ async function storeSingleToolStep(
 }
 
 function agenticOsToolDefinition(
-  ctx: XoxAgentRunContext,
-  state: XoxHostState,
   entry: (typeof AGENT_TOOL_REGISTRY)[number],
+  executeRead?: OsToolDefinition['executeRead'],
 ): OsToolDefinition {
   const authorityClass = agenticOsAuthorityClass({
     toolName: entry.name,
@@ -396,309 +353,64 @@ function agenticOsToolDefinition(
       input.mode === 'forecast' ? 'read' : authorityClass
   }
 
-  if (authorityClass === 'read' || entry.name === 'workspace_update_online_factor') {
-    definition.executeRead = async (input): Promise<OsToolHandlerResult> => {
-      const step = plannerStepFromToolCall(entry.name, input.toolCall.toolCallId, input.input)
-      if (!step) {
-        return {
-          content: { error: `No xox planner step mapping exists for tool ${entry.name}.` },
-          outcome: 'failed_terminal',
-        }
-      }
-      const graph = await storeSingleToolStep(ctx, state, step)
-      const xoxObservation = graph.observations.at(-1) ?? toolSupervisorFailureObservation(step)
-      const osObservation = state.observationBridge.toCanonical(xoxObservation, state.xoxObservations.length)
-      const result: OsToolHandlerResult = { content: osObservation.content }
-      if (osObservation.outcome !== undefined) result.outcome = osObservation.outcome
-      return result
-    }
-  }
+  if (executeRead !== undefined) definition.executeRead = executeRead
 
   return definition
 }
 
-function osActionStatus(row: Row<'agent_action_requests'>): OsActionRequest['status'] {
-  if (row.status === 'pending') return 'pending'
-  if (row.status === 'executed') return 'executed'
-  if (row.status === 'failed') return 'failed'
-  if (row.status === 'cancelled') return 'rejected'
-  return 'pending'
+function xoxObservationIndex(state: XoxHostState, observation: AgentToolObservation): number {
+  const index = state.xoxObservations.indexOf(observation)
+  return index >= 0 ? index : state.xoxObservations.length
 }
 
-function actionPreview(row: Row<'agent_action_requests'>): OsJsonObject {
-  return {
-    payload: compactJsonValue(parseJson(row.payload_json, {})),
-    navigation: compactJsonValue(parseJson(row.navigation_json, {})),
-    details: compactJsonValue(parseJson(row.details_json, [])),
-    targetLabel: row.target_label,
-    riskLevel: row.risk_level,
-  }
-}
-
-function osActionRequest(row: Row<'agent_action_requests'>, toolCallId: string): OsActionRequest {
-  return {
-    actionRequestId: row.id,
-    runId: row.run_id,
-    threadId: row.thread_id,
-    toolCallId,
-    toolName: row.kind,
-    status: osActionStatus(row),
-    title: row.title,
-    description: row.summary,
-    preview: actionPreview(row),
-  }
-}
-
-function replaceActionRow(state: XoxHostState, action: Row<'agent_action_requests'>): void {
-  const index = state.actionRows.findIndex((row) => row.id === action.id)
-  if (index >= 0) state.actionRows[index] = action
-  else state.actionRows.push(action)
-}
-
-function osAudit(input: {
-  runId: string
-  threadId: string
-  actionRequestId: string
-  toolCallId: string
-  toolName: string
-  actorId: string
-  outcome: OsActionAuditRecord['outcome']
-  reason?: string
-}): OsActionAuditRecord {
-  const audit: OsActionAuditRecord = {
-    auditId: newId(),
-    runId: input.runId,
-    threadId: input.threadId,
-    actionRequestId: input.actionRequestId,
-    toolCallId: input.toolCallId,
-    toolName: input.toolName,
-    actorId: input.actorId,
-    outcome: input.outcome,
-    createdAt: utcNow(),
-  }
-  if (input.reason !== undefined) audit.reason = input.reason
-  return audit
-}
-
-function providerTool(tool: OsRuntimeToolDescriptor): OpenAiCompatibleFunctionToolDescriptor {
-  return {
-    type: 'function',
-    function: {
-      name: tool.name,
-      description: tool.description,
-      parameters: tool.inputJsonSchema,
-    },
-  }
-}
-
-function runtimeMaxTokens(input: OsRuntimeTurnInput) {
-  return input.userMessage.length >= 600 || input.tools.length >= 20 ? 6000 : 1600
-}
-
-function providerReplayObservation(observation: AgentToolObservation) {
-  return {
-    toolName: observation.toolName,
-    toolCallId: observation.toolCallId,
-    toolArguments: observation.toolArguments,
-    modelContent: observation.modelContent,
-    lane: observation.lane === 'runner_evidence' || observation.lane === 'runner_obligation'
-      ? observation.lane
-      : 'provider_tool' as const,
-  }
-}
-
-function runtimeUserContent(input: OsRuntimeTurnInput): string {
-  const facts = contextWithoutRuntimeConversationLog(input.context.facts ?? {})
-  return `上下文：${JSON.stringify(facts)}\n用户指令：${input.userMessage}`
-}
-
-function runtimeErrorMessage(error: OpenAICompatibleRuntimeTurnError | string | undefined): string {
-  if (!error) return 'Provider runtime failed.'
-  if (typeof error === 'string') return redactSecretLikeContent(error)
-  if (error.kind === 'missing_api_key') return 'Provider API key is missing.'
-  const parts = [
-    error.kind,
-    error.statusCode !== undefined ? `HTTP ${error.statusCode}` : null,
-    error.classification,
-    error.message,
-  ].filter((item): item is string => typeof item === 'string' && item.length > 0)
-  return redactSecretLikeContent(parts.join(': ') || 'Provider runtime failed.')
-}
-
-async function persistRuntimeFailure(input: {
-  ctx: XoxAgentRunContext
-  state: XoxHostState
-  error: OpenAICompatibleRuntimeTurnError
-}) {
-  const graph = await storePlannedActionGraph(input.ctx, {
-    plannerSource: input.state.plannerSource,
-    emitPlanReady: false,
-    items: [{
-      title: 'Provider 调用失败',
-      message: runtimeErrorMessage(input.error),
-      readKind: 'status',
-      status: 'failed',
-    }],
-  })
-  applyStoredGraph(input.state, graph)
-}
-
-function agentServerStreamEvent(
-  event: OpenAICompatibleRuntimeTurnEvent,
-  source: AgentPlannerSource,
-): AgentServerRuntimeStreamEvent {
-  if (event.kind === 'stream_started') {
-    return {
-      ...event,
-      source,
-    }
-  }
-  if (event.kind === 'stream_completed') {
-    return {
-      ...event,
-      source,
-    }
-  }
-  return event
-}
-
-function agentToolCall(call: NormalizedProviderToolCall, index: number): OsToolCall {
-  return {
-    toolCallId: call.providerToolCallId ?? `provider_tool_${index + 1}`,
-    name: call.toolName,
-    input: call.arguments,
-  }
-}
-
-async function runOpenAICompatibleTurn(
-  ctx: XoxAgentRunContext,
-  state: XoxHostState,
-  input: OsRuntimeTurnInput,
-): Promise<OsRuntimeTurnOutput> {
-  const provider = ctx.settings.openaiCompatibleProvider || ctx.settings.llmProvider
-  const model = ctx.settings.openaiCompatibleModel
-  const { profile, capability, thinkingLevel } = resolveProviderRuntimeProfile({
-    provider,
-    model,
-  })
-  const xoxObservations = state.observationBridge.combine(state.xoxObservations, input.observations)
-  const messages = buildProviderToolObservationTurnMessages({
-    profile,
-    capability,
-    thinkingLevel,
-    systemPrompt: PLANNING_POLICY_PROMPT,
-    priorMessages: runtimeMessagesFromConversationLog(runtimeConversationLogFromContext(input.context.facts ?? {})),
-    userContent: runtimeUserContent(input),
-    observations: xoxObservations.map(providerReplayObservation),
-    suffix: 'planning_observation',
-    maxObservations: 12,
-    maxUserContentChars: PLANNING_USER_CONTENT_MAX_CHARS,
-    redact: redactSecretLikeContent,
-  })
-  const result = await runOpenAICompatibleRuntimeTurn({
-    provider,
-    model,
-    baseUrl: ctx.settings.openaiCompatibleBaseUrl,
-    apiKey: ctx.settings.openaiCompatibleApiKey,
-    userContent: input.userMessage,
-    tools: input.tools.map(providerTool),
-    messages,
-    stream: true,
-    maxTokens: runtimeMaxTokens(input),
-    requestTimeoutMs: ctx.settings.agentProviderRequestTimeoutMs,
-    ...(input.abortSignal !== undefined ? { abortSignal: input.abortSignal as AbortSignal } : {}),
-    onEvent: (event) => addRuntimeStreamRunEvent(ctx, agentServerStreamEvent(event, state.plannerSource)),
-  })
-  if (result.error) {
-    await persistRuntimeFailure({ ctx, state, error: result.error })
-    return { error: runtimeErrorMessage(result.error) }
-  }
-  const output: OsRuntimeTurnOutput = {}
-  if (result.assistantText !== undefined) output.assistantText = result.assistantText
-  if (result.toolCalls.length > 0) {
-    output.toolCalls = result.toolCalls.map(agentToolCall)
-  }
-  return output
-}
-
-function openAIAgentsModel(settings: PlannerContext['settings']) {
-  return settings.openaiModel || settings.openaiCompatibleModel
-}
-
-function openAIAgentsApiKey(settings: PlannerContext['settings']) {
-  return settings.openaiApiKey ?? settings.openaiCompatibleApiKey ?? undefined
-}
-
-function openAIAgentsBaseUrl(settings: PlannerContext['settings']) {
-  return settings.openaiBaseUrl || settings.openaiCompatibleBaseUrl
-}
-
-async function recordOpenAIAgentsEvent(ctx: XoxAgentRunContext, event: OpenAIAgentsRuntimeEvent) {
-  if (event.kind === 'run_started') {
-    await addRunEvent(ctx.db, {
+async function appendXoxAgenticOsRunEvent(ctx: XoxAgentRunContext, event: OsRunEvent) {
+  if (event.type.startsWith('action.')) {
+    await addAgenticOsActionRunEvent(ctx.db, {
       threadId: ctx.thread.id,
       runId: ctx.runId,
-      type: 'provider_stream_started',
-      title: 'OpenAI Agents runtime 已启动',
-      message: `正在通过 openai-agents-js runtime 调用 ${event.model}。`,
-      status: 'running',
-      data: { ...event, source: 'openai_agents' },
+      event,
     })
     return
   }
-  if (event.kind === 'tool_call') {
-    await addRunEvent(ctx.db, {
-      threadId: ctx.thread.id,
-      runId: ctx.runId,
-      type: 'provider_stream_delta',
-      title: '工具调用已捕获',
-      message: `${event.toolName}: ${event.argumentsPreview}`,
-      status: 'running',
-      channel: 'tool',
-      data: { ...event, source: 'openai_agents' },
-    })
-    return
-  }
-  await addRunEvent(ctx.db, {
+  const drafts = projectAgentServerSaaSRunEventDrafts({
     threadId: ctx.thread.id,
     runId: ctx.runId,
-    type: 'provider_stream_completed',
-    title: 'OpenAI Agents runtime 已完成',
-    message: `模型运行结束，工具调用 ${event.toolCallCount} 个。`,
-    status: 'completed',
-    data: { ...event, source: 'openai_agents' },
-  })
-}
-
-async function runOpenAIAgentsRuntimeTurn(
-  ctx: XoxAgentRunContext,
-  input: OsRuntimeTurnInput,
-): Promise<OsRuntimeTurnOutput> {
-  const options = {
-    model: openAIAgentsModel(ctx.settings),
-    baseURL: openAIAgentsBaseUrl(ctx.settings),
-    instructions: PLANNING_POLICY_PROMPT,
-    includeFinalOutputWithToolCalls: false,
-    onEvent: (event: OpenAIAgentsRuntimeEvent) => recordOpenAIAgentsEvent(ctx, event),
-  }
-  const apiKey = openAIAgentsApiKey(ctx.settings)
-  const result = await runOpenAIAgentsTurn({
-    userMessage: input.userMessage,
-    tools: input.tools,
-    context: {
-      facts: input.context.facts,
-      observations: input.observations,
+    event,
+    copy: {
+      turnStarted: ({ iteration }) => ({
+        title: `Agentic OS 循环 ${iteration ?? ''}`.trim(),
+        message: iteration === 1 ? 'Agentic OS 开始第一轮模型运行。' : 'Agentic OS 基于 observation 继续推进。',
+      }),
+      toolObserved: ({ toolName, failed }) => ({
+        title: failed ? '工具调用失败' : '工具调用完成',
+        message: `工具调用${failed ? '失败' : '完成'}：${toolName}`,
+      }),
+      toolGuardrail: ({ payload }) => ({
+        title: '工具循环保护已触发',
+        message: typeof payload.message === 'string' ? payload.message : 'Agentic OS 已阻断不安全或不可继续的工具循环。',
+      }),
+      finalReviewed: ({ payload, passed }) => ({
+        title: 'Agentic OS final review 已完成',
+        message: typeof payload.reason === 'string'
+          ? payload.reason
+          : passed
+            ? '最终回答通过 Agentic OS review。'
+            : '最终回答未通过 Agentic OS review。',
+      }),
     },
-    ...(input.abortSignal !== undefined ? { abortSignal: input.abortSignal } : {}),
-  }, apiKey === undefined ? options : { ...options, apiKey })
-  return result
+  })
+  for (const draft of drafts) {
+    await addRunEvent(ctx.db, {
+      ...draft,
+    })
+  }
 }
 
 function createXoxHostProfile(
   ctx: XoxAgentRunContext,
   options: { beforeStateWrite: () => Promise<boolean> },
   state: XoxHostState,
-): AgentHostAdapter {
+): AgentServerSaaSHostProfile {
   const store: AgentStorePort = {
     createRun: async () => {
       const run = await ctx.db.selectFrom('agent_runs').selectAll().where('id', '=', ctx.runId).executeTakeFirst()
@@ -714,85 +426,185 @@ function createXoxHostProfile(
       return active ? { status: 'active', lease } : { status: 'lost', reason: 'xox run lease is no longer active.' }
     },
     releaseRunLane: async (_lease: OsRunLease) => undefined,
-    appendEvent: async (event: OsRunEvent) => {
-      if (event.type === 'turn.started') {
-        const payload = event.payload as Record<string, unknown>
-        const iteration = typeof payload.iteration === 'number' ? payload.iteration : null
-        await addRunEvent(ctx.db, {
-          threadId: ctx.thread.id,
-          runId: ctx.runId,
-          type: 'goal_iteration_started',
-          title: `Agentic OS 循环 ${iteration ?? ''}`.trim(),
-          message: iteration === 1 ? 'Agentic OS 开始第一轮模型运行。' : 'Agentic OS 基于 observation 继续推进。',
-          status: 'running',
-          data: { iteration, harness: 'agentic-os' },
-        })
-      }
-      if (event.type.startsWith('action.')) {
-        await addAgenticOsActionRunEvent(ctx.db, {
-          threadId: ctx.thread.id,
-          runId: ctx.runId,
-          event,
-        })
-      }
-      if (event.type === 'tool.observed') {
-        const payload = event.payload as Record<string, unknown>
-        const toolName = typeof payload.toolName === 'string' ? payload.toolName : 'unknown_tool'
-        const outcome = typeof payload.outcome === 'string' ? payload.outcome : null
-        const failed = outcome === 'failed_repairable' ||
-          outcome === 'failed_terminal' ||
-          outcome === 'completed_invalid' ||
-          outcome === 'policy_blocked'
-        await addRunEvent(ctx.db, {
-          threadId: ctx.thread.id,
-          runId: ctx.runId,
-          type: failed ? 'tool_call_failed' : 'tool_call_completed',
-          title: failed ? '工具调用失败' : '工具调用完成',
-          message: `工具调用${failed ? '失败' : '完成'}：${toolName}`,
-          status: failed ? 'failed' : 'completed',
-          channel: 'tool',
-          data: { ...payload, harness: 'agentic-os' },
-        })
-      }
-      if (event.type === 'tool.guardrail') {
-        const payload = event.payload as Record<string, unknown>
-        await addRunEvent(ctx.db, {
-          threadId: ctx.thread.id,
-          runId: ctx.runId,
-          type: 'tool_loop_guardrail',
-          title: '工具循环保护已触发',
-          message: typeof payload.message === 'string' ? payload.message : 'Agentic OS 已阻断不安全或不可继续的工具循环。',
-          status: 'failed',
-          data: { ...payload, harness: 'agentic-os' },
-        })
-      }
-    },
+    appendEvent: (event) => appendXoxAgenticOsRunEvent(ctx, event),
     finishRun: async (result) => {
       state.finishedResult = result
     },
   }
 
-  const runtime: OsRuntimeAdapter = {
-    runTurn: async (input) => {
-      state.plannerSource = plannerSource(ctx.settings)
-      await addRunEvent(ctx.db, agentServerRunLifecycleEvents.modelPlanning({
-        threadId: ctx.thread.id,
-        runId: ctx.runId,
-        provider: ctx.settings.llmProvider,
-        iteration: input.iteration,
-        copy: {
-          title: '模型运行中',
-          message: 'Agentic OS 正在通过 runtime port 调用配置的模型。',
-        },
-      }))
-      return state.plannerSource === 'openai_agents'
-        ? runOpenAIAgentsRuntimeTurn(ctx, input)
-        : runOpenAICompatibleTurn(ctx, state, input)
+  const runtimeEvents = createAgentServerSaaSRuntimeEventHandlers({
+    threadId: ctx.thread.id,
+    runId: ctx.runId,
+    source: () => state.plannerSource,
+    provider: () => ctx.settings.llmProvider,
+    preferredRetryToolName: 'sandbox_run_code',
+    appendRunEvent: async (draft) => {
+      await addRunEvent(ctx.db, draft)
     },
-  }
+    copy: {
+      modelPlanning: {
+        title: '模型运行中',
+        message: 'Agentic OS 正在通过 runtime port 调用配置的模型。',
+      },
+      planningRecovery: {
+        providerRetrying: {
+          title: 'Provider 调用重试',
+          message: 'Agentic OS runtime 已切换为更稳定的同轮重试形态。',
+        },
+        runtimeEvidenceRequired: {
+          title: 'Runtime evidence required',
+          message: 'Provider 重试后仍未生成可执行工具 observation，Agentic OS 要求继续补齐证据。',
+        },
+      },
+    },
+  })
+  const provider = ctx.settings.openaiCompatibleProvider || ctx.settings.llmProvider
+  const model = ctx.settings.openaiCompatibleModel
+  const runtime = createOpenAISaaSRuntimeAdapter<AgentToolObservation>({
+    compatible: {
+      provider,
+      model,
+      baseUrl: ctx.settings.openaiCompatibleBaseUrl,
+      apiKey: ctx.settings.openaiCompatibleApiKey,
+      systemPrompt: PLANNING_POLICY_PROMPT,
+      userContent: agentServerRuntimeUserContent,
+      observations: (input) => state.observationBridge.combine(state.xoxObservations, input.observations),
+      toReplayObservation: (observation) => ({
+        toolName: observation.toolName,
+        toolCallId: observation.toolCallId,
+        toolArguments: observation.toolArguments,
+        modelContent: observation.modelContent,
+        lane: observation.lane === 'runner_evidence' || observation.lane === 'runner_obligation'
+          ? observation.lane
+          : 'provider_tool',
+      }),
+      replaySuffix: 'planning_observation',
+      maxObservations: 12,
+      maxUserContentChars: PLANNING_USER_CONTENT_MAX_CHARS,
+      redact: redactSecretLikeContent,
+      stream: (input) => input.observations.length === 0,
+      requestTimeoutMs: ctx.settings.agentProviderRequestTimeoutMs,
+      onRuntimeEvent: (event) => runtimeEvents.onRuntimeEvent(event),
+      onPlanningRecoveryEvent: (event) => runtimeEvents.onPlanningRecoveryEvent(event),
+    },
+    agents: {
+      model: () => ctx.settings.openaiModel || ctx.settings.openaiCompatibleModel,
+      apiKey: () => ctx.settings.openaiApiKey ?? ctx.settings.openaiCompatibleApiKey ?? undefined,
+      baseURL: () => ctx.settings.openaiBaseUrl || ctx.settings.openaiCompatibleBaseUrl,
+      instructions: PLANNING_POLICY_PROMPT,
+      includeFinalOutputWithToolCalls: false,
+      copy: {
+        run_started: {
+          title: 'OpenAI Agents runtime 已启动',
+        },
+        tool_call: {
+          title: '工具调用已捕获',
+        },
+        run_completed: {
+          title: 'OpenAI Agents runtime 已完成',
+        },
+      },
+      onRunEventDraft: async (draft) => {
+        await addRunEvent(ctx.db, {
+          threadId: ctx.thread.id,
+          runId: ctx.runId,
+          ...draft,
+        })
+      },
+    },
+    selectAdapter: () => {
+      state.plannerSource = plannerSource(ctx.settings)
+      return state.plannerSource === 'openai_agents' ? 'openai_agents' : 'openai_compatible'
+    },
+    beforeRunTurn: ({ turn }) => runtimeEvents.beforeRunTurn({ turn }),
+  })
+  const executionPorts = createAgentServerSaaSHostExecutionPorts<
+    (typeof AGENT_TOOL_REGISTRY)[number],
+    AgentToolCallStep,
+    Row<'agent_action_requests'>,
+    AgentToolObservation
+  >({
+    tools: AGENT_TOOL_REGISTRY,
+    toolName: (entry) => entry.name,
+    createTool: ({ entry, executeRead }) => agenticOsToolDefinition(entry, executeRead),
+    shouldExecuteRead: ({ entry, definition }) =>
+      definition.authorityClass === 'read' || entry.name === 'workspace_update_online_factor',
+    toStep: ({ toolName, toolCallId, input }) => plannerStepFromToolCall(toolName, toolCallId, input),
+    storeStep: async ({ step, forceManualApproval, emitPlanReady }) => {
+      const graph = await storeSingleToolStep(ctx, state, step, {
+        ...(forceManualApproval !== undefined ? { forceManualApproval } : {}),
+        ...(emitPlanReady !== undefined ? { emitPlanReady } : {}),
+      })
+      return {
+        observations: graph.observations,
+        actionRequests: graph.actionRows,
+      }
+    },
+    observationBridge: state.observationBridge,
+    observationIndex: ({ observation }) => xoxObservationIndex(state, observation),
+    toActionRequest: ({ action, toolCallId }) => xoxOsActionRequest(action, toolCallId),
+    executeAction: (actionInput) => executeXoxConfirmedBusinessActionForOs({
+      ctx,
+      state,
+      actionInput,
+    }),
+    createEditAudit: (input) => xoxOsActionAudit({
+      runId: input.run.runId,
+      threadId: input.run.threadId,
+      actionRequestId: input.actionRequest.actionRequestId,
+      toolCallId: input.actionRequest.toolCallId,
+      toolName: input.actionRequest.toolName,
+      actorId: input.actorId,
+      outcome: 'edited',
+      ...(input.reason !== undefined ? { reason: input.reason } : {}),
+    }),
+    createRejectAudit: (input) => xoxOsActionAudit({
+      runId: input.run.runId,
+      threadId: input.run.threadId,
+      actionRequestId: input.actionRequest.actionRequestId,
+      toolCallId: input.actionRequest.toolCallId,
+      toolName: input.actionRequest.toolName,
+      actorId: input.actorId,
+      outcome: 'rejected',
+      ...(input.reason !== undefined ? { reason: input.reason } : {}),
+    }),
+  })
 
-  const context: AgentContextPort = {
-    assemble: async (input): Promise<OsAgentContext> => {
+  return createAgentServerSaaSHostProfile<{
+    id: string
+    key: string
+    value: string
+    kind: string
+    lane: string
+    status: string
+  }>({
+    store,
+    runtime,
+    tools: executionPorts.tools,
+    actions: executionPorts.actions,
+    sandbox: executionPorts.sandbox,
+    ...createXoxActiveMemoryProfileInput({
+      db: ctx.db,
+      workspace: ctx.workspace,
+      user: ctx.user,
+      threadId: ctx.thread.id,
+      runId: ctx.runId,
+      appendRunEvent: async (draft) => {
+        await addRunEvent(ctx.db, {
+          threadId: ctx.thread.id,
+          runId: ctx.runId,
+          type: draft.type,
+          title: draft.title,
+          message: draft.message,
+          status: draft.status,
+          data: {
+            ...draft.data,
+            harness: 'agentic-os',
+          },
+        })
+      },
+    }),
+    baseContext: async (input): Promise<Partial<OsAgentContext>> => {
       const facts = await buildXoxHostContextFacts(ctx, input.request.userMessage)
       return {
         messages: [{ role: 'user', content: input.request.userMessage }],
@@ -803,158 +615,7 @@ function createXoxHostProfile(
         }),
       }
     },
-  }
-
-  const tools: AgentToolRegistryPort = {
-    listTools: async () => AGENT_TOOL_REGISTRY.map((entry) => agenticOsToolDefinition(ctx, state, entry)),
-  }
-
-  const actions: AgentActionPort = {
-    previewAction: async (input) => {
-      const step = plannerStepFromToolCall(input.tool.name, input.toolCall.toolCallId, input.input)
-      if (!step) throw new Error(`No xox planner step mapping exists for tool ${input.tool.name}.`)
-      const graph = await storeSingleToolStep(ctx, state, step, {
-        forceManualApproval: true,
-        emitPlanReady: false,
-      })
-      const action = graph.actionRows.at(-1)
-      if (!action) throw new Error(`Tool ${input.tool.name} did not create an xox action request.`)
-      return osActionRequest(action, input.toolCall.toolCallId)
-    },
-    executeAction: async (input: OsActionExecutionInput): Promise<OsActionExecutionResult> => {
-      const action = await ctx.db
-        .selectFrom('agent_action_requests')
-        .selectAll()
-        .where('id', '=', input.actionRequest.actionRequestId)
-        .executeTakeFirstOrThrow()
-      let result: unknown
-      try {
-        result = await executeAgentActionRequest(ctx.db, ctx.settings, ctx.user, action)
-      } catch (executionError) {
-        if (input.reason === undefined) {
-          throw executionError
-        }
-        const message = safeAgentActionErrorMessage(executionError)
-        await ctx.db.updateTable('agent_action_requests')
-          .set({ status: 'failed', executed_at: null, error_message: message })
-          .where('id', '=', action.id)
-          .execute()
-          .catch(() => undefined)
-        await ctx.db.updateTable('agent_plan_steps')
-          .set({ status: 'failed', updated_at: utcNow() })
-          .where('action_request_id', '=', action.id)
-          .execute()
-          .catch(() => undefined)
-        const failed = await ctx.db.selectFrom('agent_action_requests').selectAll().where('id', '=', action.id).executeTakeFirstOrThrow()
-        state.lastActionExecutionResult = null
-        replaceActionRow(state, failed)
-        const xoxObservation = actionFailureObservation({
-          action: failed,
-          reason: input.reason ?? 'Action execution failed.',
-          error: message,
-        })
-        state.xoxObservations.push(xoxObservation)
-        const observation = state.observationBridge.toCanonical(xoxObservation, state.xoxObservations.length - 1)
-        return {
-          actionRequest: osActionRequest(failed, input.actionRequest.toolCallId),
-          observation,
-          audit: osAudit({
-            runId: failed.run_id,
-            threadId: failed.thread_id,
-            actionRequestId: failed.id,
-            toolCallId: input.actionRequest.toolCallId,
-            toolName: failed.kind,
-            actorId: ctx.user.id,
-            outcome: 'failed',
-            reason: message,
-          }),
-        }
-      }
-      const updated = await ctx.db.selectFrom('agent_action_requests').selectAll().where('id', '=', action.id).executeTakeFirstOrThrow()
-      state.lastActionExecutionResult = result
-      replaceActionRow(state, updated)
-      const xoxObservation = actionExecutionObservation({ action: updated, result })
-      state.xoxObservations.push(xoxObservation)
-      const observation = state.observationBridge.toCanonical(xoxObservation, state.xoxObservations.length - 1)
-      return {
-        actionRequest: osActionRequest(updated, input.actionRequest.toolCallId),
-        observation,
-        audit: osAudit({
-          runId: updated.run_id,
-          threadId: updated.thread_id,
-          actionRequestId: updated.id,
-          toolCallId: input.actionRequest.toolCallId,
-          toolName: updated.kind,
-          actorId: ctx.user.id,
-          outcome: 'executed',
-          ...(input.reason !== undefined ? { reason: input.reason } : {}),
-        }),
-      }
-    },
-    editAction: async (input: OsActionEditInput): Promise<OsActionEditResult> => ({
-      actionRequest: { ...input.actionRequest, status: 'edited', preview: input.preview },
-      audit: osAudit({
-        runId: input.run.runId,
-        threadId: input.run.threadId,
-        actionRequestId: input.actionRequest.actionRequestId,
-        toolCallId: input.actionRequest.toolCallId,
-        toolName: input.actionRequest.toolName,
-        actorId: input.actorId,
-        outcome: 'edited',
-        ...(input.reason !== undefined ? { reason: input.reason } : {}),
-      }),
-    }),
-    rejectAction: async (input: OsActionRejectionInput): Promise<OsActionRejectionResult> => ({
-      actionRequest: { ...input.actionRequest, status: 'rejected' },
-      audit: osAudit({
-        runId: input.run.runId,
-        threadId: input.run.threadId,
-        actionRequestId: input.actionRequest.actionRequestId,
-        toolCallId: input.actionRequest.toolCallId,
-        toolName: input.actionRequest.toolName,
-        actorId: input.actorId,
-        outcome: 'rejected',
-        ...(input.reason !== undefined ? { reason: input.reason } : {}),
-      }),
-    }),
-  }
-
-  const sandbox: AgentSandboxPort = {
-    executeSandbox: async (input): Promise<OsSandboxExecutionResult> => {
-      const step = plannerStepFromToolCall(input.tool.name, input.toolCall.toolCallId, input.input)
-      if (!step) {
-        return {
-          content: { error: `No xox planner step mapping exists for sandbox tool ${input.tool.name}.` },
-          manifestScoped: false,
-          executionMode: 'not_executed',
-          status: 'failed',
-          outcome: 'failed_terminal',
-        }
-      }
-      const graph = await storeSingleToolStep(ctx, state, step)
-      const xoxObservation = graph.observations.at(-1) ?? toolSupervisorFailureObservation(step)
-      const osObservation = state.observationBridge.toCanonical(xoxObservation, state.xoxObservations.length)
-      const facts = parseToolObservationModelFacts(xoxObservation)
-      const result: OsSandboxExecutionResult = {
-        content: osObservation.content,
-        manifestScoped: facts?.manifestScoped === true,
-      }
-      if (osObservation.outcome !== undefined) result.outcome = osObservation.outcome
-      const executionMode = sandboxExecutionModeFromFacts(facts)
-      if (executionMode !== null) result.executionMode = executionMode
-      const status = sandboxExecutionStatusFromFacts(facts, xoxObservation)
-      if (status !== null) result.status = status
-      const actionRequests = graph.actionRows.map((row) => osActionRequest(row, input.toolCall.toolCallId))
-      if (actionRequests.length > 0) result.actionRequests = actionRequests
-      return result
-    },
-  }
-
-  const completion: AgentCompletionPort = {
-    reviewFinal: async () => ({ pass: true }),
-  }
-
-  return { store, runtime, context, tools, actions, sandbox, completion }
+  })
 }
 
 async function latestRunRows(ctx: PlannerContext) {
@@ -999,7 +660,6 @@ async function finalizeAgenticOsResult(
     navigationEvents: state.navigationEvents,
     actionRows,
     planRows,
-    goalStatus: null,
   }
 }
 
@@ -1041,24 +701,19 @@ export async function resumeXoxAgentRunAfterActionConfirmation(input: {
     actionRows,
     planRows,
   })
-  const host = createXoxHostProfile(planningCtx, { beforeStateWrite }, state)
-  const server = createAgentServer(host, {
-    kitOptions: {
-      engineOptions: {
-        defaultMaxIterations: 5,
-        pendingActionCollection: { enabledByDefault: true, maxActions: 8 },
-      },
-    },
-  })
   const request = osRunInput(planningCtx, objective)
   const osRun: OsRunRecord = { ...osRunRecord(planningCtx, run), status: 'awaiting_confirmation' }
-  const execution = await server.confirmAction({
+  const execution = await confirmAgentServerSaaSProfileActionAndResume({
+    profile: createXoxHostProfile(planningCtx, { beforeStateWrite }, state),
     run: osRun,
-    actionRequest: osActionRequest(input.action, `action_${input.action.id}`),
+    request,
+    actionRequest: xoxOsActionRequest(input.action, `action_${input.action.id}`),
     actorId: input.user.id,
     ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
+    ...(request.maxIterations !== undefined ? { maxIterations: request.maxIterations } : {}),
+    shouldResume: async () => !state.actionRows.some((row) => row.status === 'pending'),
   })
-  if (state.actionRows.some((row) => row.status === 'pending')) {
+  if (!execution.runResult) {
     const actionRequest = await input.db.selectFrom('agent_action_requests').selectAll().where('id', '=', input.action.id).executeTakeFirstOrThrow()
     return {
       actionRequest,
@@ -1066,15 +721,7 @@ export async function resumeXoxAgentRunAfterActionConfirmation(input: {
       runResult: null,
     }
   }
-  const result = await server.resumeRun({
-    run: osRun,
-    request,
-    observations: [execution.observation],
-    ...(request.maxIterations !== undefined ? { maxIterations: request.maxIterations } : {}),
-  }, {
-    ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
-  })
-  const runResult = await finalizeAgenticOsResult(planningCtx, state, result, { beforeStateWrite })
+  const runResult = await finalizeAgenticOsResult(planningCtx, state, execution.runResult, { beforeStateWrite })
   const actionRequest = await input.db.selectFrom('agent_action_requests').selectAll().where('id', '=', input.action.id).executeTakeFirstOrThrow()
   return {
     actionRequest,
@@ -1108,22 +755,13 @@ export async function executeXoxAgentRun(
   })
   const run = await ctx.db.selectFrom('agent_runs').selectAll().where('id', '=', ctx.runId).executeTakeFirst()
   const request = osRunInput(planningCtx, objective)
-  const host = createXoxHostProfile(planningCtx, options, state)
-  const server = createAgentServer(host, {
-    kitOptions: {
-      engineOptions: {
-        defaultMaxIterations: 5,
-        pendingActionCollection: { enabledByDefault: true, maxActions: 8 },
-      },
-    },
-  })
-  const result = await server.resumeRun({
+  const result = await runAgentServerSaaSProfileRun({
+    profile: createXoxHostProfile(planningCtx, options, state),
     run: osRunRecord(ctx, run ?? null),
     request,
     observations: [],
     ...(request.maxIterations !== undefined ? { maxIterations: request.maxIterations } : {}),
-  }, {
-    ...(ctx.abortSignal ? { abortSignal: ctx.abortSignal } : {}),
+    ...(ctx.abortSignal ? { control: { abortSignal: ctx.abortSignal } } : {}),
   })
   return finalizeAgenticOsResult(planningCtx, state, result, options)
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { SandboxBroker } from '@agentic-os/sandbox'
+import { SandboxBroker, projectAgenticSandboxObservationRead } from '@agentic-os/sandbox'
 import { createProductDefaultModel, projectModel } from '@xox/domain'
 import type { SandboxManifest, SandboxRunCodeInput } from '@xox/contracts'
 import { AGENT_TOOL_CATALOG, AGENT_TOOL_REGISTRY, toolCallToPlannerStep } from '../src/agent/tool-catalog.js'
@@ -508,14 +508,19 @@ describe('manifest-scoped sandbox tool', () => {
       loanAdjustedROI_percent: 8.7654,
       notes: 'x'.repeat(900),
     })
-    const preview = JSON.parse(sandboxInternalsForTests.displayPreview({
+    const preview = JSON.parse(projectAgenticSandboxObservationRead({
       status: 'completed',
       executionMode: 'executed',
       backendId: 'local-script',
       exitCode: 0,
+      stdout: '',
+      stderr: '',
       purpose: '长输出预览校验',
       dataBundleSummary: { scope: 'workspace_summary', fields: ['totalProfit'], rows: 1, redactions: 0 },
       manifest: {
+        manifestId: 'manifest_long_output',
+        nonce: 'nonce_long_output',
+        inputBundle: { bundleId: 'bundle_long_output', contentHash: 'bundle_hash' },
         network: { mode: 'disabled' },
         capabilities: { businessWrites: false },
       },
@@ -528,8 +533,10 @@ describe('manifest-scoped sandbox tool', () => {
       },
       outputText: longOutput,
       result: { summary: longOutput },
+      artifacts: [],
+      provenance: { codeHash: 'code_hash' },
       sandboxRunId: 'sandbox_long_output',
-    } as any))
+    } as any).displayPreview)
 
     expect(preview.outputText).toMatchObject({
       truncatedForDisplay: true,

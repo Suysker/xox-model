@@ -3,7 +3,12 @@ import type { FastifyInstance } from 'fastify'
 import type { Kysely } from 'kysely'
 import { z } from 'zod'
 import type { AgentActionUpdatePayload, AgentNavigationEvent, AgentThreadEvent, AgentThreadState } from '@xox/contracts'
-import { agentServerRunLifecycleEvents, openAgentServerSignalStateStream } from '@agentic-os/server'
+import {
+  openAgentServerSignalStateStream,
+  projectAgentServerActionExecutionFailure,
+  projectAgentServerActionCancellation,
+  projectAgentServerActionUpdate,
+} from '@agentic-os/server'
 import type { Database, Row } from '../db/schema.js'
 import { jsonString, parseJson } from '../db/database.js'
 import { conflict, forbidden, notFound, unprocessable } from '../core/http.js'
@@ -210,7 +215,7 @@ async function confirmAgentActionRequest(db: Kysely<Database>, settings: Setting
       .executeTakeFirst()
     await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', action.thread_id).execute().catch(() => undefined)
     if (latestAction?.status !== 'executed') {
-      await addRunEvent(db, agentServerRunLifecycleEvents.actionExecutionFailed({
+      const projected = projectAgentServerActionExecutionFailure({
         threadId: action.thread_id,
         runId: action.run_id,
         actionRequestId: action.id,
@@ -221,7 +226,8 @@ async function confirmAgentActionRequest(db: Kysely<Database>, settings: Setting
           title: '确认卡执行失败',
           message: `${action.title}：${message}`,
         },
-      })).catch(() => undefined)
+      })
+      await addRunEvent(db, projected.event).catch(() => undefined)
     }
     throw executionError
   })
@@ -242,29 +248,33 @@ async function cancelAgentActionRequest(db: Kysely<Database>, workspace: Row<'wo
   assertActionOwnedByWorkspace(action, workspace, user)
   if (action.status !== 'pending') throw conflict('Agent action is not pending')
 
-  await db.updateTable('agent_action_requests').set({ status: 'cancelled' }).where('id', '=', action.id).execute()
-  await db.updateTable('agent_plan_steps').set({ status: 'cancelled', updated_at: utcNow() }).where('action_request_id', '=', action.id).execute()
-  const updated = await db.selectFrom('agent_action_requests').selectAll().where('id', '=', action.id).executeTakeFirstOrThrow()
-  const planSteps = await listPlanStepsForRun(db, action.run_id)
-  const assistant = await addMessage(db, action.thread_id, 'assistant', `已取消：${action.title}`)
-  await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', action.thread_id).execute()
-  await addRunEvent(db, agentServerRunLifecycleEvents.actionCancelled({
+  const projected = projectAgentServerActionCancellation({
     threadId: action.thread_id,
     runId: action.run_id,
     actionRequestId: action.id,
     actionKind: action.kind,
     actionTitle: action.title,
+    assistantMessage: `已取消：${action.title}`,
     copy: {
       title: '确认卡已取消',
       message: `已取消：${action.title}`,
     },
-  }))
+  })
+
+  await db.updateTable('agent_action_requests').set({ status: projected.actionStatus }).where('id', '=', action.id).execute()
+  await db.updateTable('agent_plan_steps').set({ status: projected.planStepStatus, updated_at: utcNow() }).where('action_request_id', '=', action.id).execute()
+  const updated = await db.selectFrom('agent_action_requests').selectAll().where('id', '=', action.id).executeTakeFirstOrThrow()
+  const planSteps = await listPlanStepsForRun(db, action.run_id)
+  const assistant = await addMessage(db, action.thread_id, 'assistant', projected.assistantMessage)
+  await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', action.thread_id).execute()
+  await addRunEvent(db, projected.event)
   return {
     actionRequest: updated,
     messages: [assistant],
     runEvents: await listSerializedRunEvents(db, action.run_id),
     planSteps,
     threadId: action.thread_id,
+    signal: projected.signal,
   }
 }
 
@@ -309,7 +319,7 @@ async function updateAgentActionRequest(
     .execute()
   await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', action.thread_id).execute()
   const planSteps = await listPlanStepsForRun(db, action.run_id)
-  await addRunEvent(db, agentServerRunLifecycleEvents.actionUpdated({
+  const projected = projectAgentServerActionUpdate({
     threadId: action.thread_id,
     runId: action.run_id,
     actionRequestId: action.id,
@@ -320,12 +330,14 @@ async function updateAgentActionRequest(
       title: '确认卡已编辑',
       message: `确认卡已编辑：${updated.title}`,
     },
-  }))
+  })
+  await addRunEvent(db, projected.event)
   return {
     actionRequest: updated,
     runEvents: await listSerializedRunEvents(db, action.run_id),
     planSteps,
     threadId: action.thread_id,
+    signal: projected.signal,
   }
 }
 
@@ -550,7 +562,7 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
       const workspace = await getWorkspaceForUser(db, user)
       const { actionRequestId } = request.params as { actionRequestId: string }
       const result = await cancelAgentActionRequest(db, workspace, user, actionRequestId)
-      agentThreadEvents.publish(result.threadId, 'action_cancelled')
+      agentThreadEvents.publish(result.threadId, result.signal)
       return {
         actionRequest: serializeAction(result.actionRequest),
         messages: result.messages.map(serializeMessage),
@@ -569,7 +581,7 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
       const workspace = await getWorkspaceForUser(db, user)
       const { actionRequestId } = request.params as { actionRequestId: string }
       const result = await updateAgentActionRequest(db, workspace, user, actionRequestId, request.body as AgentActionUpdatePayload)
-      agentThreadEvents.publish(result.threadId, 'action_updated')
+      agentThreadEvents.publish(result.threadId, result.signal)
       return {
         actionRequest: serializeAction(result.actionRequest),
         runEvents: result.runEvents,

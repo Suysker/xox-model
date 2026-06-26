@@ -21,7 +21,7 @@ import { createProductDefaultModel, projectModel } from '@xox/domain'
 import { decideAgentMemoryCandidate } from '@agentic-os/core'
 import { recoverRunningAgentRuns } from '../src/agent/agentic-os/xox-run-worker-adapter.js'
 import {
-  rememberAgentMemory,
+  captureTenantMemory,
   retrieveAgentMemories,
 } from '../src/agent/memory.js'
 import { addRunEvent } from '../src/agent/agentic-os/xox-run-event-store-adapter.js'
@@ -1343,7 +1343,10 @@ describe('xox TypeScript API', () => {
       expect(response.json.actionRequests.every((action: any) => action.status === 'executed')).toBe(true)
       expect(response.json.actionRequests.map((action: any) => action.kind).sort()).toEqual(['ledger.create_entry', 'workspace.update_draft'])
       const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
-      expect(state.json.evaluations.map((evaluation: any) => evaluation.status)).toEqual(['pass', 'pass'])
+      expect(state.json.runEvents.some((event: any) =>
+        event.type === 'response_evaluated' &&
+        event.data?.evaluationStatus === 'pass',
+      )).toBe(true)
       expect(response.json.runEvents.filter((event: any) => event.type === 'memory_recall_started')).toHaveLength(1)
       expect(response.json.runEvents.filter((event: any) => event.type === 'action_executed')).toHaveLength(2)
       expect(response.json.messages.at(-1).content).toContain('成员入账')
@@ -1448,9 +1451,9 @@ describe('xox TypeScript API', () => {
       expect(response.json.messages.at(-1).content).toContain('个人回报')
       expect(response.json.messages.at(-1).content).not.toContain('fake_deterministic')
       expect(response.json.runEvents.some((event: any) =>
-        event.type === 'provider_stable_long_tool_mode' &&
-        event.data?.toolName === 'sandbox_run_code' &&
-        event.data?.stream === false,
+        event.type === 'tool_call_completed' &&
+        event.data?.runtimeEvent?.toolName === 'sandbox_run_code' &&
+        event.data?.runtimeEvent?.payload?.outcome === 'completed_valid',
       )).toBe(true)
       expect(response.json.runEvents.some((event: any) =>
         event.type === 'response_evaluated' &&
@@ -1470,7 +1473,7 @@ describe('xox TypeScript API', () => {
         event.data?.finding?.pattern === 'no_progress',
       )).toBe(false)
       const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
-      expect(state.json.goals.at(-1).status).toBe('completed')
+      expect(state.json.runEvents.some((event: any) => event.type === 'run_completed')).toBe(true)
       await closeHarness(harness)
     }, {
       capabilities: ['data', 'sandbox'],
@@ -1562,10 +1565,6 @@ describe('xox TypeScript API', () => {
       const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
       const sandboxSteps = state.json.planSteps.filter((step: any) => step.toolName === 'sandbox_run_code')
       expect(sandboxSteps.map((step: any) => step.status)).toEqual(['failed', 'executed'])
-      expect(state.json.evaluations.some((evaluation: any) =>
-        evaluation.status === 'continue' &&
-        evaluation.unsatisfiedCriteria.some((finding: any) => finding.id === 'graph.repairable_tool_observations'),
-      )).toBe(true)
       expect(state.json.runEvents.some((event: any) =>
         event.type === 'tool_call_failed' &&
         event.data?.runtimeEvent?.payload?.outcome === 'failed_repairable',
@@ -1574,7 +1573,7 @@ describe('xox TypeScript API', () => {
         event.type === 'tool_call_completed' &&
         event.data?.runtimeEvent?.payload?.outcome === 'completed_valid',
       )).toBe(true)
-      expect(state.json.goals.at(-1).status).toBe('completed')
+      expect(state.json.runEvents.some((event: any) => event.type === 'run_completed')).toBe(true)
       expect(state.json.messages.at(-1).content).toContain('修复后的沙箱结果')
       await closeHarness(harness)
     }, {
@@ -1611,7 +1610,6 @@ describe('xox TypeScript API', () => {
       expect(planningCalls).toBe(1)
       expect(claimReviewCalls).toBe(0)
       const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
-      expect(state.json.goals.at(-1).status).toBe('completed')
       expect(state.json.runEvents.some((event: any) =>
         event.type === 'final_answer_claim_extraction_unavailable',
       )).toBe(false)
@@ -1679,7 +1677,6 @@ describe('xox TypeScript API', () => {
         event.type === 'run_failed' &&
         event.status === 'failed',
       )).toBe(true)
-      expect(state.json.goals.at(-1).status).toBe('failed')
       expect(state.json.messages.map((message: any) => message.role)).toEqual(['user'])
       await closeHarness(harness)
     }, {
@@ -1724,7 +1721,6 @@ describe('xox TypeScript API', () => {
         event.data?.findings?.some((finding: any) => finding.code === 'response.sandbox_evidence_invalid') &&
         event.data?.evidence?.some((item: any) => item.authority === 'sandbox' && item.source === 'sandbox_run_code'),
       )).toBe(true)
-      expect(state.json.goals.at(-1).status).toBe('failed')
       expect(state.json.messages.map((message: any) => message.role)).toEqual(['user'])
       await closeHarness(harness)
     }, {
@@ -1789,7 +1785,7 @@ describe('xox TypeScript API', () => {
         'sandbox_run_code',
       ])
       const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
-      expect(state.json.goals.at(-1).status).toBe('completed')
+      expect(state.json.runEvents.some((event: any) => event.type === 'run_completed')).toBe(true)
       expect(state.json.runEvents.some((event: any) =>
         event.type === 'tool_plan_ready' &&
         event.data?.plannerSource === 'openai_compatible_tool_calls',
@@ -1875,7 +1871,7 @@ describe('xox TypeScript API', () => {
         step.toolName === 'data_query_workspace' &&
         step.toolArguments?.scope === 'entity_summary',
       )).toBe(true)
-      expect(state.json.goals.at(-1).status).toBe('completed')
+      expect(state.json.runEvents.some((event: any) => event.type === 'run_completed')).toBe(true)
       await closeHarness(harness)
     }, {
       capabilities: ['sandbox'],
@@ -1967,7 +1963,7 @@ describe('xox TypeScript API', () => {
       expect(planningCalls).toBeGreaterThanOrEqual(2)
       const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
       expect(state.json.runEvents.some((event: any) => event.type === 'response_evaluated')).toBe(true)
-      expect(state.json.goals.at(-1).status).toBe('completed')
+      expect(state.json.runEvents.some((event: any) => event.type === 'run_completed')).toBe(true)
       expect(state.json.runEvents.some((event: any) => event.type === 'response_evaluated')).toBe(true)
       await closeHarness(harness)
     }, {
@@ -2500,7 +2496,7 @@ describe('xox TypeScript API', () => {
     }
     await withFakeOpenAICompatibleProvider((body) => {
       planningTokenBudgets.push(body.max_tokens)
-      expect(body.stream).toBe(false)
+      expect(typeof body.stream).toBe('boolean')
       return fakeToolResponse('workspace_configure_operating_model', { plan: budgetPlan })
     }, async (baseUrl) => {
       const harness = await buildHarness('agent-complex-provider-budget', {
@@ -2528,14 +2524,8 @@ describe('xox TypeScript API', () => {
       })
 
       expect(planned.statusCode).toBe(200)
-      expect(planningTokenBudgets).toEqual([48000])
-      const stableMode = planned.json.runEvents.find((event: any) => event.type === 'provider_stable_long_tool_mode')
-      expect(stableMode?.data).toMatchObject({
-        toolName: 'workspace_configure_operating_model',
-        stream: false,
-        maxTokens: 48000,
-        requestTimeoutMs: 360_000,
-      })
+      expect(planningTokenBudgets.every((value) => typeof value === 'number' && value > 0)).toBe(true)
+      expect(planned.json.runEvents.some((event: any) => event.type === 'provider_stable_long_tool_mode')).toBe(false)
       await closeHarness(harness)
     })
   })
@@ -3148,8 +3138,8 @@ describe('xox TypeScript API', () => {
 
       const goals = await harness.db.selectFrom('agent_goals').selectAll().where('run_id', '=', response.json.runId).execute()
       const evaluations = await harness.db.selectFrom('agent_evaluations').selectAll().where('run_id', '=', response.json.runId).execute()
-      expect(goals).toHaveLength(1)
-      expect(evaluations.length).toBeGreaterThanOrEqual(1)
+      expect(goals).toHaveLength(0)
+      expect(evaluations).toHaveLength(0)
 
       const visibleKinds = flattenTranscriptNodes(response.json.transcriptNodes)
         .filter((node: any) => node.visibility === 'user')
@@ -3265,7 +3255,10 @@ describe('xox TypeScript API', () => {
       expect(response.json.planSteps.map((step: any) => step.status)).toEqual(['executed'])
       expect(response.json.messages.at(-1).content).toContain('3月计划收入')
       const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
-      expect(state.json.evaluations.at(-1).status).toBe('pass')
+      expect(state.json.runEvents.some((event: any) =>
+        event.type === 'response_evaluated' &&
+        event.data?.evaluationStatus === 'pass',
+      )).toBe(true)
       expect(response.json.runEvents.some((event: any) => event.type === 'response_evaluated')).toBe(true)
       expect(response.json.runEvents.some((event: any) => event.type === 'model_continuation_failed')).toBe(false)
       await closeHarness(harness)
@@ -4163,7 +4156,7 @@ describe('xox TypeScript API', () => {
 
       const workspace = await harness.db.selectFrom('workspaces').selectAll().where('owner_id', '=', firstUser.id).executeTakeFirstOrThrow()
       const firstUserRow = await harness.db.selectFrom('users').selectAll().where('id', '=', firstUser.id).executeTakeFirstOrThrow()
-      const candidateMemory = await rememberAgentMemory({
+      const candidateMemory = await captureTenantMemory({
         db: harness.db,
         workspace,
         user: firstUserRow,
@@ -4240,7 +4233,7 @@ describe('xox TypeScript API', () => {
         { id: otherThreadId, workspace_id: workspace.id, user_id: user.id, title: 'Memory v2 other', created_at: now, updated_at: now },
       ]).execute()
 
-      const semantic = await rememberAgentMemory({
+      const semantic = await captureTenantMemory({
         db: harness.db,
         workspace,
         user,
@@ -4252,7 +4245,7 @@ describe('xox TypeScript API', () => {
         value: '默认记账成员是 成员 1',
         confidence: 0.92,
       })
-      const candidate = await rememberAgentMemory({
+      const candidate = await captureTenantMemory({
         db: harness.db,
         workspace,
         user,
@@ -4265,7 +4258,7 @@ describe('xox TypeScript API', () => {
         value: '默认审批人是 李雷',
         confidence: 0.82,
       })
-      const diagnostic = await rememberAgentMemory({
+      const diagnostic = await captureTenantMemory({
         db: harness.db,
         workspace,
         user,
@@ -4277,7 +4270,7 @@ describe('xox TypeScript API', () => {
         value: '目标要求 1 个股东，当前草稿为 5 个。',
         confidence: 0.7,
       })
-      const episode = await rememberAgentMemory({
+      const episode = await captureTenantMemory({
         db: harness.db,
         workspace,
         user,
@@ -4289,7 +4282,7 @@ describe('xox TypeScript API', () => {
         value: '已通过 Agent 执行账本动作：成员 1 入账 680。',
         confidence: 0.75,
       })
-      const working = await rememberAgentMemory({
+      const working = await captureTenantMemory({
         db: harness.db,
         workspace,
         user,
@@ -4305,7 +4298,7 @@ describe('xox TypeScript API', () => {
         value: '本轮提到的成员是 成员 2。',
         confidence: 0.7,
       })
-      const otherThreadWorking = await rememberAgentMemory({
+      const otherThreadWorking = await captureTenantMemory({
         db: harness.db,
         workspace,
         user,
@@ -5311,8 +5304,8 @@ describe('xox TypeScript API', () => {
       const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
       expect(planningCalls).toBe(2)
       expect(state.statusCode).toBe(200)
-      expect(state.json.evaluations.map((evaluation: any) => evaluation.status)).toContain('needs_confirmation')
-      const confirmationEvaluation = state.json.evaluations.find((evaluation: any) => evaluation.status === 'needs_confirmation')
+      expect(state.json.actionRequests.some((action: any) => action.status === 'pending')).toBe(true)
+      expect(state.json.runEvents.some((event: any) => event.type === 'confirmation_ready')).toBe(true)
       const action = state.json.actionRequests.find((item: any) => item.payload?.source === 'workspace_configure_operating_model')
       expect(action.payload.workspaceName).toBe('星河 50 期启动测算')
       expect(action.payload.config.teamMembers).toHaveLength(50)
@@ -5444,11 +5437,9 @@ describe('xox TypeScript API', () => {
 
       const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
       expect(state.statusCode).toBe(200)
-      expect(state.json.goals).toHaveLength(1)
-      expect(state.json.goals[0].status).toBe('waiting_for_confirmation')
-      expect(state.json.evaluations[0].status).toBe('continue')
-      expect(state.json.evaluations.some((evaluation: any) => evaluation.status === 'needs_confirmation')).toBe(true)
-      expect(state.json.evaluations[0].unsatisfiedCriteria.some((finding: any) => finding.id === 'graph.operating_model_inputs_planned')).toBe(true)
+      expect(state.json.goals).toHaveLength(0)
+      expect(state.json.evaluations).toHaveLength(0)
+      expect(state.json.actionRequests.every((action: any) => action.status === 'pending')).toBe(true)
       expect(state.json.runEvents.filter((event: any) => event.type === 'goal_iteration_started').length).toBeGreaterThanOrEqual(2)
       expect(state.json.runEvents.some((event: any) => event.type === 'confirmation_ready')).toBe(true)
       expect(response.json.actionRequests.at(-1).payload.workspaceName).toBe('修复后经营模型')

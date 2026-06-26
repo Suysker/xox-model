@@ -1,14 +1,14 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { classifyToolObservationOutcome, type ToolObservationStatus } from '@agentic-os/core'
+import {
+  canonicalObservationFromHostToolObservation,
+} from '@agentic-os/core'
 import { projectModel, type ModelConfig, type ScenarioResult } from '@xox/domain'
 import type {
   SandboxArtifactKind,
   SandboxCapabilityProfile,
   SandboxDataScope,
-  SandboxEvidenceProof,
   SandboxFileKind,
   SandboxManifest,
-  SandboxNestedToolObservation,
   SandboxObservation,
   SandboxRunCodeInput,
 } from '@xox/contracts'
@@ -18,23 +18,24 @@ import { draftContext, getWorkspaceDraft } from '../modules/workspace.js'
 import { listEntries, listPeriods } from '../modules/ledger.js'
 import type { CurrentUser } from '../modules/auth.js'
 import {
-  buildPlannedItemFromRuntimeStep,
-  isActionDraft,
   type ActionDraftBuilderHandlers,
   type PlannedItem,
   type ReadDraft,
   type RuntimePlannerStep,
+  xoxNavigationFromTabs,
 } from './host-profile/xox-planned-items.js'
 import type { AgentActionDraft } from './host-profile/xox-planned-items.js'
 import type { PlannerContext } from './host-profile/xox-planned-items.js'
 import type {
   SandboxDataBundle,
   SandboxToolDocument,
-  SandboxToolRuntimeRequest,
-  SandboxToolRuntimeResponse,
   SandboxToolSdkEntry,
 } from '@agentic-os/sandbox'
-import { SandboxBroker } from '@agentic-os/sandbox'
+import {
+  createAgenticSandboxSaaSHostToolPeripheral,
+  runAgenticSandboxPeripheralRead,
+  type AgenticSandboxObservationReadProjection,
+} from '@agentic-os/sandbox'
 import { AGENT_TOOL_REGISTRY, toolCallToPlannerStep, type AgentToolRegistryEntry, type AgentToolRiskLevel } from './tool-catalog.js'
 
 type SandboxExpectedOutput = NonNullable<SandboxRunCodeInput['expectedOutputs']>[number]
@@ -78,8 +79,10 @@ const DEFAULT_CAPABILITIES: SandboxCapabilityProfile = {
   accountActions: false,
 }
 
-const DISPLAY_TEXT_PREVIEW_LIMIT = 500
 const riskRank: Record<'low' | 'medium' | 'high', number> = { low: 1, medium: 2, high: 3 }
+
+const isActionDraft = (item: PlannedItem): item is AgentActionDraft =>
+  Boolean(item && typeof item === 'object' && 'kind' in item)
 
 export const SANDBOX_FILE_KINDS: readonly SandboxFileKind[] = [
   'csv',
@@ -367,30 +370,12 @@ function hashJson(value: unknown) {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex')
 }
 
-function hashText(value: string) {
-  return createHash('sha256').update(value).digest('hex')
-}
-
 function shortHash(value: string) {
   return createHash('sha256').update(value).digest('hex').slice(0, 16)
 }
 
 function asStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0).map((item) => item.trim()) : []
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
-}
-
-function parseJsonObject(value: string | null | undefined): Record<string, unknown> | null {
-  if (!value) return null
-  try {
-    const parsed = JSON.parse(value)
-    return isRecord(parsed) ? parsed : { value: parsed }
-  } catch {
-    return { text: value }
-  }
 }
 
 function serializeToolManifestDocument(input: { title: string; tools: SandboxToolSdkEntry[] }) {
@@ -745,375 +730,123 @@ function buildManifest(ctx: SandboxServiceContext, input: SandboxRunCodeInput, b
   }
 }
 
-function displayTextReference(value: string) {
-  const bytes = Buffer.byteLength(value, 'utf8')
-  const truncatedForDisplay = bytes > DISPLAY_TEXT_PREVIEW_LIMIT
-  return {
-    preview: truncatedForDisplay ? value.slice(0, DISPLAY_TEXT_PREVIEW_LIMIT) : value,
-    truncatedForDisplay,
-    truncatedForModel: false,
-    sha256: hashText(value),
-    bytes,
-  }
-}
-
-function displayStructuredReference(value: unknown, depth = 0): unknown {
-  if (value === null || value === undefined) return value ?? null
-  if (typeof value === 'string') {
-    return value.length > DISPLAY_TEXT_PREVIEW_LIMIT
-      ? {
-          preview: value.slice(0, DISPLAY_TEXT_PREVIEW_LIMIT),
-          truncatedForDisplay: true,
-          sha256: hashText(value),
-          bytes: Buffer.byteLength(value, 'utf8'),
-        }
-      : value
-  }
-  if (typeof value !== 'object') return value
-  if (depth >= 4) return '[nested structure truncated]'
-  if (Array.isArray(value)) {
-    const items = value.slice(0, 20).map((item) => displayStructuredReference(item, depth + 1))
-    return value.length > items.length
-      ? [...items, { truncatedItems: value.length - items.length }]
-      : items
-  }
-  const entries = Object.entries(value as Record<string, unknown>)
-  const compact: Record<string, unknown> = {}
-  for (const [key, entryValue] of entries.slice(0, 40)) {
-    compact[key] = displayStructuredReference(entryValue, depth + 1)
-  }
-  if (entries.length > 40) compact.truncatedKeys = entries.length - 40
-  return compact
-}
-
-function displayPreview(observation: SandboxObservation) {
-  const outputText = displayTextReference(observation.outputText)
-  const resultSummary = displayTextReference(observation.result.summary)
-  const parsedOutput = observation.extraction.parsedOutput === undefined
-    ? undefined
-    : displayStructuredReference(observation.extraction.parsedOutput)
-  return JSON.stringify({
-    status: observation.status,
-    executionMode: observation.executionMode,
-    backendId: observation.backendId,
-    exitCode: observation.exitCode,
-    purpose: observation.purpose,
-    scope: observation.dataBundleSummary.scope,
-    fields: observation.dataBundleSummary.fields,
-    rows: observation.dataBundleSummary.rows ?? 0,
-    files: observation.dataBundleSummary.files ?? 0,
-    network: observation.manifest.network.mode,
-    directBusinessWrites: observation.manifest.capabilities.businessWrites,
-    extractionStatus: observation.extraction.extractionStatus,
-    extraction: {
-      status: observation.extraction.extractionStatus,
-      ...(parsedOutput !== undefined ? { parsedOutput } : {}),
-      ...(observation.extraction.summary ? { summary: displayTextReference(observation.extraction.summary) } : {}),
-      ...(observation.extraction.warnings?.length ? { warnings: observation.extraction.warnings } : {}),
-    },
-    outputText,
-    result: {
-      summary: resultSummary,
-    },
-    rawOutputRef: {
-      storage: 'sandbox_observation',
-      id: observation.sandboxRunId,
-      sha256: outputText.sha256,
-      bytes: outputText.bytes,
-      truncatedForDisplay: outputText.truncatedForDisplay,
-      truncatedForModel: false,
-    },
-  }, null, 2)
-}
-
-function hasModelReadableSandboxOutput(observation: SandboxObservation) {
-  return Boolean(
-    observation.outputText.trim() ||
-    observation.stdout.trim() ||
-    observation.stderr.trim() ||
-    observation.extraction.extractionStatus === 'parsed' ||
-    observation.artifacts.length > 0,
-  )
-}
-
-function sandboxOutputHash(observation: SandboxObservation) {
-  return hashJson({
-    stdout: observation.stdout,
-    stderr: observation.stderr,
-    outputText: observation.outputText,
-    extraction: observation.extraction.parsedOutput ?? observation.extraction.summary ?? null,
-    artifacts: observation.artifacts.map((artifact) => ({
-      id: artifact.artifactId,
-      name: artifact.name,
-      sizeBytes: artifact.sizeBytes,
-    })),
-  })
-}
-
-function buildSandboxEvidenceProof(observation: SandboxObservation): SandboxEvidenceProof | undefined {
-  if (
-    observation.status !== 'completed' ||
-    observation.executionMode !== 'executed' ||
-    observation.exitCode !== 0
-  ) {
-    return undefined
-  }
-  const nested = observation.nestedToolObservations ?? []
-  const sourceObservationRefs = [
-    ...(observation.provenance.inputBundleConsumed ? observation.inputEvidenceIds : []),
-    ...nested.flatMap((item) => item.status === 'completed' ? [item.observationId] : []),
-  ]
-  return {
-    executionMode: 'executed',
-    status: 'completed',
-    exitCode: 0,
-    backendId: observation.backendId,
-    codeHash: observation.provenance.codeHash,
-    outputHash: sandboxOutputHash(observation),
-    manifest: {
-      manifestId: observation.manifest.manifestId,
-      bundleId: observation.manifest.inputBundle.bundleId,
-      contentHash: observation.manifest.inputBundle.contentHash,
-      nonce: observation.manifest.nonce,
-      consumed: Boolean(observation.provenance.inputBundleConsumed),
-    },
-    sdkCalls: nested.map((item) => ({
-      name: item.name,
-      argumentsHash: item.argumentsHash,
-      observationId: item.observationId,
-      status: item.status,
-    })),
-    sourceObservationRefs,
-  }
-}
-
-function sandboxObservationStatus(observation: SandboxObservation): ToolObservationStatus {
-  if (observation.status === 'completed') return 'completed'
-  if (observation.status === 'cancelled') return 'cancelled'
-  if (observation.status === 'blocked') return 'not_executed'
-  return 'failed'
-}
-
-async function sandboxToolRuntimeHandler(input: {
-  ctx: PlannerContext
-  handlers?: ActionDraftBuilderHandlers<PlannerContext>
-  nestedObservations: SandboxNestedToolObservation[]
-  parentToolCallId: string
-  request: SandboxToolRuntimeRequest
-}): Promise<SandboxToolRuntimeResponse> {
-  if (input.request.toolName === 'sandbox_run_code') {
-    return {
-      ok: false,
-      toolName: input.request.toolName,
-      status: 'failed' as const,
-      error: {
-        code: 'sandbox.tool_recursion_forbidden',
-        message: 'sandbox_run_code cannot be called recursively from inside sandbox code.',
-        repairable: true,
-      },
-    }
-  }
-  const step = toolCallToPlannerStep(input.request.toolName, input.request.arguments)
-  if (!step || !input.handlers) {
-    return {
-      ok: false,
-      toolName: input.request.toolName,
-      status: 'failed' as const,
-      error: {
-        code: 'sandbox.tool_runtime_mapping_missing',
-        message: `${input.request.toolName} is not mapped in the host tool catalog.`,
-        repairable: true,
-      },
-    }
-  }
-  const providerToolCallId = `${input.parentToolCallId}_${input.request.id}`
-  const planned = await buildPlannedItemFromRuntimeStep(input.ctx, {
-    ...step,
-    providerToolName: input.request.toolName,
-    providerToolCallId,
-    providerToolCallIndex: 0,
-    providerToolArguments: input.request.arguments,
-  }, input.handlers)
-  const item = Array.isArray(planned) ? planned[0] : planned
-  if (!item) {
-    return {
-      ok: false,
-      toolName: input.request.toolName,
-      status: 'failed' as const,
-      error: {
-        code: 'sandbox.tool_runtime_no_result',
-        message: `${input.request.toolName} produced no runtime observation.`,
-        repairable: true,
-      },
-    }
-  }
-  if (isActionDraft(item)) {
-    const observationId = `${providerToolCallId}_pending_approval`
-    input.nestedObservations.push({
-      observationId,
-      name: input.request.toolName,
-      argumentsHash: hashJson(input.request.arguments),
-      status: 'pending_approval',
-    })
-    return {
-      ok: false,
-      toolName: input.request.toolName,
-      observationId,
-      status: 'pending_approval' as const,
-      error: {
-        code: 'sandbox.tool_runtime_pending_approval',
-        message: `${input.request.toolName} requires aggregate approval after sandbox execution.`,
-        repairable: true,
-      },
-    }
-  }
-  const modelContent = item.modelContent ?? item.displayPreview ?? item.message
-  const output = parseJsonObject(modelContent) ?? { text: modelContent }
-  const status: NonNullable<SandboxToolRuntimeResponse['status']> = item.observationStatus === 'failed' || item.status === 'failed'
-    ? 'failed'
-    : 'completed'
-  const observationId = `${providerToolCallId}_observation`
-  input.nestedObservations.push({
-    observationId,
-    name: input.request.toolName,
-    argumentsHash: hashJson(input.request.arguments),
-    status,
-    modelContent,
-    outputHash: hashJson(output),
-  })
-  return {
-    ok: status === 'completed',
-    toolName: input.request.toolName,
-    observationId,
-    status,
-    output,
-    ...(status === 'completed'
-      ? {}
-      : {
-          error: {
-            code: 'sandbox.tool_runtime_failed',
-            message: `${input.request.toolName} did not complete successfully.`,
-            repairable: true,
-          },
-        }),
-  }
-}
-
-export async function runSandboxCode(
-  ctx: SandboxServiceContext,
+async function runSandboxPeripheralCode(
+  ctx: PlannerContext,
   step: RuntimePlannerStep,
   handlers?: ActionDraftBuilderHandlers<PlannerContext>,
-): Promise<SandboxObservation> {
+): Promise<{
+  observation: SandboxObservation
+  aggregateActions: AgentActionDraft[]
+  projection: AgenticSandboxObservationReadProjection<AgentActionDraft['riskLevel']>
+}> {
   const input = normalizeSandboxInput(step)
   const toolCallId = step.providerToolCallId ?? `sandbox_${shortHash(`${ctx.runId}:${input.purpose}`)}`
   const bundle = await buildSandboxDataBundle(ctx, input)
   const manifest = buildManifest(ctx, input, bundle, toolCallId)
-  const broker = new SandboxBroker()
   const toolSdk = buildSandboxToolSdk()
-  const nestedToolObservations: SandboxNestedToolObservation[] = []
-  const execution = await broker.execute({
+  const peripheral = await runAgenticSandboxPeripheralRead<RuntimePlannerStep, PlannedItem, AgentActionDraft, AgentActionDraft['riskLevel'], SandboxObservation>({
     manifest,
     toolInput: input,
     bundle,
     toolSdk,
     ...(handlers
-      ? {
-          toolRuntimeHandler: (request) => sandboxToolRuntimeHandler({
-            ctx: ctx as PlannerContext,
-            handlers,
-            nestedObservations: nestedToolObservations,
-            parentToolCallId: toolCallId,
-            request,
-          }),
-        }
+      ? createAgenticSandboxSaaSHostToolPeripheral<
+          PlannerContext,
+          RuntimePlannerStep,
+          AgentActionDraft,
+          ReadDraft,
+          NonNullable<ReadDraft['navigation']>,
+          AgentActionDraft['riskLevel']
+        >({
+          ctx,
+          handlers,
+          mapToolCall: toolCallToPlannerStep,
+          isAction: isActionDraft,
+          locale: 'zh-CN',
+          createNavigation: xoxNavigationFromTabs,
+          shouldIncludeAggregateToolCall: shouldBridgeSandboxToolCall,
+          riskLevelForTool: writableRiskLevelForTool,
+          actionRiskLevel: (action) => action.riskLevel,
+          riskRank: (riskLevel) => riskRank[riskLevel],
+          createAggregateAction: ({ observationId, actions, riskLevel }) => {
+            const firstNavigation = actions[0]?.navigation
+            return {
+              kind: 'sandbox.aggregate_tool_calls',
+              title: '确认沙箱工具写入',
+              summary: `沙箱请求执行 ${actions.length} 个写入动作。`,
+              targetLabel: ctx.workspace.name,
+              riskLevel,
+              details: actions.map((action, index) => ({
+                label: `${index + 1}. ${action.title}`,
+                value: action.summary,
+              })),
+              navigation: firstNavigation ?? {
+                type: 'navigation',
+                route: { mainTab: 'dashboard' },
+                reason: '沙箱写入聚合确认需要打开相关工作台页面核对。',
+              },
+              payload: {
+                sandboxRunId: observationId,
+                nestedActions: actions.map(serializableNestedAction),
+              },
+            }
+          },
+        })
       : {}),
     ...(process.env.XOX_SANDBOX_BACKEND ? { preferredBackendId: process.env.XOX_SANDBOX_BACKEND } : {}),
-  })
-  const observation: SandboxObservation = {
-    runId: ctx.runId,
-    sandboxRunId: execution.sessionId,
-    status: execution.status,
-    executionMode: execution.executionMode,
-    backendId: execution.backendId,
-    sessionId: execution.sessionId,
-    exitCode: execution.exitCode,
-    durationMs: execution.durationMs,
-    stdout: execution.stdout,
-    stderr: execution.stderr,
-    outputText: execution.outputText,
-    extraction: execution.extraction,
-    provenance: execution.provenance,
-    manifestHash: execution.manifestHash,
-    inputEvidenceIds: execution.inputEvidenceIds,
-    manifestScoped: execution.manifestScoped,
-    nestedToolObservations,
-    purpose: input.purpose,
-    language: input.language,
-    manifest,
-    dataBundleSummary: {
-      scope: bundle.scope,
-      ...(bundle.rowCount !== undefined ? { rows: bundle.rowCount } : {}),
-      ...(bundle.fileCount !== undefined ? { files: bundle.fileCount } : {}),
-      fields: bundle.fields,
-      redactions: bundle.redactions,
+    readProjection: {
+      shouldIncludeToolCall: shouldBridgeSandboxToolCall,
+      riskLevel: writableRiskLevelForTool,
     },
-    result: execution.result,
-    artifacts: execution.artifacts,
-    resourceUsage: execution.resourceUsage,
+    toObservation: ({ execution, nestedToolObservations }) => ({
+      runId: ctx.runId,
+      sandboxRunId: execution.sessionId,
+      status: execution.status,
+      executionMode: execution.executionMode,
+      backendId: execution.backendId,
+      sessionId: execution.sessionId,
+      exitCode: execution.exitCode,
+      durationMs: execution.durationMs,
+      stdout: execution.stdout,
+      stderr: execution.stderr,
+      outputText: execution.outputText,
+      extraction: execution.extraction,
+      provenance: execution.provenance,
+      manifestHash: execution.manifestHash,
+      inputEvidenceIds: execution.inputEvidenceIds,
+      manifestScoped: execution.manifestScoped,
+      nestedToolObservations,
+      purpose: input.purpose,
+      language: input.language,
+      manifest,
+      dataBundleSummary: {
+        scope: bundle.scope,
+        ...(bundle.rowCount !== undefined ? { rows: bundle.rowCount } : {}),
+        ...(bundle.fileCount !== undefined ? { files: bundle.fileCount } : {}),
+        fields: bundle.fields,
+        redactions: bundle.redactions,
+      },
+      result: execution.result,
+      artifacts: execution.artifacts,
+      resourceUsage: execution.resourceUsage,
+    }),
+  })
+  return {
+    observation: peripheral.observation,
+    aggregateActions: peripheral.aggregateActions,
+    projection: peripheral.readProjection,
   }
-  const proof = buildSandboxEvidenceProof(observation)
-  return proof ? { ...observation, evidenceProof: proof } : observation
 }
 
-function riskLevelForTool(name: string): AgentToolRiskLevel | null {
-  return AGENT_TOOL_REGISTRY.find((entry) => entry.name === name)?.riskLevel ?? null
+function writableRiskLevelForTool(name: string): AgentActionDraft['riskLevel'] | null {
+  const riskLevel = AGENT_TOOL_REGISTRY.find((entry) => entry.name === name)?.riskLevel
+  return riskLevel === 'low' || riskLevel === 'medium' || riskLevel === 'high' ? riskLevel : null
 }
 
 function shouldBridgeSandboxToolCall(name: string) {
   const entry = AGENT_TOOL_REGISTRY.find((item) => item.name === name)
   if (!entry) return false
   return entry.riskLevel !== 'read' || entry.confirmationMode !== 'never'
-}
-
-function sandboxToolCallsFrom(value: unknown): Array<{ toolName: string; arguments: Record<string, unknown> }> {
-  const item = isRecord(value) ? value : null
-  if (!item) return []
-  const rawCalls = Array.isArray(item.sandboxToolCalls)
-    ? item.sandboxToolCalls
-    : Array.isArray(item.toolCalls)
-      ? item.toolCalls
-      : []
-  return rawCalls.flatMap((call) => {
-    if (!isRecord(call)) return []
-    const toolName = typeof call.toolName === 'string'
-      ? call.toolName
-      : typeof call.name === 'string'
-        ? call.name
-        : ''
-    const args = isRecord(call.arguments)
-      ? call.arguments
-      : isRecord(call.args)
-        ? call.args
-        : {}
-    if (!toolName || !shouldBridgeSandboxToolCall(toolName)) return []
-    return [{ toolName, arguments: args }]
-  })
-}
-
-function sandboxToolCalls(observation: SandboxObservation) {
-  return [
-    ...sandboxToolCallsFrom(observation.extraction.parsedOutput),
-    ...sandboxToolCallsFrom(observation.result.structured),
-  ].filter((call, index, calls) => {
-    const key = `${call.toolName}:${JSON.stringify(call.arguments)}`
-    return calls.findIndex((item) => `${item.toolName}:${JSON.stringify(item.arguments)}` === key) === index
-  })
-}
-
-function maxRisk(actions: AgentActionDraft[]): 'low' | 'medium' | 'high' {
-  return actions.reduce<'low' | 'medium' | 'high'>((max, action) => (
-    riskRank[action.riskLevel] > riskRank[max] ? action.riskLevel : max
-  ), 'low')
 }
 
 function serializableNestedAction(action: AgentActionDraft) {
@@ -1129,99 +862,31 @@ function serializableNestedAction(action: AgentActionDraft) {
   }
 }
 
-async function aggregateSandboxActions(input: {
-  ctx: PlannerContext
-  observation: SandboxObservation
-  handlers?: ActionDraftBuilderHandlers<PlannerContext>
-}) {
-  if (!input.handlers) return []
-  const calls = sandboxToolCalls(input.observation)
-  const actions: AgentActionDraft[] = []
-  for (const [index, call] of calls.entries()) {
-    const step = toolCallToPlannerStep(call.toolName, call.arguments)
-    if (!step) continue
-    const item = await buildPlannedItemFromRuntimeStep(input.ctx, {
-      ...step,
-      providerToolName: call.toolName,
-      providerToolCallId: `${input.observation.sandboxRunId}_${index}_${call.toolName}`,
-      providerToolCallIndex: index,
-      providerToolArguments: call.arguments,
-    }, input.handlers)
-    const items = Array.isArray(item) ? item : item ? [item] : []
-    for (const entry of items) {
-      if (isActionDraft(entry)) actions.push(entry)
-    }
-  }
-  if (actions.length === 0) return []
-  const riskLevel = maxRisk(actions)
-  const firstNavigation = actions[0]?.navigation
-  return [{
-    kind: 'sandbox.aggregate_tool_calls',
-    title: '确认沙箱工具写入',
-    summary: `沙箱请求执行 ${actions.length} 个写入动作。`,
-    targetLabel: input.ctx.workspace.name,
-    riskLevel,
-    details: actions.map((action, index) => ({
-      label: `${index + 1}. ${action.title}`,
-      value: action.summary,
-    })),
-    navigation: firstNavigation ?? {
-      type: 'navigation',
-      route: { mainTab: 'dashboard' },
-      reason: '沙箱写入聚合确认需要打开相关工作台页面核对。',
-    },
-    payload: {
-      sandboxRunId: input.observation.sandboxRunId,
-      nestedActions: actions.map(serializableNestedAction),
-    },
-  } satisfies AgentActionDraft]
-}
-
-export async function planSandboxRunCode(
+export async function planSandboxPeripheralRead(
   ctx: PlannerContext,
   step: RuntimePlannerStep,
   handlers?: ActionDraftBuilderHandlers<PlannerContext>,
 ): Promise<ReadDraft | PlannedItem[]> {
-  const observation = await runSandboxCode(ctx, step, handlers)
-  const preview = displayPreview(observation)
-  const modelContent = JSON.stringify({
-    observationType: 'sandbox_execution',
-    completed: observation.status === 'completed' &&
-      observation.executionMode === 'executed' &&
-      observation.exitCode === 0 &&
-      observation.manifestScoped === true &&
-      hasModelReadableSandboxOutput(observation),
-    directBusinessWrites: false,
-    nestedToolRuntimeBridge: true,
-    sandboxToolCalls: sandboxToolCalls(observation).map((call) => ({
-      ...call,
-      riskLevel: riskLevelForTool(call.toolName),
-    })),
-    ...observation,
-  })
-  const observationStatus = sandboxObservationStatus(observation)
+  const { observation, aggregateActions, projection } = await runSandboxPeripheralCode(ctx, step, handlers)
   const readDraft: ReadDraft = {
     title: observation.status === 'completed' ? '受控沙箱执行完成' : '受控沙箱执行被阻断',
-    message: preview,
+    message: projection.displayPreview,
     readKind: 'tool_observation',
     toolName: 'sandbox_run_code',
     toolCallId: step.providerToolCallId ?? observation.manifest.identity.toolCallId,
     toolArguments: step.providerToolArguments ?? {},
-    modelContent,
-    displayPreview: preview,
-    observationStatus,
-    observationOutcome: classifyToolObservationOutcome({
-      toolName: 'sandbox_run_code',
-      status: observationStatus,
-      modelContent,
-    }),
+    modelContent: projection.modelContent,
+    displayPreview: projection.displayPreview,
+    observationStatus: projection.observationStatus,
+    observationOutcome: canonicalObservationFromHostToolObservation({
+      hostObservation: {
+        toolName: 'sandbox_run_code',
+        status: projection.observationStatus,
+        modelContent: projection.modelContent,
+      },
+    }).outcome,
     status: observation.status === 'completed' ? 'executed' : 'failed',
   }
-  const aggregateActions = await aggregateSandboxActions({
-    ctx,
-    observation,
-    ...(handlers ? { handlers } : {}),
-  })
   return aggregateActions.length > 0 ? [readDraft, ...aggregateActions] : readDraft
 }
 
@@ -1231,5 +896,4 @@ export const sandboxInternalsForTests = {
   buildSandboxDataBundle,
   buildManifest,
   buildSandboxToolSdk,
-  displayPreview,
 }

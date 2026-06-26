@@ -1,5 +1,6 @@
 import type { AgentActionKind, AgentNavigationEvent } from '@xox/contracts'
 import type { Kysely } from 'kysely'
+import { executeAgenticSandboxAggregateAction } from '@agentic-os/sandbox'
 import type { Database, Row } from '../db/schema.js'
 import { conflict, forbidden, unprocessable } from '../core/http.js'
 
@@ -96,37 +97,6 @@ function assertNavigation(kind: AgentActionKind, navigation: AgentNavigationEven
   }
 }
 
-function nestedSandboxActions(payload: Record<string, unknown>) {
-  const nested = payload.nestedActions
-  if (!Array.isArray(nested) || nested.length === 0) throw unprocessable('Sandbox aggregate action requires nestedActions')
-  return nested.map((item) => {
-    if (!isRecord(item)) throw unprocessable('Sandbox nested action is invalid')
-    const kind = typeof item.kind === 'string' ? coerceAgentActionKind(item.kind) : null
-    if (!kind || kind === 'sandbox.aggregate_tool_calls') throw unprocessable('Sandbox nested action kind is invalid')
-    const riskLevel = typeof item.riskLevel === 'string' ? item.riskLevel : ''
-    if (!(riskLevel in riskRank)) throw unprocessable('Sandbox nested action risk level is invalid')
-    const navigation = isRecord(item.navigation) ? item.navigation as AgentNavigationEvent : null
-    if (!navigation) throw unprocessable('Sandbox nested action navigation is required')
-    const payloadValue = item.payload ?? {}
-    const details = Array.isArray(item.details) ? item.details : []
-    const title = typeof item.title === 'string' && item.title.trim() ? item.title.trim() : kind
-    const summary = typeof item.summary === 'string' && item.summary.trim() ? item.summary.trim() : title
-    const targetLabel = typeof item.targetLabel === 'string' && item.targetLabel.trim() ? item.targetLabel.trim() : 'Sandbox nested action'
-    const draft = {
-      kind,
-      riskLevel: riskLevel as RiskLevel,
-      navigation,
-      title,
-      summary,
-      targetLabel,
-      details,
-      payload: payloadValue,
-    }
-    assertActionDraftAllowed(draft)
-    return draft
-  })
-}
-
 async function assertPeriodAllowed(db: Kysely<Database>, workspace: Row<'workspaces'>, periodId: unknown, options?: { allowLocked?: boolean }) {
   if (typeof periodId !== 'string') throw unprocessable('Ledger period id is required')
   const period = await db.selectFrom('ledger_periods').selectAll().where('id', '=', periodId).executeTakeFirst()
@@ -211,16 +181,28 @@ export async function assertActionExecutionAllowed(
     case 'workspace.import_bundle':
       return
     case 'sandbox.aggregate_tool_calls': {
-      const nested = nestedSandboxActions(payload)
-      for (const nestedAction of nested) {
-        await assertActionExecutionAllowed(db, workspace, user, {
-          ...action,
-          kind: nestedAction.kind,
-          risk_level: nestedAction.riskLevel,
-          payload_json: JSON.stringify(nestedAction.payload),
-          navigation_json: JSON.stringify(nestedAction.navigation),
-        })
-      }
+      await executeAgenticSandboxAggregateAction({
+        aggregateAction: action,
+        payload,
+        aggregateKind: 'sandbox.aggregate_tool_calls',
+        invalid: unprocessable,
+        actionKind: (nestedAction) => nestedAction.kind,
+        createNestedAction: ({ aggregateAction, nested, kind }) => {
+          const navigation = isRecord(nested.navigation) ? nested.navigation as AgentNavigationEvent : null
+          if (!navigation) throw unprocessable('Sandbox nested action navigation is required')
+          return {
+            ...aggregateAction,
+            kind: coerceAgentActionKind(kind),
+            risk_level: typeof nested.riskLevel === 'string' ? nested.riskLevel : '',
+            payload_json: JSON.stringify(nested.payload ?? {}),
+            navigation_json: JSON.stringify(navigation),
+          }
+        },
+        executeNestedAction: async (nestedAction) => {
+          await assertActionExecutionAllowed(db, workspace, user, nestedAction)
+          return null
+        },
+      })
       return
     }
     default:

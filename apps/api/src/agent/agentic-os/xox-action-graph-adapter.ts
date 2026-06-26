@@ -8,14 +8,14 @@ import type {
 import {
   buildActionPreviewObservation,
   buildActionResultObservation,
-  classifyToolObservationOutcome,
+  createAgentHostToolObservationBridge,
+  isAgentHostToolActionDraft,
 } from '@agentic-os/core'
 import {
   materializeAgentServerActionGraph,
+  projectAgentServerHostPlannedItems,
   type AgentServerActionGraphEventDraft,
-  type AgentServerActionGraphPlanStepItem,
   type AgentServerActionGraphPlannedItem,
-  type AgentServerActionGraphReadObservationItem,
   type AgentServerActionGraphStore,
   type AgentServerActionGraphStoreActionRequestResult,
   type AgentServerActionGraphSummary,
@@ -31,13 +31,10 @@ import { newId } from '../../core/security.js'
 import { utcNow } from '../../core/time.js'
 import type { CurrentUser } from '../../modules/auth.js'
 import {
-  createXoxObservationBridge,
-  isActionDraft,
   type AgentActionDraft,
   type AgentToolObservation,
   type PlannedItem,
   type ReadDraft,
-  type XoxObservationBridge,
 } from '../host-profile/xox-planned-items.js'
 import { addRunEvent, agentThreadEvents } from './xox-run-event-store-adapter.js'
 import { assertAgentRunLease } from './xox-run-lease-store-adapter.js'
@@ -312,9 +309,8 @@ function osActionStatus(status: string): OsActionStatus {
 function osActionRequestFromDraft(
   ctx: ActionGraphContext,
   draft: AgentActionDraft,
-  index: number,
+  provisionalId: string,
 ): OsActionRequest {
-  const provisionalId = `xox_draft_${index + 1}_${draft.kind}`
   return {
     actionRequestId: provisionalId,
     runId: ctx.runId,
@@ -343,39 +339,6 @@ function osActionRequestFromRow(row: Row<'agent_action_requests'>, base: OsActio
     title: row.title,
     description: row.summary,
   }
-}
-
-function toolNameForRead(item: ReadDraft, sequenceHint: number) {
-  if (!('toolName' in item) || !item.toolName) return `read_observation_${sequenceHint}`
-  return item.toolName
-}
-
-function observationFromRead(item: ReadDraft, sequenceHint: number): AgentToolObservation | null {
-  if (!('readKind' in item) || item.readKind !== 'tool_observation') return null
-  const toolName = toolNameForRead(item, sequenceHint)
-  const displayPreview = item.displayPreview ?? item.message
-  const lane = item.observationLane ?? 'provider_tool'
-  const status = item.observationStatus ??
-    (item.status === 'failed' ? 'failed' : item.status === 'cancelled' ? 'cancelled' : 'completed')
-  const observation = {
-    title: item.title,
-    toolName,
-    toolCallId: item.toolCallId ?? `call_observation_${sequenceHint}_${toolName}`,
-    toolArguments: item.toolArguments ?? {},
-    displayPreview,
-    modelContent: item.modelContent ?? displayPreview,
-    status,
-    lane,
-    ...(item.syntheticObservation ? { synthetic: true } : {}),
-  }
-  return {
-    ...observation,
-    outcome: item.observationOutcome ?? classifyToolObservationOutcome(observation),
-  }
-}
-
-function isRunnerOwnedObservationLane(lane: unknown) {
-  return lane === 'runner_evidence'
 }
 
 type AddAgentPlanStepInput = {
@@ -422,91 +385,8 @@ function storedActionPreview(action: Row<'agent_action_requests'>): StoredAction
   }
 }
 
-function itemInput(toolArguments: Record<string, unknown> | null | undefined): OsJsonObject | undefined {
-  return toolArguments ? osJsonObject(toolArguments) : undefined
-}
-
-function readPlannedItem(
-  item: ReadDraft,
-  index: number,
-  observationBridge: XoxObservationBridge,
-): AgentServerActionGraphPlannedItem {
-  if ('readKind' in item && item.readKind === 'assistant_message') {
-    return {
-      type: 'assistant_message',
-      content: item.message,
-    }
-  }
-
-  const xoxStatus = item.status ?? 'info'
-  const baseMetadata = metadata({
-    ...(item.navigation !== undefined ? { xoxNavigation: item.navigation } : {}),
-    xoxPlanStatus: xoxStatus,
-  })
-  const input = itemInput('toolArguments' in item ? item.toolArguments : undefined)
-  const observation = observationFromRead(item, index + 1)
-
-  if (observation) {
-    const osObservation = observationBridge.toCanonical(observation, index)
-    if (isRunnerOwnedObservationLane(item.observationLane)) {
-      return {
-        type: 'observation_only',
-        observation: osObservation,
-      }
-    }
-    const planned: AgentServerActionGraphReadObservationItem = {
-      type: 'read_observation',
-      title: item.title,
-      description: item.message,
-      observation: osObservation,
-    }
-    const serverStatus = serverStatusFromXox(xoxStatus)
-    if (serverStatus !== undefined) planned.status = serverStatus
-    if (input !== undefined) planned.input = input
-    if (baseMetadata !== undefined) planned.metadata = baseMetadata
-    return planned
-  }
-
-  const toolName = 'toolName' in item && item.toolName ? item.toolName : `status_step_${index + 1}`
-  const toolCallId = 'toolCallId' in item && item.toolCallId ? item.toolCallId : `status_step_${index + 1}`
-  const planned: AgentServerActionGraphPlanStepItem = {
-    type: 'plan_step',
-    title: item.title,
-    description: item.message,
-    toolName,
-    toolCallId,
-  }
-  const serverStatus = serverStatusFromXox(xoxStatus)
-  if (serverStatus !== undefined) planned.status = serverStatus
-  if (input !== undefined) planned.input = input
-  if (baseMetadata !== undefined) planned.metadata = baseMetadata
-  return planned
-}
-
-function materializerItemFromPlannedItem(
-  ctx: ActionGraphContext,
-  item: PlannedItem,
-  index: number,
-  actionDrafts: Map<string, AgentActionDraft>,
-  observationBridge: XoxObservationBridge,
-): AgentServerActionGraphPlannedItem {
-  if (!isActionDraft(item)) return readPlannedItem(item, index, observationBridge)
-
-  const actionRequest = osActionRequestFromDraft(ctx, item, index)
-  actionDrafts.set(actionRequest.actionRequestId, item)
-  const planned: AgentServerActionGraphPlannedItem = {
-    type: 'action_request',
-    actionRequest,
-    title: item.title,
-    description: item.summary,
-    input: osJsonObject({
-      kind: item.kind,
-      payload: item.payload,
-    }),
-  }
-  const itemMetadata = metadata({ xoxNavigation: item.navigation })
-  if (itemMetadata !== undefined) planned.metadata = itemMetadata
-  return planned
+function isActionDraft(item: PlannedItem): item is AgentActionDraft {
+  return isAgentHostToolActionDraft<AgentActionDraft, ReadDraft>(item)
 }
 
 function toolArgumentsFromStep(step: AgentServerActionPlanStepDraft): Record<string, unknown> | null {
@@ -585,8 +465,25 @@ export async function storePlannedActionGraph(
   const navigationEvents: AgentNavigationEvent[] = []
   const actionRows: Row<'agent_action_requests'>[] = []
   const planRows: Row<'agent_plan_steps'>[] = []
-  const actionDrafts = new Map<string, AgentActionDraft>()
-  const observationBridge = createXoxObservationBridge()
+  const observationBridge = createAgentHostToolObservationBridge<AgentToolObservation>({
+    contentKey: 'xoxObservation',
+  })
+  const projected = projectAgentServerHostPlannedItems<AgentActionDraft, ReadDraft, AgentNavigationEvent, AgentPlanStepStatus, string, AgentToolObservation>({
+    items: input.items,
+    observationBridge,
+    isAction: isActionDraft,
+    provisionalActionRequestId: ({ action, index }) => `xox_draft_${index + 1}_${action.kind}`,
+    createActionRequest: ({ action, provisionalId }) => osActionRequestFromDraft(ctx, action, provisionalId),
+    metadata: ({ item, kind }) => kind === 'action'
+      ? metadata({ xoxNavigation: (item as AgentActionDraft).navigation })
+      : metadata({
+          ...((item as ReadDraft).navigation !== undefined ? { xoxNavigation: (item as ReadDraft).navigation } : {}),
+          xoxPlanStatus: ((item as ReadDraft).status ?? 'info') as AgentPlanStepStatus,
+        }),
+    statusFromReadStatus: (status) => serverStatusFromXox(status ?? 'info'),
+    runnerOwnedObservationLane: (lane) => lane === 'runner_evidence',
+  })
+  const actionDrafts = projected.actionDrafts
 
   const store: AgentServerActionGraphStore = {
     loadMaxPlanSequence: async () => {
@@ -632,13 +529,10 @@ export async function storePlannedActionGraph(
     },
   }
 
-  const items = input.items.map((item, index) =>
-    materializerItemFromPlannedItem(ctx, item, index, actionDrafts, observationBridge)
-  )
   const materialized = await materializeAgentServerActionGraph({
     store,
     run: osRunRecord(ctx),
-    items,
+    items: projected.items,
   })
 
   if (input.emitPlanReady !== false) {

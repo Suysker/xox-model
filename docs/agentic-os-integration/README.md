@@ -1,12 +1,12 @@
 # xox-model Agentic OS Integration Plan
 
-Status: Draft (M169 host harness pillar deletion in progress)
+Status: Draft (M182 tool-result runtime amputation implemented; full API parity still open)
 
 Date: 2026-06-21
 
-## Latest Status: M169
+## Latest Status: M182
 
-M169 supersedes the older M142-M168 incremental notes below where they still mention deleted host harness files.
+M182 supersedes the older M142-M181 incremental notes below where they still mention deleted host harness files or xox-owned final-review/runtime/projection/tool-result helpers.
 
 Current production entry is `apps/api/src/agent/host-profile/xox-host-profile.ts`. The old xox host harness pillars are deleted:
 
@@ -19,9 +19,66 @@ Current production entry is `apps/api/src/agent/host-profile/xox-host-profile.ts
 
 This cut also removed xox-local memory lifecycle orchestration, local progressive tool runtime projection, and local goal/obligation context fields. xox now keeps tool definitions, business execution, context/prompt assets, provider settings, memory store/Memory Center display, sandbox bundles, SQL/SSE adapters, and product DTO projection. Agent loop, provider execution/recovery, final review, goal/readiness, memory lifecycle, and tool-surface runtime are Agentic OS responsibilities.
 
-Current validation: targeted architecture/build/tool/sandbox checks pass; full `npm run test:api` has 109 passing tests and 27 failures that must be handled as stale local-harness expectations or Agentic OS parity follow-up, not by restoring deleted xox harness code.
+Current correction: `xox-run-event-store-adapter.ts` must remain a pure event store/stream adapter. A temporary goal/evaluation/final-review projection expansion was removed; reusable final review completion behavior now belongs in `@agentic-os/server`. The follow-up three-file audit also removed `xox-action-graph-adapter.ts` hard-coded business-tool de-dupe, removed `xox-host-profile.ts` tool-name-driven provider stable mode, and shifted `xox-run-worker-adapter.ts` partial-output fail-closed classification back to Agentic OS durable queue recovery.
 
-See [M169 Delete Host Harness Pillars](m169-delete-host-harness-pillars.md) for the current boundary, deletion list, and validation evidence.
+Current M182 cut:
+
+- `@agentic-os/core` now owns locale-aware SaaS defaults for generic tool-result runtime observations: clarification, account-boundary notice, UI navigation read, read statuses, and empty-result failure projection.
+- `@agentic-os/server` now exposes `createAgentServerSaaSHostToolResultPort()`, so `tool-executor.ts` no longer configures `clarificationTitle`, `accountForbiddenTitle`, `emptyResultTitle`, `readStatus`, or the low-level `createAgentServerHostToolResultPort()`.
+- `@agentic-os/sandbox` now exposes `createAgenticSandboxSaaSHostToolPeripheral()`, so `sandbox-service.ts` no longer passes a low-level `resultRuntime` block or repeats generic tool-result copy/status semantics.
+- xox now keeps only the route encoder `xoxNavigationFromTabs()`, business tool handlers, sandbox bundle/policy, and product DTO projection for this slice.
+- Architecture tests now guard `clarificationTitle`, `accountForbiddenTitle`, `emptyResultTitle`, `emptyResultMessage`, `readStatus:`, `resultRuntime:`, `createAgentServerHostToolResultPort`, and `createAgenticSandboxHostToolPeripheral` from returning to `apps/api/src/agent`.
+
+Current M181 cut:
+
+- `@agentic-os/server` now exposes `createAgentServerSaaSHostExecutionPorts()`, so xox no longer hand-builds `AgentActionPort`, `AgentSandboxPort`, or tool read executor wiring inside `xox-host-profile.ts`.
+- `@agentic-os/server` now exposes `createAgentServerSaaSRuntimeEventHandlers()`, so xox no longer converts OpenAI-compatible planning recovery events, runtime stream events, or model-planning run events inside HostProfile.
+- `xox-host-profile.ts` no longer contains `xoxRuntimePort()`, local action audit/result envelope construction, direct sandbox observation parsing, or the expanded active-memory recall block.
+- Confirmed xox business action execution moved to the real business tool/action peripheral in `tool-executor.ts`; active memory store wiring moved to the memory peripheral in `memory.ts`.
+- Architecture tests now guard against `xoxRuntimePort`, `AgentActionPort`, `AgentSandboxPort`, direct runtime recovery projection helpers, direct sandbox observation parsing helpers, and `executeAgentActionRequest` returning to HostProfile.
+
+Current M180 cut:
+
+- `routes.ts` no longer directly constructs generic action execution failure lifecycle events; it consumes `@agentic-os/server` `projectAgentServerActionExecutionFailure()`.
+- `xox-run-worker-adapter.ts` no longer sequences generic run interruption effects locally; it consumes `applyAgentServerRunInterruptionProjection()` and only supplies SQL/message/event/signal effects.
+- `tool-executor.ts` and `tool-policy.ts` no longer own confirmed sandbox aggregate nested-action execution/validation loops; they consume `@agentic-os/sandbox` `executeAgenticSandboxAggregateAction()`.
+- `memory.ts` no longer owns memory promote/archive lifecycle decisions; it consumes `projectAgentServerTenantMemoryPromotion()` and `projectAgentServerTenantMemoryArchive()`.
+- `xox-host-profile.ts` no longer owns `hostToolResults`, local runtime user-content helper, local runtime stream source helper, or direct runtime recovery/model-planning event construction.
+
+Current M179 cut:
+
+- `routes.ts` no longer directly constructs generic action cancel/update lifecycle events; it consumes `@agentic-os/server` `projectAgentServerActionCancellation()` / `projectAgentServerActionUpdate()` and only persists xox SQL rows plus DTO responses.
+- `xox-run-worker-adapter.ts` no longer composes `createAgentServerRunWorker()` with `createDurableRunQueuePort()` or formats recovery fail-closed messages locally; it consumes `createAgentServerDurableRunWorker()` and `projectAgentServerRunRecoveryFailClosedInterruption()`.
+- `tool-executor.ts` no longer owns `memory.remember` parsing/copy; `memory.search`, `memory.get`, and `memory.remember` all go through `createAgentServerTenantMemoryToolHandlers()`.
+- `sandbox-service.ts` consumes `@agentic-os/sandbox` `createAgenticSandboxHostToolPeripheral()` for nested tool runtime and aggregate action wiring, while xox keeps only bundle/manifest/SDK allowlist/product DTOs.
+- `xox-host-profile.ts` no longer reinterprets OpenAI Agents runtime events through `appendOpenAIAgentsRuntimeEvent()`; it persists the Agentic OS/runtime draft directly.
+
+Current M178 cut:
+
+- `xox-host-profile.ts` no longer manually builds `createAgentServerSaaSHostAdapter()` + `createAgentServerSaaSRunPlane()` or calls `resumeAgentServerRun()` / `confirmAgentServerActionAndResume()`; it now creates a HostProfile and gives execution to `@agentic-os/server` `runAgentServerSaaSProfileRun()` / `confirmAgentServerSaaSProfileActionAndResume()`.
+- `sandbox-service.ts` no longer directly calls low-level sandbox loop/projection helpers; it consumes `@agentic-os/sandbox` `runAgenticSandboxPeripheralRead()`, while keeping workspace bundle, manifest, business SDK policy and localized read DTOs.
+- `memory.ts` no longer directly constructs the core memory capture runtime; it consumes `@agentic-os/server` `createAgentServerTenantMemoryCaptureRuntime()` plus tenant memory ranking/search/get projection APIs while keeping SQL row access and Memory Center DTOs.
+- `xox-action-graph-adapter.ts` no longer owns generic planned-item materialization from host read/action DTOs; it consumes `@agentic-os/server` `projectAgentServerHostPlannedItems()` and keeps only durable row writes and localized event persistence.
+- `xox-run-worker-adapter.ts` no longer calls direct failure/cancellation projection helpers or keeps `failInterruptedAgentRun`; it applies `@agentic-os/server` `projectAgentServerInterruptedRunCompletion()` / `projectAgentServerQueuedRunCompletion()` to SQL rows.
+- `tool-executor.ts` no longer owns `answerWorkspaceDataQuestion()`; it routes `data.query_workspace` to the ordinary workspace business read tool `planWorkspaceDataQueryRead()` in `workspace-action-drafts.ts`.
+- Architecture tests now guard these deleted host-side responsibilities from returning.
+
+Current M174-M176 background:
+
+- `xox-host-profile.ts` no longer imports low-level provider runner functions. It wires `createOpenAICompatiblePlanningRuntimeAdapter()` and `createOpenAIAgentsRuntimeAdapter()` as Agentic OS runtime adapters, leaving provider turn execution to Agentic OS packages.
+- `xox-host-profile.ts` no longer imports `createAgentHostAdapterFromProfile`; it returns a server SaaS HostProfile and lets `createAgentServerSaaSHostAdapter()` build the actual harness adapter.
+- `xox-planned-items.ts`, `xox-action-graph-adapter.ts`, and `sandbox-service.ts` no longer call xox-local or low-level core outcome classifiers. Host observations now pass through `canonicalObservationFromHostToolObservation()`, and empty-result tool-supervisor projections use `buildToolSupervisorEmptyResultHostProjection()`.
+- `xox-run-worker-adapter.ts` no longer owns partial-output recovery predicates or fail-closed recovery messages. It consumes `hasAgentServerRunPartialOutput()` and `agentServerRunRecoveryFailClosedMessage()` from `@agentic-os/server`.
+- `xox-thread-store-adapter.ts` no longer queries or serializes `agent_goals` / `agent_evaluations`; legacy DTO fields remain as empty compatibility arrays until Agentic OS provides any future canonical projection.
+- `xox-thread-store-adapter.ts` no longer owns generic transcript/timeline/node projection; it calls `projectAgentServerLegacyTranscriptViews()` and only supplies product copy/action/navigation mapping.
+- `xox-run-worker-adapter.ts` no longer writes `agent_goals` or pushes `goal_status` lifecycle values; `xox-run-submission-adapter.ts` initializes legacy `goal_status` as `null`.
+- `memory.ts` no longer exposes `runMemorySearchTool()` / `runMemoryGetTool()`; `tool-executor.ts` uses `createAgentMemoryToolRuntime()` from `@agentic-os/core`, while xox keeps tenant memory repository and Memory Center DTOs.
+- `sandbox-service.ts` no longer owns generic sandbox proof/hash/model-readable/status helpers, structured nested tool-call projection, nested tool runtime bridge, or aggregate action loop. Those are now `@agentic-os/sandbox` helpers; xox keeps workspace bundle construction, business SDK policy predicates, and localized aggregate action copy.
+- `tool-catalog.ts` no longer exposes `final_answer_extract_claims` as a xox provider tool. Final-answer claim extraction is a server harness concern.
+
+Current validation: `npm run build -w @agentic-os/core`, `npm run build -w @agentic-os/server`, `npm run build -w @agentic-os/sandbox`, `npm run test -w @agentic-os/core`, `npm run test -w @agentic-os/server`, and `npm run test -w @agentic-os/sandbox` pass in `agentic-os`. `npm run build:api`, `npx vitest run tests/agent-architecture.test.ts tests/action-observation.test.ts tests/sandbox-tool.test.ts`, and `npx vitest run tests/api.test.ts -t "asks for clarification through a model-selected tool"` pass in `xox-model/apps/api`. Full `npx vitest run tests/api.test.ts` was last rerun in M174 and still reported 62 passed / 27 failed; the failures remain broad legacy parity expectations around navigation projection, old goal/evaluation/status events, provider failure plan-step shapes, memory recall signals, redundant action de-duplication, and complex-goal pacing. They must be fixed by product projection adapters or Agentic OS-owned reusable projection/runtime behavior, not by restoring local xox harness code.
+
+See [M182 Tool Result Runtime Amputation](m182-tool-result-runtime-amputation.md) for the current boundary, implementation notes, and validation evidence. See [M181 HostProfile Port Amputation](m181-host-profile-port-amputation.md) for the previous boundary, implementation notes, and validation evidence.
 
 ## Purpose
 

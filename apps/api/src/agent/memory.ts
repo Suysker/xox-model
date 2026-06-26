@@ -1,37 +1,21 @@
 import type { Kysely } from 'kysely'
+import type { AgentRunEventStatus } from '@xox/contracts'
 import {
-  applyMmr,
-  buildMemoryCitation,
-  containsSecretLikeContent,
-  decideAgentMemoryCandidate,
-  formatMemoryCitation,
-  lexicalRelevance,
-  normalizeAgentMemoryConfidence,
-  normalizeAgentMemoryKey,
-  normalizeAgentMemoryKind,
-  normalizeAgentMemoryLane,
-  normalizeAgentMemoryScopeType,
-  normalizeAgentMemorySensitivity,
-  normalizeAgentMemoryStatus,
-  normalizeAgentMemoryType,
-  normalizeAgentMemoryValue,
-  rankAgentMemoryRecords,
-  redactSecretLikeContent,
-  type AgentMemoryRecordLike,
-} from '@agentic-os/core'
+  createAgentServerTenantMemoryCaptureRuntime,
+  projectAgentServerTenantMemoryArchive,
+  projectAgentServerTenantMemoryGet,
+  projectAgentServerTenantMemoryPromotion,
+  projectAgentServerTenantMemorySearch,
+  rankAgentServerTenantMemoryRecords,
+  type AgentServerTenantMemoryRecordLike,
+  type AgentServerTenantMemoryToolItem,
+} from '@agentic-os/server'
 import type { Database, Row } from '../db/schema.js'
 import { jsonString, parseJson } from '../db/database.js'
 import { forbidden, notFound } from '../core/http.js'
 import { newId } from '../core/security.js'
 import { utcNow } from '../core/time.js'
 import type { CurrentUser } from '../modules/auth.js'
-import type { PlannerContext, ReadDraft, RuntimePlannerStep } from './host-profile/xox-planned-items.js'
-
-export type AgentRuntimeContext = {
-  memories: Row<'agent_memories'>[]
-  contextSummary: string | null
-  recentMessages: Row<'agent_messages'>[]
-}
 
 export { redactSecretLikeContent } from '@agentic-os/core'
 
@@ -69,36 +53,11 @@ export async function addMemoryEvent(
   return db.selectFrom('agent_memory_events').selectAll().where('id', '=', id).executeTakeFirstOrThrow()
 }
 
-export async function countMemoryEvents(db: Kysely<Database>, memoryId: string, eventType: AgentMemoryEventType) {
-  const row = await db
-    .selectFrom('agent_memory_events')
-    .select(({ fn }) => fn.countAll<number>().as('count'))
-    .where('memory_id', '=', memoryId)
-    .where('event_type', '=', eventType)
-    .executeTakeFirst()
-  return Number(row?.count ?? 0)
-}
-
-export function serializeMemoryEvent(row: Row<'agent_memory_events'>) {
-  return {
-    id: row.id,
-    memoryId: row.memory_id,
-    workspaceId: row.workspace_id,
-    userId: row.user_id,
-    threadId: row.thread_id,
-    runId: row.run_id,
-    eventType: row.event_type,
-    evidence: row.evidence_json ? parseJson<Record<string, unknown> | null>(row.evidence_json, null) : null,
-    metadata: row.metadata_json ? parseJson<Record<string, unknown> | null>(row.metadata_json, null) : null,
-    createdAt: row.created_at,
-  }
-}
-
-export type RememberAgentMemoryResult =
+export type CaptureTenantMemoryResult =
   | { memory: Row<'agent_memories'>; rejectedReason: null }
   | { memory: null; rejectedReason: 'empty' | 'secret' }
 
-export async function rememberAgentMemory(input: {
+export type CaptureTenantMemoryInput = {
   db: Kysely<Database>
   workspace: Row<'workspaces'>
   user: CurrentUser
@@ -122,101 +81,79 @@ export async function rememberAgentMemory(input: {
   lastVerifiedAt?: string | null
   evidence?: Record<string, unknown> | null
   metadata?: Record<string, unknown> | null
-}): Promise<RememberAgentMemoryResult> {
-  const value = normalizeAgentMemoryValue(input.value)
-  if (!value || value.length < 3) return { memory: null, rejectedReason: 'empty' }
-  if (containsSecretLikeContent(value)) return { memory: null, rejectedReason: 'secret' }
-  const kind = normalizeAgentMemoryKind(input.kind)
-  const scopeType = normalizeAgentMemoryScopeType(input.scopeType)
-  const memoryType = normalizeAgentMemoryType(input.memoryType)
-  const lane = input.lane ? normalizeAgentMemoryLane(input.lane, memoryType) : undefined
-  const status = input.status ? normalizeAgentMemoryStatus(input.status, memoryType) : undefined
-  const sensitivity = normalizeAgentMemorySensitivity(input.sensitivity)
-  const key = normalizeAgentMemoryKey({
-    fallbackValue: value,
-    kind,
-    ...(input.key !== undefined ? { key: input.key } : {}),
-  })
-  const confidence = normalizeAgentMemoryConfidence(input.confidence)
-  const policy = decideAgentMemoryCandidate({
-    kind,
-    scopeType,
-    memoryType,
-    key,
-    value,
-    confidence,
-    expiresAt: input.expiresAt ?? null,
-    ...(status ? { status } : {}),
-    ...(lane ? { lane } : {}),
-    ...(input.injectable != null ? { injectable: input.injectable } : {}),
-    ...(input.sourceKind !== undefined ? { sourceKind: input.sourceKind } : {}),
-    ...(input.evidenceScore !== undefined ? { evidenceScore: input.evidenceScore } : {}),
-  })
-  if (policy.decision === 'reject') return { memory: null, rejectedReason: 'secret' }
-  const now = utcNow()
-  const id = newId()
-  await input.db
-    .insertInto('agent_memories')
-    .values({
-      id,
-      workspace_id: input.workspace.id,
-      user_id: input.user.id,
-      thread_id: input.threadId ?? null,
-      kind,
-      scope_type: scopeType,
-      memory_type: memoryType,
-      lane: policy.lane,
-      status: policy.status,
-      key,
-      value,
-      confidence,
-      evidence_score: policy.evidenceScore,
-      sensitivity,
-      injectable: policy.injectable ? 1 : 0,
-      normalized_hash: policy.normalizedHash,
-      source_message_id: input.messageId ?? null,
-      source_run_id: input.runId ?? null,
-      source_kind: policy.sourceKind,
-      evidence_json: input.evidence ? JSON.stringify(input.evidence) : null,
-      last_used_at: null,
-      last_verified_at: input.lastVerifiedAt ?? null,
-      promoted_at: policy.status === 'promoted' ? now : null,
-      expires_at: policy.expiresAt,
-      superseded_by: input.supersededBy ?? null,
-      metadata_json: input.metadata ? JSON.stringify(input.metadata) : null,
-      created_at: now,
-      updated_at: now,
-      archived_at: policy.status === 'archived' ? now : null,
-    })
-    .execute()
-  await addMemoryEvent(input.db, {
-    memoryId: id,
+}
+
+const tenantMemoryCaptureRuntime = createAgentServerTenantMemoryCaptureRuntime<CaptureTenantMemoryInput, Row<'agent_memories'>>({
+  persist: async ({ ctx: input, original, prepared }) => {
+    const now = utcNow()
+    const id = newId()
+    await input.db
+      .insertInto('agent_memories')
+      .values({
+        id,
+        workspace_id: input.workspace.id,
+        user_id: input.user.id,
+        thread_id: input.threadId ?? null,
+        kind: prepared.kind,
+        scope_type: prepared.scopeType,
+        memory_type: prepared.memoryType,
+        lane: prepared.lane,
+        status: prepared.status,
+        key: prepared.key,
+        value: prepared.value,
+        confidence: prepared.confidence,
+        evidence_score: prepared.evidenceScore,
+        sensitivity: prepared.sensitivity,
+        injectable: prepared.injectable ? 1 : 0,
+        normalized_hash: prepared.normalizedHash,
+        source_message_id: input.messageId ?? null,
+        source_run_id: input.runId ?? null,
+        source_kind: prepared.sourceKind,
+        evidence_json: original.evidence ? JSON.stringify(original.evidence) : null,
+        last_used_at: null,
+        last_verified_at: prepared.lastVerifiedAt ?? null,
+        promoted_at: prepared.promoted ? now : null,
+        expires_at: prepared.expiresAt ?? null,
+        superseded_by: prepared.supersededBy ?? null,
+        metadata_json: original.metadata ? JSON.stringify(original.metadata) : null,
+        created_at: now,
+        updated_at: now,
+        archived_at: prepared.archived ? now : null,
+      })
+      .execute()
+    await addMemoryEvent(input.db, {
+      memoryId: id,
       workspaceId: input.workspace.id,
       userId: input.user.id,
       threadId: input.threadId ?? null,
       runId: input.runId ?? null,
-    eventType: policy.status === 'rejected' ? 'rejected' : 'captured',
-    evidence: input.evidence ?? null,
-    metadata: {
-      source: input.metadata?.source ?? 'memory_store',
-      kind,
-      scopeType,
-      memoryType,
-      lane: policy.lane,
-      status: policy.status,
-      sensitivity,
-      injectable: policy.injectable,
-      normalizedHash: policy.normalizedHash,
-      evidenceScore: policy.evidenceScore,
-      sourceKind: policy.sourceKind,
-      decision: policy.decision,
-      reason: policy.reason,
-    },
-  })
-  return {
-    memory: await input.db.selectFrom('agent_memories').selectAll().where('id', '=', id).executeTakeFirstOrThrow(),
-    rejectedReason: null,
-  }
+      eventType: prepared.status === 'rejected' ? 'rejected' : 'captured',
+      evidence: original.evidence ?? null,
+      metadata: {
+        source: original.metadata?.source ?? 'memory_store',
+        kind: prepared.kind,
+        scopeType: prepared.scopeType,
+        memoryType: prepared.memoryType,
+        lane: prepared.lane,
+        status: prepared.status,
+        sensitivity: prepared.sensitivity,
+        injectable: prepared.injectable,
+        normalizedHash: prepared.normalizedHash,
+        evidenceScore: prepared.evidenceScore,
+        sourceKind: prepared.sourceKind,
+        decision: prepared.decision,
+        reason: prepared.reason,
+      },
+    })
+    return input.db.selectFrom('agent_memories').selectAll().where('id', '=', id).executeTakeFirstOrThrow()
+  },
+})
+
+export async function captureTenantMemory(input: CaptureTenantMemoryInput): Promise<CaptureTenantMemoryResult> {
+  const result = await tenantMemoryCaptureRuntime.capture(input, input)
+  return result.memory
+    ? { memory: result.memory, rejectedReason: null }
+    : { memory: null, rejectedReason: result.rejectedReason }
 }
 
 export async function listAgentMemories(db: Kysely<Database>, workspace: Row<'workspaces'>, user: CurrentUser) {
@@ -230,22 +167,13 @@ export async function listAgentMemories(db: Kysely<Database>, workspace: Row<'wo
     .execute()
 }
 
-export async function touchAgentMemories(db: Kysely<Database>, memories: Row<'agent_memories'>[]) {
-  if (memories.length === 0) return
-  await db
-    .updateTable('agent_memories')
-    .set({ last_used_at: utcNow(), updated_at: utcNow() })
-    .where('id', 'in', memories.map((memory) => memory.id))
-    .execute()
-}
-
 export type AgentMemoryRetrievalResult = {
   memory: Row<'agent_memories'>
   score: number
   reasons: string[]
 }
 
-function agentMemoryRecordFromRow(row: Row<'agent_memories'>): AgentMemoryRecordLike {
+function agentMemoryRecordFromRow(row: Row<'agent_memories'>): AgentServerTenantMemoryRecordLike {
   return {
     id: row.id,
     key: row.key,
@@ -287,9 +215,9 @@ export async function retrieveAgentMemories(input: {
     .limit(80)
     .execute()
 
-  const rowsById = new Map(rows.map((row) => [row.id, row]))
-  const ranked = rankAgentMemoryRecords({
-    records: rows.map(agentMemoryRecordFromRow),
+  const ranked = rankAgentServerTenantMemoryRecords({
+    records: rows,
+    toRecordLike: agentMemoryRecordFromRow,
     query: input.query,
     now: utcNow(),
     ...(input.limit !== undefined ? { limit: input.limit } : {}),
@@ -300,7 +228,7 @@ export async function retrieveAgentMemories(input: {
     ...(input.forPrompt !== undefined ? { forPrompt: input.forPrompt } : {}),
     ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
   }).map((result) => ({
-    memory: rowsById.get(result.record.id)!,
+    memory: result.record,
     score: result.score,
     reasons: result.reasons,
   }))
@@ -308,46 +236,25 @@ export async function retrieveAgentMemories(input: {
   return ranked
 }
 
-export async function markAgentMemoriesRecalled(input: {
-  db: Kysely<Database>
-  memories: Row<'agent_memories'>[]
-  workspace: Row<'workspaces'>
-  user: CurrentUser
-  threadId: string
-  runId: string
-  query: string
-  retrieval?: Array<{ memoryId: string; score: number; reasons: string[] }>
-}) {
-  if (input.memories.length === 0) return []
-  await touchAgentMemories(input.db, input.memories)
-  for (const memory of input.memories) {
-    await addMemoryEvent(input.db, {
-      memoryId: memory.id,
-      workspaceId: input.workspace.id,
-      userId: input.user.id,
-      threadId: input.threadId,
-      runId: input.runId,
-      eventType: 'recalled',
-      evidence: { query: redactSecretLikeContent(input.query).slice(0, 500) },
-      metadata: { memoryType: memory.memory_type, status: memory.status },
-    })
-  }
-  return []
-}
-
 export async function archiveAgentMemory(db: Kysely<Database>, workspace: Row<'workspaces'>, user: CurrentUser, memoryId: string) {
   const memory = await db.selectFrom('agent_memories').selectAll().where('id', '=', memoryId).executeTakeFirst()
   if (!memory) throw notFound('Agent memory not found')
   if (memory.workspace_id !== workspace.id || memory.user_id !== user.id) throw forbidden()
+  const projected = projectAgentServerTenantMemoryArchive()
   const now = utcNow()
-  await db.updateTable('agent_memories').set({ status: 'archived', injectable: 0, archived_at: now, updated_at: now }).where('id', '=', memoryId).execute()
+  await db.updateTable('agent_memories').set({
+    status: projected.status,
+    injectable: projected.injectable ? 1 : 0,
+    archived_at: now,
+    updated_at: now,
+  }).where('id', '=', memoryId).execute()
   await addMemoryEvent(db, {
     memoryId,
     workspaceId: workspace.id,
     userId: user.id,
     threadId: memory.thread_id,
     runId: null,
-    eventType: 'archived',
+    eventType: projected.eventType,
     evidence: { memoryId },
   })
 }
@@ -356,20 +263,24 @@ export async function promoteAgentMemory(db: Kysely<Database>, workspace: Row<'w
   const memory = await db.selectFrom('agent_memories').selectAll().where('id', '=', memoryId).executeTakeFirst()
   if (!memory) throw notFound('Agent memory not found')
   if (memory.workspace_id !== workspace.id || memory.user_id !== user.id) throw forbidden()
-  if (memory.lane === 'diagnostic' || memory.kind === 'diagnostic') throw forbidden('Diagnostic memories cannot be promoted into prompt context')
-  if (memory.status !== 'candidate') throw forbidden('Only candidate memories can be promoted')
-  const lane = memory.lane === 'procedural' || memory.memory_type === 'procedural' ? 'procedural' : 'semantic'
+  const projected = projectAgentServerTenantMemoryPromotion({
+    status: memory.status,
+    lane: memory.lane,
+    kind: memory.kind,
+    memoryType: memory.memory_type,
+  })
+  if (!projected.ok) throw forbidden(projected.message)
   const now = utcNow()
   await db
     .updateTable('agent_memories')
     .set({
-      lane,
-      memory_type: lane,
-      status: 'promoted',
-      injectable: 1,
+      lane: projected.lane,
+      memory_type: projected.lane,
+      status: projected.status,
+      injectable: projected.injectable ? 1 : 0,
       promoted_at: now,
       updated_at: now,
-      archived_at: null,
+      archived_at: projected.archivedAt,
       last_verified_at: now,
     })
     .where('id', '=', memoryId)
@@ -380,43 +291,10 @@ export async function promoteAgentMemory(db: Kysely<Database>, workspace: Row<'w
     userId: user.id,
     threadId: memory.thread_id,
     runId: null,
-    eventType: 'promoted',
+    eventType: projected.eventType,
     evidence: { memoryId, source: 'user_memory_center' },
   })
   return db.selectFrom('agent_memories').selectAll().where('id', '=', memoryId).executeTakeFirstOrThrow()
-}
-
-export async function loadAgentRuntimeContext(input: {
-  db: Kysely<Database>
-  workspace: Row<'workspaces'>
-  user: CurrentUser
-  threadId: string
-}): Promise<AgentRuntimeContext> {
-  const [snapshot, recentMessagesDesc] = await Promise.all([
-    input.db
-      .selectFrom('agent_context_snapshots')
-      .selectAll()
-      .where('workspace_id', '=', input.workspace.id)
-      .where('user_id', '=', input.user.id)
-      .where('thread_id', '=', input.threadId)
-      .orderBy('created_at', 'desc')
-      .executeTakeFirst(),
-    input.db
-      .selectFrom('agent_messages')
-      .selectAll()
-      .where('thread_id', '=', input.threadId)
-      .orderBy('created_at', 'desc')
-      .limit(8)
-      .execute(),
-  ])
-  return {
-    memories: [],
-    contextSummary: snapshot?.summary ?? null,
-    recentMessages: recentMessagesDesc.reverse().map((message) => ({
-      ...message,
-      content: redactSecretLikeContent(message.content),
-    })),
-  }
 }
 
 export function serializeMemory(row: Row<'agent_memories'>) {
@@ -450,39 +328,6 @@ export function serializeMemory(row: Row<'agent_memories'>) {
   }
 }
 
-export async function storeDailyMemoryNote(input: {
-  db: Kysely<Database>
-  workspace: Row<'workspaces'>
-  user: CurrentUser
-  threadId?: string | null
-  runId?: string | null
-  noteDate?: string
-  title: string
-  content: string
-  evidence?: Record<string, unknown> | null
-}) {
-  const content = redactSecretLikeContent(input.content).replace(/\s+/g, ' ').trim().slice(0, 4000)
-  if (!content) return null
-  const now = utcNow()
-  const id = newId()
-  await input.db.insertInto('agent_memory_notes').values({
-    id,
-    workspace_id: input.workspace.id,
-    user_id: input.user.id,
-    thread_id: input.threadId ?? null,
-    run_id: input.runId ?? null,
-    note_date: input.noteDate ?? now.slice(0, 10),
-    layer: 'daily',
-    title: input.title.slice(0, 180),
-    content,
-    evidence_json: input.evidence ? JSON.stringify(input.evidence) : null,
-    created_at: now,
-    updated_at: now,
-    archived_at: null,
-  }).execute()
-  return input.db.selectFrom('agent_memory_notes').selectAll().where('id', '=', id).executeTakeFirstOrThrow()
-}
-
 export async function listDailyMemoryNotes(input: {
   db: Kysely<Database>
   workspace: Row<'workspaces'>
@@ -500,14 +345,7 @@ export async function listDailyMemoryNotes(input: {
     .execute()
 }
 
-export type MemoryToolItem = {
-  memoryId: string
-  layer: 'durable' | 'daily' | 'dream' | 'signal' | 'diagnostic'
-  title: string
-  snippet: string
-  score?: number
-  citations: ReturnType<typeof buildMemoryCitation>[]
-}
+export type MemoryToolItem = AgentServerTenantMemoryToolItem
 
 function layerForMemory(memory: Row<'agent_memories'>): MemoryToolItem['layer'] {
   if (memory.lane === 'diagnostic' || memory.kind === 'diagnostic') return 'diagnostic'
@@ -523,6 +361,72 @@ function rowEvidenceRefs(row: Row<'agent_memories'>) {
   ].filter((item): item is string => Boolean(item))
 }
 
+export function createXoxActiveMemoryProfileInput(input: {
+  db: Kysely<Database>
+  workspace: Row<'workspaces'>
+  user: CurrentUser
+  threadId: string
+  runId: string
+  appendRunEvent: (draft: {
+    type: string
+    title: string
+    message: string
+    status: AgentRunEventStatus
+    data?: Record<string, unknown>
+  }) => Promise<void>
+}) {
+  return {
+    activeMemory: {
+      getScopeKey: () => `${input.user.id}:${input.workspace.id}`,
+      getRunCacheKey: (context: { run: { runId: string } }) => `${input.user.id}:${input.workspace.id}:${context.run.runId}`,
+      getQuery: (context: { request: { userMessage: string } }) => context.request.userMessage,
+      scope: () => ({
+        tenantId: input.user.id,
+        workspaceId: input.workspace.id,
+        userId: input.user.id,
+      }),
+      retrieve: async (context: { request: { userMessage: string } }) => {
+        const recalled = await retrieveAgentMemories({
+          db: input.db,
+          workspace: input.workspace,
+          user: input.user,
+          query: context.request.userMessage,
+          limit: 6,
+          forPrompt: true,
+          includeCandidates: false,
+          includeArchived: false,
+          includeNonInjectable: false,
+        })
+        return recalled.map((item) => ({
+          memory: {
+            id: item.memory.id,
+            key: item.memory.key,
+            value: item.memory.value,
+            kind: item.memory.kind,
+            lane: item.memory.lane,
+            status: item.memory.status,
+          },
+          memoryId: item.memory.id,
+          text: `${item.memory.key}: ${item.memory.value}`,
+          score: item.score,
+          reasons: item.reasons,
+          layer: layerForMemory(item.memory),
+          evidenceRefs: rowEvidenceRefs(item.memory),
+        }))
+      },
+      appendRunEvent: async (_context: unknown, draft: {
+        type: string
+        title: string
+        message: string
+        status: AgentRunEventStatus
+        data?: Record<string, unknown>
+      }) => {
+        await input.appendRunEvent(draft)
+      },
+    },
+  }
+}
+
 export async function searchTenantMemory(input: {
   db: Kysely<Database>
   workspace: Row<'workspaces'>
@@ -533,77 +437,56 @@ export async function searchTenantMemory(input: {
   includeDurable?: boolean
 }) {
   const maxResults = Math.max(1, Math.min(50, input.maxResults ?? 8))
-  const items: Array<MemoryToolItem & { id: string; key: string; value: string; score: number }> = []
-  if (input.includeDurable !== false) {
-    const memories = await retrieveAgentMemories({
-      db: input.db,
-      workspace: input.workspace,
-      user: input.user,
-      query: input.query,
-      limit: maxResults,
-      includeCandidates: true,
-      includeArchived: true,
-      includeDiagnostics: false,
-      includeNonInjectable: true,
-    })
-    for (const result of memories) {
-      const layer = layerForMemory(result.memory)
-      items.push({
-        id: result.memory.id,
-        key: result.memory.key,
-        value: result.memory.value,
-        memoryId: result.memory.id,
-        layer,
-        title: result.memory.key,
-        snippet: redactSecretLikeContent(result.memory.value).slice(0, 800),
-        score: result.score,
-        citations: [buildMemoryCitation({
-          memoryId: result.memory.id,
-          layer,
-          score: result.score,
-          evidenceRefs: rowEvidenceRefs(result.memory),
-        })],
-      })
-    }
-  }
+  const [durable, dailyNotes] = await Promise.all([
+    input.includeDurable === false
+      ? []
+      : retrieveAgentMemories({
+          db: input.db,
+          workspace: input.workspace,
+          user: input.user,
+          query: input.query,
+          limit: maxResults,
+          includeCandidates: true,
+          includeArchived: true,
+          includeDiagnostics: false,
+          includeNonInjectable: true,
+        }),
+    input.includeDailyNotes === false
+      ? []
+      : input.db
+          .selectFrom('agent_memory_notes')
+          .selectAll()
+          .where('workspace_id', '=', input.workspace.id)
+          .where('user_id', '=', input.user.id)
+          .where('archived_at', 'is', null)
+          .orderBy('updated_at', 'desc')
+          .limit(80)
+          .execute(),
+  ])
 
-  if (input.includeDailyNotes !== false) {
-    const notes = await input.db
-      .selectFrom('agent_memory_notes')
-      .selectAll()
-      .where('workspace_id', '=', input.workspace.id)
-      .where('user_id', '=', input.user.id)
-      .where('archived_at', 'is', null)
-      .orderBy('updated_at', 'desc')
-      .limit(80)
-      .execute()
-    for (const note of notes) {
-      const relevance = lexicalRelevance(input.query, `${note.title} ${note.content}`)
-      if (relevance.score < 0.15 && relevance.reasons.length === 0) continue
-      items.push({
-        id: note.id,
-        key: note.title,
-        value: note.content,
-        memoryId: note.id,
-        layer: 'daily',
-        title: note.title,
-        snippet: redactSecretLikeContent(note.content).slice(0, 800),
-        score: Number(relevance.score.toFixed(4)),
-        citations: [buildMemoryCitation({
-          memoryId: note.id,
-          layer: 'daily',
-          score: Number(relevance.score.toFixed(4)),
-          evidenceRefs: note.run_id ? [`run:${note.run_id}`] : [],
-        })],
-      })
-    }
-  }
-
-  const ranked = applyMmr(items.toSorted((left, right) => right.score - left.score))
-    .slice(0, maxResults)
-  return {
-    items: ranked.map(({ id: _id, key: _key, value: _value, ...item }) => item),
-  }
+  return projectAgentServerTenantMemorySearch({
+    query: input.query,
+    maxResults,
+    durable: {
+      records: durable.map((item) => ({
+        record: item.memory,
+        score: item.score,
+        reasons: item.reasons,
+      })),
+      id: (memory) => memory.id,
+      key: (memory) => memory.key,
+      value: (memory) => memory.value,
+      layer: layerForMemory,
+      evidenceRefs: rowEvidenceRefs,
+    },
+    daily: {
+      notes: dailyNotes,
+      id: (note) => note.id,
+      title: (note) => note.title,
+      content: (note) => note.content,
+      evidenceRefs: (note) => note.run_id ? [`run:${note.run_id}`] : [],
+    },
+  })
 }
 
 export async function getTenantMemory(input: {
@@ -620,18 +503,16 @@ export async function getTenantMemory(input: {
     .where('user_id', '=', input.user.id)
     .executeTakeFirst()
   if (memory) {
-    const layer = layerForMemory(memory)
-    const score = 1
-    return {
-      item: {
-        memoryId: memory.id,
-        layer,
-        title: memory.key,
-        snippet: redactSecretLikeContent(memory.value).slice(0, 2000),
-        score,
-        citations: [buildMemoryCitation({ memoryId: memory.id, layer, score, evidenceRefs: rowEvidenceRefs(memory) })],
+    return projectAgentServerTenantMemoryGet({
+      durable: {
+        record: memory,
+        id: (row) => row.id,
+        key: (row) => row.key,
+        value: (row) => row.value,
+        layer: layerForMemory,
+        evidenceRefs: rowEvidenceRefs,
       },
-    }
+    })
   }
 
   const note = await input.db
@@ -642,87 +523,15 @@ export async function getTenantMemory(input: {
     .where('user_id', '=', input.user.id)
     .where('archived_at', 'is', null)
     .executeTakeFirst()
-  if (!note) return { item: null }
-  return {
-    item: {
-      memoryId: note.id,
-      layer: 'daily' as const,
-      title: note.title,
-      snippet: redactSecretLikeContent(note.content).slice(0, 2000),
-      score: 1,
-      citations: [buildMemoryCitation({ memoryId: note.id, layer: 'daily', score: 1, evidenceRefs: note.run_id ? [`run:${note.run_id}`] : [] })],
+  return projectAgentServerTenantMemoryGet({
+    daily: {
+      note,
+      id: (row) => row.id,
+      title: (row) => row.title,
+      content: (row) => row.content,
+      evidenceRefs: (row) => row.run_id ? [`run:${row.run_id}`] : [],
     },
-  }
-}
-
-export function summarizeMemoryToolItems(items: MemoryToolItem[]) {
-  if (items.length === 0) return '没有找到相关记忆。'
-  return items.map((item, index) => {
-    const citations = item.citations.map(formatMemoryCitation).join(' ')
-    return `${index + 1}. ${item.title}: ${item.snippet}${citations ? ` ${citations}` : ''}`
-  }).join('\n')
-}
-
-function maxResultsFromStep(step: RuntimePlannerStep) {
-  const explicit = typeof step.maxResults === 'number'
-    ? step.maxResults
-    : typeof step.limit === 'number'
-      ? step.limit
-      : null
-  return Math.max(1, Math.min(20, explicit ?? 8))
-}
-
-export async function runMemorySearchTool(ctx: PlannerContext, step: RuntimePlannerStep): Promise<ReadDraft> {
-  const query = typeof step.query === 'string' && step.query.trim()
-    ? step.query.trim()
-    : typeof step.question === 'string' && step.question.trim()
-      ? step.question.trim()
-      : ctx.message
-  const result = await searchTenantMemory({
-    db: ctx.db,
-    workspace: ctx.workspace,
-    user: ctx.user,
-    query,
-    maxResults: maxResultsFromStep(step),
-    includeDailyNotes: step.includeDailyNotes !== false,
-    includeDurable: step.includeDurable !== false,
   })
-  return {
-    title: '搜索记忆',
-    message: summarizeMemoryToolItems(result.items),
-    readKind: 'tool_observation',
-    displayPreview: result.items.length > 0 ? `找到 ${result.items.length} 条相关记忆。` : '没有找到相关记忆。',
-    status: 'executed',
-  }
-}
-
-export async function runMemoryGetTool(ctx: PlannerContext, step: RuntimePlannerStep): Promise<ReadDraft> {
-  const memoryId = typeof step.memoryId === 'string'
-    ? step.memoryId
-    : typeof step.id === 'string'
-      ? step.id
-      : ''
-  if (!memoryId) {
-    return {
-      title: '读取记忆',
-      message: '缺少 memoryId，无法读取记忆。',
-      readKind: 'tool_observation',
-      status: 'info',
-    }
-  }
-  const result = await getTenantMemory({
-    db: ctx.db,
-    workspace: ctx.workspace,
-    user: ctx.user,
-    memoryId,
-  })
-  return {
-    title: '读取记忆',
-    message: result.item ? summarizeMemoryToolItems([result.item]) : '没有找到这条记忆，或当前用户/工作区无权读取。',
-    readKind: 'tool_observation',
-    displayPreview: result.item ? result.item.title : '未找到记忆。',
-    status: result.item ? 'executed' : 'info',
-  }
 }
 
 function textMatches(value: string, query: string) {

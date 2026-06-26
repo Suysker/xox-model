@@ -1,20 +1,28 @@
 import type { Kysely } from 'kysely'
-import type { AgentRunResult } from '@agentic-os/contracts'
+import type { AgentRunInput, AgentRunRecord, AgentScope } from '@agentic-os/contracts'
 import { normalizeAgentAutomationLevel } from '@agentic-os/core'
 import {
-  createAgentServerRunScheduler,
-  projectAgentServerRunCompletion,
-  type AgentServerRunScheduler,
+  applyAgentServerRunInterruptionProjection,
+  createAgentServerDurableRunWorker,
+  hasAgentServerRunPartialOutput,
+  projectAgentServerInterruptedRunCompletion,
+  projectAgentServerRunRecoveryFailClosedInterruption,
+  projectAgentServerQueuedRunCompletion,
+  safeAgentServerErrorMessage,
+  type AgentServerDurableRunQueueStore,
+  type AgentServerQueuedRun,
+  type AgentServerRunExecutor,
+  type AgentServerRunRecoveryCandidate,
+  type AgentServerRunWorker,
 } from '@agentic-os/server'
-import type { AgentGoalStatus, AgentNavigationEvent, AgentPlannerSource } from '@xox/contracts'
+import type { AgentPlannerSource } from '@xox/contracts'
 import type { Database, Row } from '../../db/schema.js'
 import type { Settings } from '../../core/settings.js'
 import { utcNow } from '../../core/time.js'
 import type { CurrentUser } from '../../modules/auth.js'
-import { redactSecretLikeContent } from '../memory.js'
 import { resolveAgentRuntimeSettings } from '../provider-settings.js'
 import type { PlannerContext } from '../host-profile/xox-planned-items.js'
-import { executeXoxAgentRun } from '../host-profile/xox-host-profile.js'
+import { executeXoxAgentRun, type AgenticOsKernelRunResult } from '../host-profile/xox-host-profile.js'
 import {
   AgentRunLeaseLostError,
   claimAgentRunLease,
@@ -25,103 +33,149 @@ import {
 import { addRunEvent, agentThreadEvents } from './xox-run-event-store-adapter.js'
 import { addMessage, touchThreadAfterRun } from './xox-thread-store-adapter.js'
 
-const agentRunSchedulers = new WeakMap<Kysely<Database>, AgentServerRunScheduler>()
+const agentRunWorkers = new WeakMap<Kysely<Database>, AgentServerRunWorker>()
 
-export type CompletedAgentRun = {
-  agenticOsResult: AgentRunResult
-  plannerSource: AgentPlannerSource
-  assistantMessage: Row<'agent_messages'> | null
-  navigationEvents: AgentNavigationEvent[]
-  actionRows: Row<'agent_action_requests'>[]
-  planRows: Row<'agent_plan_steps'>[]
-  goalStatus: AgentGoalStatus | null
+type XoxRunLoad =
+  | {
+      ok: true
+      run: Row<'agent_runs'>
+      thread: Row<'agent_threads'>
+      workspace: Row<'workspaces'>
+      user: CurrentUser
+      message: string
+    }
+  | {
+      ok: false
+      run: Row<'agent_runs'>
+      thread: Row<'agent_threads'> | null
+      invalidReason: string
+    }
+
+function xoxScope(workspace: Row<'workspaces'>, user: CurrentUser): AgentScope {
+  return {
+    tenantId: workspace.owner_id,
+    workspaceId: workspace.id,
+    userId: user.id,
+  }
+}
+
+function xoxRunRecord(input: {
+  workspace: Row<'workspaces'>
+  user: CurrentUser
+  run: Row<'agent_runs'>
+}): AgentRunRecord {
+  return {
+    runId: input.run.id,
+    threadId: input.run.thread_id,
+    scope: xoxScope(input.workspace, input.user),
+    status: 'running',
+    createdAt: input.run.created_at,
+  }
+}
+
+function xoxRunInput(input: {
+  workspace: Row<'workspaces'>
+  user: CurrentUser
+  threadId: string
+  runId: string
+  message: string
+  automationLevel: ReturnType<typeof normalizeAgentAutomationLevel>
+}): AgentRunInput {
+  return {
+    threadId: input.threadId,
+    scope: xoxScope(input.workspace, input.user),
+    userMessage: input.message,
+    automationLevel: input.automationLevel,
+    maxIterations: 5,
+    metadata: {
+      host: 'xox-model',
+      harness: 'agentic-os',
+      xoxRunId: input.runId,
+    },
+  }
+}
+
+function xoxPlannerSource(settings: Settings): AgentPlannerSource {
+  return settings.llmProvider === 'openai' ? 'openai_agents' : 'openai_compatible_tool_calls'
 }
 
 async function executeAgentRun(
   ctx: PlannerContext & { thread: Row<'agent_threads'> },
   options: { beforeStateWrite: () => Promise<boolean> },
-): Promise<CompletedAgentRun | null> {
+): Promise<AgenticOsKernelRunResult | null> {
   return executeXoxAgentRun(ctx, options)
 }
 
-function getExistingAgentRunScheduler(db: Kysely<Database>) {
-  return agentRunSchedulers.get(db)
-}
-
-function getAgentRunScheduler(db: Kysely<Database>, settings: Settings) {
-  let scheduler = agentRunSchedulers.get(db)
-  if (!scheduler) {
-    scheduler = createAgentServerRunScheduler({
-      pollIntervalMs: settings.agentRunWorkerPollMs,
-    })
-    agentRunSchedulers.set(db, scheduler)
-  }
-  return scheduler
-}
-
-export function createAgentRunController(db: Kysely<Database>, settings: Settings, runId: string) {
-  const controller = getAgentRunScheduler(db, settings).claimRunController(runId)
-  if (!controller) throw new Error(`Agent run is already active: ${runId}`)
-  return controller
-}
-
 export function safeRunErrorMessage(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error)
-  return redactSecretLikeContent(message).slice(0, 500) || 'Agent run failed'
+  return safeAgentServerErrorMessage(error)
 }
 
-async function failAgentRun(
+async function persistRunInterruptionProjection(
+  db: Kysely<Database>,
+  thread: Row<'agent_threads'>,
+  projected: Parameters<typeof applyAgentServerRunInterruptionProjection>[0]['projection'],
+) {
+  await applyAgentServerRunInterruptionProjection({
+    projection: projected,
+    effects: {
+      appendAssistantMessage: async ({ message }) => {
+        await addMessage(db, thread.id, 'assistant', message).catch(() => undefined)
+      },
+      updatePendingActions: async ({ runId, status, errorMessage }) => {
+        await db
+          .updateTable('agent_action_requests')
+          .set({ status, error_message: errorMessage })
+          .where('run_id', '=', runId)
+          .where('status', '=', 'pending')
+          .execute()
+          .catch(() => undefined)
+      },
+      updatePendingPlanSteps: async ({ runId, status }) => {
+        await db
+          .updateTable('agent_plan_steps')
+          .set({ status, updated_at: utcNow() })
+          .where('run_id', '=', runId)
+          .where('status', '!=', 'executed')
+          .execute()
+          .catch(() => undefined)
+      },
+      updateRun: async ({ runId, status }) => {
+        await db
+          .updateTable('agent_runs')
+          .set({
+            status,
+            completed_at: utcNow(),
+            lease_expires_at: null,
+          })
+          .where('id', '=', runId)
+          .execute()
+          .catch(() => undefined)
+      },
+      touchThread: async () => {
+        await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', thread.id).execute().catch(() => undefined)
+      },
+      appendRunEvent: async (event) => {
+        await addRunEvent(db, event).catch(() => undefined)
+      },
+      publishSignal: ({ signal }) => {
+        agentThreadEvents.publish(thread.id, signal)
+      },
+    },
+  })
+}
+
+async function recordRunFailureFromError(
   db: Kysely<Database>,
   thread: Row<'agent_threads'>,
   runId: string,
   error: unknown,
 ) {
-  const message = safeRunErrorMessage(error)
-  const projected = projectAgentServerRunCompletion({
-    result: {
-      status: 'failed',
-      runId,
-      threadId: thread.id,
-      reason: message,
-      evidence: [],
-      observations: [],
-    },
-  })
-  if (projected.assistantMessage) {
-    await addMessage(db, thread.id, 'assistant', projected.assistantMessage).catch(() => undefined)
-  }
-  await db.updateTable('agent_runs').set({ status: 'failed', goal_status: 'failed', completed_at: utcNow(), lease_expires_at: null }).where('id', '=', runId).execute().catch(() => undefined)
-  await db
-    .updateTable('agent_goals')
-    .set({ status: 'failed', updated_at: utcNow(), completed_at: utcNow(), blocked_reason: message })
-    .where('run_id', '=', runId)
-    .execute()
-    .catch(() => undefined)
-  await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', thread.id).execute().catch(() => undefined)
-  await addRunEvent(db, projected.event).catch(() => undefined)
-  agentThreadEvents.publish(thread.id, projected.signal)
-}
-
-async function failInterruptedAgentRun(
-  db: Kysely<Database>,
-  thread: Row<'agent_threads'>,
-  runId: string,
-  message: string,
-) {
-  const now = utcNow()
-  await db
-    .updateTable('agent_action_requests')
-    .set({ status: 'cancelled', error_message: message })
-    .where('run_id', '=', runId)
-    .where('status', '=', 'pending')
-    .execute()
-  await db
-    .updateTable('agent_plan_steps')
-    .set({ status: 'failed', updated_at: now })
-    .where('run_id', '=', runId)
-    .where('status', '!=', 'executed')
-    .execute()
-  await failAgentRun(db, thread, runId, new Error(message))
+  await persistRunInterruptionProjection(db, thread, projectAgentServerInterruptedRunCompletion({
+    runId,
+    threadId: thread.id,
+    kind: 'failed',
+    message: safeRunErrorMessage(error),
+  }))
 }
 
 export async function cancelRunningAgentRun(
@@ -130,96 +184,13 @@ export async function cancelRunningAgentRun(
   runId: string,
   message: string,
 ) {
-  getExistingAgentRunScheduler(db)?.cancelRun(runId, message)
-  const now = utcNow()
-  await db
-    .updateTable('agent_action_requests')
-    .set({ status: 'cancelled', error_message: message })
-    .where('run_id', '=', runId)
-    .where('status', '=', 'pending')
-    .execute()
-  await db
-    .updateTable('agent_plan_steps')
-    .set({ status: 'cancelled', updated_at: now })
-    .where('run_id', '=', runId)
-    .where('status', '!=', 'executed')
-    .execute()
-  await db
-    .updateTable('agent_runs')
-    .set({ status: 'cancelled', goal_status: 'cancelled', completed_at: now, lease_expires_at: null })
-    .where('id', '=', runId)
-    .where('status', '=', 'running')
-    .execute()
-  await db
-    .updateTable('agent_goals')
-    .set({ status: 'cancelled', updated_at: now, completed_at: now, blocked_reason: message })
-    .where('run_id', '=', runId)
-    .execute()
-  const projected = projectAgentServerRunCompletion({
-    result: {
-      status: 'cancelled',
-      runId,
-      threadId: thread.id,
-      reason: message,
-      observations: [],
-    },
-  })
-  if (projected.assistantMessage) await addMessage(db, thread.id, 'assistant', projected.assistantMessage)
-  await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', thread.id).execute()
-  await addRunEvent(db, projected.event).catch(() => undefined)
-  agentThreadEvents.publish(thread.id, projected.signal)
-}
-
-export async function completeAgentRun(ctx: PlannerContext & { thread: Row<'agent_threads'> }): Promise<CompletedAgentRun | null> {
-  let stopHeartbeat: (() => void) | null = null
-  let runtimeSettings = ctx.settings
-  try {
-    runtimeSettings = await resolveAgentRuntimeSettings(ctx.db, ctx.settings, ctx.workspace, ctx.user)
-    const runtimeCtx: PlannerContext & { thread: Row<'agent_threads'> } = { ...ctx, settings: runtimeSettings }
-    const claimed = await claimAgentRunLease(ctx.db, runtimeSettings, ctx.runId)
-    if (!claimed) return null
-    await addRunEvent(ctx.db, {
-      threadId: ctx.thread.id,
-      runId: ctx.runId,
-      type: 'worker_claimed',
-      title: 'Worker 已认领',
-      message: '后台 worker 已取得 run lease，开始执行。同步调用也会经过同一套 lease guard。',
-      status: 'running',
-    })
-    stopHeartbeat = startAgentRunLeaseHeartbeat(ctx.db, runtimeSettings, ctx.runId)
-    const runResult = await executeAgentRun(runtimeCtx, {
-      beforeStateWrite: () => refreshAgentRunLease(ctx.db, runtimeSettings, ctx.runId),
-    })
-    if (!runResult) return null
-    const projected = projectAgentServerRunCompletion({
-      result: runResult.agenticOsResult,
-      data: {
-        actionCount: runResult.actionRows.length,
-        planStepCount: runResult.planRows.length,
-      },
-    })
-    await ctx.db
-      .updateTable('agent_runs')
-      .set({ status: projected.durableStatus, planner_source: runResult.plannerSource, completed_at: utcNow(), lease_expires_at: null })
-      .where('id', '=', ctx.runId)
-      .where('status', '=', 'running')
-      .where('worker_id', '=', runtimeSettings.agentWorkerId)
-      .execute()
-    await touchThreadAfterRun(ctx.db, ctx.thread, ctx.message)
-    await addRunEvent(ctx.db, projected.event)
-    agentThreadEvents.publish(ctx.thread.id, projected.signal)
-    return runResult
-  } catch (error) {
-    if (error instanceof AgentRunLeaseLostError) return null
-    if (!(await refreshAgentRunLease(ctx.db, runtimeSettings, ctx.runId).catch(() => false))) {
-      return null
-    }
-    await failAgentRun(ctx.db, ctx.thread, ctx.runId, error)
-    throw error
-  } finally {
-    stopHeartbeat?.()
-    getExistingAgentRunScheduler(ctx.db)?.releaseRunController(ctx.runId)
-  }
+  agentRunWorkers.get(db)?.cancelRun(runId, message)
+  await persistRunInterruptionProjection(db, thread, projectAgentServerInterruptedRunCompletion({
+    runId,
+    threadId: thread.id,
+    kind: 'cancelled',
+    message,
+  }))
 }
 
 async function countRunRows(db: Kysely<Database>, table: 'agent_plan_steps' | 'agent_action_requests', runId: string) {
@@ -229,6 +200,14 @@ async function countRunRows(db: Kysely<Database>, table: 'agent_plan_steps' | 'a
     .where('run_id', '=', runId)
     .executeTakeFirstOrThrow()
   return Number(row.count)
+}
+
+async function runPartialOutputSummary(db: Kysely<Database>, runId: string) {
+  const [planStepCount, actionRequestCount] = await Promise.all([
+    countRunRows(db, 'agent_plan_steps', runId),
+    countRunRows(db, 'agent_action_requests', runId),
+  ])
+  return { planStepCount, actionRequestCount }
 }
 
 async function recoverRunMessage(db: Kysely<Database>, run: Row<'agent_runs'>) {
@@ -255,69 +234,303 @@ async function recoverRunMessage(db: Kysely<Database>, run: Row<'agent_runs'>) {
   return fallback?.content.trim() ?? null
 }
 
-export async function recoverRunningAgentRuns(db: Kysely<Database>, settings: Settings) {
-  const scheduler = getAgentRunScheduler(db, settings)
-  return scheduler.runExclusiveDrain({
-    skipped: () => 0,
-    drain: async () => {
-      let started = 0
-      const runs = await claimRecoverableAgentRuns(db, settings)
+async function loadXoxRun(db: Kysely<Database>, run: Row<'agent_runs'>): Promise<XoxRunLoad> {
+  const thread = await db.selectFrom('agent_threads').selectAll().where('id', '=', run.thread_id).executeTakeFirst()
+  if (!thread) return { ok: false, run, thread: null, invalidReason: 'Agent run 无法恢复：线程已不存在。' }
+  const [workspace, user, message] = await Promise.all([
+    db.selectFrom('workspaces').selectAll().where('id', '=', thread.workspace_id).executeTakeFirst(),
+    db.selectFrom('users').selectAll().where('id', '=', run.user_id).executeTakeFirst(),
+    recoverRunMessage(db, run),
+  ])
+  if (!workspace || !user || thread.user_id !== run.user_id) {
+    return { ok: false, run, thread, invalidReason: 'Agent run 无法恢复：用户或工作区已不存在。' }
+  }
+  if (!message) {
+    return { ok: false, run, thread, invalidReason: 'Agent run 无法恢复：缺少原始用户指令。请重新发送这条指令。' }
+  }
+  return { ok: true, run, thread, workspace, user, message }
+}
 
-      for (const run of runs) {
-        if (scheduler.isRunActive(run.id)) continue
-        const thread = await db.selectFrom('agent_threads').selectAll().where('id', '=', run.thread_id).executeTakeFirst()
-        if (!thread) {
-          await db.updateTable('agent_runs').set({ status: 'failed', goal_status: 'failed', completed_at: utcNow(), lease_expires_at: null }).where('id', '=', run.id).execute()
-          continue
-        }
-        const [workspace, user, planStepCount, actionCount] = await Promise.all([
-          db.selectFrom('workspaces').selectAll().where('id', '=', thread.workspace_id).executeTakeFirst(),
-          db.selectFrom('users').selectAll().where('id', '=', run.user_id).executeTakeFirst(),
-          countRunRows(db, 'agent_plan_steps', run.id),
-          countRunRows(db, 'agent_action_requests', run.id),
-        ])
-        if (!workspace || !user || thread.user_id !== run.user_id) {
-          await failInterruptedAgentRun(db, thread, run.id, 'Agent run 无法恢复：用户或工作区已不存在。')
-          continue
-        }
-        if (planStepCount > 0 || actionCount > 0) {
-          await failInterruptedAgentRun(db, thread, run.id, 'Agent run 在服务重启时已有部分运行产物，系统已取消未执行确认卡以避免重复执行。请重新发送这条指令。')
-          continue
-        }
-        const message = await recoverRunMessage(db, run)
-        if (!message) {
-          await failInterruptedAgentRun(db, thread, run.id, 'Agent run 无法恢复：缺少原始用户指令。请重新发送这条指令。')
-          continue
-        }
-        agentThreadEvents.publish(thread.id, 'thread_restored')
-        const controller = scheduler.claimRunController(run.id)
-        if (!controller) continue
-        void completeAgentRun({
-          db,
-          settings,
-          user,
-          workspace,
-          thread,
-          threadId: thread.id,
-          runId: run.id,
-          message,
-          automationLevel: normalizeAgentAutomationLevel(run.automation_level),
-          abortSignal: controller.signal,
-        }).catch(() => undefined)
-        started += 1
-      }
-      return started
+function queuedRunFromLoad(load: Extract<XoxRunLoad, { ok: true }>): AgentServerQueuedRun {
+  const automationLevel = normalizeAgentAutomationLevel(load.run.automation_level)
+  return {
+    run: xoxRunRecord({
+      workspace: load.workspace,
+      user: load.user,
+      run: load.run,
+    }),
+    request: xoxRunInput({
+      workspace: load.workspace,
+      user: load.user,
+      threadId: load.thread.id,
+      runId: load.run.id,
+      message: load.message,
+      automationLevel,
+    }),
+    maxIterations: 5,
+    metadata: {
+      xoxRunId: load.run.id,
+      xoxThreadId: load.thread.id,
     },
-  })
+  }
+}
+
+async function recoveryCandidateFromRun(
+  db: Kysely<Database>,
+  run: Row<'agent_runs'>,
+): Promise<AgentServerRunRecoveryCandidate> {
+  const load = await loadXoxRun(db, run)
+  if (!load.ok) {
+    return {
+      run: {
+        runId: run.id,
+        threadId: run.thread_id,
+        scope: { tenantId: run.user_id, workspaceId: load.thread?.workspace_id ?? 'unknown', userId: run.user_id },
+        status: 'running',
+        createdAt: run.created_at,
+      },
+      request: null,
+      invalidReason: load.invalidReason,
+    }
+  }
+  const [planStepCount, actionRequestCount] = await Promise.all([
+    countRunRows(db, 'agent_plan_steps', run.id),
+    countRunRows(db, 'agent_action_requests', run.id),
+  ])
+  const queued = queuedRunFromLoad(load)
+  const candidate: AgentServerRunRecoveryCandidate = {
+    run: queued.run,
+    request: queued.request,
+    partialOutput: {
+      planStepCount,
+      actionRequestCount,
+    },
+  }
+  if (queued.maxIterations !== undefined) candidate.maxIterations = queued.maxIterations
+  if (queued.metadata !== undefined) candidate.metadata = queued.metadata
+  return candidate
+}
+
+async function claimRows(
+  db: Kysely<Database>,
+  settings: Settings,
+  input: { limit: number },
+  source: 'pending' | 'recoverable',
+) {
+  const candidates = source === 'recoverable'
+    ? await claimRecoverableAgentRuns(db, settings)
+    : await db
+      .selectFrom('agent_runs')
+      .selectAll()
+      .where('status', '=', 'running')
+      .where((eb) =>
+        eb.or([
+          eb('worker_id', 'is', null),
+          eb('lease_expires_at', 'is', null),
+        ]),
+      )
+      .orderBy('created_at', 'asc')
+      .limit(input.limit)
+      .execute()
+
+  const claimed: Row<'agent_runs'>[] = []
+  for (const run of candidates.slice(0, input.limit)) {
+    const row = await claimAgentRunLease(db, settings, run.id)
+    if (row) claimed.push(row)
+  }
+  return claimed
+}
+
+function createXoxRunExecutor(db: Kysely<Database>, baseSettings: Settings): AgentServerRunExecutor {
+  return {
+    resumeRun: async (input, control) => {
+      const run = await db.selectFrom('agent_runs').selectAll().where('id', '=', input.run.runId).executeTakeFirst()
+      if (!run) throw new Error(`Agent run not found: ${input.run.runId}`)
+      const load = await loadXoxRun(db, run)
+      if (!load.ok) throw new Error(load.invalidReason)
+      const runtimeSettings = await resolveAgentRuntimeSettings(db, baseSettings, load.workspace, load.user)
+      const runtimeCtx: PlannerContext & { thread: Row<'agent_threads'> } = {
+        db,
+        settings: runtimeSettings,
+        user: load.user,
+        workspace: load.workspace,
+        thread: load.thread,
+        threadId: load.thread.id,
+        runId: run.id,
+        message: load.message,
+        automationLevel: normalizeAgentAutomationLevel(run.automation_level),
+      }
+      if (control?.abortSignal !== undefined) {
+        runtimeCtx.abortSignal = control.abortSignal as AbortSignal
+      }
+      let stopHeartbeat: (() => void) | null = null
+      try {
+        stopHeartbeat = startAgentRunLeaseHeartbeat(db, runtimeSettings, run.id)
+        const completed = await executeAgentRun(runtimeCtx, {
+          beforeStateWrite: () => refreshAgentRunLease(db, runtimeSettings, run.id),
+        })
+        if (!completed) throw new AgentRunLeaseLostError(run.id)
+        return completed.agenticOsResult
+      } finally {
+        stopHeartbeat?.()
+      }
+    },
+  }
+}
+
+function createXoxRunQueueStore(
+  db: Kysely<Database>,
+  settings: Settings,
+): AgentServerDurableRunQueueStore {
+  return {
+    claimPendingRuns: async (input) => {
+      const runs = await claimRows(db, settings, input, 'pending')
+      const queuedRuns: AgentServerQueuedRun[] = []
+      for (const run of runs) {
+        const load = await loadXoxRun(db, run)
+        if (load.ok) {
+          const partialOutput = await runPartialOutputSummary(db, run.id)
+          if (hasAgentServerRunPartialOutput(partialOutput)) {
+            continue
+          }
+          queuedRuns.push(queuedRunFromLoad(load))
+        } else if (load.thread) {
+          await recordRunFailureFromError(db, load.thread, run.id, new Error(load.invalidReason))
+        } else {
+          await db.updateTable('agent_runs').set({ status: 'failed', completed_at: utcNow(), lease_expires_at: null }).where('id', '=', run.id).execute()
+        }
+      }
+      return queuedRuns
+    },
+    claimRecoverableRuns: async (input) => {
+      const runs = await claimRows(db, settings, input, 'recoverable')
+      const candidates: AgentServerRunRecoveryCandidate[] = []
+      for (const run of runs) {
+        candidates.push(await recoveryCandidateFromRun(db, run))
+      }
+      return candidates
+    },
+    markRunStarted: async ({ queuedRun }) => {
+      await addRunEvent(db, {
+        threadId: queuedRun.run.threadId,
+        runId: queuedRun.run.runId,
+        type: 'worker_claimed',
+        title: 'Worker 已认领',
+        message: 'Agentic OS worker 已取得 run lease，开始执行。',
+        status: 'running',
+      })
+      agentThreadEvents.publish(queuedRun.run.threadId, 'thread_started')
+    },
+    markRunCompleted: async ({ queuedRun, result }) => {
+      const [planStepCount, actionCount] = await Promise.all([
+        countRunRows(db, 'agent_plan_steps', queuedRun.run.runId),
+        countRunRows(db, 'agent_action_requests', queuedRun.run.runId),
+      ])
+      const projected = projectAgentServerQueuedRunCompletion({
+        queuedRun,
+        result,
+        partialOutput: { actionRequestCount: actionCount, planStepCount },
+        data: { actionCount },
+      })
+      await db
+        .updateTable('agent_runs')
+        .set({
+          status: projected.durableStatus,
+          planner_source: xoxPlannerSource(settings),
+          completed_at: utcNow(),
+          lease_expires_at: null,
+        })
+        .where('id', '=', queuedRun.run.runId)
+        .where('status', '=', 'running')
+        .where('worker_id', '=', settings.agentWorkerId)
+        .execute()
+      const thread = await db.selectFrom('agent_threads').selectAll().where('id', '=', queuedRun.run.threadId).executeTakeFirst()
+      if (thread) await touchThreadAfterRun(db, thread, queuedRun.request.userMessage)
+      await addRunEvent(db, projected.event)
+      agentThreadEvents.publish(queuedRun.run.threadId, projected.signal)
+    },
+    markRunFailed: async ({ queuedRun, error }) => {
+      const thread = await db.selectFrom('agent_threads').selectAll().where('id', '=', queuedRun.run.threadId).executeTakeFirst()
+      if (thread) await recordRunFailureFromError(db, thread, queuedRun.run.runId, error)
+    },
+    failClosedRecovery: async ({ candidate, decision }) => {
+      const thread = await db.selectFrom('agent_threads').selectAll().where('id', '=', candidate.run.threadId).executeTakeFirst()
+      if (!thread) {
+        await db.updateTable('agent_runs').set({ status: 'failed', completed_at: utcNow(), lease_expires_at: null }).where('id', '=', candidate.run.runId).execute()
+        return
+      }
+      await persistRunInterruptionProjection(db, thread, projectAgentServerRunRecoveryFailClosedInterruption({
+        candidate,
+        decision,
+        copy: {
+          partial_output_present: 'Agent run 在服务重启时已有部分运行产物，系统已取消未执行确认卡以避免重复执行。请重新发送这条指令。',
+        },
+      }))
+    },
+  }
+}
+
+function getAgentRunWorker(db: Kysely<Database>, settings: Settings) {
+  let worker = agentRunWorkers.get(db)
+  if (!worker) {
+    worker = createAgentServerDurableRunWorker({
+      server: createXoxRunExecutor(db, settings),
+      store: createXoxRunQueueStore(db, settings),
+      queueOptions: { recoverRunningRuns: true },
+      workerOptions: {
+        workerId: settings.agentWorkerId,
+        batchSize: 1,
+        pollIntervalMs: settings.agentRunWorkerPollMs,
+      },
+    })
+    agentRunWorkers.set(db, worker)
+  }
+  return worker
+}
+
+async function queuedRunForRunId(db: Kysely<Database>, settings: Settings, runId: string) {
+  const claimed = await claimAgentRunLease(db, settings, runId)
+  if (!claimed) return null
+  const load = await loadXoxRun(db, claimed)
+  if (!load.ok) {
+    if (load.thread) await recordRunFailureFromError(db, load.thread, runId, new Error(load.invalidReason))
+    return null
+  }
+  return queuedRunFromLoad(load)
+}
+
+export async function completeAgentRun(input: PlannerContext & { thread: Row<'agent_threads'> }): Promise<AgenticOsKernelRunResult | null> {
+  const worker = getAgentRunWorker(input.db, input.settings)
+  const queuedRun = await queuedRunForRunId(input.db, input.settings, input.runId)
+  if (!queuedRun) return null
+  const execution = await worker.runQueuedRun(queuedRun)
+  if (execution.status === 'failed') throw execution.error
+  if (execution.status === 'skipped_active') return null
+  const run = await input.db.selectFrom('agent_runs').selectAll().where('id', '=', input.runId).executeTakeFirstOrThrow()
+  const load = await loadXoxRun(input.db, run)
+  if (!load.ok) return null
+  const actionRows = await input.db.selectFrom('agent_action_requests').selectAll().where('run_id', '=', input.runId).orderBy('created_at', 'asc').execute()
+  const planRows = await input.db.selectFrom('agent_plan_steps').selectAll().where('run_id', '=', input.runId).orderBy('sequence_no', 'asc').execute()
+  const assistantMessage = await input.db.selectFrom('agent_messages').selectAll().where('thread_id', '=', input.thread.id).where('role', '=', 'assistant').orderBy('created_at', 'desc').executeTakeFirst()
+  return {
+    agenticOsResult: execution.result,
+    plannerSource: (run.planner_source as AgentPlannerSource | null) ?? xoxPlannerSource(input.settings),
+    assistantMessage: assistantMessage ?? null,
+    navigationEvents: [],
+    actionRows,
+    planRows,
+  }
+}
+
+export async function recoverRunningAgentRuns(db: Kysely<Database>, settings: Settings) {
+  const result = await getAgentRunWorker(db, settings).startReadyRuns()
+  return result.started
 }
 
 export function scheduleAgentRunQueueDrain(db: Kysely<Database>, settings: Settings) {
-  getAgentRunScheduler(db, settings).scheduleDrain(() => recoverRunningAgentRuns(db, settings))
+  getAgentRunWorker(db, settings).scheduleStartReadyRuns()
 }
 
 export function startAgentRunQueueWorker(db: Kysely<Database>, settings: Settings) {
-  return getAgentRunScheduler(db, settings).start(
-    () => recoverRunningAgentRuns(db, settings),
-    settings.agentRunWorkerPollMs,
-  )
+  return getAgentRunWorker(db, settings).start()
 }

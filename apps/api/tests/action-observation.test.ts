@@ -5,9 +5,10 @@ import {
   actionPreviewObservation,
 } from '../src/agent/agentic-os/xox-action-graph-adapter.js'
 import {
-  toolSupervisorFailureObservation,
-} from '../src/agent/host-profile/xox-planned-items.js'
-import { toolSupervisorFailureReadDraft } from '../src/agent/host-profile/xox-planned-items.js'
+  createAgentHostToolResultRuntime,
+  type AgentHostToolCallStepLike,
+  type AgentHostToolReadDraft,
+} from '@agentic-os/core'
 import type { Row } from '../src/db/schema.js'
 
 function action(overrides: Partial<Row<'agent_action_requests'>> = {}): Row<'agent_action_requests'> {
@@ -114,6 +115,10 @@ describe('xox action observations through Agentic OS envelopes', () => {
   })
 
   it('keeps tool supervisor failure envelopes in Agentic OS core adapters', () => {
+    type TestRead = AgentHostToolReadDraft<never, string, string>
+    const toolResultPort = createAgentHostToolResultRuntime<unknown, AgentHostToolCallStepLike, never, TestRead, never>({
+      isAction: (_item): _item is never => false,
+    })
     const step = {
       intent: 'data.queryWorkspace',
       providerToolName: 'data_query_workspace',
@@ -121,17 +126,16 @@ describe('xox action observations through Agentic OS envelopes', () => {
       providerToolArguments: { scope: 'workspace_summary' },
     }
 
-    const read = toolSupervisorFailureReadDraft(step)
-    const observation = toolSupervisorFailureObservation(step)
+    const read = toolResultPort.emptyResultRead(step)
 
     expect(read).toMatchObject({
-      title: '工具未生成业务结果',
-      message: '工具 data_query_workspace 没有生成可执行动作或可观察结果。',
+      title: 'Tool produced no business result',
+      message: 'Tool data_query_workspace did not produce an executable action or observable result.',
       readKind: 'tool_observation',
       toolName: 'data_query_workspace',
       toolCallId: 'call_data',
       toolArguments: { scope: 'workspace_summary' },
-      displayPreview: '工具没有生成业务结果。',
+      displayPreview: 'Tool data_query_workspace did not produce an executable action or observable result.',
       observationStatus: 'failed',
       observationOutcome: 'failed_terminal',
       status: 'failed',
@@ -140,23 +144,8 @@ describe('xox action observations through Agentic OS envelopes', () => {
       observationType: 'tool_supervisor_failure',
       toolName: 'data_query_workspace',
       toolCallId: 'call_data',
-      message: 'Tool data_query_workspace did not produce an action or observation.',
+      message: 'Tool data_query_workspace did not produce an executable action or observable result.',
     })
 
-    expect(observation).toMatchObject({
-      title: '工具未生成业务结果',
-      toolName: 'data_query_workspace',
-      toolCallId: 'call_data',
-      toolArguments: { scope: 'workspace_summary' },
-      displayPreview: '工具 data_query_workspace 没有生成可执行动作或可观察结果。',
-      status: 'failed',
-      outcome: 'failed_terminal',
-    })
-    expect(modelContent(observation)).toMatchObject({
-      observationType: 'tool_supervisor_failure',
-      toolName: 'data_query_workspace',
-      toolCallId: 'call_data',
-      message: 'Tool data_query_workspace did not produce an action or observation.',
-    })
   })
 })

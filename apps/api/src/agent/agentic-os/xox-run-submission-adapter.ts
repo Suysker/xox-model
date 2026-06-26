@@ -1,5 +1,8 @@
 import type { Kysely } from 'kysely'
-import { projectAgentServerAgUiEvents, projectAgentServerRunSubmissionView } from '@agentic-os/server'
+import {
+  projectAgentServerSaaSAgUiEvents,
+  projectAgentServerSaaSRunSubmissionView,
+} from '@agentic-os/server'
 import type {
   AgentActionRequest,
   AgentAutomationLevel,
@@ -19,7 +22,7 @@ import { addRunEvent, agentThreadEvents, listSerializedRunEvents, serializeRunEv
 import {
   addMessage,
   buildThreadState,
-  buildXoxProjectionViews,
+  projectXoxProductViews,
   getOrCreateThread,
   serializeAction,
   serializeMessage,
@@ -33,7 +36,7 @@ import {
   xoxRunInputToOs,
   xoxRunToOsRunRecord,
 } from './xox-thread-store-adapter.js'
-import { completeAgentRun, createAgentRunController, scheduleAgentRunQueueDrain } from './xox-run-worker-adapter.js'
+import { completeAgentRun, scheduleAgentRunQueueDrain } from './xox-run-worker-adapter.js'
 
 export type SubmitAgentMessageRunInput = {
   db: Kysely<Database>
@@ -83,7 +86,7 @@ function buildSubmittedRunResponse(input: XoxSubmittedRunResponseInput): AgentSe
     run: osRun,
     assistantText: input.assistantText,
   })
-  const osView = projectAgentServerRunSubmissionView({
+  const osView = projectAgentServerSaaSRunSubmissionView({
     thread: {
       threadId: input.threadId,
     },
@@ -121,8 +124,8 @@ function buildSubmittedRunResponse(input: XoxSubmittedRunResponseInput): AgentSe
     planSteps: input.planSteps,
     actionRequests: input.actionRequests,
   }
-  const agUiEvents = projectAgentServerAgUiEvents(projection, { eventNamePrefix: 'xox' }) as AgentAgUiEvent[]
-  const projected = buildXoxProjectionViews({
+  const agUiEvents = projectAgentServerSaaSAgUiEvents(projection, { eventNamePrefix: 'xox' }) as AgentAgUiEvent[]
+  const projected = projectXoxProductViews({
     messages: input.messages,
     osTranscriptItems: osView.transcriptItems,
     actionRequests: input.actionRequests,
@@ -148,7 +151,7 @@ function buildSubmittedRunResponse(input: XoxSubmittedRunResponseInput): AgentSe
 }
 
 export async function failSubmittedAgentRun(db: Kysely<Database>, runId: string, thread: Row<'agent_threads'>) {
-  await db.updateTable('agent_runs').set({ status: 'failed', goal_status: 'failed', completed_at: utcNow(), lease_expires_at: null }).where('id', '=', runId).execute().catch(() => undefined)
+  await db.updateTable('agent_runs').set({ status: 'failed', completed_at: utcNow(), lease_expires_at: null }).where('id', '=', runId).execute().catch(() => undefined)
   await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', thread.id).execute().catch(() => undefined)
   agentThreadEvents.publish(thread.id, 'run_failed')
 }
@@ -170,7 +173,7 @@ export async function submitAgentMessageRun(input: SubmitAgentMessageRunInput): 
         input_message: input.message,
         planner_source: null,
         automation_level: automationLevel,
-        goal_status: 'interpreting',
+        goal_status: null,
         worker_id: null,
         lease_expires_at: null,
         heartbeat_at: null,
@@ -214,7 +217,6 @@ export async function submitAgentMessageRun(input: SubmitAgentMessageRunInput): 
       })
     }
 
-    const controller = createAgentRunController(input.db, input.settings, runId)
     const completed = await completeAgentRun({
       db: input.db,
       settings: input.settings,
@@ -225,7 +227,6 @@ export async function submitAgentMessageRun(input: SubmitAgentMessageRunInput): 
       runId,
       message: input.message,
       automationLevel,
-      abortSignal: controller.signal,
     })
     if (!completed) return buildThreadState(input.db, input.workspace, input.user, thread.id)
     const runEvents = await listSerializedRunEvents(input.db, runId)

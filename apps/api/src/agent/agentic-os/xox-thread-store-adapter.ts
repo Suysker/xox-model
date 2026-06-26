@@ -14,16 +14,14 @@ import type {
 } from '@agentic-os/contracts'
 import { normalizeAgentAutomationLevel } from '@agentic-os/core'
 import type { AgentServerThreadRunState, AgentServerThreadSnapshot } from '@agentic-os/server'
-import { AgentServerThreadStateProjector, projectAgentServerAgUiEvents } from '@agentic-os/server'
+import {
+  AgentServerThreadStateProjector,
+  projectAgentServerLegacyTranscriptViews,
+  projectAgentServerSaaSAgUiEvents,
+} from '@agentic-os/server'
 import type {
   AgentActionRequest,
   AgentAgUiEvent,
-  AgentEvaluationFinding,
-  AgentEvaluationResult,
-  AgentEvaluationStatus,
-  AgentGoalContract,
-  AgentGoalRecord,
-  AgentGoalStatus,
   AgentMessage,
   AgentNavigationEvent,
   AgentPlannerSource,
@@ -112,97 +110,6 @@ function plannerSource(value: string | null): AgentPlannerSource | null {
     : null
 }
 
-const LEGACY_GOAL_PAGES: AgentGoalContract['scope']['pages'] = ['model', 'ledger', 'variance', 'versions', 'share']
-const LEGACY_GOAL_CAPABILITIES = ['data', 'draft', 'import_export', 'ledger', 'memory', 'share', 'version']
-
-function legacyGoalContract(row: Row<'agent_goals'>): AgentGoalContract {
-  return {
-    goalId: row.id,
-    threadId: row.thread_id,
-    runId: row.run_id,
-    userId: row.user_id,
-    workspaceId: row.workspace_id,
-    objective: row.objective,
-    scope: {
-      workspace: 'current',
-      pages: LEGACY_GOAL_PAGES,
-      allowedCapabilities: LEGACY_GOAL_CAPABILITIES,
-    },
-    acceptanceCriteria: [],
-    facts: {},
-    forbiddenActions: [],
-    humanCheckpoints: [],
-    automationLevel: 'manual',
-    maxIterations: 5,
-    contextStrategy: { memoryScopes: ['user', 'workspace', 'thread'], compactionMode: 'summary' },
-  }
-}
-
-export function normalizeGoalStatus(value: string | null): AgentGoalStatus | null {
-  if (
-    value === 'interpreting' ||
-    value === 'planning' ||
-    value === 'waiting_for_confirmation' ||
-    value === 'evaluating' ||
-    value === 'repairing' ||
-    value === 'completed' ||
-    value === 'needs_clarification' ||
-    value === 'blocked' ||
-    value === 'failed' ||
-    value === 'cancelled'
-  ) {
-    return value
-  }
-  return null
-}
-
-function normalizeEvaluationStatus(value: string): AgentEvaluationStatus {
-  if (
-    value === 'pass' ||
-    value === 'continue' ||
-    value === 'needs_confirmation' ||
-    value === 'needs_clarification' ||
-    value === 'blocked' ||
-    value === 'failed'
-  ) {
-    return value
-  }
-  return 'failed'
-}
-
-export function serializeGoal(row: Row<'agent_goals'>): AgentGoalRecord {
-  return {
-    id: row.id,
-    threadId: row.thread_id,
-    runId: row.run_id,
-    status: normalizeGoalStatus(row.status) ?? 'failed',
-    contract: parseJson<AgentGoalContract>(row.contract_json, legacyGoalContract(row)),
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    completedAt: row.completed_at,
-    blockedReason: row.blocked_reason,
-  }
-}
-
-export function serializeEvaluation(row: Row<'agent_evaluations'>): AgentEvaluationResult {
-  return {
-    id: row.id,
-    goalId: row.goal_id,
-    threadId: row.thread_id,
-    runId: row.run_id,
-    iteration: row.iteration_no,
-    status: normalizeEvaluationStatus(row.status),
-    confidence: row.confidence,
-    satisfiedCriteria: parseJson<string[]>(row.satisfied_json, []),
-    unsatisfiedCriteria: parseJson<AgentEvaluationFinding[]>(row.unsatisfied_json, []),
-    policyFindings: parseJson<AgentEvaluationFinding[]>(row.policy_json, []),
-    nextPlannerBrief: row.next_planner_brief,
-    userQuestion: row.user_question,
-    blocker: row.blocker,
-    createdAt: row.created_at,
-  }
-}
-
 function runStatus(value: string): AgentRunRecord['status'] {
   if (value === 'completed' || value === 'failed' || value === 'cancelled') return value
   return 'running'
@@ -215,7 +122,7 @@ export function serializeRun(row: Row<'agent_runs'>): AgentRunRecord {
     status: runStatus(row.status),
     planner: plannerSource(row.planner_source),
     automationLevel: normalizeAgentAutomationLevel(row.automation_level),
-    goalStatus: normalizeGoalStatus(row.goal_status),
+    goalStatus: null,
     createdAt: row.created_at,
     completedAt: row.completed_at,
   }
@@ -475,8 +382,8 @@ type XoxThreadStateViewInput = {
   runs: AgentRunRecord[]
   runInputs: XoxThreadStateRunInput[]
   planner: AgentPlannerSource | null
-  goals: AgentGoalRecord[]
-  evaluations: AgentEvaluationResult[]
+  goals: AgentThreadState['goals']
+  evaluations: AgentThreadState['evaluations']
   navigationEvents: AgentNavigationEvent[]
   runEvents: AgentRunEvent[]
   planSteps: AgentPlanStep[]
@@ -509,8 +416,8 @@ function buildXoxThreadStateView(input: XoxThreadStateViewInput): AgentThreadSta
     planSteps: input.planSteps,
     actionRequests: input.actionRequests,
   }
-  const agUiEvents = projectAgentServerAgUiEvents(projection, { eventNamePrefix: 'xox' }) as AgentAgUiEvent[]
-  const projected = buildXoxProjectionViews({
+  const agUiEvents = projectAgentServerSaaSAgUiEvents(projection, { eventNamePrefix: 'xox' }) as AgentAgUiEvent[]
+  const projected = projectXoxProductViews({
     messages: input.messages,
     osTranscriptItems: osState.transcriptItems,
     actionRequests: input.actionRequests,
@@ -535,236 +442,31 @@ function buildXoxThreadStateView(input: XoxThreadStateViewInput): AgentThreadSta
   }
 }
 
-export function buildXoxProjectionViews(input: XoxProjectionViewInput): XoxProjectionViews {
-  const actionById = new Map(input.actionRequests.map((action) => [action.id, action]))
-  const productMessages = input.messages
-  const messageItems = productMessages.map((message, index): AgentTranscriptItem => ({
-    id: `transcript-message-${message.id}`,
-    threadId: message.threadId,
-    runId: input.osTranscriptItems.find((item) => item.threadId === message.threadId)?.runId ?? 'run',
-    sequence: index + 1,
-    kind: 'message',
-    title: message.role === 'user' ? '你' : message.role === 'assistant' ? '助手' : '系统',
-    summary: message.content,
-    status: 'completed',
-    visibility: message.role === 'system' ? 'technical' : 'user',
-    sourceType: 'message',
-    createdAt: message.createdAt,
-  }))
-  const messageKeys = new Set(productMessages.map((message) => `${message.role}:${message.content}`))
-  const osItems = input.osTranscriptItems
-    .filter((item) => !messageKeys.has(`${item.role}:${osContentSummary(item.content)}`))
-    .map((item, index) => xoxTranscriptItemFromOs(item, {
-      sequence: messageItems.length + index + 1,
-      actionById,
-      fallbackCreatedAt: input.fallbackCreatedAt,
-    }))
-  const transcriptItems = [...messageItems, ...osItems]
-    .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.sequence - right.sequence)
-    .map((item, index) => ({ ...item, sequence: index + 1 }))
-  const timelineItems = transcriptItems.map((item, index) => timelineItemFromTranscriptItem(item, actionById, index + 1))
-  const transcriptNodes = timelineItems.map((item, index) => transcriptNodeFromTimelineItem(item, index + 1))
-  return { transcriptItems, timelineItems, transcriptNodes }
-}
-
-function xoxTranscriptItemFromOs(
-  item: OsTranscriptItem,
-  input: {
-    sequence: number
-    actionById: Map<string, AgentActionRequest>
-    fallbackCreatedAt: string
-  },
-): AgentTranscriptItem {
-  const content = osRecordContent(item.content)
-  const actionRequestId = osString(content.actionRequestId)
-  const action = actionRequestId ? input.actionById.get(actionRequestId) ?? null : null
-  const payload = osPayload(item)
-  const kind = transcriptKindFromOs(item, action)
-  const title = transcriptTitleFromOs(item, content, action, payload)
-  const summary = transcriptSummaryFromOs(item, content, action, payload)
-  return {
-    id: `transcript-os-${item.itemId}`,
-    threadId: item.threadId,
-    runId: item.runId,
-    sequence: input.sequence,
-    kind,
-    title,
-    summary,
-    status: transcriptStatusFromOs(item, content, action, payload),
-    visibility: item.visibility,
-    sourceType: item.kind,
-    actionRequestId,
-    toolCallId: action?.id ?? osString(content.toolCallId),
-    toolName: action?.kind ?? osString(content.toolName),
-    navigation: action?.navigation ?? null,
-    ...(action?.details ? { details: action.details } : {}),
-    payload,
-    createdAt: item.createdAt ?? input.fallbackCreatedAt,
-  }
-}
-
-function timelineItemFromTranscriptItem(
-  item: AgentTranscriptItem,
-  actionById: Map<string, AgentActionRequest>,
-  sequence: number,
-): AgentTimelineItem {
-  const action = item.actionRequestId ? actionById.get(item.actionRequestId) ?? null : null
-  const kind: AgentTimelineItem['kind'] = item.kind === 'confirmation'
-    ? 'tool_call'
-    : item.kind === 'message' && item.title === '你'
-      ? 'user_message'
-      : item.kind === 'message'
-        ? 'assistant_message'
-        : item.kind === 'tool_result'
-          ? 'tool_result'
-          : item.kind === 'navigation'
-            ? 'navigation'
-            : item.kind === 'action_update'
-              ? 'action_edit'
-              : item.kind === 'memory'
-                ? 'memory'
-                : item.kind === 'evaluation'
-                  ? 'evaluation'
-                  : item.kind === 'technical'
-                    ? 'technical'
-                    : 'summary'
-  const timelineItem: AgentTimelineItem = {
-    id: `timeline-${item.id}`,
-    threadId: item.threadId,
-    runId: item.runId,
-    sequence,
-    kind,
-    title: kind === 'tool_call' && item.toolName ? `调用工具：${item.toolName}` : item.title,
-    summary: item.summary,
-    content: item.summary,
-    status: item.status,
-    visibility: item.visibility,
-    createdAt: item.createdAt,
-  }
-  if (item.sourceType !== undefined) timelineItem.sourceType = item.sourceType
-  if (item.agUiEventType !== undefined) timelineItem.agUiEventType = item.agUiEventType
-  if (item.toolCallId !== undefined) timelineItem.toolCallId = item.toolCallId
-  if (item.toolName !== undefined) timelineItem.toolName = item.toolName
-  if (item.actionRequestId !== undefined) timelineItem.actionRequestId = item.actionRequestId
-  if (action !== undefined) timelineItem.actionRequest = action
-  if (item.navigation !== undefined) timelineItem.navigation = item.navigation
-  if (item.details !== undefined) timelineItem.details = item.details
-  if (item.payload !== undefined) timelineItem.payload = item.payload
-  return timelineItem
-}
-
-function transcriptNodeFromTimelineItem(item: AgentTimelineItem, sequence: number): AgentTranscriptNode {
-  const kind: AgentTranscriptNode['kind'] = item.kind === 'action_edit'
-    ? 'action_update'
-    : item.kind === 'summary'
-      ? 'summary'
-      : item.kind
-  const node: AgentTranscriptNode = {
-    id: `node-${item.id}`,
-    threadId: item.threadId,
-    runId: item.runId,
-    sequence,
-    kind,
-    title: item.title,
-    summary: item.summary,
-    ...(item.content ? { content: item.content } : {}),
-    status: item.status,
-    visibility: item.visibility,
-    defaultOpen: item.visibility === 'user',
-    createdAt: item.createdAt,
-  }
-  if (item.toolName) node.tool = { name: item.toolName, callId: item.toolCallId ?? null }
-  if (item.sourceType !== undefined) node.sourceType = item.sourceType
-  if (item.agUiEventType !== undefined) node.agUiEventType = item.agUiEventType
-  if (item.actionRequestId !== undefined) node.actionRequestId = item.actionRequestId
-  if (item.actionRequest !== undefined) node.actionRequest = item.actionRequest
-  if (item.navigation !== undefined) node.navigation = item.navigation
-  if (item.details !== undefined) node.details = item.details
-  if (item.payload !== undefined) node.payload = item.payload
-  return node
-}
-
-function transcriptKindFromOs(item: OsTranscriptItem, action?: AgentActionRequest | null): AgentTranscriptItem['kind'] {
-  if (item.kind === 'action_request') return action?.status === 'executed' ? 'tool_result' : 'confirmation'
-  if (item.kind === 'tool_observation') return 'tool_result'
-  if (item.kind === 'technical_event') return 'technical'
-  if (item.kind === 'run_status') return 'status'
-  return 'message'
-}
-
-function transcriptStatusFromOs(
-  item: OsTranscriptItem,
-  content: Record<string, unknown>,
-  action: AgentActionRequest | null,
-  payload: Record<string, unknown> | null,
-): AgentTranscriptItem['status'] {
-  if (action) return action.status === 'pending' || action.status === 'confirmed'
-    ? 'waiting'
-    : action.status === 'executed'
-      ? 'completed'
-      : action.status === 'cancelled'
-        ? 'cancelled'
-        : 'failed'
-  const status = osString(payload?.status) ?? osString(content.status)
-  if (status === 'pending' || status === 'queued') return 'pending'
-  if (status === 'running') return 'running'
-  if (status === 'waiting') return 'waiting'
-  if (status === 'completed' || status === 'executed') return 'completed'
-  if (status === 'failed') return 'failed'
-  if (status === 'cancelled' || status === 'rejected') return 'cancelled'
-  return item.kind === 'technical_event' ? 'info' : 'completed'
-}
-
-function transcriptTitleFromOs(
-  item: OsTranscriptItem,
-  content: Record<string, unknown>,
-  action: AgentActionRequest | null,
-  payload: Record<string, unknown> | null,
-) {
-  if (action?.status === 'executed') return '已执行动作'
-  if (action) return action.title
-  if (item.kind === 'user_message') return '用户消息'
-  if (item.kind === 'assistant_final') return '最终回答'
-  return osString(payload?.title) ?? osString(content.title) ?? osString(content.toolName) ?? item.kind
-}
-
-function transcriptSummaryFromOs(
-  item: OsTranscriptItem,
-  content: Record<string, unknown>,
-  action: AgentActionRequest | null,
-  payload: Record<string, unknown> | null,
-) {
-  if (action) return action.summary
-  return osString(payload?.message) ?? osString(content.description) ?? osString(content.reason) ?? osContentSummary(item.content)
-}
-
-function osPayload(item: OsTranscriptItem): Record<string, unknown> | null {
-  const content = osRecordContent(item.content)
-  const payload = content.payload
-  return payload && typeof payload === 'object' && !Array.isArray(payload)
-    ? payload as Record<string, unknown>
-    : content
-}
-
-function osRecordContent(content: unknown): Record<string, unknown> {
-  return content && typeof content === 'object' && !Array.isArray(content)
-    ? content as Record<string, unknown>
-    : {}
-}
-
-function osString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim().length > 0 ? value : null
-}
-
-function osContentSummary(content: unknown): string {
-  if (typeof content === 'string') return content
-  if (content === null || content === undefined) return ''
-  if (typeof content === 'number' || typeof content === 'boolean') return String(content)
-  try {
-    return JSON.stringify(content)
-  } catch {
-    return String(content)
-  }
+export function projectXoxProductViews(input: XoxProjectionViewInput): XoxProjectionViews {
+  return projectAgentServerLegacyTranscriptViews<AgentActionRequest, AgentNavigationEvent>({
+    messages: input.messages,
+    osTranscriptItems: input.osTranscriptItems,
+    actionRequests: input.actionRequests,
+    fallbackCreatedAt: input.fallbackCreatedAt,
+    action: {
+      id: (action) => action.id,
+      status: (action) => action.status,
+      kind: (action) => action.kind,
+      title: (action) => action.title,
+      summary: (action) => action.summary,
+      navigation: (action) => action.navigation,
+      details: (action) => action.details,
+    },
+    copy: {
+      userTitle: '你',
+      assistantTitle: '助手',
+      systemTitle: '系统',
+      osUserMessageTitle: '用户消息',
+      osAssistantFinalTitle: '最终回答',
+      executedActionTitle: '已执行动作',
+      toolCallTitle: (toolName) => `调用工具：${toolName}`,
+    },
+  }) as XoxProjectionViews
 }
 
 function buildOsThreadSnapshot(input: XoxThreadStateViewInput): AgentServerThreadSnapshot {
@@ -843,19 +545,12 @@ export async function buildThreadState(
       .execute(),
   ])
   const latestRun = runs[0] ?? null
-  const [planSteps, runEvents, goals, evaluations] = latestRun
+  const [planSteps, runEvents] = latestRun
     ? await Promise.all([
         db.selectFrom('agent_plan_steps').selectAll().where('run_id', '=', latestRun.id).orderBy('sequence_no', 'asc').execute(),
         db.selectFrom('agent_run_events').selectAll().where('run_id', '=', latestRun.id).orderBy('sequence_no', 'asc').execute(),
-        db.selectFrom('agent_goals').selectAll().where('run_id', '=', latestRun.id).orderBy('created_at', 'asc').execute(),
-        db.selectFrom('agent_evaluations')
-          .selectAll()
-          .where('run_id', '=', latestRun.id)
-          .orderBy((eb) => eb.case().when('status', '=', 'pass').then(1).else(0).end(), 'asc')
-          .orderBy('iteration_no', 'asc')
-          .execute(),
       ])
-    : [[], [], [], []] as [Row<'agent_plan_steps'>[], Row<'agent_run_events'>[], Row<'agent_goals'>[], Row<'agent_evaluations'>[]]
+    : [[], []] as [Row<'agent_plan_steps'>[], Row<'agent_run_events'>[]]
   const navigationEvents = planSteps
     .map((step) => (step.navigation_json ? parseJson<AgentNavigationEvent | null>(step.navigation_json, null) : null))
     .filter((event): event is AgentNavigationEvent => Boolean(event))
@@ -871,8 +566,8 @@ export async function buildThreadState(
       userMessage: run.input_message,
     })),
     planner: latestRun ? plannerSource(latestRun.planner_source) : null,
-    goals: (goals as Row<'agent_goals'>[]).map(serializeGoal) as AgentGoalRecord[],
-    evaluations: (evaluations as Row<'agent_evaluations'>[]).map(serializeEvaluation) as AgentEvaluationResult[],
+    goals: [],
+    evaluations: [],
     navigationEvents,
     runEvents: runEvents.map(serializeRunEvent),
     planSteps: planSteps.map(serializePlanStep),
