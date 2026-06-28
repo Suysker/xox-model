@@ -128,6 +128,7 @@ function buildSubmittedRunResponse(input: XoxSubmittedRunResponseInput): AgentSe
   const projected = projectXoxProductViews({
     messages: input.messages,
     osTranscriptItems: osView.transcriptItems,
+    planSteps: input.planSteps,
     actionRequests: input.actionRequests,
     fallbackCreatedAt: input.createdAt,
   })

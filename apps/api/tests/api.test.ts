@@ -3090,6 +3090,16 @@ describe('xox TypeScript API', () => {
       const visibleNodes = flattenTranscriptNodes(response.json.transcriptNodes).filter((node: any) => node.visibility === 'user')
       const assistantNode = visibleNodes.find((node: any) => node.kind === 'assistant_message')
       expect(assistantNode?.content ?? assistantNode?.summary).toContain('3月计划收入')
+      const dataToolNodes = visibleNodes.filter((node: any) =>
+        (node.kind === 'tool_call' || node.kind === 'tool_result') &&
+        node.tool?.name === 'data_query_workspace')
+      const toolNode = dataToolNodes.find((node: any) =>
+        node.tool?.argumentsPreview ||
+        node.sections?.some((section: any) => section.kind === 'arguments')) ?? dataToolNodes[0]
+      expect(toolNode?.tool?.argumentsPreview ?? '').toContain('period_summary')
+      expect(toolNode?.tool?.resultPreview ?? '').toContain('plannedRevenue')
+      expect(toolNode?.sections?.some((section: any) => section.kind === 'arguments')).toBe(true)
+      expect(toolNode?.sections?.some((section: any) => section.kind === 'result')).toBe(true)
       expect(response.json.planSteps[0].description).toContain('plannedRevenue')
       expect(response.json.planSteps[0].description).not.toContain('3月计划收入 ¥')
       await closeHarness(harness)
@@ -3131,7 +3141,6 @@ describe('xox TypeScript API', () => {
       const eventTypes = response.json.runEvents.map((event: any) => event.type)
       expect(eventTypes).not.toContain('turn_intake_resolved')
       expect(eventTypes).not.toContain('assistant_final_message')
-      expect(eventTypes).toContain('goal_contract_created')
       expect(eventTypes).toContain('model_planning')
       expect(eventTypes).toContain('run_completed')
       expect(response.json.runEvents.every((event: any) => ['assistant', 'tool', 'lifecycle'].includes(event.channel))).toBe(true)

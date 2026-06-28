@@ -399,6 +399,7 @@ type XoxProjectionViews = {
 type XoxProjectionViewInput = {
   messages: AgentMessage[]
   osTranscriptItems: OsTranscriptItem[]
+  planSteps?: AgentPlanStep[]
   actionRequests: AgentActionRequest[]
   fallbackCreatedAt: string
 }
@@ -420,6 +421,7 @@ function buildXoxThreadStateView(input: XoxThreadStateViewInput): AgentThreadSta
   const projected = projectXoxProductViews({
     messages: input.messages,
     osTranscriptItems: osState.transcriptItems,
+    planSteps: input.planSteps,
     actionRequests: input.actionRequests,
     fallbackCreatedAt: input.thread.updatedAt,
   })
@@ -446,6 +448,7 @@ export function projectXoxProductViews(input: XoxProjectionViewInput): XoxProjec
   return projectAgentServerLegacyTranscriptViews<AgentActionRequest, AgentNavigationEvent>({
     messages: input.messages,
     osTranscriptItems: input.osTranscriptItems,
+    planSteps: input.planSteps ?? [],
     actionRequests: input.actionRequests,
     fallbackCreatedAt: input.fallbackCreatedAt,
     action: {
