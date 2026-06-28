@@ -10,11 +10,11 @@ import type {
   JsonValue,
 } from '@agentic-os/contracts'
 import {
-  agentServerSaaSTenantMemoryToolHandlers,
-  planAgentServerSaaSBusinessToolStep,
+  createAgentServerSaaSBusinessToolRuntime,
+  createAgentServerSaaSTenantMemoryToolRuntime,
 } from '@agentic-os/server'
 import type { AgentServerTenantMemoryToolItem } from '@agentic-os/server'
-import { executeAgenticSandboxAggregateAction } from '@agentic-os/sandbox'
+import { createAgenticSandboxAggregateActionExecutor } from '@agentic-os/sandbox'
 import { isAgentHostToolActionDraft, type HostObservationBridge } from '@agentic-os/core'
 import type { Database, Row } from '../db/schema.js'
 import { parseJson } from '../db/database.js'
@@ -114,7 +114,7 @@ function numericAlias(...values: unknown[]) {
   return null
 }
 
-const memoryToolHandlers = agentServerSaaSTenantMemoryToolHandlers<
+const memoryToolRuntime = createAgentServerSaaSTenantMemoryToolRuntime<
   PlannerContext,
   RuntimePlannerStep,
   AgentServerTenantMemoryToolItem,
@@ -149,6 +149,8 @@ const memoryToolHandlers = agentServerSaaSTenantMemoryToolHandlers<
     memoryValue: (memory) => memory.value,
   },
 })
+
+const sandboxAggregateActionExecutor = createAgenticSandboxAggregateActionExecutor<unknown, Row<'agent_action_requests'>>()
 
 export const xoxBusinessToolHandlers: ActionDraftBuilderHandlers<PlannerContext> = {
   'ledger.create_member_income': (ctx, step) => {
@@ -231,32 +233,32 @@ export const xoxBusinessToolHandlers: ActionDraftBuilderHandlers<PlannerContext>
     ...(step.versionName !== undefined ? { versionName: step.versionName } : {}),
     revoke: true,
   }),
-  'memory.search': memoryToolHandlers.search,
-  'memory.get': memoryToolHandlers.get,
-  'memory.remember': memoryToolHandlers.remember,
+  'memory.search': memoryToolRuntime.search,
+  'memory.get': memoryToolRuntime.get,
+  'memory.remember': memoryToolRuntime.remember,
   'data.query_workspace': planWorkspaceDataQueryRead,
   'sandbox.run_code': (ctx, step) => planSandboxPeripheralRead(ctx, step, xoxBusinessToolHandlers),
 }
+
+const xoxBusinessToolRuntime = createAgentServerSaaSBusinessToolRuntime<
+  PlannerContext,
+  RuntimePlannerStep,
+  AgentActionDraft,
+  ReadDraft,
+  NonNullable<ReadDraft['navigation']>
+>({
+  handlers: xoxBusinessToolHandlers,
+  isAction: (item): item is AgentActionDraft =>
+    isAgentHostToolActionDraft<AgentActionDraft, ReadDraft>(item),
+  locale: 'zh-CN',
+  createNavigation: xoxNavigationFromTabs,
+})
 
 export async function planXoxBusinessToolStep(
   ctx: PlannerContext,
   step: RuntimePlannerStep,
 ): Promise<PlannedItem[]> {
-  return planAgentServerSaaSBusinessToolStep<
-    PlannerContext,
-    RuntimePlannerStep,
-    AgentActionDraft,
-    ReadDraft,
-    NonNullable<ReadDraft['navigation']>
-  >({
-    ctx,
-    step,
-    handlers: xoxBusinessToolHandlers,
-    isAction: (item): item is AgentActionDraft =>
-      isAgentHostToolActionDraft<AgentActionDraft, ReadDraft>(item),
-    locale: 'zh-CN',
-    createNavigation: xoxNavigationFromTabs,
-  })
+  return xoxBusinessToolRuntime.planStep(ctx, step)
 }
 
 export type XoxOsActionExecutionState = {
@@ -459,7 +461,7 @@ export async function executeAgentTool(
   const payload = parseJson<any>(action.payload_json, {})
 
   if (action.kind === 'sandbox.aggregate_tool_calls') {
-    return executeAgenticSandboxAggregateAction({
+    return sandboxAggregateActionExecutor.execute({
       aggregateAction: action,
       payload,
       aggregateKind: 'sandbox.aggregate_tool_calls',

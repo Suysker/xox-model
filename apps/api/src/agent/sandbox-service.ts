@@ -32,7 +32,7 @@ import type {
   SandboxToolSdkEntry,
 } from '@agentic-os/sandbox'
 import {
-  runAgenticSandboxSaaSPeripheralRead,
+  createAgenticSandboxSaaSPeripheral,
 } from '@agentic-os/sandbox'
 import { AGENT_TOOL_REGISTRY, toolCallToPlannerStep, type AgentToolRegistryEntry, type AgentToolRiskLevel } from './tool-catalog.js'
 
@@ -81,6 +81,17 @@ const riskRank: Record<'low' | 'medium' | 'high', number> = { low: 1, medium: 2,
 
 const isActionDraft = (item: PlannedItem): item is AgentActionDraft =>
   Boolean(item && typeof item === 'object' && 'kind' in item)
+
+const xoxSandboxPeripheral = createAgenticSandboxSaaSPeripheral<
+  PlannerContext,
+  RuntimePlannerStep,
+  AgentActionDraft,
+  ReadDraft,
+  NonNullable<ReadDraft['navigation']>,
+  AgentActionDraft['riskLevel'],
+  SandboxObservation,
+  'sandbox.aggregate_tool_calls'
+>()
 
 export const SANDBOX_FILE_KINDS: readonly SandboxFileKind[] = [
   'csv',
@@ -738,16 +749,7 @@ async function readSandboxPeripheral(
   const bundle = await buildSandboxDataBundle(ctx, input)
   const manifest = buildManifest(ctx, input, bundle, toolCallId)
   const toolSdk = buildSandboxToolSdk()
-  const peripheral = await runAgenticSandboxSaaSPeripheralRead<
-    PlannerContext,
-    RuntimePlannerStep,
-    AgentActionDraft,
-    ReadDraft,
-    NonNullable<ReadDraft['navigation']>,
-    AgentActionDraft['riskLevel'],
-    SandboxObservation,
-    'sandbox.aggregate_tool_calls'
-  >({
+  const peripheral = await xoxSandboxPeripheral.read({
     manifest,
     toolInput: input,
     bundle,

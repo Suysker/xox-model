@@ -1,12 +1,39 @@
 # xox-model Agentic OS Integration Plan
 
-Status: Draft (M185 host worker/runtime amputation in progress; full API parity still open)
+Status: Draft (M188 action/run/store profile boundary implemented; full API parity still open)
 
 Date: 2026-06-21
 
-## Latest Status: M185
+## Latest Status: M188
 
-M185 supersedes the older M142-M184 incremental notes below where they still mention deleted host harness files or xox-owned final-review/runtime/projection/tool-result/sandbox-aggregate helpers.
+M188 removes the remaining visible lifecycle projection and StorePort assembly names from `apps/api/src/agent`.
+
+Current M188 cut:
+
+- `@agentic-os/server` now exposes `applyAgentServerSaaSActionCancellation()`, `applyAgentServerSaaSActionUpdate()`, and `applyAgentServerSaaSActionExecutionFailure()`. `routes.ts` no longer imports direct action projection helpers.
+- `@agentic-os/server` now exposes `applyAgentServerSaaSRunInterruption()` and a durable profile `interruption` section. `xox-run-store-adapter.ts` no longer imports direct run interruption projection/apply helpers.
+- `@agentic-os/server` now exposes `createAgentServerSaaSHostStorePort()`, and `@agentic-os/runtime-openai-agents` now accepts `storeProfile` in `createOpenAISaaSHostComputerFromProfile()`. `xox-host-profile.ts` no longer imports `AgentStorePort` or hand-builds `claimRunLane`, `refreshRunLease`, or `releaseRunLane`.
+- xox still provides durable SQL facts/effects, provider setting values, prompt assets, tool registry, business execution, product events, route transport, and DTO projection.
+- Architecture tests now guard against these low-level lifecycle/store symbols returning to `apps/api/src/agent`.
+
+See [M188 Action, Run Interruption, and Store Profile Boundary](m188-action-run-store-profile-boundary.md) for the design and validation contract.
+
+## Previous Status: M187
+
+M187 continues M186 by removing the last visible lifecycle/runtime assembly names from the first downstream host.
+
+Current M187 cut:
+
+- `@agentic-os/server` now exposes `createAgentServerSaaSDurableRunHostFromProfile()` and `createAgentServerSaaSDurableRunHostProfileRegistry()`. `xox-run-store-adapter.ts` no longer constructs an `AgentServerDurableRunQueueStore` or exposes `claimPendingRuns`, `claimRecoverableRuns`, `markRunStarted`, `markRunCompleted`, `markRunFailed`, or `failClosedRecovery`.
+- `@agentic-os/runtime-openai-agents` now exposes `createOpenAISaaSHostComputerFromProfile()`. `xox-host-profile.ts` no longer exposes low-level `compatible`, `agents`, or `selectAdapter` runtime groups.
+- xox still provides durable SQL facts/effects, provider settings values, prompt assets, tool registry, business execution, product events, route transport, and DTO projection.
+- Architecture tests now guard the higher-level boundary directly: downstream source must consume profile facades and must not reintroduce visible queue-store lifecycle keys or low-level runtime group names.
+
+See [M187 Durable Host Profile Boundary](m187-durable-host-profile-boundary.md) for the design and validation contract.
+
+## Previous Status: M186
+
+M186 supersedes the older M142-M185 incremental notes below where they still mention deleted host harness files or xox-owned final-review/runtime/projection/tool-result/sandbox-aggregate helpers.
 
 Current production entry is `apps/api/src/agent/host-profile/xox-host-profile.ts`. The old xox host harness pillars are deleted:
 
@@ -21,6 +48,16 @@ Current production entry is `apps/api/src/agent/host-profile/xox-host-profile.ts
 This cut also removed xox-local memory lifecycle orchestration, local progressive tool runtime projection, and local goal/obligation context fields. xox now keeps tool definitions, business execution, context/prompt assets, provider settings, memory store/Memory Center display, sandbox bundles, SQL/SSE adapters, and product DTO projection. Agent loop, provider execution/recovery, final review, goal/readiness, memory lifecycle, and tool-surface runtime are Agentic OS responsibilities.
 
 Current correction: `xox-run-event-store-adapter.ts` must remain a pure event store/stream adapter. A temporary goal/evaluation/final-review projection expansion was removed; reusable final review completion behavior now belongs in `@agentic-os/server`. The follow-up three-file audit also removed `xox-action-graph-adapter.ts` hard-coded business-tool de-dupe, removed `xox-host-profile.ts` tool-name-driven provider stable mode, and shifted `xox-run-worker-adapter.ts` partial-output fail-closed classification back to Agentic OS durable queue recovery.
+
+Current M186 cut:
+
+- `@agentic-os/runtime-openai-agents` now exposes `createOpenAISaaSHostComputer()`, so `xox-host-profile.ts` no longer imports or directly composes `createOpenAISaaSHostRuntimeAdapter()` with `createAgentServerSaaSHostComputer()`.
+- `@agentic-os/server` now exposes `createAgentServerSaaSDurableRunHostRegistry()` and SaaS completion/recovery projection facades, so `xox-run-store-adapter.ts` no longer imports `createAgentServerDurableRunCoordinatorRegistry()`, `projectAgentServerQueuedRunCompletion()`, `projectAgentServerRunRecoveryFailClosedInterruption()`, or `hasAgentServerRunPartialOutput()`.
+- `@agentic-os/server` now exposes stable SaaS business-tool and tenant-memory runtime objects, so `tool-executor.ts` no longer calls one-off planner/memory helper functions.
+- `@agentic-os/sandbox` now exposes `createAgenticSandboxSaaSPeripheral()` and an aggregate action executor object, so xox no longer calls direct sandbox peripheral/aggregate execution functions.
+- Architecture tests now guard these low-level helper names from returning to `apps/api/src/agent`.
+
+Still open after M186: xox still owns business tool handlers, business write execution, SQL run/action/message stores, route transport, provider settings, prompts, workspace bundles, Memory Center DTOs, and product display projection. These are host peripherals, not harness loop ownership. The remaining cleanup target is size and naming, not visible local loop ownership.
 
 Current M185 cut:
 

@@ -5,8 +5,6 @@ import type {
   AgentObservation as OsObservation,
   AgentRunEvent as OsRunEvent,
   AgentRunInput as OsRunInput,
-  AgentRunLease as OsRunLease,
-  AgentRunLeaseCheck as OsRunLeaseCheck,
   AgentRunRecord as OsRunRecord,
   AgentRunResult as OsRunResult,
   AgentScope as OsScope,
@@ -16,20 +14,19 @@ import type {
 import {
   createAgentHostToolObservationBridge,
   normalizeAgentAutomationLevel,
-  type AgentStorePort,
   type HostObservationBridge,
 } from '@agentic-os/core'
 import {
   agentServerRuntimeUserContent,
-  createAgentServerSaaSHostComputer,
   createAgentServerSaaSToolDefinition,
   confirmAgentServerSaaSProfileActionAndResume,
   projectAgentServerSaaSRunEventDrafts,
   runAgentServerSaaSProfileRun,
   type AgentServerSaaSHostProfile,
+  type AgentServerSaaSHostStoreProfile,
 } from '@agentic-os/server'
 import {
-  createOpenAISaaSHostRuntimeAdapter,
+  createOpenAISaaSHostComputerFromProfile,
 } from '@agentic-os/runtime-openai-agents'
 import type { AgentNavigationEvent, AgentPlannerSource } from '@xox/contracts'
 import { hydrateModelConfig } from '@xox/domain'
@@ -380,31 +377,40 @@ function createXoxHostProfile(
   options: { beforeStateWrite: () => Promise<boolean> },
   state: XoxHostState,
 ): AgentServerSaaSHostProfile {
-  const store: AgentStorePort = {
-    createRun: async () => {
+  const storeProfile = {
+    loadRun: async () => {
       const run = await ctx.db.selectFrom('agent_runs').selectAll().where('id', '=', ctx.runId).executeTakeFirst()
       return osRunRecord(ctx, run ?? null)
     },
-    claimRunLane: async ({ run }) => ({
-      leaseId: `${run.runId}:xox-worker-lease`,
-      runId: run.runId,
-      threadId: run.threadId,
-    }),
-    refreshRunLease: async (lease): Promise<OsRunLeaseCheck> => {
+    leaseId: ({ run }) => `${run.runId}:xox-worker-lease`,
+    checkLease: async ({ lease }) => {
       const active = await options.beforeStateWrite()
       return active ? { status: 'active', lease } : { status: 'lost', reason: 'xox run lease is no longer active.' }
     },
-    releaseRunLane: async (_lease: OsRunLease) => undefined,
     appendEvent: (event) => appendXoxAgenticOsRunEvent(ctx, event),
     finishRun: async (result) => {
       state.finishedResult = result
     },
-  }
+  } satisfies AgentServerSaaSHostStoreProfile
 
   const provider = ctx.settings.openaiCompatibleProvider || ctx.settings.llmProvider
   const model = ctx.settings.openaiCompatibleModel
-  const runtime = createOpenAISaaSHostRuntimeAdapter<AgentToolObservation>({
-    compatible: {
+  return createOpenAISaaSHostComputerFromProfile<
+    (typeof AGENT_TOOL_REGISTRY)[number],
+    AgentToolCallStep,
+    Row<'agent_action_requests'>,
+    AgentToolObservation,
+    {
+      id: string
+      key: string
+      value: string
+      kind: string
+      lane: string
+      status: string
+    }
+  >({
+    storeProfile,
+    runtimeProfile: {
       provider,
       model,
       baseUrl: ctx.settings.openaiCompatibleBaseUrl,
@@ -427,54 +433,36 @@ function createXoxHostProfile(
       redact: redactSecretLikeContent,
       stream: (input) => input.observations.length === 0,
       requestTimeoutMs: ctx.settings.agentProviderRequestTimeoutMs,
-    },
-    agents: {
-      model: () => ctx.settings.openaiModel || ctx.settings.openaiCompatibleModel,
-      apiKey: () => ctx.settings.openaiApiKey ?? ctx.settings.openaiCompatibleApiKey ?? undefined,
-      baseURL: () => ctx.settings.openaiBaseUrl || ctx.settings.openaiCompatibleBaseUrl,
-      instructions: PLANNING_POLICY_PROMPT,
-      includeFinalOutputWithToolCalls: false,
-      copy: {
-        run_started: {
-          title: 'OpenAI Agents runtime 已启动',
+      openAIAgents: {
+        model: () => ctx.settings.openaiModel || ctx.settings.openaiCompatibleModel,
+        apiKey: () => ctx.settings.openaiApiKey ?? ctx.settings.openaiCompatibleApiKey ?? undefined,
+        baseURL: () => ctx.settings.openaiBaseUrl || ctx.settings.openaiCompatibleBaseUrl,
+        instructions: PLANNING_POLICY_PROMPT,
+        includeFinalOutputWithToolCalls: false,
+        copy: {
+          run_started: {
+            title: 'OpenAI Agents runtime 已启动',
+          },
+          tool_call: {
+            title: '工具调用已捕获',
+          },
+          run_completed: {
+            title: 'OpenAI Agents runtime 已完成',
+          },
         },
-        tool_call: {
-          title: '工具调用已捕获',
-        },
-        run_completed: {
-          title: 'OpenAI Agents runtime 已完成',
+        onRunEventDraft: async (draft) => {
+          await addRunEvent(ctx.db, {
+            threadId: ctx.thread.id,
+            runId: ctx.runId,
+            ...draft,
+          })
         },
       },
-      onRunEventDraft: async (draft) => {
-        await addRunEvent(ctx.db, {
-          threadId: ctx.thread.id,
-          runId: ctx.runId,
-          ...draft,
-        })
+      selectRuntimeAdapter: () => {
+        state.plannerSource = plannerSource(ctx.settings)
+        return state.plannerSource === 'openai_agents' ? 'openai_agents' : 'openai_compatible'
       },
     },
-    selectAdapter: () => {
-      state.plannerSource = plannerSource(ctx.settings)
-      return state.plannerSource === 'openai_agents' ? 'openai_agents' : 'openai_compatible'
-    },
-  })
-
-  return createAgentServerSaaSHostComputer<
-    (typeof AGENT_TOOL_REGISTRY)[number],
-    AgentToolCallStep,
-    Row<'agent_action_requests'>,
-    AgentToolObservation,
-    {
-      id: string
-      key: string
-      value: string
-      kind: string
-      lane: string
-      status: string
-    }
-  >({
-    store,
-    runtime,
     tools: AGENT_TOOL_REGISTRY,
     toolName: (entry) => entry.name,
     createTool: ({ entry, executeRead }) => agenticOsToolDefinition(entry, executeRead),

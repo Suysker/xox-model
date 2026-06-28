@@ -4,10 +4,10 @@ import type { Kysely } from 'kysely'
 import { z } from 'zod'
 import type { AgentActionUpdatePayload, AgentNavigationEvent, AgentThreadEvent, AgentThreadState } from '@xox/contracts'
 import {
+  applyAgentServerSaaSActionExecutionFailure,
+  applyAgentServerSaaSActionCancellation,
+  applyAgentServerSaaSActionUpdate,
   openAgentServerSignalStateStream,
-  projectAgentServerActionExecutionFailure,
-  projectAgentServerActionCancellation,
-  projectAgentServerActionUpdate,
 } from '@agentic-os/server'
 import type { Database, Row } from '../db/schema.js'
 import { jsonString, parseJson } from '../db/database.js'
@@ -213,21 +213,29 @@ async function confirmAgentActionRequest(db: Kysely<Database>, settings: Setting
       .select(['status'])
       .where('id', '=', action.id)
       .executeTakeFirst()
-    await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', action.thread_id).execute().catch(() => undefined)
     if (latestAction?.status !== 'executed') {
-      const projected = projectAgentServerActionExecutionFailure({
-        threadId: action.thread_id,
-        runId: action.run_id,
-        actionRequestId: action.id,
-        actionKind: action.kind,
-        actionTitle: action.title,
-        errorMessage: message,
-        copy: {
-          title: '确认卡执行失败',
-          message: `${action.title}：${message}`,
+      await applyAgentServerSaaSActionExecutionFailure({
+        action: {
+          threadId: action.thread_id,
+          runId: action.run_id,
+          actionRequestId: action.id,
+          actionKind: action.kind,
+          actionTitle: action.title,
+          errorMessage: message,
+          copy: {
+            title: '确认卡执行失败',
+            message: `${action.title}：${message}`,
+          },
+        },
+        effects: {
+          touchThread: async ({ threadId }) => {
+            await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', threadId).execute().catch(() => undefined)
+          },
+          appendRunEvent: async (event) => {
+            await addRunEvent(db, event).catch(() => undefined)
+          },
         },
       })
-      await addRunEvent(db, projected.event).catch(() => undefined)
     }
     throw executionError
   })
@@ -248,29 +256,43 @@ async function cancelAgentActionRequest(db: Kysely<Database>, workspace: Row<'wo
   assertActionOwnedByWorkspace(action, workspace, user)
   if (action.status !== 'pending') throw conflict('Agent action is not pending')
 
-  const projected = projectAgentServerActionCancellation({
-    threadId: action.thread_id,
-    runId: action.run_id,
-    actionRequestId: action.id,
-    actionKind: action.kind,
-    actionTitle: action.title,
-    assistantMessage: `已取消：${action.title}`,
-    copy: {
-      title: '确认卡已取消',
-      message: `已取消：${action.title}`,
+  let assistant: Row<'agent_messages'> | null = null
+  const projected = await applyAgentServerSaaSActionCancellation({
+    action: {
+      threadId: action.thread_id,
+      runId: action.run_id,
+      actionRequestId: action.id,
+      actionKind: action.kind,
+      actionTitle: action.title,
+      assistantMessage: `已取消：${action.title}`,
+      copy: {
+        title: '确认卡已取消',
+        message: `已取消：${action.title}`,
+      },
+    },
+    effects: {
+      updateActionStatus: async ({ actionRequestId, status }) => {
+        await db.updateTable('agent_action_requests').set({ status }).where('id', '=', actionRequestId).execute()
+      },
+      updatePlanStepStatus: async ({ actionRequestId, status }) => {
+        await db.updateTable('agent_plan_steps').set({ status, updated_at: utcNow() }).where('action_request_id', '=', actionRequestId).execute()
+      },
+      appendAssistantMessage: async ({ threadId, message }) => {
+        assistant = await addMessage(db, threadId, 'assistant', message)
+      },
+      touchThread: async ({ threadId }) => {
+        await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', threadId).execute()
+      },
+      appendRunEvent: async (event) => {
+        await addRunEvent(db, event)
+      },
     },
   })
-
-  await db.updateTable('agent_action_requests').set({ status: projected.actionStatus }).where('id', '=', action.id).execute()
-  await db.updateTable('agent_plan_steps').set({ status: projected.planStepStatus, updated_at: utcNow() }).where('action_request_id', '=', action.id).execute()
   const updated = await db.selectFrom('agent_action_requests').selectAll().where('id', '=', action.id).executeTakeFirstOrThrow()
   const planSteps = await listPlanStepsForRun(db, action.run_id)
-  const assistant = await addMessage(db, action.thread_id, 'assistant', projected.assistantMessage)
-  await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', action.thread_id).execute()
-  await addRunEvent(db, projected.event)
   return {
     actionRequest: updated,
-    messages: [assistant],
+    messages: assistant ? [assistant] : [],
     runEvents: await listSerializedRunEvents(db, action.run_id),
     planSteps,
     threadId: action.thread_id,
@@ -317,21 +339,29 @@ async function updateAgentActionRequest(
     })
     .where('action_request_id', '=', action.id)
     .execute()
-  await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', action.thread_id).execute()
-  const planSteps = await listPlanStepsForRun(db, action.run_id)
-  const projected = projectAgentServerActionUpdate({
-    threadId: action.thread_id,
-    runId: action.run_id,
-    actionRequestId: action.id,
-    actionKind: action.kind,
-    actionTitle: updated.title,
-    changes,
-    copy: {
-      title: '确认卡已编辑',
-      message: `确认卡已编辑：${updated.title}`,
+  const projected = await applyAgentServerSaaSActionUpdate({
+    action: {
+      threadId: action.thread_id,
+      runId: action.run_id,
+      actionRequestId: action.id,
+      actionKind: action.kind,
+      actionTitle: updated.title,
+      changes,
+      copy: {
+        title: '确认卡已编辑',
+        message: `确认卡已编辑：${updated.title}`,
+      },
+    },
+    effects: {
+      touchThread: async ({ threadId }) => {
+        await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', threadId).execute()
+      },
+      appendRunEvent: async (event) => {
+        await addRunEvent(db, event)
+      },
     },
   })
-  await addRunEvent(db, projected.event)
+  const planSteps = await listPlanStepsForRun(db, action.run_id)
   return {
     actionRequest: updated,
     runEvents: await listSerializedRunEvents(db, action.run_id),
