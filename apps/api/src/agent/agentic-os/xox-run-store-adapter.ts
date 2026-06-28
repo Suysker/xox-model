@@ -10,8 +10,9 @@ import {
   type AgentServerSaaSDurableRunClaimSource,
   type AgentServerSaaSDurableRunLoad,
 } from '@agentic-os/server'
-import type { AgentPlannerSource } from '@xox/contracts'
+import type { AgentNavigationEvent, AgentPlannerSource } from '@xox/contracts'
 import type { Database, Row } from '../../db/schema.js'
+import { parseJson } from '../../db/database.js'
 import type { Settings } from '../../core/settings.js'
 import { utcNow } from '../../core/time.js'
 import type { CurrentUser } from '../../modules/auth.js'
@@ -293,9 +294,11 @@ async function claimRows(
   input: { limit: number },
   source: AgentServerSaaSDurableRunClaimSource,
 ) {
-  const candidates = source === 'recoverable'
-    ? await claimRecoverableAgentRuns(db, settings)
-    : await db
+  if (source === 'recoverable') {
+    return (await claimRecoverableAgentRuns(db, settings)).slice(0, input.limit)
+  }
+
+  const candidates = await db
       .selectFrom('agent_runs')
       .selectAll()
       .where('status', '=', 'running')
@@ -315,6 +318,12 @@ async function claimRows(
     if (row) claimed.push(row)
   }
   return claimed
+}
+
+function runNavigationEvents(planRows: Row<'agent_plan_steps'>[]): AgentNavigationEvent[] {
+  return planRows
+    .map((step) => (step.navigation_json ? parseJson<AgentNavigationEvent | null>(step.navigation_json, null) : null))
+    .filter((event): event is AgentNavigationEvent => Boolean(event))
 }
 
 async function resumeProfileRun(
@@ -379,7 +388,7 @@ async function materializeXoxRunResult(
     agenticOsResult: input.result,
     plannerSource: (run.planner_source as AgentPlannerSource | null) ?? xoxPlannerSource(settings),
     assistantMessage: assistantMessage ?? null,
-    navigationEvents: [],
+    navigationEvents: runNavigationEvents(planRows),
     actionRows,
     planRows,
   }

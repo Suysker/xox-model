@@ -395,6 +395,19 @@ function createXoxHostProfile(
 
   const provider = ctx.settings.openaiCompatibleProvider || ctx.settings.llmProvider
   const model = ctx.settings.openaiCompatibleModel
+  const runtimeEvents = {
+    source: () => state.plannerSource,
+    provider: () => provider,
+    appendRunEvent: async (draft: Parameters<typeof addRunEvent>[1]) => {
+      await addRunEvent(ctx.db, draft)
+    },
+    copy: {
+      modelPlanning: {
+        title: '模型规划中',
+        message: 'Agentic OS 正在调用模型规划下一步。',
+      },
+    },
+  }
   return createOpenAISaaSHostComputerFromProfile<
     (typeof AGENT_TOOL_REGISTRY)[number],
     AgentToolCallStep,
@@ -433,6 +446,7 @@ function createXoxHostProfile(
       redact: redactSecretLikeContent,
       stream: (input) => input.observations.length === 0,
       requestTimeoutMs: ctx.settings.agentProviderRequestTimeoutMs,
+      runtimeEvents,
       openAIAgents: {
         model: () => ctx.settings.openaiModel || ctx.settings.openaiCompatibleModel,
         apiKey: () => ctx.settings.openaiApiKey ?? ctx.settings.openaiCompatibleApiKey ?? undefined,

@@ -29,7 +29,6 @@ export async function claimAgentRunLease(
     .where((eb) =>
       eb.or([
         eb('worker_id', 'is', null),
-        eb('worker_id', '=', settings.agentWorkerId),
         eb('lease_expires_at', 'is', null),
         eb('lease_expires_at', '<', now),
       ]),
@@ -42,6 +41,7 @@ export async function claimAgentRunLease(
     .where('id', '=', runId)
     .where('status', '=', 'running')
     .where('worker_id', '=', settings.agentWorkerId)
+    .where('heartbeat_at', '=', now)
     .executeTakeFirst()
   return row ?? null
 }
@@ -94,7 +94,6 @@ export async function claimRecoverableAgentRuns(
     .where((eb) =>
       eb.or([
         eb('worker_id', 'is', null),
-        eb('worker_id', '=', settings.agentWorkerId),
         eb('lease_expires_at', 'is', null),
         eb('lease_expires_at', '<', now),
       ]),

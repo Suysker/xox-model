@@ -3658,6 +3658,54 @@ describe('xox TypeScript API', () => {
     })
   })
 
+  it('does not recover running agent runs leased by the current active worker', async () => {
+    let providerCalls = 0
+    await withFakeOpenAICompatibleProvider(() => {
+      providerCalls += 1
+      return fakeToolResponse('data_query_workspace', {
+        question: '3 月计划收入是多少',
+        scope: 'period_summary',
+        monthLabel: '3月',
+        metrics: ['plannedRevenue'],
+      })
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-recover-current-active-lease', {
+        llmProvider: 'openai-compatible',
+        openaiCompatibleProvider: 'test-compatible',
+        openaiCompatibleBaseUrl: baseUrl,
+        openaiCompatibleApiKey: 'test-key',
+        agentWorkerId: 'current-worker',
+        agentRunWorkerPollMs: 25,
+      })
+      const client = new Client(harness.app)
+      const user = await registerUser(client, 'agent-recover-current-active-lease@example.com')
+      const futureLease = new Date(Date.now() + 60_000).toISOString()
+      const run = await insertRunningAgentRun(harness.db, user.id, {
+        suffix: 'current-active-lease',
+        message: '记住，我是一个风险偏好比较低的人',
+        partialOutput: true,
+        workerId: 'current-worker',
+        leaseExpiresAt: futureLease,
+        heartbeatAt: new Date().toISOString(),
+      })
+
+      await createXoxDurableRunStore(harness.db, harness.settings).startReady()
+      await sleep(80)
+
+      expect(providerCalls).toBe(0)
+      const state = await client.get(`/api/v1/agent/threads/${run.threadId}`)
+      expect(state.statusCode).toBe(200)
+      expect(state.json.runs[0].status).toBe('running')
+      expect(state.json.runEvents.some((event: any) => event.type === 'run_failed')).toBe(false)
+      expect(state.json.actionRequests).toHaveLength(1)
+      expect(state.json.actionRequests[0].status).toBe('pending')
+      const row = await harness.db.selectFrom('agent_runs').select(['worker_id', 'lease_expires_at']).where('id', '=', run.runId).executeTakeFirstOrThrow()
+      expect(row.worker_id).toBe('current-worker')
+      expect(row.lease_expires_at).toBe(futureLease)
+      await closeHarness(harness)
+    })
+  })
+
   it('claims expired leased running agent runs before recovery', async () => {
     let releaseProvider!: () => void
     const providerGate = new Promise<void>((resolve) => {
