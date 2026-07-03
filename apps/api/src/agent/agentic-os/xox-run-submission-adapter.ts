@@ -23,6 +23,7 @@ import {
   addMessage,
   buildThreadState,
   projectXoxProductViews,
+  projectXoxHarnessUi,
   getOrCreateThread,
   serializeAction,
   serializeMessage,
@@ -125,6 +126,15 @@ function buildSubmittedRunResponse(input: XoxSubmittedRunResponseInput): AgentSe
     actionRequests: input.actionRequests,
   }
   const agUiEvents = projectAgentServerSaaSAgUiEvents(projection, { eventNamePrefix: 'xox' }) as AgentAgUiEvent[]
+  const harnessUi = projectXoxHarnessUi({
+    threadId: osView.thread.threadId,
+    messages: osView.messages,
+    runs: [osView.run],
+    transcriptItems: osView.transcriptItems,
+    runEvents,
+    planSteps: input.planSteps,
+    actionRequests: input.actionRequests,
+  })
   const projected = projectXoxProductViews({
     messages: input.messages,
     osTranscriptItems: osView.transcriptItems,
@@ -143,6 +153,7 @@ function buildSubmittedRunResponse(input: XoxSubmittedRunResponseInput): AgentSe
     navigationEvents: input.navigationEvents,
     runEvents,
     agUiEvents,
+    harnessUi,
     transcriptItems: projected.transcriptItems,
     timelineItems: projected.timelineItems,
     transcriptNodes: projected.transcriptNodes,

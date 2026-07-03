@@ -1,8 +1,14 @@
 // @vitest-environment jsdom
 import { act, type ComponentProps } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import {
+  EventType,
+  createAgenticOsAgUiFrame,
+  createAgenticOsAgUiSnapshot,
+  createAgenticOsHarnessState,
+} from '@agentic-os/ui-protocol'
 import { AgentConsole } from './AgentConsole'
-import type { AgentProviderProbeResult, AgentTranscriptNode } from '../../lib/api'
+import type { AgentHarnessUiProjection, AgentProviderProbeResult, AgentTranscriptNode } from '../../lib/api'
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -75,10 +81,65 @@ function providerProbe(status: AgentProviderProbeResult['status'] = 'passed'): A
   }
 }
 
+function harnessUiProjection(): AgentHarnessUiProjection {
+  const harness = createAgenticOsHarnessState({
+    threadId: 'thread-1',
+    stateVersion: 1,
+    runs: [{ runId: 'run-1', status: 'completed' }],
+    toolCalls: [{
+      toolCallId: 'tool-1',
+      runId: 'run-1',
+      name: 'workspace_update',
+      status: 'completed',
+      argumentsText: '{"name":"Budget"}',
+      resultText: '{"ok":true}',
+    }],
+    traceItems: [{
+      traceId: 'trace-1',
+      runId: 'run-1',
+      kind: 'tool',
+      title: 'workspace_update',
+      status: 'completed',
+    }],
+    pendingApprovals: [{
+      approvalId: 'action-1',
+      runId: 'run-1',
+      title: '确认更新',
+      status: 'pending',
+      toolCallId: 'tool-1',
+    }],
+  })
+  const snapshot = createAgenticOsAgUiSnapshot({
+    threadId: 'thread-1',
+    runId: 'run-1',
+    messages: [],
+    state: harness,
+  })
+  const event = {
+    type: EventType.STATE_SNAPSHOT,
+    snapshot: {
+      agenticOsHarness: harness,
+    },
+  }
+  return {
+    snapshot,
+    events: [event],
+    frames: [createAgenticOsAgUiFrame({
+      eventId: 'frame-1',
+      threadId: 'thread-1',
+      runId: 'run-1',
+      sequence: 1,
+      stateVersion: 1,
+      event,
+    })],
+  }
+}
+
 function props(overrides: Partial<AgentConsoleProps> = {}): AgentConsoleProps {
   return {
     threadId: 'thread-1',
     planner: null,
+    harnessUi: null,
     transcriptNodes: [node()],
     memoryCenter: { memories: [], dailyNotes: [], recallSignals: [], dreamReports: [] },
     memories: [],
@@ -91,6 +152,7 @@ function props(overrides: Partial<AgentConsoleProps> = {}): AgentConsoleProps {
     layoutMode: 'bottomDrawer',
     surface: 'drawer',
     conversationOpen: true,
+    canInspectHarness: false,
     busy: false,
     error: null,
     onLayoutModeChange: () => undefined,
@@ -233,6 +295,80 @@ describe('AgentConsole', () => {
       expect(rendered.container.innerHTML).not.toContain('max-h-28')
       expect(rendered.container.innerHTML).not.toContain('max-h-24')
       expect(rendered.container.querySelector('textarea')?.getAttribute('placeholder')).toBe('输入指令')
+    } finally {
+      rendered.cleanup()
+    }
+  })
+
+  it('renders the standard Agentic OS user harness surface from harnessUi frames', () => {
+    const confirmed: string[] = []
+    const cancelled: string[] = []
+    const rendered = renderConsole(props({
+      harnessUi: harnessUiProjection(),
+      onConfirm: (id) => confirmed.push(id),
+      onCancel: (id) => cancelled.push(id),
+    }))
+    try {
+      const harnessButton = rendered.container.querySelector('button[title="运行状态"]') as HTMLButtonElement | null
+      if (!harnessButton) throw new Error('harness button missing')
+
+      act(() => harnessButton.click())
+
+      const harnessPanel = rendered.container.querySelector('[data-testid="agent-harness-ui-panel"]')
+      expect(harnessPanel).not.toBeNull()
+      expect(harnessPanel?.textContent).toContain('Agentic OS')
+      expect(harnessPanel?.textContent).toContain('运行时间线')
+      expect(harnessPanel?.textContent).toContain('工具活动')
+      expect(harnessPanel?.textContent).toContain('workspace_update')
+      expect(harnessPanel?.textContent).toContain('确认更新')
+      expect(harnessPanel?.textContent).not.toContain('运维检查')
+      expect(harnessPanel?.textContent).not.toContain('轨迹')
+      expect(rendered.container.querySelector('[data-testid="agent-harness-audience-switcher"]')).toBeNull()
+
+      const approveButton = Array.from(harnessPanel?.querySelectorAll('button') ?? [])
+        .find((button) => button.textContent?.includes('Approve')) as HTMLButtonElement | undefined
+      const rejectButton = Array.from(harnessPanel?.querySelectorAll('button') ?? [])
+        .find((button) => button.textContent?.includes('Reject')) as HTMLButtonElement | undefined
+      if (!approveButton || !rejectButton) throw new Error('approval buttons missing')
+      act(() => approveButton.click())
+      act(() => rejectButton.click())
+      expect(confirmed).toEqual(['action-1'])
+      expect(cancelled).toEqual(['action-1'])
+    } finally {
+      rendered.cleanup()
+    }
+  })
+
+  it('gates operator and developer Agentic OS harness audiences behind inspection permission', () => {
+    const rendered = renderConsole(props({
+      harnessUi: harnessUiProjection(),
+      canInspectHarness: true,
+    }))
+    try {
+      const harnessButton = rendered.container.querySelector('button[title="运行状态"]') as HTMLButtonElement | null
+      if (!harnessButton) throw new Error('harness button missing')
+
+      act(() => harnessButton.click())
+
+      const harnessPanel = rendered.container.querySelector('[data-testid="agent-harness-ui-panel"]')
+      const switcher = rendered.container.querySelector('[data-testid="agent-harness-audience-switcher"]')
+      expect(harnessPanel).not.toBeNull()
+      expect(switcher).not.toBeNull()
+      expect(harnessPanel?.textContent).not.toContain('运维检查')
+
+      const operatorButton = Array.from(switcher?.querySelectorAll('button') ?? [])
+        .find((button) => button.textContent === '运维') as HTMLButtonElement | undefined
+      const developerButton = Array.from(switcher?.querySelectorAll('button') ?? [])
+        .find((button) => button.textContent === '调试') as HTMLButtonElement | undefined
+      if (!operatorButton || !developerButton) throw new Error('audience buttons missing')
+
+      act(() => operatorButton.click())
+      expect(harnessPanel?.textContent).toContain('运维检查')
+      expect(harnessPanel?.textContent).toContain('轨迹')
+
+      act(() => developerButton.click())
+      expect(harnessPanel?.textContent).toContain('开发调试')
+      expect(harnessPanel?.textContent).not.toContain('运维检查')
     } finally {
       rendered.cleanup()
     }

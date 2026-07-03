@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.2.0",
   "type": "module",
+  "dependencies": {
+    "@agentic-os/ui-protocol": "file:../../../agentic-os/packages/ui-protocol"
+  },
   "exports": {
     ".": "./src/index.ts"
   }

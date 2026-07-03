@@ -16,12 +16,14 @@ import { normalizeAgentAutomationLevel } from '@agentic-os/core'
 import type { AgentServerThreadRunState, AgentServerThreadSnapshot } from '@agentic-os/server'
 import {
   AgentServerThreadStateProjector,
+  projectAgentServerHarnessUi,
   projectAgentServerLegacyTranscriptViews,
   projectAgentServerSaaSAgUiEvents,
 } from '@agentic-os/server'
 import type {
   AgentActionRequest,
   AgentAgUiEvent,
+  AgentHarnessUiProjection,
   AgentMessage,
   AgentNavigationEvent,
   AgentPlannerSource,
@@ -404,6 +406,32 @@ type XoxProjectionViewInput = {
   fallbackCreatedAt: string
 }
 
+type XoxHarnessUiInput = {
+  threadId: string
+  messages: OsMessage[]
+  runs: OsRunRecord[]
+  transcriptItems: OsTranscriptItem[]
+  runEvents: AgentRunEvent[]
+  planSteps: AgentPlanStep[]
+  actionRequests: AgentActionRequest[]
+}
+
+export function projectXoxHarnessUi(input: XoxHarnessUiInput): AgentHarnessUiProjection {
+  return projectAgentServerHarnessUi({
+    threadId: input.threadId,
+    messages: input.messages,
+    runs: input.runs,
+    transcriptItems: input.transcriptItems,
+    runEvents: input.runEvents,
+    planSteps: input.planSteps,
+    actionRequests: input.actionRequests,
+    stateVersion: Math.max(0, ...input.runEvents.map((event) => event.sequence)),
+  }, {
+    eventNamePrefix: 'xox',
+    eventIdPrefix: 'xox-harness-ui',
+  }) as AgentHarnessUiProjection
+}
+
 function buildXoxThreadStateView(input: XoxThreadStateViewInput): AgentThreadState {
   const osState = new AgentServerThreadStateProjector().project(buildOsThreadSnapshot(input))
   const runEvents = sortXoxRunEventsByOsView(input.runEvents, osState.events)
@@ -418,6 +446,15 @@ function buildXoxThreadStateView(input: XoxThreadStateViewInput): AgentThreadSta
     actionRequests: input.actionRequests,
   }
   const agUiEvents = projectAgentServerSaaSAgUiEvents(projection, { eventNamePrefix: 'xox' }) as AgentAgUiEvent[]
+  const harnessUi = projectXoxHarnessUi({
+    threadId: osState.thread.threadId,
+    messages: osState.messages,
+    runs: osState.runs,
+    transcriptItems: osState.transcriptItems,
+    runEvents,
+    planSteps: input.planSteps,
+    actionRequests: input.actionRequests,
+  })
   const projected = projectXoxProductViews({
     messages: input.messages,
     osTranscriptItems: osState.transcriptItems,
@@ -436,6 +473,7 @@ function buildXoxThreadStateView(input: XoxThreadStateViewInput): AgentThreadSta
     navigationEvents: input.navigationEvents,
     runEvents,
     agUiEvents,
+    harnessUi,
     transcriptItems: projected.transcriptItems,
     timelineItems: projected.timelineItems,
     transcriptNodes: projected.transcriptNodes,

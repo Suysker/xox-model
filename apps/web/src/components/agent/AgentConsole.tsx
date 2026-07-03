@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
-import { Bot, Check, ChevronDown, ChevronUp, Database, History, KeyRound, PanelBottom, PanelRight, Plus, RefreshCw, SendHorizontal, Save, ShieldCheck, SquarePen, Trash2, XCircle } from 'lucide-react'
-import type { AgentActionUpdatePayload, AgentAutomationLevel, AgentMemoryCenterState, AgentMemoryRecord, AgentProviderProbePayload, AgentProviderProbeResult, AgentProviderSettingRecord, AgentProviderSettingUpdatePayload, AgentSendResponse, AgentThreadSummary, AgentTranscriptNode } from '../../lib/api'
+import { Bot, Check, ChevronDown, ChevronUp, Database, History, KeyRound, PanelBottom, PanelRight, Plus, RefreshCw, SendHorizontal, Save, ShieldCheck, SquarePen, TerminalSquare, Trash2, XCircle } from 'lucide-react'
+import type { AgentActionUpdatePayload, AgentAutomationLevel, AgentHarnessUiProjection, AgentMemoryCenterState, AgentMemoryRecord, AgentProviderProbePayload, AgentProviderProbeResult, AgentProviderSettingRecord, AgentProviderSettingUpdatePayload, AgentSendResponse, AgentThreadSummary, AgentTranscriptNode } from '../../lib/api'
 import type { AgentShellLayoutMode, AgentShellSurface } from './agentShellLayout'
+import { AgentHarnessPanel } from './AgentHarnessPanel'
 import { AgentChatTimeline } from './AgentChatTimeline'
 
 function flattenTranscriptNodes(nodes: AgentTranscriptNode[]): AgentTranscriptNode[] {
@@ -26,6 +27,7 @@ function normalizeMaskedApiKeyInput(current: string, next: string) {
 export function AgentConsole(props: {
   threadId: string | null
   planner: AgentSendResponse['planner'] | null
+  harnessUi: AgentHarnessUiProjection | null
   transcriptNodes: AgentTranscriptNode[]
   memoryCenter: AgentMemoryCenterState
   memories: AgentMemoryRecord[]
@@ -38,6 +40,7 @@ export function AgentConsole(props: {
   layoutMode: AgentShellLayoutMode
   surface: AgentShellSurface
   conversationOpen: boolean
+  canInspectHarness: boolean
   busy: boolean
   error: string | null
   onLayoutModeChange: (mode: AgentShellLayoutMode) => void
@@ -65,6 +68,7 @@ export function AgentConsole(props: {
   const [memorySearch, setMemorySearch] = useState('')
   const [memoryLaneFilter, setMemoryLaneFilter] = useState('active')
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [harnessOpen, setHarnessOpen] = useState(false)
   const [providerOpen, setProviderOpen] = useState(false)
   const [sideAutomationMenuOpen, setSideAutomationMenuOpen] = useState(false)
   const [providerDraft, setProviderDraft] = useState({
@@ -146,9 +150,9 @@ export function AgentConsole(props: {
     title: '所有写入都停在确认卡',
   }
   const isSideSurface = props.surface === 'side'
-  const utilityPanelCount = Number(historyOpen) + Number(memoryOpen)
+  const utilityPanelCount = Number(historyOpen) + Number(harnessOpen) + Number(memoryOpen)
   const showUtilityPanels = props.conversationOpen && utilityPanelCount > 0
-  const utilityPanelRows = utilityPanelCount > 1 ? 'minmax(0, 1fr) minmax(0, 1fr)' : 'minmax(0, 1fr)'
+  const utilityPanelRows = Array.from({ length: Math.max(1, utilityPanelCount) }, () => 'minmax(0, 1fr)').join(' ')
   const layoutOptions: Array<{ mode: AgentShellLayoutMode; title: string; icon: typeof PanelBottom }> = [
     { mode: 'bottomDrawer', title: '底部抽屉', icon: PanelBottom },
     { mode: 'sidePanel', title: '右侧栏', icon: PanelRight },
@@ -320,6 +324,16 @@ export function AgentConsole(props: {
                 </button>
                 <button
                   type="button"
+                  onClick={() => toggleUtilityPanel(setHarnessOpen)}
+                  className={sideIconButtonClass(harnessOpen)}
+                  title="运行状态"
+                  aria-label="运行状态"
+                  aria-pressed={harnessOpen}
+                >
+                  <TerminalSquare className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
                   onClick={() => toggleUtilityPanel(setProviderOpen)}
                   className={sideIconButtonClass(providerOpen)}
                   title={`模型 ${props.providerSetting?.provider ?? '默认'}`}
@@ -445,6 +459,16 @@ export function AgentConsole(props: {
               >
                 <Database className="h-3.5 w-3.5" />
                 记忆 {props.memories.length}
+              </button>
+              <button
+                type="button"
+                onClick={() => toggleUtilityPanel(setHarnessOpen)}
+                className={utilityButtonClass(harnessOpen)}
+                title="运行状态"
+                aria-pressed={harnessOpen}
+              >
+                <TerminalSquare className="h-3.5 w-3.5" />
+                运行
               </button>
               <button
                 type="button"
@@ -637,6 +661,17 @@ export function AgentConsole(props: {
                   )}
                 </div>
               </div>
+            ) : null}
+
+            {harnessOpen ? (
+              <AgentHarnessPanel
+                threadId={props.threadId}
+                harnessUi={props.harnessUi}
+                className="flex-1"
+                canInspectHarness={props.canInspectHarness}
+                onApprove={props.onConfirm}
+                onReject={props.onCancel}
+              />
             ) : null}
 
             {memoryOpen ? (

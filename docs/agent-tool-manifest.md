@@ -22,10 +22,10 @@ Read-only tools return the same tenant-authorized observation contract as provid
 When code needs current workspace data or tool documentation, it should call tool-shaped SDK methods instead of pasting previous tool results into code as prose:
 
 ```python
-import xox_sandbox
-summary = xox_sandbox.data_query_workspace(scope="workspace_summary", metrics=["roi", "cash"])
-matches = xox_sandbox.rg(pattern="data_query_workspace", paths=["tools/agent-tool-manifest.md"])
-xox_sandbox.emit({"summary": summary})
+import agentic_os_sandbox
+summary = agentic_os_sandbox.data_query_workspace(scope="workspace_summary", metrics=["roi", "cash"])
+matches = agentic_os_sandbox.rg(pattern="data_query_workspace", paths=["tools/agent-tool-manifest.md"])
+agentic_os_sandbox.emit({"summary": summary})
 ```
 
 ## Sandbox `rg`
@@ -62,10 +62,10 @@ Default behavior:
 
 | Surface | Sandbox SDK | Authority | Notes |
 | --- | --- | --- | --- |
-| read-only provider tools | `xox_sandbox.<tool_name>(...)` / generated JS camelCase | Tool Runtime Gateway | Returns the same structured observation contract as the provider tool when the data is authorized in the manifest. |
-| write-capable provider tools | `xox_sandbox.<tool_name>(...)` / generated JS camelCase | Tool Runtime Gateway + aggregate approval | Preserves name, argument schema and output contract. Writes execute only through the same policy/confirmation/audit path as provider tools; if automation is insufficient, the sandbox run asks for one aggregate approval. |
-| tool manifest search | `xox_sandbox.rg(...)` / `rg(...)` | manifest search | Searches only manifest-authorized virtual docs and safe input text. |
-| sandbox output | `xox_sandbox.emit(...)` / `emit(...)` | output | Emits structured sandbox result. |
+| read-only provider tools | `agentic_os_sandbox.<tool_name>(...)` / generated JS camelCase | Tool Runtime Gateway | Returns the same structured observation contract as the provider tool when the data is authorized in the manifest. |
+| write-capable provider tools | `agentic_os_sandbox.<tool_name>(...)` / generated JS camelCase | Tool Runtime Gateway + aggregate approval | Preserves name, argument schema and output contract. Writes execute only through the same policy/confirmation/audit path as provider tools; if automation is insufficient, the sandbox run asks for one aggregate approval. |
+| tool manifest search | `agentic_os_sandbox.rg(...)` / `rg(...)` | manifest search | Searches only manifest-authorized virtual docs and safe input text. |
+| sandbox output | `agentic_os_sandbox.emit(...)` / `emit(...)` | output | Emits structured sandbox result. |
 
 The implementation should generate these functions from `AGENT_TOOL_REGISTRY` / `buildToolManifests`, not maintain a hand-written sandbox API list.
 
@@ -75,48 +75,48 @@ This table lists the current complete provider tool names. Detailed JSON schema 
 
 | Tool | Capability | Risk | Confirmation | Navigation | Sandbox SDK |
 | --- | --- | --- | --- | --- | --- |
-| `account_forbidden` | account | read | never | none | `xox_sandbox.account_forbidden` |
-| `ask_user_clarification` | clarification | read | never | none | `xox_sandbox.ask_user_clarification` |
-| `tool_discover` | tooling | read | never | none | `xox_sandbox.tool_discover` |
-| `rg` | tooling | read | never | none | `xox_sandbox.rg` |
-| `data_query_workspace` | data | read | never | none | `xox_sandbox.data_query_workspace` |
+| `account_forbidden` | account | read | never | none | `agentic_os_sandbox.account_forbidden` |
+| `ask_user_clarification` | clarification | read | never | none | `agentic_os_sandbox.ask_user_clarification` |
+| `tool_discover` | tooling | read | never | none | `agentic_os_sandbox.tool_discover` |
+| `rg` | tooling | read | never | none | `agentic_os_sandbox.rg` |
+| `data_query_workspace` | data | read | never | none | `agentic_os_sandbox.data_query_workspace` |
 | `sandbox_run_code` | sandbox | read | never | none | outer tool only |
-| `memory_search` | memory | read | never | none | `xox_sandbox.memory_search` |
-| `memory_get` | memory | read | never | none | `xox_sandbox.memory_get` |
-| `memory_remember` | memory | low | never | none | `xox_sandbox.memory_remember` |
-| `ui_navigate` | navigation | read | never | none | `xox_sandbox.ui_navigate` |
-| `ledger_create_entry` | ledger | medium | always | bookkeeping | `xox_sandbox.ledger_create_entry` |
-| `ledger_create_member_income` | ledger | medium | always | bookkeeping | `xox_sandbox.ledger_create_member_income` |
-| `ledger_create_planned_member_income_batch` | ledger | medium | always | bookkeeping | `xox_sandbox.ledger_create_planned_member_income_batch` |
-| `ledger_create_planned_related_expense_batch` | ledger | medium | always | bookkeeping | `xox_sandbox.ledger_create_planned_related_expense_batch` |
-| `ledger_update_entry` | ledger | medium | always | bookkeeping | `xox_sandbox.ledger_update_entry` |
-| `ledger_void_entry` | ledger | high | always | bookkeeping | `xox_sandbox.ledger_void_entry` |
-| `ledger_restore_entry` | ledger | high | always | bookkeeping | `xox_sandbox.ledger_restore_entry` |
-| `ledger_set_period_lock` | ledger | high | always | bookkeeping | `xox_sandbox.ledger_set_period_lock` |
-| `team_member_add` | draft | medium | always | inputs | `xox_sandbox.team_member_add` |
-| `team_member_delete` | draft | high | always | inputs | `xox_sandbox.team_member_delete` |
-| `employee_add` | draft | medium | always | inputs | `xox_sandbox.employee_add` |
-| `employee_delete` | draft | high | always | inputs | `xox_sandbox.employee_delete` |
-| `shareholder_add` | draft | medium | always | inputs | `xox_sandbox.shareholder_add` |
-| `shareholder_delete` | draft | high | always | inputs | `xox_sandbox.shareholder_delete` |
-| `cost_item_add` | draft | medium | always | inputs | `xox_sandbox.cost_item_add` |
-| `cost_item_delete` | draft | high | always | inputs | `xox_sandbox.cost_item_delete` |
-| `stage_cost_type_add` | draft | medium | always | inputs | `xox_sandbox.stage_cost_type_add` |
-| `stage_cost_type_delete` | draft | high | always | inputs | `xox_sandbox.stage_cost_type_delete` |
-| `workspace_update_online_factor` | draft | medium | conditional | inputs | `xox_sandbox.workspace_update_online_factor` |
-| `workspace_patch_config` | draft | medium | always | inputs | `xox_sandbox.workspace_patch_config` |
-| `workspace_configure_operating_model` | draft | high | always | inputs | `xox_sandbox.workspace_configure_operating_model` |
-| `workspace_rename` | draft | medium | always | workspace | `xox_sandbox.workspace_rename` |
-| `workspace_export_bundle` | import_export | read | never | workspace | `xox_sandbox.workspace_export_bundle` |
-| `workspace_import_bundle` | import_export | high | always | workspace | `xox_sandbox.workspace_import_bundle` |
-| `workspace_save_snapshot` | version | low | always | workspace | `xox_sandbox.workspace_save_snapshot` |
-| `workspace_publish_release` | version | high | always | workspace | `xox_sandbox.workspace_publish_release` |
-| `workspace_promote_version` | version | high | always | workspace | `xox_sandbox.workspace_promote_version` |
-| `workspace_rollback_version` | version | high | always | workspace | `xox_sandbox.workspace_rollback_version` |
-| `workspace_delete_version` | version | high | always | workspace | `xox_sandbox.workspace_delete_version` |
-| `workspace_reset_draft` | version | high | always | inputs | `xox_sandbox.workspace_reset_draft` |
-| `share_create` | share | high | always | workspace | `xox_sandbox.share_create` |
-| `share_revoke` | share | medium | always | workspace | `xox_sandbox.share_revoke` |
+| `memory_search` | memory | read | never | none | `agentic_os_sandbox.memory_search` |
+| `memory_get` | memory | read | never | none | `agentic_os_sandbox.memory_get` |
+| `memory_remember` | memory | low | never | none | `agentic_os_sandbox.memory_remember` |
+| `ui_navigate` | navigation | read | never | none | `agentic_os_sandbox.ui_navigate` |
+| `ledger_create_entry` | ledger | medium | always | bookkeeping | `agentic_os_sandbox.ledger_create_entry` |
+| `ledger_create_member_income` | ledger | medium | always | bookkeeping | `agentic_os_sandbox.ledger_create_member_income` |
+| `ledger_create_planned_member_income_batch` | ledger | medium | always | bookkeeping | `agentic_os_sandbox.ledger_create_planned_member_income_batch` |
+| `ledger_create_planned_related_expense_batch` | ledger | medium | always | bookkeeping | `agentic_os_sandbox.ledger_create_planned_related_expense_batch` |
+| `ledger_update_entry` | ledger | medium | always | bookkeeping | `agentic_os_sandbox.ledger_update_entry` |
+| `ledger_void_entry` | ledger | high | always | bookkeeping | `agentic_os_sandbox.ledger_void_entry` |
+| `ledger_restore_entry` | ledger | high | always | bookkeeping | `agentic_os_sandbox.ledger_restore_entry` |
+| `ledger_set_period_lock` | ledger | high | always | bookkeeping | `agentic_os_sandbox.ledger_set_period_lock` |
+| `team_member_add` | draft | medium | always | inputs | `agentic_os_sandbox.team_member_add` |
+| `team_member_delete` | draft | high | always | inputs | `agentic_os_sandbox.team_member_delete` |
+| `employee_add` | draft | medium | always | inputs | `agentic_os_sandbox.employee_add` |
+| `employee_delete` | draft | high | always | inputs | `agentic_os_sandbox.employee_delete` |
+| `shareholder_add` | draft | medium | always | inputs | `agentic_os_sandbox.shareholder_add` |
+| `shareholder_delete` | draft | high | always | inputs | `agentic_os_sandbox.shareholder_delete` |
+| `cost_item_add` | draft | medium | always | inputs | `agentic_os_sandbox.cost_item_add` |
+| `cost_item_delete` | draft | high | always | inputs | `agentic_os_sandbox.cost_item_delete` |
+| `stage_cost_type_add` | draft | medium | always | inputs | `agentic_os_sandbox.stage_cost_type_add` |
+| `stage_cost_type_delete` | draft | high | always | inputs | `agentic_os_sandbox.stage_cost_type_delete` |
+| `workspace_update_online_factor` | draft | medium | conditional | inputs | `agentic_os_sandbox.workspace_update_online_factor` |
+| `workspace_patch_config` | draft | medium | always | inputs | `agentic_os_sandbox.workspace_patch_config` |
+| `workspace_configure_operating_model` | draft | high | always | inputs | `agentic_os_sandbox.workspace_configure_operating_model` |
+| `workspace_rename` | draft | medium | always | workspace | `agentic_os_sandbox.workspace_rename` |
+| `workspace_export_bundle` | import_export | read | never | workspace | `agentic_os_sandbox.workspace_export_bundle` |
+| `workspace_import_bundle` | import_export | high | always | workspace | `agentic_os_sandbox.workspace_import_bundle` |
+| `workspace_save_snapshot` | version | low | always | workspace | `agentic_os_sandbox.workspace_save_snapshot` |
+| `workspace_publish_release` | version | high | always | workspace | `agentic_os_sandbox.workspace_publish_release` |
+| `workspace_promote_version` | version | high | always | workspace | `agentic_os_sandbox.workspace_promote_version` |
+| `workspace_rollback_version` | version | high | always | workspace | `agentic_os_sandbox.workspace_rollback_version` |
+| `workspace_delete_version` | version | high | always | workspace | `agentic_os_sandbox.workspace_delete_version` |
+| `workspace_reset_draft` | version | high | always | inputs | `agentic_os_sandbox.workspace_reset_draft` |
+| `share_create` | share | high | always | workspace | `agentic_os_sandbox.share_create` |
+| `share_revoke` | share | medium | always | workspace | `agentic_os_sandbox.share_revoke` |
 
 ## Provider Tool Summaries
 

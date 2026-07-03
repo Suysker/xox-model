@@ -10,6 +10,9 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@agentic-os/ui": "file:../../../agentic-os/packages/ui",
+    "@agentic-os/ui-protocol": "file:../../../agentic-os/packages/ui-protocol",
+    "@agentic-os/ui-react": "file:../../../agentic-os/packages/ui-react",
     "@xox/contracts": "file:../../packages/contracts",
     "@xox/domain": "file:../../packages/domain",
     "dompurify": "^3.4.5",

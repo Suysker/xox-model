@@ -936,14 +936,14 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
     function: {
       name: 'sandbox_run_code',
       description:
-        '在 manifest-scoped 受控沙箱中运行代码，用于复杂计算、临时数据清洗、文件校验/转换、公式实验、短期 artifact 生成，或通过同名工具 SDK 请求受控业务工具。沙箱不能直连内部 API、生产 DB、provider key、用户 session、记忆存储、任意文件系统或网络；读写都必须通过 `xox_sandbox.<tool_name>(...)` 桥回 Agentic OS tool runtime bridge。写入类 nested calls 会按自动化等级生成聚合确认卡或自动执行，不允许绕过确认、领域校验和审计。',
+        '在 manifest-scoped 受控沙箱中运行代码，用于复杂计算、临时数据清洗、文件校验/转换、公式实验和短期 artifact 生成。需要业务事实时，先通过合适的顶层业务工具形成用户可见 observation，再让沙箱消费已有 observation、用户输入或受控 dataRequest bundle 做计算。沙箱不能直连内部 API、生产 DB、provider key、用户 session、记忆存储、任意文件系统或网络；不能绕过顶层工具调用、确认、领域校验和审计。',
       parameters: objectSchema({
         purpose: { type: 'string', description: '本次沙箱任务目的，用一句中文说明，例如“对当前 12 个月预测做敏感性分析”。' },
         language: { type: 'string', enum: ['python', 'javascript'], description: '代码语言。默认优先 python；轻量 JSON/文本转换可用 javascript。' },
         code: {
           type: 'string',
           description:
-            '要在受控沙箱里运行的代码。不要访问网络、内部 API、生产数据库、任意文件系统路径或安装包。Python 优先 `import xox_sandbox` 后调用与 provider tools 同名的函数，例如 `xox_sandbox.data_query_workspace(scope="workspace_summary", metrics=["roi"])`、`xox_sandbox.workspace_patch_config(patches=[...])`；JavaScript 从 `./xox_sandbox.mjs` 导入 snake_case 或 camelCase 函数。`load_structured/load_rows` 仅是低层 helper。结构化输出用 `xox_sandbox.emit({...})` 或写 XOX_SANDBOX_OUTPUT_DIR/result.json。',
+            '要在受控沙箱里运行的代码。不要访问网络、内部 API、生产数据库、任意文件系统路径、环境变量路径或安装包。Python 优先 `import agentic_os_sandbox` 后使用 `agentic_os_sandbox.load_structured()` / `agentic_os_sandbox.load_rows()` 读取 dataRequest bundle，并用 `agentic_os_sandbox.emit({...})` 输出结构化结果；JavaScript 从 `./agentic_os_sandbox.mjs` 导入 `loadStructured()` / `loadRows()` / `emit()`。不要猜测或访问原始挂载文件路径。需要用户可见的业务事实或业务动作时，先在 sandbox 外调用顶层业务工具，不要用沙箱代码替代顶层 tool_call。',
         },
         dataRequest: objectSchema({
           scope: {

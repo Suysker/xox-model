@@ -151,6 +151,7 @@ export function AgentShell(props: {
   const consoleProps = {
     threadId: agent.threadId,
     planner: agent.planner,
+    harnessUi: agent.harnessUi,
     transcriptNodes: agent.transcriptNodes,
     memoryCenter: agent.memoryCenter,
     memories: agent.memories,
@@ -163,6 +164,7 @@ export function AgentShell(props: {
     layoutMode: effectiveMode,
     surface: effectiveMode === 'sidePanel' ? 'side' as const : 'drawer' as const,
     conversationOpen,
+    canInspectHarness: import.meta.env.DEV,
     busy: agent.busy,
     error: agent.error,
     onLayoutModeChange: setLayoutMode,

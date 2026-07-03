@@ -230,10 +230,10 @@ describe('manifest-scoped sandbox tool', () => {
       language: 'python',
       code: [
         'import os',
-        'import xox_sandbox',
-        'payload = xox_sandbox.data_query_workspace(scope="workspace_summary", metrics=["roi"])',
+        'import agentic_os_sandbox',
+        'payload = agentic_os_sandbox.load_structured()',
         'rows = payload["rows"]',
-        'xox_sandbox.emit({',
+        'agentic_os_sandbox.emit({',
         '  "summary": "计算完成",',
         '  "structured": {',
         '    "profit": payload["totalProfit"],',
@@ -285,7 +285,7 @@ describe('manifest-scoped sandbox tool', () => {
       expect(result.extraction).toMatchObject({
         extractionStatus: 'parsed',
         parsedOutput: {
-          schemaVersion: 'xox.sandbox.result.v1',
+          schemaVersion: 'agentic-os.sandbox.result.v1',
           structured: {
             profit: 20,
             rowCount: 1,
@@ -304,13 +304,12 @@ describe('manifest-scoped sandbox tool', () => {
       purpose: '结构化结果文件校验',
       language: 'python',
       code: [
-        'import json, os, pathlib',
-        'result = {',
-        '  "schemaVersion": "xox.sandbox.result.v1",',
+        'import agentic_os_sandbox',
+        'agentic_os_sandbox.emit({',
+        '  "schemaVersion": "agentic-os.sandbox.result.v1",',
         '  "summary": "完成结构化结果输出",',
         '  "structured": {"profit": 20}',
-        '}',
-        'pathlib.Path(os.environ["XOX_SANDBOX_OUTPUT_DIR"], "result.json").write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")',
+        '})',
       ].join('\n'),
       dataRequest: { scope: 'workspace_summary' },
       expectedOutputs: ['json'],
@@ -342,12 +341,12 @@ describe('manifest-scoped sandbox tool', () => {
       bundleId: bundle.bundleId,
       bundleContentHash: bundle.contentHash,
       inputBundleMounted: true,
-      inputBundleConsumed: false,
+      inputBundleConsumed: true,
     })
     expect(result.extraction).toMatchObject({
       extractionStatus: 'parsed',
       parsedOutput: {
-        schemaVersion: 'xox.sandbox.result.v1',
+        schemaVersion: 'agentic-os.sandbox.result.v1',
         structured: { profit: 20 },
       },
     })
@@ -358,9 +357,9 @@ describe('manifest-scoped sandbox tool', () => {
       purpose: '同名工具 SDK 校验',
       language: 'python',
       code: [
-        'import xox_sandbox',
-        'summary = xox_sandbox.data_query_workspace(scope="workspace_summary", metrics=["roi", "payback"])',
-        'xox_sandbox.emit({',
+        'import agentic_os_sandbox',
+        'summary = agentic_os_sandbox.data_query_workspace(scope="workspace_summary", metrics=["roi", "payback"])',
+        'agentic_os_sandbox.emit({',
         '  "summary": "SDK ok",',
         '  "structured": {',
         '    "roi": summary["roi"],',
@@ -401,7 +400,7 @@ describe('manifest-scoped sandbox tool', () => {
     expect(result.extraction).toMatchObject({
       extractionStatus: 'parsed',
       parsedOutput: {
-        schemaVersion: 'xox.sandbox.result.v1',
+        schemaVersion: 'agentic-os.sandbox.result.v1',
         structured: {
           roi: 0.2,
           paybackMonthLabel: '4月',
@@ -415,11 +414,11 @@ describe('manifest-scoped sandbox tool', () => {
       purpose: '沙箱写入桥接校验',
       language: 'python',
       code: [
-        'import xox_sandbox',
-        'request = xox_sandbox.workspace_patch_config(patches=[',
+        'import agentic_os_sandbox',
+        'request = agentic_os_sandbox.workspace_patch_config(patches=[',
         '  {"path": "shareholders[0].investmentAmount", "value": 123456, "label": "股东 1 投资额"}',
         '])',
-        'xox_sandbox.emit({"summary": "write requested", "structured": {"request": request}})',
+        'agentic_os_sandbox.emit({"summary": "write requested", "structured": {"request": request}})',
       ].join('\n'),
       dataRequest: { scope: 'workspace_summary' },
       expectedOutputs: ['json'],
@@ -451,7 +450,7 @@ describe('manifest-scoped sandbox tool', () => {
     expect(result.exitCode).toBe(0)
     expect(result.artifacts.map((artifact) => artifact.name)).not.toContain('tool_calls.jsonl')
     expect(result.extraction.parsedOutput).toMatchObject({
-      schemaVersion: 'xox.sandbox.result.v1',
+      schemaVersion: 'agentic-os.sandbox.result.v1',
       sandboxToolCalls: [
         {
           toolName: 'workspace_patch_config',

@@ -108,7 +108,7 @@ sudo systemctl status xox-model-web
 
 ## Agent Sandbox Runtime
 
-`sandbox_run_code` 是 Agent harness 的 manifest-scoped 代码执行工具，不是公开 REST 写入接口。服务端会先构造 manifest-scoped 输入包、同名工具 SDK 和输出策略，再通过 `SandboxBroker` 选择真实 backend 执行模型代码。sandbox 不能直接访问 DB、provider key、internal API、领域服务或其他租户数据；代码里的 `xox_sandbox.<tool_name>(...)` 会桥回同一个 Tool Runtime Gateway，按正常租户、权限、确认、领域服务和审计链路执行。
+`sandbox_run_code` 是 Agent harness 的 manifest-scoped 代码执行工具，不是公开 REST 写入接口。服务端会先构造 manifest-scoped 输入包、同名工具 SDK 和输出策略，再通过 `SandboxBroker` 选择真实 backend 执行模型代码。sandbox 不能直接访问 DB、provider key、internal API、领域服务或其他租户数据；代码里的 `agentic_os_sandbox.<tool_name>(...)` 会桥回同一个 Tool Runtime Gateway，按正常租户、权限、确认、领域服务和审计链路执行。
 
 配置项：
 

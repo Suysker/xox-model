@@ -1,10 +1,34 @@
 # xox-model Agentic OS Integration Plan
 
-Status: Draft (M188 action/run/store profile boundary implemented; full API parity still open)
+Status: Draft (M191 harness frontend audience surface implemented; full API parity still open)
 
 Date: 2026-06-21
 
-## Latest Status: M188
+## Latest Status: M191
+
+M191 connects the Agentic OS ADR0058/ADR0059 frontend control plane to xox web as the standard harness UI surface.
+
+Current M191 cut:
+
+- xox API continues to project backend-owned `harnessUi` through `@agentic-os/server` `projectAgentServerHarnessUi()`.
+- `apps/web/src/components/agent/AgentHarnessPanel.tsx` now reduces those frames through `@agentic-os/ui-react` and renders `@agentic-os/ui` audience surfaces.
+- The default mounted surface is the ordinary user surface. It shows the Agentic OS run timeline, tool activity, inline approval, and completion state without exposing operator/developer internals.
+- Operator/developer surfaces are explicit and gated by the host shell. The current web shell enables them only in Vite dev builds until a real product role/permission is passed through.
+- Agentic OS inline approval callbacks route to the existing xox confirm/cancel lifecycle, so the generic harness UI does not invent another action execution path.
+- xox keeps `AgentChatTimeline` only for xox-specific editable confirmation card rendering until Agentic OS exposes a generic host artifact renderer slot.
+
+See [M191 Agentic OS Harness Frontend Audience Surface](m191-harness-frontend-audience-surface.md) for the downstream frontend boundary.
+
+## Previous Status: M190
+
+M190 fixes a realtime visibility regression found in conversation `e366b31c`.
+
+Current M190 cut:
+
+- xox keeps provider streaming enabled for observation-continuation and post-tool final-answer turns. A run must not stop streaming just because it already has tool observations; otherwise the user sees no model-authored post-tool text until completion.
+- xox still shows only semantic user-visible transcript facts: assistant content, compact tool calls/arguments/results, confirmation interrupts, errors, and the lightweight running state. Provider lifecycle, memory recall, final-review and worker events remain in the technical log.
+
+## Previous Status: M188
 
 M188 removes the remaining visible lifecycle projection and StorePort assembly names from `apps/api/src/agent`.
 

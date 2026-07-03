@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@source "../../../../agentic-os/packages/ui/src";
 
 @theme {
   --font-sans: "IBM Plex Sans", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;

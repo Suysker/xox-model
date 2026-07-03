@@ -166,7 +166,7 @@ Agent 写入动作统一遵循 Agentic OS `preview -> authority decision -> exec
 
 Agent 只读数据问答通过模型选择 `data_query_workspace` 工具完成，支持整体工作区、单月汇总、成员汇总、团队成员数量/名单、月份排行、预实科目差异深度追问和账本历史筛选。该工具只返回 `planSteps / messages / navigationEvents`，不生成 `actionRequests`，不修改业务数据；账本历史筛选会在导航事件中携带 `ledgerFilters`，前端据此打开账本页并应用方向、状态、日期和关键词过滤器。
 
-Agent 受控代码执行通过模型选择 `sandbox_run_code` 工具完成，内部 intent 为 `sandbox.run_code`。该工具不是公开 REST 写入接口，而是 Agent harness 的 manifest-scoped 代码执行能力。sandbox 不能直接访问 DB、secrets、internal HTTP、领域服务或跨租户数据；代码里的 `xox_sandbox.<tool_name>(...)` 会桥回同一个 Tool Runtime Gateway，因此 provider tool call、tool-search bridge 和 sandbox SDK 调用共享同名、同参、同出参的工具契约。
+Agent 受控代码执行通过模型选择 `sandbox_run_code` 工具完成，内部 intent 为 `sandbox.run_code`。该工具不是公开 REST 写入接口，而是 Agent harness 的 manifest-scoped 代码执行能力。sandbox 不能直接访问 DB、secrets、internal HTTP、领域服务或跨租户数据；代码里的 `agentic_os_sandbox.<tool_name>(...)` 会桥回同一个 Tool Runtime Gateway，因此 provider tool call、tool-search bridge 和 sandbox SDK 调用共享同名、同参、同出参的工具契约。
 
 - 入参包含 `purpose`、`language`、`code`、`dataRequest.scope`、可选字段/月度/文件/行数和期望输出类型。
 - 服务端生成 `SandboxManifest`，其中输入挂载只读，网络默认关闭，shell/package install/internal API/production DB/provider secret/user session token/direct business write/direct memory write/account action 全部禁用。业务写入只能通过同名 sandbox SDK 桥回 Tool Runtime Gateway，再按正常自动化策略、确认卡、领域服务和审计执行。

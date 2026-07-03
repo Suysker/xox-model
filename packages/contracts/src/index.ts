@@ -1,4 +1,9 @@
 import type { ModelConfig, ModelResult } from '@xox/domain'
+import type {
+  AgenticOsAgUiFrame,
+  AgenticOsAgUiSnapshot,
+  BaseEvent,
+} from '@agentic-os/ui-protocol'
 
 export type AuthUser = {
   id: string
@@ -443,6 +448,12 @@ export type AgentAgUiEvent = {
   createdAt: string
 }
 
+export type AgentHarnessUiProjection = {
+  snapshot: AgenticOsAgUiSnapshot
+  events: BaseEvent[]
+  frames: AgenticOsAgUiFrame[]
+}
+
 export type AgentTranscriptItemKind =
   | 'message'
   | 'planning'
@@ -806,6 +817,7 @@ export type AgentThreadState = {
   navigationEvents: AgentNavigationEvent[]
   runEvents: AgentRunEvent[]
   agUiEvents: AgentAgUiEvent[]
+  harnessUi: AgentHarnessUiProjection
   transcriptItems: AgentTranscriptItem[]
   timelineItems: AgentTimelineItem[]
   transcriptNodes: AgentTranscriptNode[]
@@ -1193,6 +1205,7 @@ export type AgentSendResponse = {
   navigationEvents: AgentNavigationEvent[]
   runEvents: AgentRunEvent[]
   agUiEvents: AgentAgUiEvent[]
+  harnessUi: AgentHarnessUiProjection
   transcriptItems: AgentTranscriptItem[]
   timelineItems: AgentTimelineItem[]
   transcriptNodes: AgentTranscriptNode[]

@@ -7,6 +7,7 @@ import {
   type AgentAutomationLevel,
   type AgentEvaluationResult,
   type AgentGoalRecord,
+  type AgentHarnessUiProjection,
   type AgentMemoryCenterState,
   type AgentMemoryRecord,
   type AgentMessage,
@@ -98,6 +99,7 @@ export function useAgentThread(props: {
   const [evaluations, setEvaluations] = useState<AgentEvaluationResult[]>([])
   const [navigationEvents, setNavigationEvents] = useState<AgentNavigationEvent[]>([])
   const [agUiEvents, setAgUiEvents] = useState<AgentAgUiEvent[]>([])
+  const [harnessUi, setHarnessUi] = useState<AgentHarnessUiProjection | null>(null)
   const [transcriptNodes, setTranscriptNodes] = useState<AgentTranscriptNode[]>([])
   const [planner, setPlanner] = useState<AgentSendResponse['planner'] | null>(null)
   const [memoryCenter, setMemoryCenter] = useState<AgentMemoryCenterState>(EMPTY_MEMORY_CENTER_STATE)
@@ -123,6 +125,7 @@ export function useAgentThread(props: {
     setEvaluations(state.evaluations)
     setNavigationEvents(state.navigationEvents)
     setAgUiEvents(state.agUiEvents)
+    setHarnessUi(state.harnessUi)
     setTranscriptNodes(state.transcriptNodes)
     setPlanner(state.planner)
     setRunningRunId(latestRun?.status === 'running' ? latestRun.id : null)
@@ -308,6 +311,7 @@ export function useAgentThread(props: {
       setPlanSteps(response.planSteps)
       setRunEvents(response.runEvents)
       setAgUiEvents(response.agUiEvents)
+      setHarnessUi(response.harnessUi)
       setTranscriptNodes(response.transcriptNodes)
       setGoals([])
       setEvaluations([])
@@ -415,6 +419,7 @@ export function useAgentThread(props: {
     setEvaluations([])
     setNavigationEvents([])
     setAgUiEvents([])
+    setHarnessUi(null)
     setTranscriptNodes([])
     setPlanner(null)
     setRunningRunId(null)
@@ -503,6 +508,7 @@ export function useAgentThread(props: {
     evaluations,
     navigationEvents,
     agUiEvents,
+    harnessUi,
     transcriptNodes,
     planner,
     memoryCenter,

@@ -4,6 +4,7 @@ import type {
   AgentActionUpdatePayload,
   AgentAgUiEvent,
   AgentAutomationLevel,
+  AgentHarnessUiProjection,
   AgentTranscriptNode,
   AgentTranscriptSection,
   AgentTranscriptItem,
@@ -397,7 +398,7 @@ export const api = {
   getAgentThread: (threadId: string) =>
     apiRequest<AgentThreadState>('GET', `/api/v1/agent/threads/${encodeURIComponent(threadId)}`),
   getAgentAgUiEvents: (threadId: string) =>
-    apiRequest<{ events: AgentAgUiEvent[]; transcriptItems: AgentTranscriptItem[]; timelineItems: AgentThreadState['timelineItems']; transcriptNodes: AgentTranscriptNode[] }>('GET', `/api/v1/agent/threads/${encodeURIComponent(threadId)}/ag-ui-events`),
+    apiRequest<{ events: AgentAgUiEvent[]; harnessUi: AgentHarnessUiProjection; transcriptItems: AgentTranscriptItem[]; timelineItems: AgentThreadState['timelineItems']; transcriptNodes: AgentTranscriptNode[] }>('GET', `/api/v1/agent/threads/${encodeURIComponent(threadId)}/ag-ui-events`),
   agentThreadEventsPath: (threadId: string) =>
     `/api/v1/agent/threads/${encodeURIComponent(threadId)}/events`,
   cancelAgentRun: (runId: string) =>
@@ -434,4 +435,4 @@ export const api = {
     ),
 }
 
-export type { AgentAgUiEvent, AgentProviderProbePayload, AgentProviderProbeResult, AgentProviderSettingRecord, AgentProviderSettingUpdatePayload, AgentThreadEvent, AgentTranscriptItem }
+export type { AgentAgUiEvent, AgentHarnessUiProjection, AgentProviderProbePayload, AgentProviderProbeResult, AgentProviderSettingRecord, AgentProviderSettingUpdatePayload, AgentThreadEvent, AgentTranscriptItem }

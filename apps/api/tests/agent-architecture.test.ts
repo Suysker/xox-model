@@ -334,7 +334,8 @@ describe('Agentic OS downstream boundary', () => {
     expect(host).toContain("@agentic-os/core")
     expect(host).toContain("@agentic-os/server")
     expect(host).not.toContain("@agentic-os/runtime-openai-compatible")
-    expect(host).toContain("@agentic-os/runtime-openai-agents")
+    expect(host).toContain("@agentic-os/integration-openai")
+    expect(host).not.toContain("@agentic-os/runtime-openai-agents")
     expect(host).toContain('createOpenAISaaSHostComputerFromProfile')
     expect(host).toContain('storeProfile')
     expect(host).not.toContain('AgentStorePort')
@@ -504,6 +505,31 @@ describe('Agentic OS downstream boundary', () => {
     expect(sandbox).not.toContain('SandboxBroker')
   })
 
+  it('does not advertise sandbox as a business-tool gateway to the model', () => {
+    const planningPolicy = source('agent/host-profile/prompts/xox-planning-policy.md')
+    const toolCatalog = source('agent/tool-catalog.ts')
+    const modelVisibleContract = `${planningPolicy}\n${toolCatalog}`
+
+    expect(modelVisibleContract).toContain('顶层业务工具提供用户可见的事实 observation')
+    expect(modelVisibleContract).toContain('agentic_os_sandbox.load_structured()')
+    expect(modelVisibleContract).toContain('agentic_os_sandbox.emit({...})')
+    expect(modelVisibleContract).toContain('先在 sandbox 外调用顶层业务工具')
+
+    for (const forbidden of [
+      'xox_sandbox',
+      'xox_sandbox.data_query_workspace',
+      '通过同名工具 SDK 请求受控业务工具',
+      '同名、同参、同返回契约',
+      '读写都必须通过 `xox_sandbox.<tool_name>(...)`',
+      '不是业务数据的首选模型接口',
+      '/input/bundle.json',
+      '/output/result.json',
+      'XOX_SANDBOX_OUTPUT_DIR',
+    ]) {
+      expect(modelVisibleContract, `${forbidden} must not return to model-visible sandbox guidance`).not.toContain(forbidden)
+    }
+  })
+
   it('keeps xox-owned surface to tools, prompts, context, sandbox bundle, projection, and transport', () => {
     expect(existsSync(join(srcRoot, 'agent', 'tool-catalog.ts'))).toBe(true)
     expect(existsSync(join(srcRoot, 'agent', 'tool-executor.ts'))).toBe(true)
@@ -527,6 +553,7 @@ describe('Agentic OS downstream boundary', () => {
 
     const apiPackage = readFileSync(join(apiRoot, 'package.json'), 'utf8')
     const packageLock = readFileSync(join(repoRoot, 'package-lock.json'), 'utf8')
+    expect(apiPackage).toContain('@agentic-os/integration-openai')
     expect(apiPackage).toContain('@agentic-os/runtime-openai-compatible')
     expect(apiPackage).toContain('@agentic-os/runtime-openai-agents')
     expect(packageLock).not.toContain('@xox/agent-memory-core')

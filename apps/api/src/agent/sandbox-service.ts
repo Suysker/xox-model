@@ -433,11 +433,12 @@ function buildSandboxToolSdk(): { tools: SandboxToolSdkEntry[]; documents: Sandb
       {
         path: 'tools/sandbox-sdk.md',
         text: [
-          '# xox_sandbox SDK',
+          '# agentic_os_sandbox SDK',
           '',
-          'Use Python functions as xox_sandbox.<tool_name>(**args).',
-          'Use JavaScript functions as either snake_case or camelCase exports from ./xox_sandbox.mjs.',
-          'Read tools return model-readable observations. Write tools record nested Tool Runtime requests and may produce one aggregate approval.',
+          'Prefer agentic_os_sandbox.load_structured()/load_rows() in Python, or loadStructured()/loadRows() from ./agentic_os_sandbox.mjs in JavaScript, to consume the manifest-scoped dataRequest bundle.',
+          'Emit structured output with agentic_os_sandbox.emit(...) or emit(...); do not guess raw mounted file paths or depend on raw output path environment variables.',
+          'Business tool bridge functions exist only for controlled advanced cases; they are not a substitute for top-level provider tool calls when a business fact or action should be visible in the agent transcript.',
+          'Write tool bridge calls record nested Tool Runtime requests and may produce one aggregate approval; they never bypass Agentic OS confirmation, validation, or audit.',
         ].join('\n'),
       },
     ],

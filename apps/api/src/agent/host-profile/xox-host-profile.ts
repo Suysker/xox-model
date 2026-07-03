@@ -27,7 +27,7 @@ import {
 } from '@agentic-os/server'
 import {
   createOpenAISaaSHostComputerFromProfile,
-} from '@agentic-os/runtime-openai-agents'
+} from '@agentic-os/integration-openai'
 import type { AgentNavigationEvent, AgentPlannerSource } from '@xox/contracts'
 import { hydrateModelConfig } from '@xox/domain'
 import { parseJson } from '../../db/database.js'
@@ -444,7 +444,7 @@ function createXoxHostProfile(
       maxObservations: 12,
       maxUserContentChars: PLANNING_USER_CONTENT_MAX_CHARS,
       redact: redactSecretLikeContent,
-      stream: (input) => input.observations.length === 0,
+      stream: true,
       requestTimeoutMs: ctx.settings.agentProviderRequestTimeoutMs,
       runtimeEvents,
       openAIAgents: {
