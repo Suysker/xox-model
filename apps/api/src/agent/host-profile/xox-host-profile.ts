@@ -68,6 +68,7 @@ import { buildAgentWritableConfigContext } from '../tool-catalog.js'
 import {
   redactSecretLikeContent,
 } from '../memory.js'
+import { executeXoxSandboxForAgenticOs } from '../sandbox-service.js'
 import { extractWorkspaceBundleArtifact } from '../workspace-bundle-artifact.js'
 
 export type AgenticOsKernelRunResult = {
@@ -501,6 +502,9 @@ function createXoxHostProfile(
       state,
       actionInput,
     }),
+    sandboxPort: {
+      executeSandbox: (sandboxInput) => executeXoxSandboxForAgenticOs(ctx, sandboxInput),
+    },
     createEditAudit: (input) => xoxOsActionAudit({
       runId: input.run.runId,
       threadId: input.run.threadId,

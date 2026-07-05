@@ -4,7 +4,7 @@
   "version": "0.2.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/main.ts",
+    "dev": "cross-env XOX_SANDBOX_BACKEND=local-script tsx watch src/main.ts",
     "build": "tsc --noEmit",
     "test": "vitest run",
     "smoke:agent": "tsx scripts/agent-real-provider-smoke.ts"
@@ -33,6 +33,7 @@
     "@agentic-os/testing": "^0.1.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^24.10.1",
+    "cross-env": "^10.1.0",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
     "vitest": "^4.0.18"

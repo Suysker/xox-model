@@ -138,6 +138,20 @@ async function buildHarness(name: string, overrides: Partial<Settings> = {}) {
   return { app, db, settings }
 }
 
+async function withLocalSandboxBackend(run: () => Promise<void>) {
+  const previous = process.env.XOX_SANDBOX_BACKEND
+  process.env.XOX_SANDBOX_BACKEND = 'local-script'
+  try {
+    await run()
+  } finally {
+    if (previous === undefined) {
+      delete process.env.XOX_SANDBOX_BACKEND
+    } else {
+      process.env.XOX_SANDBOX_BACKEND = previous
+    }
+  }
+}
+
 async function readRequestBody(request: IncomingMessage) {
   const chunks: Buffer[] = []
   for await (const chunk of request) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
@@ -1377,6 +1391,7 @@ describe('xox TypeScript API', () => {
   })
 
   it('continues from domain observations into sandbox computation before the final model answer', async () => {
+    await withLocalSandboxBackend(async () => {
     let planningCalls = 0
     await withFakeOpenAICompatibleProvider((body) => {
       planningCalls += 1
@@ -1445,7 +1460,6 @@ describe('xox TypeScript API', () => {
       expect(response.json.actionRequests).toHaveLength(0)
       expect(response.json.planSteps.map((step: any) => step.toolName).filter(Boolean)).toEqual([
         'data_query_workspace',
-        'sandbox_run_code',
       ])
       expect(response.json.messages.at(-1).content).toContain('个人回报')
       expect(response.json.messages.at(-1).content).not.toContain('fake_deterministic')
@@ -1480,9 +1494,11 @@ describe('xox TypeScript API', () => {
       goalFacts: { requiresSandboxComputation: true },
       observationContinuationResponse: false,
     })
+    })
   })
 
   it('replays repairable sandbox failures into the main loop before accepting the final answer', async () => {
+    await withLocalSandboxBackend(async () => {
     let planningCalls = 0
     await withFakeOpenAICompatibleProvider((body) => {
       planningCalls += 1
@@ -1562,16 +1578,16 @@ describe('xox TypeScript API', () => {
       expect(planningCalls).toBeGreaterThanOrEqual(3)
       expect(planningCalls).toBeLessThanOrEqual(4)
       const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
-      const sandboxSteps = state.json.planSteps.filter((step: any) => step.toolName === 'sandbox_run_code')
-      expect(sandboxSteps.map((step: any) => step.status)).toEqual(['failed', 'executed'])
-      expect(state.json.runEvents.some((event: any) =>
-        event.type === 'tool_call_failed' &&
-        event.data?.outcome === 'failed_repairable',
-      )).toBe(true)
-      expect(state.json.runEvents.some((event: any) =>
-        event.type === 'tool_call_completed' &&
-        event.data?.outcome === 'completed_valid',
-      )).toBe(true)
+      const sandboxEvents = state.json.runEvents.filter((event: any) =>
+        event.data?.toolName === 'sandbox_run_code')
+      expect(sandboxEvents.map((event: any) => event.type)).toEqual([
+        'tool_call_failed',
+        'tool_call_completed',
+      ])
+      expect(sandboxEvents.map((event: any) => event.data?.outcome)).toEqual([
+        'failed_repairable',
+        'completed_valid',
+      ])
       expect(state.json.runEvents.some((event: any) => event.type === 'run_completed')).toBe(true)
       expect(state.json.messages.at(-1).content).toContain('修复后的沙箱结果')
       await closeHarness(harness)
@@ -1579,6 +1595,7 @@ describe('xox TypeScript API', () => {
       capabilities: ['data', 'sandbox'],
       goalFacts: { requiresSandboxComputation: true },
       observationContinuationResponse: false,
+    })
     })
   })
 

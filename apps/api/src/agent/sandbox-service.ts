@@ -2,13 +2,18 @@ import { createHash, randomBytes } from 'node:crypto'
 import {
   canonicalObservationFromHostToolObservation,
 } from '@agentic-os/core'
+import type {
+  AgentSandboxExecutionInput,
+  AgentSandboxExecutionResult,
+  JsonObject as OsJsonObject,
+  JsonValue as OsJsonValue,
+} from '@agentic-os/contracts'
 import { projectModel, type ModelConfig, type ScenarioResult } from '@xox/domain'
 import type {
   SandboxArtifactKind,
   SandboxCapabilityProfile,
   SandboxDataScope,
   SandboxFileKind,
-  SandboxManifest,
   SandboxObservation,
   SandboxRunCodeInput,
 } from '@xox/contracts'
@@ -28,11 +33,14 @@ import type { AgentActionDraft } from './host-profile/xox-planned-items.js'
 import type { PlannerContext } from './host-profile/xox-planned-items.js'
 import type {
   SandboxDataBundle,
+  SandboxDataScope as AgenticSandboxDataScope,
   SandboxToolDocument,
   SandboxToolSdkEntry,
+  SandboxManifest,
 } from '@agentic-os/sandbox'
 import {
   createAgenticSandboxSaaSPeripheral,
+  normalizeSandboxDataScope,
 } from '@agentic-os/sandbox'
 import { AGENT_TOOL_REGISTRY, toolCallToPlannerStep, type AgentToolRegistryEntry, type AgentToolRiskLevel } from './tool-catalog.js'
 
@@ -689,6 +697,7 @@ function outputKindsForExpectedOutputs(expectedOutputs: SandboxRunCodeInput['exp
 function buildManifest(ctx: SandboxServiceContext, input: SandboxRunCodeInput, bundle: SandboxDataBundle, toolCallId: string): SandboxManifest {
   const allowedArtifactKinds = normalizeSandboxArtifactKinds(outputKindsForExpectedOutputs(input.expectedOutputs))
   const manifestSeed = `${ctx.workspace.id}:${ctx.runId}:${toolCallId}:${bundle.bundleId}:${bundle.contentHash}`
+  const inputBundleKind: AgenticSandboxDataScope = normalizeSandboxDataScope(bundle.scope)
   return {
     schemaVersion: 1,
     manifestId: `manifest_${shortHash(manifestSeed)}`,
@@ -703,7 +712,7 @@ function buildManifest(ctx: SandboxServiceContext, input: SandboxRunCodeInput, b
     },
     inputBundle: {
       bundleId: bundle.bundleId,
-      kind: bundle.scope,
+      kind: inputBundleKind,
       schemaVersion: 'xox.sandbox.bundle.v1',
       mountPath: '/input',
       readonly: true,
@@ -718,7 +727,7 @@ function buildManifest(ctx: SandboxServiceContext, input: SandboxRunCodeInput, b
       language: input.language,
       entrypoint: 'single_script',
       timeoutMs: 10_000,
-      cpuMs: 5_000,
+      computeMs: 5_000,
       memoryMb: 256,
       processLimit: 1,
       openFileLimit: 64,
@@ -750,6 +759,7 @@ async function readSandboxPeripheral(
   const bundle = await buildSandboxDataBundle(ctx, input)
   const manifest = buildManifest(ctx, input, bundle, toolCallId)
   const toolSdk = buildSandboxToolSdk()
+  const preferredBackendId = process.env.XOX_SANDBOX_BACKEND
   const peripheral = await xoxSandboxPeripheral.read({
     manifest,
     toolInput: input,
@@ -782,7 +792,8 @@ async function readSandboxPeripheral(
           },
         }
       : {}),
-    ...(process.env.XOX_SANDBOX_BACKEND ? { preferredBackendId: process.env.XOX_SANDBOX_BACKEND } : {}),
+    ...(preferredBackendId ? { preferredBackendId } : {}),
+    ...(preferredBackendId === 'local-script' ? { allowUnsafeLocalScript: true } : {}),
     toObservation: ({ execution, nestedToolObservations }) => ({
       runId: ctx.runId,
       sandboxRunId: execution.sessionId,
@@ -832,6 +843,117 @@ function shouldBridgeSandboxToolCall(name: string) {
   const entry = AGENT_TOOL_REGISTRY.find((item) => item.name === name)
   if (!entry) return false
   return entry.riskLevel !== 'read' || entry.confirmationMode !== 'never'
+}
+
+function sandboxExecutionContent(
+  observation: SandboxObservation,
+  projection: { modelContent: string },
+): OsJsonValue {
+  const parsed = parseSandboxModelContent(projection.modelContent)
+  if (parsed !== undefined) return parsed
+
+  return osJsonValue({
+    result: observation.result,
+    outputText: observation.outputText,
+    stdout: observation.stdout,
+    stderr: observation.stderr,
+    extraction: observation.extraction,
+    artifacts: observation.artifacts,
+  })
+}
+
+function parseSandboxModelContent(content: string): OsJsonValue | undefined {
+  const trimmed = content.trim()
+  if (!trimmed) return undefined
+  try {
+    return osJsonValue(JSON.parse(trimmed))
+  } catch {
+    return undefined
+  }
+}
+
+function osJsonValue(value: unknown): OsJsonValue {
+  return JSON.parse(JSON.stringify(value ?? null)) as OsJsonValue
+}
+
+function osJsonObject(value: Record<string, unknown>): OsJsonObject {
+  return JSON.parse(JSON.stringify(value)) as OsJsonObject
+}
+
+function sandboxOutputPresent(observation: SandboxObservation): boolean {
+  return observation.outputText.trim().length > 0 ||
+    observation.stdout.trim().length > 0 ||
+    observation.stderr.trim().length > 0 ||
+    observation.artifacts.length > 0 ||
+    observation.result.summary.trim().length > 0 ||
+    observation.extraction.extractionStatus === 'parsed'
+}
+
+function sandboxStepFromOsInput(input: AgentSandboxExecutionInput): RuntimePlannerStep {
+  return {
+    ...input.input,
+    providerToolCallId: input.toolCall.toolCallId,
+    providerToolName: input.tool.name,
+    ...(input.toolCall.sourceIndex !== undefined ? { providerToolCallIndex: input.toolCall.sourceIndex } : {}),
+    providerToolArguments: input.input,
+    intent: input.tool.name === 'sandbox_run_code' ? 'sandbox.run_code' : input.tool.name,
+  }
+}
+
+export async function executeXoxSandboxForAgenticOs(
+  ctx: PlannerContext,
+  input: AgentSandboxExecutionInput,
+): Promise<AgentSandboxExecutionResult> {
+  const step = sandboxStepFromOsInput(input)
+  const { observation, projection } = await readSandboxPeripheral(ctx, step)
+  const outcome = canonicalObservationFromHostToolObservation({
+    hostObservation: {
+      toolName: input.tool.name,
+      status: projection.observationStatus,
+      modelContent: projection.modelContent,
+    },
+  }).outcome
+
+  return {
+    content: sandboxExecutionContent(observation, projection),
+    manifestScoped: observation.manifestScoped,
+    executionMode: observation.executionMode,
+    status: observation.status,
+    backendId: observation.backendId,
+    runtimeMetadata: {
+      schemaVersion: 'agentic-os.sandbox_runtime.v1',
+      manifestId: observation.manifest.manifestId,
+      bundleId: observation.manifest.inputBundle.bundleId,
+      inputContentHash: observation.manifest.inputBundle.contentHash,
+      backendId: observation.backendId,
+      executionMode: observation.executionMode,
+      status: observation.status,
+      exitCode: observation.exitCode,
+      networkMode: observation.manifest.network.mode === 'disabled' ? 'disabled' : 'restricted',
+      directBusinessWrites: false,
+      artifactRefs: observation.artifacts.map((artifact) => artifact.artifactId),
+      outputPresent: sandboxOutputPresent(observation),
+      policyFacts: osJsonObject({
+        manifestScoped: observation.manifestScoped,
+        manifestHash: observation.manifestHash,
+        inputEvidenceIds: observation.inputEvidenceIds,
+        dataScope: observation.dataBundleSummary.scope,
+      }),
+    },
+    evidence: [
+      {
+        kind: 'sandbox_boundary',
+        label: 'manifest_scoped_execution',
+        value: osJsonObject({
+          manifestId: observation.manifest.manifestId,
+          bundleId: observation.manifest.inputBundle.bundleId,
+          backendId: observation.backendId,
+          manifestScoped: observation.manifestScoped,
+        }),
+      },
+    ],
+    outcome,
+  }
 }
 
 export async function planSandboxPeripheralRead(

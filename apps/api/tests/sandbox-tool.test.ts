@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { SandboxBroker, projectAgenticSandboxObservationRead } from '@agentic-os/sandbox'
 import { createProductDefaultModel, projectModel } from '@xox/domain'
-import type { SandboxManifest, SandboxRunCodeInput } from '@xox/contracts'
+import type { SandboxManifest } from '@agentic-os/sandbox'
+import type { SandboxRunCodeInput } from '@xox/contracts'
 import { AGENT_TOOL_CATALOG, AGENT_TOOL_REGISTRY, toolCallToPlannerStep } from '../src/agent/tool-catalog.js'
 import {
   inspectSandboxUploadedFile,
@@ -38,6 +39,11 @@ function toolRuntimeHandlerFrom(output: unknown) {
     }
   }
 }
+
+const LOCAL_SANDBOX_EXECUTION = {
+  preferredBackendId: 'local-script',
+  allowUnsafeLocalScript: true,
+} as const
 
 describe('manifest-scoped sandbox tool', () => {
   it('registers sandbox_run_code as a provider-native sandbox capability tool', () => {
@@ -264,6 +270,7 @@ describe('manifest-scoped sandbox tool', () => {
     process.env.XOX_SANDBOX_SECRET_FOR_TEST = 'secret-value-that-must-not-leak'
     try {
       const result = await new SandboxBroker().execute({
+        ...LOCAL_SANDBOX_EXECUTION,
         manifest,
         toolInput: input,
         bundle,
@@ -330,7 +337,7 @@ describe('manifest-scoped sandbox tool', () => {
       threadId: 'thread_1',
       runId: 'run_1',
     } as any, input, bundle, 'tool_call_unconsumed') as SandboxManifest
-    const result = await new SandboxBroker().execute({ manifest, toolInput: input, bundle })
+    const result = await new SandboxBroker().execute({ ...LOCAL_SANDBOX_EXECUTION, manifest, toolInput: input, bundle })
 
     expect(result.status).toBe('completed')
     expect(result.executionMode).toBe('executed')
@@ -387,6 +394,7 @@ describe('manifest-scoped sandbox tool', () => {
       runId: 'run_1',
     } as any, input, bundle, 'tool_call_sdk') as SandboxManifest
     const result = await new SandboxBroker().execute({
+      ...LOCAL_SANDBOX_EXECUTION,
       manifest,
       toolInput: input,
       bundle,
@@ -440,6 +448,7 @@ describe('manifest-scoped sandbox tool', () => {
       runId: 'run_1',
     } as any, input, bundle, 'tool_call_write_sdk') as SandboxManifest
     const result = await new SandboxBroker().execute({
+      ...LOCAL_SANDBOX_EXECUTION,
       manifest,
       toolInput: input,
       bundle,
@@ -488,7 +497,7 @@ describe('manifest-scoped sandbox tool', () => {
       threadId: 'thread_1',
       runId: 'run_1',
     } as any, input, bundle, 'tool_call_text') as SandboxManifest
-    const result = await new SandboxBroker().execute({ manifest, toolInput: input, bundle })
+    const result = await new SandboxBroker().execute({ ...LOCAL_SANDBOX_EXECUTION, manifest, toolInput: input, bundle })
 
     expect(result.status).toBe('completed')
     expect(result.executionMode).toBe('executed')
@@ -583,7 +592,7 @@ describe('manifest-scoped sandbox tool', () => {
       threadId: 'thread_1',
       runId: 'run_1',
     } as any, input, bundle, 'tool_call_empty') as SandboxManifest
-    const result = await new SandboxBroker().execute({ manifest, toolInput: input, bundle })
+    const result = await new SandboxBroker().execute({ ...LOCAL_SANDBOX_EXECUTION, manifest, toolInput: input, bundle })
 
     expect(result.status).toBe('completed')
     expect(result.executionMode).toBe('executed')
@@ -617,7 +626,7 @@ describe('manifest-scoped sandbox tool', () => {
       runId: 'run_1',
     } as any, input, bundle, 'tool_call_timeout') as SandboxManifest
     manifest.runtime.timeoutMs = 50
-    const result = await new SandboxBroker().execute({ manifest, toolInput: input, bundle })
+    const result = await new SandboxBroker().execute({ ...LOCAL_SANDBOX_EXECUTION, manifest, toolInput: input, bundle })
 
     expect(result.status).toBe('timeout')
     expect(result.executionMode).toBe('executed')
@@ -649,7 +658,7 @@ describe('manifest-scoped sandbox tool', () => {
       threadId: 'thread_1',
       runId: 'run_1',
     } as any, input, bundle, 'tool_call_failure') as SandboxManifest
-    const result = await new SandboxBroker().execute({ manifest, toolInput: input, bundle })
+    const result = await new SandboxBroker().execute({ ...LOCAL_SANDBOX_EXECUTION, manifest, toolInput: input, bundle })
 
     expect(result.status).toBe('failed')
     expect(result.executionMode).toBe('executed')
@@ -684,7 +693,7 @@ describe('manifest-scoped sandbox tool', () => {
       runId: 'run_1',
     } as any, input, bundle, 'tool_call_blocked') as SandboxManifest
     ;(manifest.capabilities as any).businessWrites = true
-    const result = await new SandboxBroker().execute({ manifest, toolInput: input, bundle })
+    const result = await new SandboxBroker().execute({ ...LOCAL_SANDBOX_EXECUTION, manifest, toolInput: input, bundle })
 
     expect(result.status).toBe('blocked')
     expect(result.executionMode).toBe('not_executed')

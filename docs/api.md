@@ -170,7 +170,7 @@ Agent 受控代码执行通过模型选择 `sandbox_run_code` 工具完成，内
 
 - 入参包含 `purpose`、`language`、`code`、`dataRequest.scope`、可选字段/月度/文件/行数和期望输出类型。
 - 服务端生成 `SandboxManifest`，其中输入挂载只读，网络默认关闭，shell/package install/internal API/production DB/provider secret/user session token/direct business write/direct memory write/account action 全部禁用。业务写入只能通过同名 sandbox SDK 桥回 Tool Runtime Gateway，再按正常自动化策略、确认卡、领域服务和审计执行。
-- 当前实现通过 `SandboxBroker` 选择真实执行 backend。默认 `local-script` backend 会在临时工作区启动 Python/Node 子进程执行模型代码；设置 `XOX_SANDBOX_BACKEND=docker` 时改用 Docker backend，并保持同一工具 schema、manifest 和 observation 合约。
+- 当前实现通过 `SandboxBroker` 选择真实执行 backend。`dev:api` 显式选择 `local-script` backend，在临时工作区启动 Python/Node 子进程执行模型代码；非 dev 启动未设置时交给 Agentic OS 选择隔离默认后端，也可设置 `XOX_SANDBOX_BACKEND=docker` 改用 Docker backend，并保持同一工具 schema、manifest 和 observation 合约。
 - 沙箱输入会写入 `input.json` 和 `input/input.json`，结构化输出优先写入 `output/result.json`。返回 observation 会记录 `executionMode`、`backendId`、`exitCode`、`stdout/stderr`、`structuredOutput`、`manifestHash` 和输入 evidence id；只有 `executionMode=executed`、`status=completed`、`exitCode=0` 且存在结构化输出的结果才能满足可复核计算。
 - 工具结果是 `tool_observation`，模型必须基于 observation 继续生成最终回复或继续选择工具。sandbox 内的保存草稿、记账、发布、恢复、记忆写入请求必须通过同一 Tool Runtime Gateway 生成 server-owned 可编辑确认卡；如果多个 nested writes 超过当前自动化等级，整次 sandbox run 生成一张聚合确认/授权。
 - 常见文件格式通过 typed file adapter 进入沙箱边界，当前覆盖 `.xlsx / .xls / .csv / .tsv / .json / .jsonl / .html / .txt / .md / .pdf / .docx / .doc / .png / .jpg / .jpeg / .webp` 的归一化和安全检查。

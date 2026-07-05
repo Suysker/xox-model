@@ -1,10 +1,24 @@
 # xox-model Agentic OS Integration Plan
 
-Status: Draft (M191 harness frontend audience surface implemented; full API parity still open)
+Status: Draft (M192 sandbox port cutover implemented; full API parity still open)
 
 Date: 2026-06-21
 
-## Latest Status: M191
+## Latest Status: M192
+
+M192 reconnects xox sandbox execution to the updated Agentic OS first-class sandbox port.
+
+Current M192 cut:
+
+- `@agentic-os/core` now owns sandbox tool execution as an `AgentSandboxPort` path. xox passes its existing manifest-scoped sandbox peripheral into `createOpenAISaaSHostComputerFromProfile()` instead of relying on the legacy read-draft tool path.
+- `sandbox-service.ts` keeps only host peripheral responsibilities: workspace bundle creation, manifest policy, SDK manifest, file policy, backend selection, and conversion to `AgentSandboxExecutionResult`.
+- xox sandbox manifests now use Agentic OS canonical bundle scopes (`summary_records`, `time_series_records`, `tabular_records`, `entity_records`, `uploaded_file`, `custom_bundle`) and `runtime.computeMs`.
+- Sandbox tool activity is projected through Agentic OS run events/transcript (`tool_call_completed` / `tool_call_failed`) rather than xox legacy `planSteps`; this keeps sandbox in the Agentic OS CPU path while preserving user-visible tool evidence.
+- Local test/dev runs without Docker explicitly select `XOX_SANDBOX_BACKEND=local-script`; production should continue using an isolated backend.
+
+See [M192 Agentic OS Sandbox Port Cutover](m192-agentic-os-sandbox-port-cutover.md) for the design and validation contract.
+
+## Previous Status: M191
 
 M191 connects the Agentic OS ADR0058/ADR0059 frontend control plane to xox web as the standard harness UI surface.
 

@@ -989,6 +989,14 @@ export type SandboxDataScope =
   | 'uploaded_file'
   | 'custom_bundle'
 
+export type SandboxManifestDataScope =
+  | 'summary_records'
+  | 'time_series_records'
+  | 'tabular_records'
+  | 'entity_records'
+  | 'uploaded_file'
+  | 'custom_bundle'
+
 export type SandboxRunCodeInput = {
   purpose: string
   language: 'python' | 'javascript'
@@ -1032,7 +1040,7 @@ export type SandboxManifest = {
   }
   inputBundle: {
     bundleId: string
-    kind: SandboxDataScope
+    kind: SandboxManifestDataScope
     schemaVersion: string
     mountPath: '/input'
     readonly: true
@@ -1047,8 +1055,10 @@ export type SandboxManifest = {
   runtime: {
     language: 'python' | 'javascript'
     entrypoint: 'single_script'
+    imageTag?: string
+    allowedImageTags?: string[]
     timeoutMs: number
-    cpuMs: number
+    computeMs: number
     memoryMb: number
     processLimit: number
     openFileLimit: number

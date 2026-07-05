@@ -15,6 +15,8 @@ npm.cmd run dev:web
 npm.cmd run dev:api
 ```
 
+本地 `dev:api` 会显式使用 `XOX_SANDBOX_BACKEND=local-script`，避免无 Docker 的开发机把 `sandbox_run_code` 交给生产隔离默认后端。
+
 ## Linux 一键部署
 
 生产环境的前后端部署统一使用 `infra/scripts/deploy-linux.sh`。这个脚本不会修改 nginx 配置，而是直接在服务器上完成：
@@ -112,7 +114,7 @@ sudo systemctl status xox-model-web
 
 配置项：
 
-- `XOX_SANDBOX_BACKEND=local-script | docker`：默认 `local-script`。`local-script` 在临时工作区启动 Python/Node 子进程，适合本地开发和 smoke；`docker` 使用容器执行，适合后续自托管隔离环境。
+- `XOX_SANDBOX_BACKEND=local-script | docker`：`dev:api` 显式选择 `local-script`；非 dev 启动未设置时交给 Agentic OS `SandboxBroker` 选择隔离默认后端。`local-script` 在临时工作区启动 Python/Node 子进程，适合本地开发和 smoke；`docker` 使用容器执行，适合后续自托管隔离环境。
 - `XOX_SANDBOX_PYTHON_BIN=<path>`：local-script Python 命令，默认 `python`。
 - `XOX_SANDBOX_DOCKER_BIN=<path>`：Docker 命令，默认 `docker`。
 - `XOX_SANDBOX_DOCKER_PYTHON_IMAGE=python:3.12-alpine`
