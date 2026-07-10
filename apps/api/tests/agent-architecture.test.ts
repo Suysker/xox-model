@@ -123,6 +123,11 @@ describe('Agentic OS downstream boundary', () => {
 
     expect(host).toContain('createOpenAISaaSHostComputerFromProfile')
     expect(host).toContain('storeProfile')
+    expect(host).toContain('AgentHookPlanePorts')
+    expect(host).not.toContain('AgentHookRunner')
+    expect(host).not.toContain('AgentRunEngine')
+    expect(host).not.toContain('runBeforeAgentRun')
+    expect(host).not.toContain('runBeforeToolCall')
     expect(host).not.toContain('AgentStorePort')
     expect(host).not.toContain('claimRunLane')
     expect(host).not.toContain('refreshRunLease')

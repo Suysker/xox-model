@@ -14,6 +14,7 @@ import type {
 import {
   createAgentHostToolObservationBridge,
   normalizeAgentAutomationLevel,
+  type AgentHookPlanePorts,
   type HostObservationBridge,
 } from '@agentic-os/core'
 import {
@@ -93,6 +94,11 @@ type XoxHostState = {
   observationBridge: HostObservationBridge<AgentToolObservation>
   finishedResult: OsRunResult | null
   lastActionExecutionResult: unknown | null
+}
+
+type XoxAgentHarnessOptions = {
+  beforeStateWrite: () => Promise<boolean>
+  hooks?: AgentHookPlanePorts
 }
 
 const PLANNING_USER_CONTENT_MAX_CHARS = 64_000
@@ -375,7 +381,7 @@ async function appendXoxAgenticOsRunEvent(ctx: XoxAgentRunContext, event: OsRunE
 
 function createXoxHostProfile(
   ctx: XoxAgentRunContext,
-  options: { beforeStateWrite: () => Promise<boolean> },
+  options: XoxAgentHarnessOptions,
   state: XoxHostState,
 ): AgentServerSaaSHostProfile {
   const storeProfile = {
@@ -536,6 +542,7 @@ function createXoxHostProfile(
         }),
       }
     },
+    ...(options.hooks === undefined ? {} : { hooks: options.hooks }),
   })
 }
 
@@ -592,6 +599,7 @@ export async function resumeXoxAgentRunAfterActionConfirmation(input: {
   action: Row<'agent_action_requests'>
   abortSignal?: AbortSignal
   beforeStateWrite?: () => Promise<boolean>
+  hooks?: AgentHookPlanePorts
 }): Promise<{
   actionRequest: Row<'agent_action_requests'>
   actionResult: unknown
@@ -625,7 +633,10 @@ export async function resumeXoxAgentRunAfterActionConfirmation(input: {
   const request = osRunInput(planningCtx, objective)
   const osRun: OsRunRecord = { ...osRunRecord(planningCtx, run), status: 'awaiting_confirmation' }
   const execution = await confirmAgentServerSaaSProfileActionAndResume({
-    profile: createXoxHostProfile(planningCtx, { beforeStateWrite }, state),
+    profile: createXoxHostProfile(planningCtx, {
+      beforeStateWrite,
+      ...(input.hooks === undefined ? {} : { hooks: input.hooks }),
+    }, state),
     run: osRun,
     request,
     actionRequest: xoxOsActionRequest(input.action, `action_${input.action.id}`),
@@ -653,7 +664,7 @@ export async function resumeXoxAgentRunAfterActionConfirmation(input: {
 
 export async function executeXoxAgentRun(
   ctx: XoxAgentRunContext,
-  options: { beforeStateWrite: () => Promise<boolean> },
+  options: XoxAgentHarnessOptions,
 ): Promise<AgenticOsKernelRunResult | null> {
   const providedWorkspaceBundle = ctx.providedWorkspaceBundle ?? extractWorkspaceBundleArtifact(ctx.message) ?? undefined
   const objective = providedWorkspaceBundle?.messageForModel ?? ctx.message
