@@ -19,9 +19,9 @@ import {
   type AgentServerActionGraphStore,
   type AgentServerActionGraphStoreActionRequestResult,
   type AgentServerActionGraphSummary,
-  type AgentServerActionPlanStep,
-  type AgentServerActionPlanStepDraft,
-  type AgentServerActionPlanStepStatus,
+  type AgentServerActionGraphStep,
+  type AgentServerActionGraphStepDraft,
+  type AgentServerActionGraphStepStatus,
 } from '@agentic-os/server'
 import type { AgentAutomationLevel, AgentNavigationEvent, AgentPlannerSource, AgentPlanStepStatus } from '@xox/contracts'
 import type { Database, Row } from '../../db/schema.js'
@@ -110,54 +110,62 @@ function conciseResult(value: unknown) {
 
 export function actionExecutionObservation(input: {
   action: Row<'agent_action_requests'>
+  toolCallId: string
   result?: unknown
 }): AgentToolObservation {
   const displayPreview = `已执行：${input.action.title}`
   const details = parseJsonObject(input.action.details_json)
-  return buildActionResultObservation({
-    actionRequestId: input.action.id,
-    actionKind: input.action.kind,
-    actionStatus: input.action.status,
-    title: input.action.title,
-    summary: input.action.summary,
-    targetLabel: input.action.target_label,
-    riskLevel: input.action.risk_level,
-    changeSet: details,
-    displayPreview,
-    toolName: input.action.kind,
-    toolCallId: `action_${input.action.id}`,
-    toolArguments: {
+  return {
+    ...buildActionResultObservation({
       actionRequestId: input.action.id,
       actionKind: input.action.kind,
-      status: input.action.status,
-    },
-    executedAt: input.action.executed_at,
-    result: conciseResult(input.result),
-  }) as AgentToolObservation
+      actionStatus: input.action.status,
+      title: input.action.title,
+      summary: input.action.summary,
+      targetLabel: input.action.target_label,
+      riskLevel: input.action.risk_level,
+      changeSet: details,
+      displayPreview,
+      toolName: input.action.kind,
+      toolCallId: input.toolCallId,
+      toolArguments: {
+        actionRequestId: input.action.id,
+        actionKind: input.action.kind,
+        status: input.action.status,
+      },
+      executedAt: input.action.executed_at,
+      result: conciseResult(input.result),
+    }),
+    observationId: `action_result_${input.action.id}`,
+  } as AgentToolObservation
 }
 
 export function actionFailureObservation(input: {
   action: Row<'agent_action_requests'>
+  toolCallId: string
   reason: string
   error?: string | null
 }): AgentToolObservation {
   const displayPreview = input.error
     ? `动作执行失败：${input.action.title}：${input.error}`
     : `动作被策略阻止：${input.action.title}`
-  return buildActionResultObservation({
-    actionRequestId: input.action.id,
-    actionKind: input.action.kind,
-    actionStatus: input.action.status,
-    title: input.action.title,
-    displayPreview,
-    toolName: input.action.kind,
-    toolCallId: `action_${input.action.id}`,
-    toolArguments: {},
-    reason: input.reason,
-    error: input.error ?? null,
-    observationStatus: 'failed',
-    outcome: input.error ? 'failed_terminal' : 'policy_blocked',
-  }) as AgentToolObservation
+  return {
+    ...buildActionResultObservation({
+      actionRequestId: input.action.id,
+      actionKind: input.action.kind,
+      actionStatus: input.action.status,
+      title: input.action.title,
+      displayPreview,
+      toolName: input.action.kind,
+      toolCallId: input.toolCallId,
+      toolArguments: {},
+      reason: input.reason,
+      error: input.error ?? null,
+      observationStatus: 'failed',
+      outcome: input.error ? 'failed_terminal' : 'policy_blocked',
+    }),
+    observationId: `action_failure_${input.action.id}`,
+  } as AgentToolObservation
 }
 
 export function actionPreviewObservation(input: {
@@ -165,23 +173,27 @@ export function actionPreviewObservation(input: {
 }): AgentToolObservation {
   const details = parseJsonObject(input.action.details_json)
   const displayPreview = `待确认：${input.action.title}`
-  return buildActionPreviewObservation({
-    actionRequestId: input.action.id,
-    actionKind: input.action.kind,
-    actionStatus: input.action.status,
-    title: input.action.title,
-    summary: input.action.summary,
-    targetLabel: input.action.target_label,
-    riskLevel: input.action.risk_level,
-    changeSet: details,
-    displayPreview,
-    toolName: input.action.kind,
-    toolCallId: `action_preview_${input.action.id}`,
-    toolArguments: {},
-  }) as AgentToolObservation
+  if (!input.action.tool_call_id) throw new Error('Stored action request is missing canonical tool-call identity.')
+  return {
+    ...buildActionPreviewObservation({
+      actionRequestId: input.action.id,
+      actionKind: input.action.kind,
+      actionStatus: input.action.status,
+      title: input.action.title,
+      summary: input.action.summary,
+      targetLabel: input.action.target_label,
+      riskLevel: input.action.risk_level,
+      changeSet: details,
+      displayPreview,
+      toolName: input.action.kind,
+      toolCallId: input.action.tool_call_id,
+      toolArguments: {},
+    }),
+    observationId: `action_preview_${input.action.id}`,
+  } as AgentToolObservation
 }
 
-async function addAgentActionRequest(ctx: ActionGraphContext, draft: AgentActionDraft) {
+async function addAgentActionRequest(ctx: ActionGraphContext, draft: AgentActionDraft, toolCallId: string) {
   assertActionDraftAllowed(draft)
   const id = newId()
   const now = utcNow()
@@ -202,6 +214,7 @@ async function addAgentActionRequest(ctx: ActionGraphContext, draft: AgentAction
       details_json: jsonString(draft.details),
       navigation_json: jsonString(draft.navigation),
       payload_json: jsonString(draft.payload),
+      tool_call_id: toolCallId,
       created_at: now,
       executed_at: null,
       error_message: null,
@@ -251,7 +264,7 @@ function xoxStatusFromMetadata(item: AgentServerActionGraphPlannedItem): AgentPl
     : null
 }
 
-function serverStatusFromXox(status: AgentPlanStepStatus | undefined): AgentServerActionPlanStepStatus | undefined {
+function serverStatusFromXox(status: AgentPlanStepStatus | undefined): AgentServerActionGraphStepStatus | undefined {
   if (status === 'failed') return 'failed'
   if (status === 'cancelled') return 'cancelled'
   if (status === 'pending') return 'running'
@@ -259,7 +272,7 @@ function serverStatusFromXox(status: AgentPlanStepStatus | undefined): AgentServ
   return undefined
 }
 
-function xoxStatusFromServer(status: AgentServerActionPlanStepStatus): AgentPlanStepStatus {
+function xoxStatusFromServer(status: AgentServerActionGraphStepStatus): AgentPlanStepStatus {
   if (status === 'waiting') return 'ready'
   if (status === 'running') return 'pending'
   if (status === 'completed') return 'info'
@@ -267,7 +280,7 @@ function xoxStatusFromServer(status: AgentServerActionPlanStepStatus): AgentPlan
   return 'cancelled'
 }
 
-function xoxActionStepStatus(status: AgentServerActionPlanStepStatus): AgentPlanStepStatus {
+function xoxActionStepStatus(status: AgentServerActionGraphStepStatus): AgentPlanStepStatus {
   if (status === 'waiting') return 'ready'
   if (status === 'completed') return 'executed'
   if (status === 'failed') return 'failed'
@@ -277,7 +290,7 @@ function xoxActionStepStatus(status: AgentServerActionPlanStepStatus): AgentPlan
 
 function xoxPlanStepStatus(
   item: AgentServerActionGraphPlannedItem,
-  step: AgentServerActionPlanStepDraft,
+  step: AgentServerActionGraphStepDraft,
 ): AgentPlanStepStatus {
   const explicit = xoxStatusFromMetadata(item)
   if (explicit) return explicit
@@ -310,12 +323,13 @@ function osActionRequestFromDraft(
   ctx: ActionGraphContext,
   draft: AgentActionDraft,
   provisionalId: string,
+  toolCallId: string,
 ): OsActionRequest {
   return {
     actionRequestId: provisionalId,
     runId: ctx.runId,
     threadId: ctx.threadId,
-    toolCallId: provisionalId,
+    toolCallId,
     toolName: draft.kind,
     status: 'pending',
     title: draft.title,
@@ -389,17 +403,17 @@ function isActionDraft(item: PlannedItem): item is AgentActionDraft {
   return isAgentHostToolActionDraft<AgentActionDraft, ReadDraft>(item)
 }
 
-function toolArgumentsFromStep(step: AgentServerActionPlanStepDraft): Record<string, unknown> | null {
+function toolArgumentsFromStep(step: AgentServerActionGraphStepDraft): Record<string, unknown> | null {
   return step.input ? JSON.parse(JSON.stringify(step.input)) as Record<string, unknown> : null
 }
 
 function storedPlanStep(
   row: Row<'agent_plan_steps'>,
-  step: AgentServerActionPlanStepDraft,
-): AgentServerActionPlanStep {
-  const stored: AgentServerActionPlanStep = {
+  step: AgentServerActionGraphStepDraft,
+): AgentServerActionGraphStep {
+  const stored: AgentServerActionGraphStep = {
     ...step,
-    planStepId: row.id,
+    graphStepId: row.id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -460,7 +474,12 @@ async function addLocalizedActionGraphEvent(
 
 export async function storePlannedActionGraph(
   ctx: ActionGraphContext,
-  input: { items: PlannedItem[]; plannerSource: AgentPlannerSource; emitPlanReady?: boolean },
+  input: {
+    items: PlannedItem[]
+    plannerSource: AgentPlannerSource
+    toolCallId: string
+    emitPlanReady?: boolean
+  },
 ): Promise<StoredActionGraph> {
   const navigationEvents: AgentNavigationEvent[] = []
   const actionRows: Row<'agent_action_requests'>[] = []
@@ -473,7 +492,8 @@ export async function storePlannedActionGraph(
     observationBridge,
     isAction: isActionDraft,
     provisionalActionRequestId: ({ action, index }) => `xox_draft_${index + 1}_${action.kind}`,
-    createActionRequest: ({ action, provisionalId }) => osActionRequestFromDraft(ctx, action, provisionalId),
+    createActionRequest: ({ action, provisionalId }) =>
+      osActionRequestFromDraft(ctx, action, provisionalId, input.toolCallId),
     metadata: ({ item, kind }) => kind === 'action'
       ? metadata({ xoxNavigation: (item as AgentActionDraft).navigation })
       : metadata({
@@ -486,7 +506,7 @@ export async function storePlannedActionGraph(
   const actionDrafts = projected.actionDrafts
 
   const store: AgentServerActionGraphStore = {
-    loadMaxPlanSequence: async () => {
+    loadMaxGraphSequence: async () => {
       await assertAgentRunLease(ctx.db, ctx.settings, ctx.runId)
       const existing = await ctx.db
         .selectFrom('agent_plan_steps')
@@ -499,7 +519,7 @@ export async function storePlannedActionGraph(
       await assertAgentRunLease(ctx.db, ctx.settings, ctx.runId)
       const draft = actionDrafts.get(actionInput.actionRequest.actionRequestId)
       if (!draft) throw new Error(`Missing xox action draft for ${actionInput.actionRequest.actionRequestId}`)
-      const createdAction = await addAgentActionRequest(ctx, draft)
+      const createdAction = await addAgentActionRequest(ctx, draft, actionInput.actionRequest.toolCallId)
       const settled = storedActionPreview(createdAction)
       actionRows.push(settled.action)
       navigationEvents.push(draft.navigation)
@@ -509,7 +529,7 @@ export async function storePlannedActionGraph(
         observation: osObservation,
       }
     },
-    storePlanStep: async (stepInput) => {
+    storeGraphStep: async (stepInput) => {
       await assertAgentRunLease(ctx.db, ctx.settings, ctx.runId)
       const navigation = navigationFromItem(stepInput.item)
       if (navigation && stepInput.item.type !== 'action_request') navigationEvents.push(navigation)

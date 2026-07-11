@@ -296,25 +296,6 @@ export async function runMigrations(db: Kysely<Database>) {
   )
   await exec(
     db,
-    `CREATE TABLE IF NOT EXISTS agent_evaluations (
-      id VARCHAR(36) PRIMARY KEY,
-      goal_id VARCHAR(36) NOT NULL REFERENCES agent_goals(id) ON DELETE CASCADE,
-      thread_id VARCHAR(36) NOT NULL REFERENCES agent_threads(id) ON DELETE CASCADE,
-      run_id VARCHAR(36) NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
-      iteration_no INTEGER NOT NULL,
-      status VARCHAR(32) NOT NULL,
-      confidence REAL NOT NULL,
-      satisfied_json JSON NOT NULL,
-      unsatisfied_json JSON NOT NULL,
-      policy_json JSON NOT NULL,
-      next_planner_brief TEXT,
-      user_question TEXT,
-      blocker TEXT,
-      created_at DATETIME NOT NULL
-    )`,
-  )
-  await exec(
-    db,
     `CREATE TABLE IF NOT EXISTS agent_run_events (
       id VARCHAR(36) PRIMARY KEY,
       thread_id VARCHAR(36) NOT NULL REFERENCES agent_threads(id) ON DELETE CASCADE,
@@ -348,11 +329,13 @@ export async function runMigrations(db: Kysely<Database>) {
       details_json JSON NOT NULL,
       navigation_json JSON NOT NULL,
       payload_json JSON NOT NULL,
+      tool_call_id VARCHAR(500),
       created_at DATETIME NOT NULL,
       executed_at DATETIME,
       error_message TEXT
     )`,
   )
+  await addColumnIfMissing(db, 'agent_action_requests', 'tool_call_id', 'VARCHAR(500)')
   await exec(
     db,
     `CREATE TABLE IF NOT EXISTS agent_plan_steps (
@@ -602,6 +585,26 @@ export async function runMigrations(db: Kysely<Database>) {
       updated_at DATETIME NOT NULL,
       UNIQUE(workspace_id, user_id)
     )`,
+  )
+  await exec(
+    db,
+    `CREATE TABLE IF NOT EXISTS agent_harness_control_records (
+      id VARCHAR(36) PRIMARY KEY,
+      tenant_id VARCHAR(128) NOT NULL,
+      workspace_id VARCHAR(36) NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      user_id VARCHAR(36) NOT NULL DEFAULT '',
+      collection_name VARCHAR(160) NOT NULL,
+      record_key VARCHAR(255) NOT NULL,
+      version_no INTEGER NOT NULL,
+      value_json JSON NOT NULL,
+      created_at DATETIME NOT NULL,
+      updated_at DATETIME NOT NULL,
+      UNIQUE(tenant_id, workspace_id, user_id, collection_name, record_key)
+    )`,
+  )
+  await exec(
+    db,
+    'CREATE INDEX IF NOT EXISTS idx_agent_harness_control_collection ON agent_harness_control_records (tenant_id, workspace_id, user_id, collection_name, updated_at)',
   )
 
   await addColumnIfMissing(db, 'actual_entries', 'related_entity_type', 'VARCHAR(32)')

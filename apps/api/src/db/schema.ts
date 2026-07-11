@@ -230,23 +230,6 @@ export type AgentGoalTable = {
   blocked_reason: string | null
 }
 
-export type AgentEvaluationTable = {
-  id: Generated<string>
-  goal_id: string
-  thread_id: string
-  run_id: string
-  iteration_no: number
-  status: string
-  confidence: number
-  satisfied_json: JsonText
-  unsatisfied_json: JsonText
-  policy_json: JsonText
-  next_planner_brief: string | null
-  user_question: string | null
-  blocker: string | null
-  created_at: Timestamp
-}
-
 export type AgentRunEventTable = {
   id: Generated<string>
   thread_id: string
@@ -276,6 +259,7 @@ export type AgentActionRequestTable = {
   details_json: JsonText
   navigation_json: JsonText
   payload_json: JsonText
+  tool_call_id: string | null
   created_at: Timestamp
   executed_at: string | null
   error_message: string | null
@@ -413,6 +397,19 @@ export type AgentProviderSettingTable = {
   updated_at: Timestamp
 }
 
+export type AgentHarnessControlRecordTable = {
+  id: Generated<string>
+  tenant_id: string
+  workspace_id: string
+  user_id: string
+  collection_name: string
+  record_key: string
+  version_no: number
+  value_json: JsonText
+  created_at: Timestamp
+  updated_at: Timestamp
+}
+
 export type Database = {
   users: UserTable
   user_credentials: UserCredentialTable
@@ -433,7 +430,6 @@ export type Database = {
   agent_messages: AgentMessageTable
   agent_runs: AgentRunTable
   agent_goals: AgentGoalTable
-  agent_evaluations: AgentEvaluationTable
   agent_run_events: AgentRunEventTable
   agent_action_requests: AgentActionRequestTable
   agent_plan_steps: AgentPlanStepTable
@@ -444,6 +440,7 @@ export type Database = {
   agent_memory_dream_reports: AgentMemoryDreamReportTable
   agent_context_snapshots: AgentContextSnapshotTable
   agent_provider_settings: AgentProviderSettingTable
+  agent_harness_control_records: AgentHarnessControlRecordTable
 }
 
 export type Row<T extends keyof Database> = Selectable<Database[T]>

@@ -27,6 +27,7 @@ function action(overrides: Partial<Row<'agent_action_requests'>> = {}): Row<'age
     details_json: JSON.stringify({ name: 'North plan' }),
     navigation_json: '{}',
     payload_json: '{}',
+    tool_call_id: 'call_1',
     created_at: '2026-06-19T08:00:00.000Z',
     executed_at: null,
     error_message: null,
@@ -66,6 +67,7 @@ describe('xox action observations through Agentic OS envelopes', () => {
   it('keeps xox execution result summary compact', () => {
     const observation = actionExecutionObservation({
       action: action({ status: 'executed', executed_at: '2026-06-19T09:00:00.000Z' }),
+      toolCallId: 'call_1',
       result: {
         ok: true,
         id: 'version_1',
@@ -76,6 +78,7 @@ describe('xox action observations through Agentic OS envelopes', () => {
     })
 
     expect(observation.displayPreview).toBe('已执行：更新工作区')
+    expect(observation.toolCallId).toBe('call_1')
     expect(observation.status).toBe('completed')
     expect(observation.outcome).toBe('completed_valid')
     expect(modelContent(observation)).toMatchObject({
@@ -97,10 +100,12 @@ describe('xox action observations through Agentic OS envelopes', () => {
   it('keeps policy-blocked action observations terminal for the loop', () => {
     const observation = actionFailureObservation({
       action: action({ status: 'failed' }),
+      toolCallId: 'call_2',
       reason: 'manual approval required',
     })
 
     expect(observation.displayPreview).toBe('动作被策略阻止：更新工作区')
+    expect(observation.toolCallId).toBe('call_2')
     expect(observation.status).toBe('failed')
     expect(observation.outcome).toBe('policy_blocked')
     expect(modelContent(observation)).toMatchObject({
@@ -141,7 +146,7 @@ describe('xox action observations through Agentic OS envelopes', () => {
       status: 'failed',
     })
     expect(modelContent(read as { modelContent: string })).toMatchObject({
-      observationType: 'tool_supervisor_failure',
+      observationType: 'tool_result_failure',
       toolName: 'data_query_workspace',
       toolCallId: 'call_data',
       message: 'Tool data_query_workspace did not produce an executable action or observable result.',

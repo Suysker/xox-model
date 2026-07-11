@@ -46,6 +46,48 @@ export async function claimAgentRunLease(
   return row ?? null
 }
 
+export async function claimAgentRunContinuationLease(
+  db: Kysely<Database>,
+  settings: Settings,
+  runId: string,
+): Promise<boolean> {
+  const now = utcNow()
+  const claimed = await db
+    .updateTable('agent_runs')
+    .set({
+      status: 'running',
+      worker_id: settings.agentWorkerId,
+      lease_expires_at: agentServerRunLeaseExpiresAt(settings.agentRunLeaseTtlMs),
+      heartbeat_at: now,
+      completed_at: null,
+    })
+    .where('id', '=', runId)
+    .where('status', '=', 'completed')
+    .where('lease_expires_at', 'is', null)
+    .executeTakeFirst()
+  return Number(claimed.numUpdatedRows) === 1
+}
+
+export async function releaseAgentRunContinuationLease(
+  db: Kysely<Database>,
+  settings: Settings,
+  runId: string,
+): Promise<void> {
+  await db
+    .updateTable('agent_runs')
+    .set({
+      status: 'completed',
+      worker_id: null,
+      lease_expires_at: null,
+      heartbeat_at: null,
+      completed_at: utcNow(),
+    })
+    .where('id', '=', runId)
+    .where('status', '=', 'running')
+    .where('worker_id', '=', settings.agentWorkerId)
+    .execute()
+}
+
 export async function refreshAgentRunLease(
   db: Kysely<Database>,
   settings: Settings,

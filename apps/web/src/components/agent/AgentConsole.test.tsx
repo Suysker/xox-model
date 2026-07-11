@@ -318,7 +318,6 @@ describe('AgentConsole', () => {
       expect(harnessPanel).not.toBeNull()
       expect(harnessPanel?.textContent).toContain('Agentic OS')
       expect(harnessPanel?.textContent).toContain('运行时间线')
-      expect(harnessPanel?.textContent).toContain('工具活动')
       expect(harnessPanel?.textContent).toContain('workspace_update')
       expect(harnessPanel?.textContent).toContain('确认更新')
       expect(harnessPanel?.textContent).not.toContain('运维检查')

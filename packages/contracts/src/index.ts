@@ -789,7 +789,6 @@ export type AgentEvaluationResult = {
   satisfiedCriteria: string[]
   unsatisfiedCriteria: AgentEvaluationFinding[]
   policyFindings: AgentEvaluationFinding[]
-  nextPlannerBrief: string | null
   userQuestion: string | null
   blocker: string | null
   createdAt: string

@@ -254,11 +254,11 @@ const xoxBusinessToolRuntime = createAgentServerSaaSBusinessToolRuntime<
   createNavigation: xoxNavigationFromTabs,
 })
 
-export async function planXoxBusinessToolStep(
+export async function executeXoxBusinessToolStep(
   ctx: PlannerContext,
   step: RuntimePlannerStep,
 ): Promise<PlannedItem[]> {
-  return xoxBusinessToolRuntime.planStep(ctx, step)
+  return xoxBusinessToolRuntime.runTool(ctx, step)
 }
 
 export type XoxOsActionExecutionState = {
@@ -293,13 +293,13 @@ function osActionStatus(row: Row<'agent_action_requests'>): AgentActionStatus {
 
 export function xoxOsActionRequest(
   row: Row<'agent_action_requests'>,
-  toolCallId: string,
 ): AgentActionRequest {
+  if (!row.tool_call_id) throw new Error('Stored action request is missing canonical tool-call identity.')
   return {
     actionRequestId: row.id,
     runId: row.run_id,
     threadId: row.thread_id,
-    toolCallId,
+    toolCallId: row.tool_call_id,
     toolName: row.kind,
     status: osActionStatus(row),
     title: row.title,
@@ -373,13 +373,14 @@ export async function executeXoxConfirmedBusinessActionForOs(input: {
     replaceActionRow(input.state, failed)
     const xoxObservation = actionFailureObservation({
       action: failed,
+      toolCallId: input.actionInput.actionRequest.toolCallId,
       reason: input.actionInput.reason ?? 'Action execution failed.',
       error: message,
     })
     input.state.xoxObservations.push(xoxObservation)
     const observation = input.state.observationBridge.toCanonical(xoxObservation, input.state.xoxObservations.length - 1)
     return {
-      actionRequest: xoxOsActionRequest(failed, input.actionInput.actionRequest.toolCallId),
+      actionRequest: xoxOsActionRequest(failed),
       observation,
       audit: xoxOsActionAudit({
         runId: failed.run_id,
@@ -397,11 +398,15 @@ export async function executeXoxConfirmedBusinessActionForOs(input: {
   const updated = await input.ctx.db.selectFrom('agent_action_requests').selectAll().where('id', '=', action.id).executeTakeFirstOrThrow()
   input.state.lastActionExecutionResult = result
   replaceActionRow(input.state, updated)
-  const xoxObservation = actionExecutionObservation({ action: updated, result })
+  const xoxObservation = actionExecutionObservation({
+    action: updated,
+    toolCallId: input.actionInput.actionRequest.toolCallId,
+    result,
+  })
   input.state.xoxObservations.push(xoxObservation)
   const observation = input.state.observationBridge.toCanonical(xoxObservation, input.state.xoxObservations.length - 1)
   return {
-    actionRequest: xoxOsActionRequest(updated, input.actionInput.actionRequest.toolCallId),
+    actionRequest: xoxOsActionRequest(updated),
     observation,
     audit: xoxOsActionAudit({
       runId: updated.run_id,

@@ -47,6 +47,12 @@ import {
 } from './agentic-os/xox-run-store-adapter.js'
 import { submitAgentMessageRun } from './agentic-os/xox-run-submission-adapter.js'
 import { addRunEvent, agentThreadEvents, listSerializedRunEvents } from './agentic-os/xox-run-event-store-adapter.js'
+import {
+  claimAgentRunContinuationLease,
+  refreshAgentRunLease,
+  releaseAgentRunContinuationLease,
+  startAgentRunLeaseHeartbeat,
+} from './agentic-os/xox-run-lease-store-adapter.js'
 import { addMessage } from './agentic-os/xox-thread-store-adapter.js'
 import { resumeXoxAgentRunAfterActionConfirmation } from './host-profile/xox-host-profile.js'
 import {
@@ -200,54 +206,64 @@ async function confirmAgentActionRequest(db: Kysely<Database>, settings: Setting
   const action = await getActionRequest(db, actionRequestId)
   const workspace = await getWorkspaceForUser(db, user)
   assertActionOwnedByWorkspace(action, workspace, user)
-  const resumed = await resumeXoxAgentRunAfterActionConfirmation({
-    db,
-    settings,
-    user,
-    workspace,
-    action,
-  }).catch(async (executionError) => {
-    const message = safeActionRouteErrorMessage(executionError)
-    const latestAction = await db
-      .selectFrom('agent_action_requests')
-      .select(['status'])
-      .where('id', '=', action.id)
-      .executeTakeFirst()
-    if (latestAction?.status !== 'executed') {
-      await applyAgentServerSaaSActionExecutionFailure({
-        action: {
-          threadId: action.thread_id,
-          runId: action.run_id,
-          actionRequestId: action.id,
-          actionKind: action.kind,
-          actionTitle: action.title,
-          errorMessage: message,
-          copy: {
-            title: '确认卡执行失败',
-            message: `${action.title}：${message}`,
+  if (!(await claimAgentRunContinuationLease(db, settings, action.run_id))) {
+    throw conflict('Agent run continuation is already active or no longer resumable')
+  }
+  const stopHeartbeat = startAgentRunLeaseHeartbeat(db, settings, action.run_id)
+  try {
+    const resumed = await resumeXoxAgentRunAfterActionConfirmation({
+      db,
+      settings,
+      user,
+      workspace,
+      action,
+      beforeStateWrite: () => refreshAgentRunLease(db, settings, action.run_id),
+    }).catch(async (executionError) => {
+      const message = safeActionRouteErrorMessage(executionError)
+      const latestAction = await db
+        .selectFrom('agent_action_requests')
+        .select(['status'])
+        .where('id', '=', action.id)
+        .executeTakeFirst()
+      if (latestAction?.status !== 'executed') {
+        await applyAgentServerSaaSActionExecutionFailure({
+          action: {
+            threadId: action.thread_id,
+            runId: action.run_id,
+            actionRequestId: action.id,
+            actionKind: action.kind,
+            actionTitle: action.title,
+            errorMessage: message,
+            copy: {
+              title: '确认卡执行失败',
+              message: `${action.title}：${message}`,
+            },
           },
-        },
-        effects: {
-          touchThread: async ({ threadId }) => {
-            await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', threadId).execute().catch(() => undefined)
+          effects: {
+            touchThread: async ({ threadId }) => {
+              await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', threadId).execute().catch(() => undefined)
+            },
+            appendRunEvent: async (event) => {
+              await addRunEvent(db, event).catch(() => undefined)
+            },
           },
-          appendRunEvent: async (event) => {
-            await addRunEvent(db, event).catch(() => undefined)
-          },
-        },
-      })
-    }
-    throw executionError
-  })
+        })
+      }
+      throw executionError
+    })
 
-  await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', action.thread_id).execute()
-  return {
-    actionRequest: resumed.actionRequest,
-    result: resumed.actionResult,
-    messages: resumed.runResult?.assistantMessage ? [resumed.runResult.assistantMessage] : [],
-    runEvents: await listSerializedRunEvents(db, action.run_id),
-    planSteps: await listPlanStepsForRun(db, action.run_id),
-    threadId: action.thread_id,
+    await db.updateTable('agent_threads').set({ updated_at: utcNow() }).where('id', '=', action.thread_id).execute()
+    return {
+      actionRequest: resumed.actionRequest,
+      result: resumed.actionResult,
+      messages: resumed.runResult?.assistantMessage ? [resumed.runResult.assistantMessage] : [],
+      runEvents: await listSerializedRunEvents(db, action.run_id),
+      planSteps: await listPlanStepsForRun(db, action.run_id),
+      threadId: action.thread_id,
+    }
+  } finally {
+    stopHeartbeat()
+    await releaseAgentRunContinuationLease(db, settings, action.run_id)
   }
 }
 

@@ -246,7 +246,6 @@ function queuedRunFromLoad(load: Extract<XoxRunLoad, { ok: true }>): AgentServer
       message: load.message,
       automationLevel,
     }),
-    maxIterations: 5,
     metadata: {
       xoxRunId: load.run.id,
       xoxThreadId: load.thread.id,

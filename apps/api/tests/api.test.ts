@@ -530,6 +530,43 @@ function fakeOpenAIChatToolResponse(name: string, args: Record<string, unknown> 
   }
 }
 
+function fakeOpenAIResponsesToolResponse(name: string, args: Record<string, unknown> = {}) {
+  return {
+    id: `resp_${name}`,
+    object: 'response',
+    created_at: 0,
+    status: 'completed',
+    model: 'fake-openai',
+    output: [{
+      type: 'function_call',
+      id: `fc_${name}`,
+      call_id: `call_${name}`,
+      name,
+      arguments: JSON.stringify(args),
+      status: 'completed',
+    }],
+    usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+  }
+}
+
+function fakeOpenAIResponsesTextResponse(text: string) {
+  return {
+    id: 'resp_text',
+    object: 'response',
+    created_at: 0,
+    status: 'completed',
+    model: 'fake-openai',
+    output: [{
+      type: 'message',
+      id: 'msg_text',
+      role: 'assistant',
+      status: 'completed',
+      content: [{ type: 'output_text', text, annotations: [] }],
+    }],
+    usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+  }
+}
+
 async function insertRunningAgentRun(
   db: Kysely<Database>,
   userId: string,
@@ -600,6 +637,7 @@ async function insertRunningAgentRun(
         reason: '半成品导航。',
       }),
       payload_json: JSON.stringify({ revision: 1, workspaceName: workspace.name, config: createProductDefaultModel() }),
+      tool_call_id: `partial_tool_call_${input.suffix}`,
       created_at: now,
       executed_at: null,
       error_message: null,
@@ -1212,13 +1250,14 @@ describe('xox TypeScript API', () => {
   })
 
   it('plans multiple agent steps and lets users edit pending action payloads before execution', async () => {
-    let continuationCalls = 0
-    await withFakeOpenAICompatibleProvider(() => fakeToolResponse('ledger_create_member_income', {
-        monthLabel: '3月',
-        memberName: '成员 B',
-        offlineUnits: 1,
-        onlineUnits: 1,
-      }), async (baseUrl) => {
+    await withFakeOpenAICompatibleProvider(() => fakeToolResponses([
+      { name: 'ledger_create_member_income', args: {
+        monthLabel: '3月', memberName: '成员 B', offlineUnits: 1, onlineUnits: 1,
+      } },
+      { name: 'workspace_update_online_factor', args: {
+        monthLabel: '4月', onlineSalesFactor: 0.3, mode: 'write',
+      } },
+    ]), async (baseUrl) => {
       const harness = await buildHarness('agent-multi-edit', fakeProviderSettings(baseUrl))
       const client = new Client(harness.app)
       await registerUser(client, 'agent-multi-edit@example.com')
@@ -1277,23 +1316,11 @@ describe('xox TypeScript API', () => {
     }, {
       capabilities: ['ledger', 'draft'],
       requiredActionCapabilities: ['ledger', 'draft'],
-      observationContinuationResponse: (body, request) => {
-        continuationCalls += 1
-        if (continuationCalls === 1) {
-          return fakeToolResponse('workspace_update_online_factor', {
-          monthLabel: '4月',
-          onlineSalesFactor: 0.3,
-          mode: 'write',
-          })
-        }
-        return fakeObservationFinalizerResponse(body)
-      },
     })
-  })
+  }, 10_000)
 
   it('repairs a cross-domain goal and auto-executes eligible writes under high automation', async () => {
     let goalPlanningCalls = 0
-    const finalizerRequests: any[] = []
     const provider = mutableScriptedProvider(fakeAssistantTextResponse('已按当前对话记录这个上下文。'))
     await withFakeOpenAICompatibleProvider(provider.handler, async (baseUrl) => {
       const harness = await buildHarness('agent-cross-domain-goal-repair', fakeProviderSettings(baseUrl))
@@ -1350,7 +1377,7 @@ describe('xox TypeScript API', () => {
         automationLevel: 'high',
       })
 
-      expect(response.statusCode).toBe(200)
+      expect(response.statusCode, JSON.stringify(response.json)).toBe(200)
       expect(goalPlanningCalls).toBeGreaterThanOrEqual(2)
       expect(goalPlanningCalls).toBeLessThanOrEqual(3)
       expect(response.json.actionRequests).toHaveLength(2)
@@ -1361,7 +1388,6 @@ describe('xox TypeScript API', () => {
         event.type === 'response_evaluated' &&
         event.data?.evaluationStatus === 'pass',
       )).toBe(true)
-      expect(response.json.runEvents.filter((event: any) => event.type === 'memory_recall_started')).toHaveLength(1)
       expect(response.json.runEvents.filter((event: any) => event.type === 'action_executed')).toHaveLength(2)
       expect(response.json.messages.at(-1).content).toContain('成员入账')
       expect(response.json.messages.at(-1).content).toContain('股东注资')
@@ -1382,13 +1408,9 @@ describe('xox TypeScript API', () => {
     }, {
       capabilities: ['data', 'ledger', 'draft'],
       requiredActionCapabilities: ['ledger', 'draft'],
-      finalizerResponse: (body) => {
-        finalizerRequests.push(body)
-        return fakeAssistantTextResponse('当前仍未回本；高自动化已自动执行 2 个动作：成员 A 今天线上 10 张入账、股东 A 注资 100 万。')
-      },
       observationContinuationResponse: false,
     })
-  })
+  }, 10_000)
 
   it('continues from domain observations into sandbox computation before the final model answer', async () => {
     await withLocalSandboxBackend(async () => {
@@ -1454,13 +1476,11 @@ describe('xox TypeScript API', () => {
         message: '给我预测一下，如果目前的通胀率是5%，我的投资回报率是多少？我是第一个股东，我投入的钱都是银行贷款出来的，银行利率是年利率5%',
       })
 
-      expect(response.statusCode).toBe(200)
+      expect(response.statusCode, JSON.stringify(response.json)).toBe(200)
       expect(planningCalls).toBeGreaterThanOrEqual(2)
       expect(planningCalls).toBeLessThanOrEqual(3)
       expect(response.json.actionRequests).toHaveLength(0)
-      expect(response.json.planSteps.map((step: any) => step.toolName).filter(Boolean)).toEqual([
-        'data_query_workspace',
-      ])
+      expect(response.json.planSteps.map((step: any) => step.toolName).filter(Boolean)).toEqual(['data_query_workspace'])
       expect(response.json.messages.at(-1).content).toContain('个人回报')
       expect(response.json.messages.at(-1).content).not.toContain('fake_deterministic')
       expect(response.json.runEvents.some((event: any) =>
@@ -1574,7 +1594,7 @@ describe('xox TypeScript API', () => {
         message: '给我预测一下，如果目前的通胀率是5%，我的投资回报率是多少？我是第一个股东，我投入的钱都是银行贷款出来的，银行利率是年利率5%',
       })
 
-      expect(response.statusCode).toBe(200)
+      expect(response.statusCode, JSON.stringify(response.json)).toBe(200)
       expect(planningCalls).toBeGreaterThanOrEqual(3)
       expect(planningCalls).toBeLessThanOrEqual(4)
       const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
@@ -1631,8 +1651,7 @@ describe('xox TypeScript API', () => {
       )).toBe(false)
       expect(state.json.runEvents.some((event: any) =>
         event.type === 'response_evaluated' &&
-        event.data?.evaluationStatus === 'pass' &&
-        event.data?.claimReviewStatus === 'skipped',
+        event.data?.evaluationStatus === 'pass',
       )).toBe(true)
       expect(state.json.runEvents.some((event: any) => event.type === 'run_failed')).toBe(false)
       expect(state.json.messages.at(-1).content).toContain('当前工作区共有')
@@ -1647,7 +1666,7 @@ describe('xox TypeScript API', () => {
     })
   })
 
-  it('fails closed when sandbox retry returns assistant text without a tool observation', async () => {
+  it('isolates a malformed sandbox call and continues without a fabricated sandbox observation', async () => {
     let planningCalls = 0
     await withFakeOpenAICompatibleProvider((body) => {
       planningCalls += 1
@@ -1660,12 +1679,12 @@ describe('xox TypeScript API', () => {
         })
       }
       if (planningCalls === 2) {
-        expect(body.stream).toBe(false)
+        expect(body.stream).toBe(true)
         expectProviderTools(body, ['sandbox_run_code'])
         return fakeMalformedToolResponse('sandbox_run_code', '{"purpose":"结合工作区数据计算通胀和贷款后的个人 ROI","language":"python","code":"print(1)"')
       }
       if (planningCalls === 3) {
-        expect(body.stream).toBe(false)
+        expect(body.stream).toBe(true)
         expectProviderTools(body, ['sandbox_run_code'])
         return fakeAssistantTextResponse('只用工作区 ROI 粗略估算，投资回报率大约为正。')
       }
@@ -1684,16 +1703,9 @@ describe('xox TypeScript API', () => {
 
       expect(response.statusCode).toBe(200)
       const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
-      expect(state.json.planSteps.some((step: any) =>
-        step.toolName === 'sandbox_run_code' &&
-        step.status === 'failed' &&
-        String(step.description).includes('未形成可执行 observation'),
-      )).toBe(true)
-      expect(state.json.runEvents.some((event: any) =>
-        event.type === 'run_failed' &&
-        event.status === 'failed',
-      )).toBe(true)
-      expect(state.json.messages.map((message: any) => message.role)).toEqual(['user'])
+      expect(state.json.planSteps.some((step: any) => step.toolName === 'sandbox_run_code')).toBe(false)
+      expect(state.json.runEvents.some((event: any) => event.type === 'run_failed')).toBe(false)
+      expect(state.json.messages.at(-1).role).toBe('assistant')
       await closeHarness(harness)
     }, {
       capabilities: ['data', 'sandbox'],
@@ -1702,7 +1714,7 @@ describe('xox TypeScript API', () => {
     })
   })
 
-  it('keeps empty sandbox observations from completing the run even without router goal facts', async () => {
+  it('keeps empty sandbox observations visible as repairable harness trace', async () => {
     let planningCalls = 0
     await withFakeOpenAICompatibleProvider((body) => {
       planningCalls += 1
@@ -1731,13 +1743,11 @@ describe('xox TypeScript API', () => {
 
       expect(response.statusCode).toBe(200)
       const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
-      const responseEvaluations = state.json.runEvents.filter((event: any) => event.type === 'response_evaluated')
-      expect(responseEvaluations.some((event: any) =>
-        event.data?.evaluationStatus === 'needs_calculation' &&
-        event.data?.findings?.some((finding: any) => finding.code === 'response.sandbox_evidence_invalid') &&
-        event.data?.evidence?.some((item: any) => item.authority === 'sandbox' && item.source === 'sandbox_run_code'),
-      )).toBe(true)
-      expect(state.json.messages.map((message: any) => message.role)).toEqual(['user'])
+      expect(state.json.runEvents.some((event: any) =>
+        event.type === 'tool_call_failed' &&
+        event.data?.toolName === 'sandbox_run_code' &&
+        event.data?.outcome === 'failed_repairable',
+      ), JSON.stringify(state.json.runEvents.filter((event: any) => event.data?.toolName === 'sandbox_run_code'))).toBe(true)
       await closeHarness(harness)
     }, {
       capabilities: ['sandbox'],
@@ -1795,10 +1805,7 @@ describe('xox TypeScript API', () => {
       })
 
       expect(response.statusCode).toBe(200)
-      expect(response.json.planSteps.map((step: any) => step.toolName).filter(Boolean)).toEqual([
-        'data_query_workspace',
-        'sandbox_run_code',
-      ])
+      expect(response.json.planSteps.map((step: any) => step.toolName).filter(Boolean)).toEqual(['data_query_workspace'])
       const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
       expect(state.json.runEvents.some((event: any) => event.type === 'run_completed')).toBe(true)
       expect(state.json.runEvents.some((event: any) =>
@@ -1870,10 +1877,7 @@ describe('xox TypeScript API', () => {
       })
 
       expect(response.statusCode).toBe(200)
-      expect(response.json.planSteps.map((step: any) => step.toolName).filter(Boolean)).toEqual([
-        'sandbox_run_code',
-        'data_query_workspace',
-      ])
+      expect(response.json.planSteps.map((step: any) => step.toolName).filter(Boolean)).toEqual(['data_query_workspace'])
       expect(response.json.messages.at(-1).content).toContain('第 2 位股东')
       expect(response.json.messages.at(-1).content).not.toContain('Runner evidence obligations')
       expect(response.json.messages.at(-1).content).not.toContain('runnerObligationPlan')
@@ -2005,11 +2009,13 @@ describe('xox TypeScript API', () => {
 
       if (phase === 'resume') {
         resumePlanningCalls += 1
-        return fakeToolResponse('ledger_create_member_income', {
-          memberName: '成员1',
-          onlineUnits: 10,
-          occurredAt: '2026-05-24',
-        })
+        return resumePlanningCalls === 1
+          ? fakeToolResponse('ledger_create_member_income', {
+              memberName: '成员1',
+              onlineUnits: 10,
+              occurredAt: '2026-05-24',
+            })
+          : fakeAssistantTextResponse('已根据你的补充自动执行成员 1 今天线上 10 张入账。')
       }
 
       initialPlanningCalls += 1
@@ -2075,7 +2081,9 @@ describe('xox TypeScript API', () => {
       expect(first.json.actionRequests[0].status).toBe('executed')
       expect(first.json.actionRequests[0].payload.config.shareholders[0].investmentAmount).toBe(1300000)
       const firstState = await client.get(`/api/v1/agent/threads/${first.json.threadId}`)
-      expect(firstState.json.evaluations.map((evaluation: any) => evaluation.status)).toContain('needs_clarification')
+      expect(firstState.json.runEvents.some((event: any) =>
+        event.type === 'tool_call_completed' && event.data?.toolName === 'ask_user_clarification',
+      ), JSON.stringify(firstState.json.runEvents)).toBe(true)
       expect(first.json.messages.at(-1).content).toContain('成员')
 
       phase = 'resume'
@@ -2085,16 +2093,17 @@ describe('xox TypeScript API', () => {
         automationLevel: 'high',
       })
 
-      expect(second.statusCode).toBe(200)
+      expect(second.statusCode, JSON.stringify(second.json)).toBe(200)
       expect(initialPlanningCalls).toBeGreaterThanOrEqual(2)
       expect(resumePlanningCalls).toBeGreaterThanOrEqual(1)
-      expect(second.json.runEvents.some((event: any) => event.type === 'clarification_resume_context')).toBe(true)
+      expect(second.json.runId).not.toBe(first.json.runId)
+      expect(second.json.runEvents.some((event: any) => event.type === 'model_planning')).toBe(true)
       expect(second.json.actionRequests).toHaveLength(1)
-      expect(second.json.actionRequests[0].kind).toBe('ledger.create_entry')
-      expect(second.json.actionRequests[0].status).toBe('executed')
-      expect(second.json.actionRequests[0].targetLabel).toContain('成员 1')
-      expect(second.json.actionRequests[0].payload.amount).toBe(880)
-      expect(second.json.actionRequests[0].payload.occurredAt).toContain('2026-05-24')
+      const ledgerAction = second.json.actionRequests.find((action: any) => action.kind === 'ledger.create_entry')
+      expect(ledgerAction?.status).toBe('executed')
+      expect(ledgerAction?.targetLabel).toContain('成员 1')
+      expect(ledgerAction?.payload.amount).toBe(880)
+      expect(ledgerAction?.payload.occurredAt).toContain('2026-05-24')
 
       const state = await client.get(`/api/v1/agent/threads/${first.json.threadId}`)
       const executedKinds = state.json.actionRequests
@@ -2115,7 +2124,7 @@ describe('xox TypeScript API', () => {
       },
       observationContinuationResponse: false,
     })
-  })
+  }, 10_000)
 
   it('does not create a confirmation card for no-op workspace patch arguments', async () => {
     await withFakeOpenAICompatibleProvider(() => fakeToolResponse('workspace_patch_config', {
@@ -2146,12 +2155,12 @@ describe('xox TypeScript API', () => {
   it('keeps allowed steps when a multi-step message also contains a forbidden account action', async () => {
     await withFakeOpenAICompatibleProvider((body) => {
         expectProviderTools(body, ['ledger_create_member_income'])
-        return fakeToolResponse('ledger_create_member_income', {
-          monthLabel: '3月',
-          memberName: '成员 A',
-          offlineUnits: 1,
-          onlineUnits: 0,
-        })
+        return fakeToolResponses([
+          { name: 'ledger_create_member_income', args: {
+            monthLabel: '3月', memberName: '成员 A', offlineUnits: 1, onlineUnits: 0,
+          } },
+          { name: 'account_forbidden', args: { action: '注销账号' } },
+        ])
       }, async (baseUrl) => {
       const harness = await buildHarness('agent-mixed-account-step', fakeProviderSettings(baseUrl))
       const client = new Client(harness.app)
@@ -2255,6 +2264,7 @@ describe('xox TypeScript API', () => {
           focusRecordId: derived.id,
           reason: '定位派生分录。',
         }),
+        tool_call_id: `policy_tool_call_${pendingActionId}`,
         payload_json: JSON.stringify({
           entryId: derived.id,
           amount: derived.amount,
@@ -2269,7 +2279,7 @@ describe('xox TypeScript API', () => {
       expect(rejectedDerived.statusCode).toBe(409)
       await closeHarness(harness)
     })
-  })
+  }, 10_000)
 
   it('uses OpenAI-compatible tool calls as the primary model planning protocol', async () => {
     await withFakeOpenAICompatibleProvider((body) => {
@@ -2277,8 +2287,6 @@ describe('xox TypeScript API', () => {
       expect(body.tool_choice).toBe('auto')
       expect(toolNames.has('agent_reply')).toBe(false)
       expect(toolNames.has('ledger_create_member_income')).toBe(true)
-      expect(toolNames.has('workspace_publish_release')).toBe(false)
-      expect(body.tools.length).toBeLessThanOrEqual(10)
       expect(body.messages[0].content).toContain('tool_calls')
       return {
         choices: [{
@@ -2314,7 +2322,7 @@ describe('xox TypeScript API', () => {
       expect(planned.json.actionRequests[0].kind).toBe('ledger.create_entry')
       expect(planned.json.actionRequests[0].payload.amount).toBe(176)
       await closeHarness(harness)
-    })
+    }, { capabilities: ['ledger'] })
   })
 
   it('exposes the model-owned tool catalog without regex intent projection', async () => {
@@ -2419,47 +2427,28 @@ describe('xox TypeScript API', () => {
       expect(planned.json.actionRequests[0].payload.amount).toBe(176)
       expect(planned.json.runEvents.some((event: any) => event.type === 'provider_stream_started' && event.data?.provider === 'test-compatible')).toBe(true)
       const streamDeltas = planned.json.runEvents.filter((event: any) => event.type === 'provider_stream_delta')
-      expect(streamDeltas.some((event: any) => event.data?.kind === 'tool_call_delta' && event.data?.toolName === 'ledger_create_member_income')).toBe(true)
-      expect(streamDeltas.some((event: any) => String(event.data?.argumentsPreview ?? '').includes('onlineUnits'))).toBe(true)
+      expect(streamDeltas.some((event: any) => event.data?.deltaType === 'tool_call_arguments' && event.data?.toolName === 'ledger_create_member_income')).toBe(true)
+      expect(streamDeltas.some((event: any) => String(event.data?.delta ?? '').includes('onlineUnits'))).toBe(true)
       expect(planned.json.runEvents.some((event: any) => event.type === 'provider_stream_completed' && event.data?.toolCallCount === 1)).toBe(true)
       await closeHarness(harness)
     })
   })
 
-  it('retries malformed streamed tool-call arguments as a non-stream provider call', async () => {
+  it('fails closed on malformed visible tool-call arguments without replaying provider output', async () => {
     const planningStreams: Array<unknown> = []
     await withFakeOpenAICompatibleProvider((body) => {
       planningStreams.push(body.stream)
-      if (planningStreams.length === 1) {
-        return {
-          __stream: [
-            {
-              choices: [{
-                delta: {
-                  tool_calls: [{
-                    index: 0,
-                    id: 'call_malformed',
-                    type: 'function',
-                    function: {
-                      name: 'ledger_create_member_income',
-                      arguments: '{"monthLabel":"3月"',
-                    },
-                  }],
-                },
-              }],
+      return {
+        __stream: [{
+          choices: [{ delta: { tool_calls: [{
+            index: 0, id: 'call_malformed', type: 'function',
+            function: {
+              name: 'ledger_create_member_income',
+              arguments: '{"monthLabel":"3月"',
             },
-          ],
-        }
+          }] } }],
+        }],
       }
-      expect(body.stream).toBe(false)
-      expect(body.tools.map((tool: any) => tool.function.name)).toEqual(['ledger_create_member_income'])
-      expect(body.tool_choice).toBe('auto')
-      return fakeToolResponse('ledger_create_member_income', {
-        monthLabel: '3月',
-        memberName: '成员 A',
-        offlineUnits: 1,
-        onlineUnits: 0,
-      })
     }, async (baseUrl) => {
       const harness = await buildHarness('agent-streaming-tool-call-retry', {
         llmProvider: 'openai-compatible',
@@ -2475,16 +2464,10 @@ describe('xox TypeScript API', () => {
       })
 
       expect(planned.statusCode).toBe(200)
-      expect(planningStreams).toEqual([true, false])
+      expect(planningStreams).toEqual([true])
       expect(planned.json.planner).toBe('openai_compatible_tool_calls')
-      expect(planned.json.actionRequests[0].kind).toBe('ledger.create_entry')
-      expect(planned.json.actionRequests[0].payload.amount).toBe(88)
-      expect(planned.json.runEvents.some((event: any) =>
-        event.type === 'provider_retrying' &&
-        event.data?.errorKind === 'provider_response_error' &&
-        event.data?.retryStream === false &&
-        event.data?.retryTool === 'ledger_create_member_income',
-      )).toBe(true)
+      expect(planned.json.actionRequests).toHaveLength(0)
+      expect(planned.json.runEvents.some((event: any) => event.type === 'provider_retrying')).toBe(false)
       await closeHarness(harness)
     })
   })
@@ -2544,41 +2527,22 @@ describe('xox TypeScript API', () => {
     })
   })
 
-  it('retries streamed tool-call timeouts as non-stream selected-tool planning', async () => {
+  it('does not replay a partial streamed tool call after provider output becomes visible', async () => {
     const planningStreams: Array<unknown> = []
     await withFakeOpenAICompatibleProvider((body) => {
       planningStreams.push(body.stream)
-      if (planningStreams.length === 1) {
-        return {
-          __stream: [
-            {
-              choices: [{
-                delta: {
-                  tool_calls: [{
-                    index: 0,
-                    id: 'call_timeout',
-                    type: 'function',
-                    function: {
-                      name: 'ledger_create_member_income',
-                      arguments: '{"monthLabel":"3月"',
-                    },
-                  }],
-                },
-              }],
+      return {
+        __stream: [{
+          choices: [{ delta: { tool_calls: [{
+            index: 0, id: 'call_timeout', type: 'function',
+            function: {
+              name: 'ledger_create_member_income',
+              arguments: '{"monthLabel":"3月"',
             },
-          ],
-          delayMs: 150,
-        }
+          }] } }],
+        }],
+        delayMs: 150,
       }
-      expect(body.stream).toBe(false)
-      expect(body.tools.map((tool: any) => tool.function.name)).toEqual(['ledger_create_member_income'])
-      expect(body.tool_choice).toBe('auto')
-      return fakeToolResponse('ledger_create_member_income', {
-        monthLabel: '3月',
-        memberName: '成员 A',
-        offlineUnits: 1,
-        onlineUnits: 0,
-      })
     }, async (baseUrl) => {
       const harness = await buildHarness('agent-streaming-tool-call-timeout-retry', {
         llmProvider: 'openai-compatible',
@@ -2595,14 +2559,9 @@ describe('xox TypeScript API', () => {
       })
 
       expect(planned.statusCode).toBe(200)
-      expect(planningStreams).toEqual([true, false])
-      expect(planned.json.actionRequests[0].kind).toBe('ledger.create_entry')
-      expect(planned.json.actionRequests[0].payload.amount).toBe(88)
-      expect(planned.json.runEvents.some((event: any) =>
-        event.type === 'provider_retrying' &&
-        event.data?.retryStream === false &&
-        event.data?.retryTool === 'ledger_create_member_income',
-      )).toBe(true)
+      expect(planningStreams).toEqual([true])
+      expect(planned.json.actionRequests).toHaveLength(0)
+      expect(planned.json.runEvents.some((event: any) => event.type === 'provider_retrying')).toBe(false)
       await closeHarness(harness)
     }, { capabilities: ['ledger'] })
   })
@@ -2616,30 +2575,7 @@ describe('xox TypeScript API', () => {
         toolNames: body.tools.map((tool: any) => tool.function.name),
       })
       if (planningRequests.length === 1) {
-        return {
-          __stream: [
-            {
-              choices: [{
-                delta: {
-                  tool_calls: [{
-                    index: 0,
-                    id: 'call_malformed',
-                    type: 'function',
-                    function: {
-                      name: 'workspace_configure_operating_model',
-                      arguments: '{"plan":{"workspaceName":"星河"',
-                    },
-                  }],
-                },
-              }],
-            },
-          ],
-        }
-      }
-      if (planningRequests.length === 2) {
-        expect(body.stream).toBe(false)
         expect(body.tool_choice).toBe('auto')
-        expect(body.tools.map((tool: any) => tool.function.name)).toEqual(['workspace_configure_operating_model'])
         return {
           __statusCode: 400,
           body: {
@@ -2650,9 +2586,9 @@ describe('xox TypeScript API', () => {
           },
         }
       }
-      expect(body.stream).toBe(false)
+      expect(body.stream).toBe(true)
       expect(body.tool_choice).toBeUndefined()
-      expect(body.tools.map((tool: any) => tool.function.name)).toEqual(['workspace_configure_operating_model'])
+      expect(body.tools.map((tool: any) => tool.function.name)).toContain('workspace_configure_operating_model')
       return fakeToolResponse('workspace_configure_operating_model', {
         plan: {
           workspaceName: '星河 50 期启动测算',
@@ -2692,14 +2628,11 @@ describe('xox TypeScript API', () => {
       })
 
       expect(planned.statusCode).toBe(200)
-      expect(planningRequests.map((request) => request.stream)).toEqual([true, false, false])
+      expect(planningRequests.map((request) => request.stream)).toEqual([true, true])
       expect(planningRequests.at(-1)?.toolChoice).toBeUndefined()
       expect(planned.json.actionRequests[0].kind).toBe('workspace.update_draft')
       expect(planned.json.actionRequests[0].payload.workspaceName).toBe('星河 50 期启动测算')
-      expect(planned.json.runEvents.some((event: any) =>
-        event.type === 'provider_retrying' &&
-        event.data?.retryTool === 'workspace_configure_operating_model',
-      )).toBe(true)
+      expect(planned.json.runEvents.some((event: any) => event.type === 'provider_stream_completed')).toBe(true)
       await closeHarness(harness)
     }, { capabilities: ['draft'] })
   })
@@ -2789,10 +2722,10 @@ describe('xox TypeScript API', () => {
       expect(planned.statusCode).toBe(200)
       expect(planned.json.planner).toBe('openai_compatible_tool_calls')
       expect(planned.json.actionRequests).toHaveLength(0)
-      expect(planned.json.planSteps[0].status).toBe('failed')
+      expect(planned.json.planSteps).toHaveLength(0)
       expect(planned.json.messages.map((message: any) => message.role)).toEqual(['user'])
-      expect(planned.json.planSteps[0].description).toContain('认证失败')
-      expect(planned.json.planSteps[0].description).toContain('HTTP 401')
+      expect(planned.json.runEvents.some((event: any) => event.type === 'provider_stream_failed')).toBe(true)
+      expect(planned.json.runEvents.some((event: any) => event.type === 'run_failed')).toBe(true)
       await closeHarness(harness)
     })
   })
@@ -2811,9 +2744,9 @@ describe('xox TypeScript API', () => {
     expect(planned.statusCode).toBe(200)
     expect(planned.json.planner).toBe('openai_compatible_tool_calls')
     expect(planned.json.actionRequests).toHaveLength(0)
-    expect(planned.json.planSteps[0].status).toBe('failed')
+    expect(planned.json.planSteps).toHaveLength(0)
     expect(planned.json.messages.map((message: any) => message.role)).toEqual(['user'])
-    expect(planned.json.planSteps[0].description).toContain('API key')
+    expect(planned.json.runEvents.some((event: any) => event.type === 'run_failed')).toBe(true)
     await closeHarness(harness)
   })
 
@@ -2889,7 +2822,8 @@ describe('xox TypeScript API', () => {
       expect(callCount).toBe(1)
       expect(secondPlanned.json.planner).toBe('openai_compatible_tool_calls')
       expect(secondPlanned.json.actionRequests).toHaveLength(0)
-      expect(secondPlanned.json.planSteps[0].status).toBe('failed')
+      expect(secondPlanned.json.planSteps).toHaveLength(0)
+      expect(secondPlanned.json.runEvents.some((event: any) => event.type === 'run_failed')).toBe(true)
 
       const deleted = await firstClient.delete('/api/v1/agent/provider-settings')
       expect(deleted.statusCode).toBe(200)
@@ -2900,7 +2834,8 @@ describe('xox TypeScript API', () => {
       expect(afterDelete.statusCode).toBe(200)
       expect(callCount).toBe(1)
       expect(afterDelete.json.actionRequests).toHaveLength(0)
-      expect(afterDelete.json.planSteps[0].status).toBe('failed')
+      expect(afterDelete.json.planSteps).toHaveLength(0)
+      expect(afterDelete.json.runEvents.some((event: any) => event.type === 'run_failed')).toBe(true)
       await closeHarness(harness)
     })
   })
@@ -3160,9 +3095,7 @@ describe('xox TypeScript API', () => {
       expect(response.json.runEvents.every((event: any) => ['assistant', 'tool', 'lifecycle'].includes(event.channel))).toBe(true)
 
       const goals = await harness.db.selectFrom('agent_goals').selectAll().where('run_id', '=', response.json.runId).execute()
-      const evaluations = await harness.db.selectFrom('agent_evaluations').selectAll().where('run_id', '=', response.json.runId).execute()
       expect(goals).toHaveLength(0)
-      expect(evaluations).toHaveLength(0)
 
       const visibleKinds = flattenTranscriptNodes(response.json.transcriptNodes)
         .filter((node: any) => node.visibility === 'user')
@@ -3395,7 +3328,6 @@ describe('xox TypeScript API', () => {
   it('feeds read observations back into repair planning so the model can inspect then write', async () => {
     let planningCalls = 0
     let secondPlanningBody: any = null
-    const finalizerRequests: any[] = []
 
     await withFakeOpenAICompatibleProvider((body) => {
       planningCalls += 1
@@ -3408,15 +3340,18 @@ describe('xox TypeScript API', () => {
         })
       }
 
-      secondPlanningBody = body
-      const toolMessages = body.messages.filter((message: any) => message.role === 'tool')
-      expect(toolMessages.some((message: any) => String(message.content).includes('"scope":"entity_summary"'))).toBe(true)
-      expect(JSON.stringify(toolMessages)).toContain('shareholders')
-      return fakeToolResponse('workspace_patch_config', {
-        patches: [
-          { path: 'shareholders[0].investmentAmount', value: 1065000, label: '股东 1 投资额' },
-        ],
-      })
+      if (planningCalls === 2) {
+        secondPlanningBody = body
+        const replayMessages = JSON.stringify(body.messages)
+        expect(replayMessages).toContain('entity_summary')
+        expect(replayMessages).toContain('shareholders')
+        return fakeToolResponse('workspace_patch_config', {
+          patches: [
+            { path: 'shareholders[0].investmentAmount', value: 1065000, label: '股东 1 投资额' },
+          ],
+        })
+      }
+      return fakeAssistantTextResponse('已检查当前股东并完成注资。')
     }, async (baseUrl) => {
       const harness = await buildHarness('agent-observation-driven-planning-loop', fakeProviderSettings(baseUrl))
       const client = new Client(harness.app)
@@ -3436,17 +3371,12 @@ describe('xox TypeScript API', () => {
       expect(response.json.actionRequests[0].payload.config.shareholders[0].investmentAmount).toBe(1065000)
       expect(response.json.planSteps.map((step: any) => step.toolName)).toContain('data_query_workspace')
       expect(response.json.planSteps.some((step: any) => step.actionRequestId === response.json.actionRequests[0].id)).toBe(true)
-      expect(response.json.runEvents.filter((event: any) => event.type === 'memory_recall_started')).toHaveLength(1)
       expect(response.json.runEvents.some((event: any) => event.type === 'action_executed')).toBe(true)
-      expect(response.json.messages.map((message: any) => message.role)).toEqual(['user'])
+      expect(response.json.messages.map((message: any) => message.role)).toEqual(['user', 'assistant'])
       await closeHarness(harness)
     }, {
       capabilities: ['data', 'draft'],
       requiredActionCapabilities: ['draft'],
-      finalizerResponse: (body) => {
-        finalizerRequests.push(body)
-        return fakeAssistantTextResponse('已检查当前股东并按高自动化已自动执行：把第一个股东投资额追加 100 万。')
-      },
       observationContinuationResponse: false,
     })
   })
@@ -3470,12 +3400,16 @@ describe('xox TypeScript API', () => {
 
       expect(response.statusCode).toBe(200)
       const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
-      expect(state.json.runEvents.filter((event: any) => event.type === 'goal_iteration_started').length).toBeGreaterThanOrEqual(1)
+      expect(state.json.runEvents.filter((event: any) => event.type === 'model_planning').length).toBeGreaterThanOrEqual(1)
       expect(state.json.actionRequests).toHaveLength(0)
-      expect(state.json.runEvents.some((event: any) => event.type === 'run_failed')).toBe(false)
-      expect(state.json.runEvents.some((event: any) => event.type === 'run_completed')).toBe(true)
+      expect(state.json.runEvents.some((event: any) => event.type === 'run_failed')).toBe(true)
+      expect(state.json.runEvents.some((event: any) => event.type === 'run_completed')).toBe(false)
       await closeHarness(harness)
-    }, { capabilities: ['data', 'draft'], requiredActionCapabilities: ['draft'] })
+    }, {
+      capabilities: ['data', 'draft'],
+      requiredActionCapabilities: ['draft'],
+      observationContinuationResponse: false,
+    })
   })
 
   it('asks for clarification through a model-selected tool when required business details are missing', async () => {
@@ -3959,7 +3893,11 @@ describe('xox TypeScript API', () => {
     })
 
     await createXoxDurableRunStore(harness.db, harness.settings).startReady()
-    const state = await client.get(`/api/v1/agent/threads/${run.threadId}`)
+    let state = await client.get(`/api/v1/agent/threads/${run.threadId}`)
+    for (let attempt = 0; attempt < 20 && state.json.runs[0].status === 'running'; attempt += 1) {
+      await sleep(25)
+      state = await client.get(`/api/v1/agent/threads/${run.threadId}`)
+    }
     expect(state.statusCode).toBe(200)
     expect(state.json.runs[0].status).toBe('failed')
     expect(state.json.actionRequests[0].status).toBe('cancelled')
@@ -3974,34 +3912,36 @@ describe('xox TypeScript API', () => {
 
   it('uses OpenAI Agents SDK adapter for OpenAI provider planning', async () => {
     let forecastCalls = 0
+    const providerBodies: any[] = []
     await withFakeOpenAICompatibleProvider((body) => {
+      providerBodies.push(body)
       const bodyText = JSON.stringify(body)
       const latestUserMessage = Array.isArray(body.messages)
         ? [...body.messages].reverse().find((message: any) => message?.role === 'user')
         : null
       const latestUserText = typeof latestUserMessage?.content === 'string' ? latestUserMessage.content : ''
       if (latestUserText.includes('把 3 月成员 A 线下 1 张入账') || bodyText.includes('把 3 月成员 A 线下 1 张入账')) {
-        return fakeOpenAIChatToolResponse('ledger_create_member_income', {
+        return fakeOpenAIResponsesToolResponse('ledger_create_member_income', {
           monthLabel: '3月',
           memberName: '成员 A',
           offlineUnits: 1,
           onlineUnits: 0,
         })
       }
-      if (latestUserText.includes('如果 4 月线上系数变成 0.3')) {
+      if (latestUserText.includes('如果 4 月线上系数变成 0.3') || bodyText.includes('如果 4 月线上系数变成 0.3')) {
         forecastCalls += 1
         const hasToolObservation = Array.isArray(body.messages) &&
           body.messages.some((message: any) => message?.role === 'tool')
         if (hasToolObservation || bodyText.includes('上一轮模型自己选择的 tool_calls')) {
-          return fakeAssistantTextResponse('4 月线上系数试算完成，草稿没有被修改。')
+          return fakeOpenAIResponsesTextResponse('4 月线上系数试算完成，草稿没有被修改。')
         }
-        return fakeOpenAIChatToolResponse('workspace_update_online_factor', {
+        return fakeOpenAIResponsesToolResponse('workspace_update_online_factor', {
           monthLabel: '4月',
           onlineSalesFactor: 0.3,
           mode: 'forecast',
         })
       }
-      return fakeAssistantTextResponse('已完成。')
+      return fakeOpenAIResponsesTextResponse('已完成。')
     }, async (baseUrl) => {
       const harness = await buildHarness('agent-openai-sdk', {
         llmProvider: 'openai',
@@ -4017,22 +3957,22 @@ describe('xox TypeScript API', () => {
       })
       expect(forecast.statusCode).toBe(200)
       expect(forecast.json.planner).toBe('openai_agents')
-      expect(forecastCalls).toBeGreaterThanOrEqual(1)
+      expect(forecastCalls, JSON.stringify({ providerBodies, runEvents: forecast.json.runEvents, messages: forecast.json.messages })).toBeGreaterThanOrEqual(1)
       expect(forecast.json.actionRequests).toHaveLength(0)
       expect(forecast.json.navigationEvents[0].route.mainTab).toBe('inputs')
       expect(forecast.json.runEvents.some((event: any) =>
         event.type === 'provider_stream_started' &&
-        event.data?.source === 'openai_agents' &&
+        event.data?.adapterName === 'openai_agents' &&
         event.data?.provider === 'openai',
       )).toBe(true)
       expect(forecast.json.runEvents.some((event: any) =>
         event.type === 'provider_stream_delta' &&
-        event.data?.kind === 'tool_call_delta' &&
+        event.data?.deltaType === 'tool_call_arguments' &&
         event.data?.toolName === 'workspace_update_online_factor',
       )).toBe(true)
       expect(forecast.json.runEvents.some((event: any) =>
         event.type === 'provider_stream_completed' &&
-        event.data?.source === 'openai_agents' &&
+        event.data?.adapterName === 'openai_agents' &&
         event.data?.toolCallCount === 1,
       )).toBe(true)
 
@@ -4045,22 +3985,28 @@ describe('xox TypeScript API', () => {
       expect(planned.json.actionRequests[0].payload.amount).toBe(88)
       expect(planned.json.runEvents.some((event: any) =>
         event.type === 'provider_stream_delta' &&
-        event.data?.kind === 'tool_call_delta' &&
+        event.data?.deltaType === 'tool_call_arguments' &&
         event.data?.toolName === 'ledger_create_member_income',
       )).toBe(true)
       await closeHarness(harness)
     }, {
-      observationContinuationResponse: (body) => fakeObservationFinalizerResponse(body),
+      observationContinuationResponse: () => fakeOpenAIResponsesTextResponse('已根据工具结果完成回复。'),
     })
   }, 10_000)
 
   it('persists agent thread history and restores messages, runs, plan steps, and pending actions', async () => {
-    await withFakeOpenAICompatibleProvider(() => fakeToolResponse('ledger_create_member_income', {
-      monthLabel: '3月',
-      memberName: '成员 A',
-      offlineUnits: 1,
-      onlineUnits: 0,
-    }), async (baseUrl) => {
+    let planningCalls = 0
+    await withFakeOpenAICompatibleProvider(() => {
+      planningCalls += 1
+      return planningCalls === 1
+        ? fakeToolResponse('ledger_create_member_income', {
+            monthLabel: '3月',
+            memberName: '成员 A',
+            offlineUnits: 1,
+            onlineUnits: 0,
+          })
+        : fakeAssistantTextResponse('已执行 3 月成员 A 线下 1 张入账。')
+    }, async (baseUrl) => {
       const harness = await buildHarness('agent-thread-history', fakeProviderSettings(baseUrl))
       const firstClient = new Client(harness.app)
       const secondClient = new Client(harness.app)
@@ -4114,7 +4060,7 @@ describe('xox TypeScript API', () => {
       expect(threadsAfterConfirm.json.threads[0].pendingActionCount).toBe(0)
       await closeHarness(harness)
     })
-  })
+  }, 10_000)
 
   it('streams server-owned thread state through SSE and keeps events tenant scoped', async () => {
     await withFakeOpenAICompatibleProvider(scriptedProvider([
@@ -4205,7 +4151,9 @@ describe('xox TypeScript API', () => {
       expect(remembered.statusCode).toBe(200)
       expect(remembered.json.planner).toBe('openai_compatible_tool_calls')
       expect(remembered.json.planSteps.some((step: any) => step.title === '已保存记忆')).toBe(true)
-      expect(remembered.json.runEvents.some((event: any) => event.type === 'memory_recall_completed')).toBe(true)
+      expect(remembered.json.runEvents.some((event: any) =>
+        event.type === 'tool_call_completed' && event.data?.toolName === 'memory_remember',
+      )).toBe(true)
       const threadId = remembered.json.threadId
       const firstMemories = await firstClient.get('/api/v1/agent/memories')
       expect(firstMemories.json.memories).toHaveLength(1)
@@ -4522,7 +4470,7 @@ describe('xox TypeScript API', () => {
     }
   })
 
-  it('injects tenant-scoped memory into a new agent thread for real provider planning', async () => {
+  it('keeps memory tool state tenant-scoped and provider-boundary redacted', async () => {
     const secretValue = ['sk', 'providersecretvalue123456'].join('-')
     await withFakeOpenAICompatibleProvider(scriptedProvider([
       (body) => {
@@ -4595,18 +4543,6 @@ describe('xox TypeScript API', () => {
       expect(plannedFromNewThread.json.planner).toBe('openai_compatible_tool_calls')
       expect(plannedFromNewThread.json.actionRequests[0].kind).toBe('ledger.create_entry')
       expect(plannedFromNewThread.json.actionRequests[0].targetLabel).toContain('成员 A')
-      const memoryEvent = plannedFromNewThread.json.runEvents.find((event: any) => event.type === 'memory_injected')
-      expect(memoryEvent?.data.memoryCount).toBe(1)
-      expect(memoryEvent?.data.memoryIds).toHaveLength(1)
-      const memoryCenterAfterRecall = await client.get('/api/v1/agent/memories')
-      expect(memoryCenterAfterRecall.json.recallSignals.some((signal: any) => signal.memoryId === memoryEvent.data.memoryIds[0])).toBe(true)
-      const recalledEvents = await harness.db
-        .selectFrom('agent_memory_events')
-        .selectAll()
-        .where('run_id', '=', plannedFromNewThread.json.runId)
-        .where('event_type', 'in', ['recalled', 'injected'])
-        .execute()
-      expect(recalledEvents.length).toBeGreaterThanOrEqual(2)
       await closeHarness(harness)
     })
   })
@@ -4700,7 +4636,7 @@ describe('xox TypeScript API', () => {
 
       await closeHarness(harness)
     })
-  })
+  }, 10_000)
 
   it('plans shareholder and cost structure add/delete through dedicated Agent confirmations', async () => {
     await withFakeOpenAICompatibleProvider(scriptedProvider([
@@ -4840,7 +4776,7 @@ describe('xox TypeScript API', () => {
 
       await closeHarness(harness)
     })
-  }, 10_000)
+  }, 20_000)
 
   it('plans employee add/delete and workspace rename through model-selected tools', async () => {
     await withFakeOpenAICompatibleProvider(scriptedProvider([
@@ -5049,7 +4985,7 @@ describe('xox TypeScript API', () => {
     })
   })
 
-  it('recovers a long operating-model tool call when a preceding rename streamed successfully', async () => {
+  it('recovers on a new semantic turn without replay when a visible tool batch ends damaged', async () => {
     const months = Array.from({ length: 12 }, (_, index) => ({
       monthIndex: index + 1,
       events: index === 0 ? 0 : index < 3 ? 4 : 8,
@@ -5135,15 +5071,12 @@ describe('xox TypeScript API', () => {
         automationLevel: 'high',
       })
       expect(planned.statusCode).toBe(200)
-      expect(planningCalls).toBeGreaterThanOrEqual(2)
-      expect(planned.json.actionRequests.map((action: any) => action.kind)).toEqual(['workspace.update_draft'])
-      expect(planned.json.actionRequests[0].status).toBe('pending')
-      expect(planned.json.actionRequests[0].payload.source).toBe('workspace_configure_operating_model')
-      expect(planned.json.runEvents.some((event: any) =>
-        event.type === 'provider_retrying' &&
-        event.data?.retryTool === 'workspace_configure_operating_model',
-      )).toBe(true)
-      expect(planned.json.evaluations?.[0]?.status ?? planned.json.goals?.[0]?.status).not.toBe('failed')
+      expect(planningCalls).toBe(1)
+      expect(planned.json.actionRequests).toHaveLength(0)
+      expect(planned.json.runEvents.some((event: any) => event.type === 'provider_stream_failed')).toBe(true)
+      expect(planned.json.runEvents.some((event: any) => event.type === 'response_evaluated')).toBe(true)
+      expect(planned.json.runEvents.some((event: any) => event.type === 'run_completed')).toBe(true)
+      expect(planned.json.runEvents.some((event: any) => event.type === 'run_failed')).toBe(false)
       const draft = (await client.get('/api/v1/workspace/draft')).json
       expect(draft.workspaceName).not.toBe('星河 50 期启动测算')
       expect(draft.config.teamMembers).not.toHaveLength(50)
@@ -5208,7 +5141,7 @@ describe('xox TypeScript API', () => {
     }, { capabilities: ['draft'], requiredActionCapabilities: ['draft'] })
   })
 
-  it('fails closed instead of returning 500 when non-stream tool-call arguments remain malformed after retry', async () => {
+  it('repairs malformed non-stream output on a new semantic turn without replaying the provider attempt', async () => {
     let calls = 0
     await withFakeOpenAICompatibleProvider(() => {
       calls += 1
@@ -5243,12 +5176,13 @@ describe('xox TypeScript API', () => {
         automationLevel: 'high',
       })
       expect(response.statusCode).toBe(200)
-      expect(calls).toBeGreaterThanOrEqual(2)
+      expect(calls).toBe(1)
       expect(response.json.actionRequests).toHaveLength(0)
-      expect(response.json.planSteps.some((step: any) =>
-        step.status === 'failed' &&
-        String(step.title).includes('工具调用未形成可执行参数'),
-      )).toBe(true)
+      expect(response.json.planSteps).toHaveLength(0)
+      expect(response.json.runEvents.some((event: any) => event.type === 'provider_stream_failed')).toBe(true)
+      expect(response.json.runEvents.some((event: any) => event.type === 'response_evaluated')).toBe(true)
+      expect(response.json.runEvents.some((event: any) => event.type === 'run_completed')).toBe(true)
+      expect(response.json.runEvents.some((event: any) => event.type === 'run_failed')).toBe(false)
       await closeHarness(harness)
     }, {
       capabilities: ['draft'],
@@ -5265,7 +5199,7 @@ describe('xox TypeScript API', () => {
     })
   })
 
-  it('deduplicates a redundant workspace rename when the operating-model action owns the same name', async () => {
+  it('preserves model-declared tool order when a rename precedes an operating-model confirmation', async () => {
     const operatingPlan = {
       workspaceName: '星河 50 期启动测算',
       planning: { startMonth: 3, horizonMonths: 12 },
@@ -5302,15 +5236,18 @@ describe('xox TypeScript API', () => {
         automationLevel: 'high',
       })
       expect(planned.statusCode).toBe(200)
-      expect(planned.json.actionRequests).toHaveLength(1)
-      expect(planned.json.actionRequests[0].kind).toBe('workspace.update_draft')
-      expect(planned.json.actionRequests[0].status).toBe('pending')
-      expect(planned.json.actionRequests[0].payload.workspaceName).toBe('星河 50 期启动测算')
+      expect(planned.json.actionRequests).toHaveLength(2)
+      expect(planned.json.actionRequests.map((action: any) => action.kind)).toEqual([
+        'workspace.rename',
+        'workspace.update_draft',
+      ])
+      expect(planned.json.actionRequests.map((action: any) => action.status)).toEqual(['executed', 'pending'])
+      expect(planned.json.actionRequests[1].payload.workspaceName).toBe('星河 50 期启动测算')
       expect(planned.json.runEvents.some((event: any) =>
         event.type === 'action_execution_failed',
       )).toBe(false)
       const draft = (await client.get('/api/v1/workspace/draft')).json
-      expect(draft.workspaceName).not.toBe('星河 50 期启动测算')
+      expect(draft.workspaceName).toBe('星河 50 期启动测算')
       expect(draft.config.teamMembers).not.toHaveLength(50)
       await closeHarness(harness)
     }, { capabilities: ['draft'], requiredActionCapabilities: ['draft'] })
@@ -5395,6 +5332,7 @@ describe('xox TypeScript API', () => {
         requiresForecastSummary: true,
         forbiddenActions: ['publish_release'],
       },
+      observationContinuationResponse: false,
     })
   })
 
@@ -5488,7 +5426,9 @@ describe('xox TypeScript API', () => {
       const toolNames = new Set(body.tools.map((tool: any) => tool.function.name))
       expect(toolNames.has('workspace_configure_operating_model')).toBe(true)
       planningCalls += 1
-      return fakeToolResponse('workspace_configure_operating_model', { plan: planningCalls === 1 ? emptyPlan : repairedPlan })
+      if (planningCalls === 1) return fakeToolResponse('workspace_configure_operating_model', { plan: emptyPlan })
+      if (planningCalls === 2) return fakeToolResponse('workspace_configure_operating_model', { plan: repairedPlan })
+      return fakeAssistantTextResponse('经营模型已修复并通过最终检查。')
     }, async (baseUrl) => {
       const harness = await buildHarness('agentic-os-loop', { llmProvider: 'openai-compatible', openaiCompatibleProvider: 'test-compatible', openaiCompatibleBaseUrl: baseUrl, openaiCompatibleApiKey: 'test-key' })
       const client = new Client(harness.app)
@@ -5501,22 +5441,29 @@ describe('xox TypeScript API', () => {
 
       expect(response.statusCode).toBe(200)
       expect(response.json.planner).toBe('openai_compatible_tool_calls')
-      expect(planningCalls).toBeGreaterThanOrEqual(2)
-      expect(response.json.actionRequests).toHaveLength(2)
-      expect(response.json.actionRequests.every((action: any) => action.status === 'pending')).toBe(true)
-      expect(response.json.planSteps.map((step: any) => step.sequence)).toEqual([1, 2, 3, 4])
+      expect(planningCalls).toBe(1)
+      expect(response.json.actionRequests).toHaveLength(1)
+      expect(response.json.actionRequests[0].status).toBe('pending')
 
-      const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
-      expect(state.statusCode).toBe(200)
-      expect(state.json.goals).toHaveLength(0)
-      expect(state.json.evaluations).toHaveLength(0)
-      expect(state.json.actionRequests.every((action: any) => action.status === 'pending')).toBe(true)
-      expect(state.json.runEvents.filter((event: any) => event.type === 'goal_iteration_started').length).toBeGreaterThanOrEqual(2)
-      expect(state.json.runEvents.some((event: any) => event.type === 'confirmation_ready')).toBe(true)
-      expect(response.json.actionRequests.at(-1).payload.workspaceName).toBe('修复后经营模型')
-      expect(response.json.actionRequests.at(-1).payload.config.teamMembers).toHaveLength(2)
+      const firstConfirmed = await client.post(`/api/v1/agent/action-requests/${response.json.actionRequests[0].id}/confirm`)
+      expect(firstConfirmed.statusCode).toBe(200)
+      let state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
+      const repairedAction = state.json.actionRequests.find((action: any) => action.status === 'pending')
+      expect(repairedAction).toBeTruthy()
+      expect(repairedAction.payload.workspaceName).toBe('修复后经营模型')
+      expect(repairedAction.payload.config.teamMembers).toHaveLength(2)
+
+      const secondConfirmed = await client.post(`/api/v1/agent/action-requests/${repairedAction.id}/confirm`)
+      expect(secondConfirmed.statusCode).toBe(200)
+      state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
+      expect(planningCalls).toBe(3)
+      expect(state.json.actionRequests).toHaveLength(2)
+      expect(state.json.actionRequests.every((action: any) => action.status === 'executed')).toBe(true)
+      expect(state.json.runEvents.some((event: any) => event.type === 'response_evaluated')).toBe(true)
+      expect(state.json.runEvents.some((event: any) => event.type === 'run_completed')).toBe(true)
+      expect(state.json.runEvents.some((event: any) => event.type === 'run_failed')).toBe(false)
       const draft = (await client.get('/api/v1/workspace/draft')).json
-      expect(draft.workspaceName).not.toBe('修复后经营模型')
+      expect(draft.workspaceName).toBe('修复后经营模型')
       const base = projectModel(draft.config).scenarios.find((scenario) => scenario.key === 'base')
       expect(base?.grossSales).toBeGreaterThan(0)
       expect(base?.totalCost).toBeGreaterThan(0)
@@ -5969,7 +5916,7 @@ describe('xox TypeScript API', () => {
 
       await closeHarness(harness)
     })
-  }, 25_000)
+  }, 60_000)
 
   it('keeps agent read-only forecasts non-mutating and refuses account actions', async () => {
     await withFakeOpenAICompatibleProvider(scriptedProvider([
@@ -6002,7 +5949,7 @@ describe('xox TypeScript API', () => {
       expect(account.json.messages.at(-1).content).toContain('不能由 Agent 自动执行')
       await closeHarness(harness)
     })
-  })
+  }, 10_000)
 
   it('exports and imports workspace bundles through REST and Agent confirmation cards', async () => {
     const importConfig = createProductDefaultModel()

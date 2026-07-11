@@ -39,7 +39,7 @@ describe('Agentic OS hook plane downstream boundary', () => {
 
     try {
       await runMigrations(db)
-      const now = '2026-07-10T00:00:00.000Z'
+      const now = new Date().toISOString()
       const userId = 'xox-user-pilot'
       const workspaceId = 'xox-workspace-pilot'
       const threadId = 'xox-thread-pilot'

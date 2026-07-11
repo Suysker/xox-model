@@ -2,7 +2,6 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import type {
   AgentContext as OsAgentContext,
-  AgentObservation as OsObservation,
   AgentRunEvent as OsRunEvent,
   AgentRunInput as OsRunInput,
   AgentRunRecord as OsRunRecord,
@@ -14,21 +13,19 @@ import type {
 import {
   createAgentHostToolObservationBridge,
   normalizeAgentAutomationLevel,
+  type AgentHostProfile,
   type AgentHookPlanePorts,
   type HostObservationBridge,
 } from '@agentic-os/core'
 import {
-  agentServerRuntimeUserContent,
+  createAgentServer,
+  createAgentServerSaaSHostExecutionPorts,
+  createAgentServerSaaSHostStorePort,
   createAgentServerSaaSToolDefinition,
-  confirmAgentServerSaaSProfileActionAndResume,
   projectAgentServerSaaSRunEventDrafts,
-  runAgentServerSaaSProfileRun,
-  type AgentServerSaaSHostProfile,
   type AgentServerSaaSHostStoreProfile,
 } from '@agentic-os/server'
-import {
-  createOpenAISaaSHostComputerFromProfile,
-} from '@agentic-os/integration-openai'
+import { createOpenAIRuntimePlane } from '@agentic-os/integration-openai'
 import type { AgentNavigationEvent, AgentPlannerSource } from '@xox/contracts'
 import { hydrateModelConfig } from '@xox/domain'
 import { parseJson } from '../../db/database.js'
@@ -38,7 +35,7 @@ import { listPeriods, listSubjectsForPeriod } from '../../modules/ledger.js'
 import { getWorkspaceDraft, listVersions } from '../../modules/workspace.js'
 import {
   executeXoxConfirmedBusinessActionForOs,
-  planXoxBusinessToolStep,
+  executeXoxBusinessToolStep,
   xoxOsActionAudit,
   xoxOsActionRequest,
 } from '../tool-executor.js'
@@ -56,6 +53,7 @@ import {
   addAgenticOsActionRunEvent,
   addRunEvent,
 } from '../agentic-os/xox-run-event-store-adapter.js'
+import { createXoxHarnessControlPlane } from '../agentic-os/xox-harness-control-store-adapter.js'
 import { addMessage } from '../agentic-os/xox-thread-store-adapter.js'
 import {
   AGENT_TOOL_REGISTRY,
@@ -101,7 +99,6 @@ type XoxAgentHarnessOptions = {
   hooks?: AgentHookPlanePorts
 }
 
-const PLANNING_USER_CONTENT_MAX_CHARS = 64_000
 const PLANNING_POLICY_PROMPT = readFileSync(
   fileURLToPath(new URL('./prompts/xox-planning-policy.md', import.meta.url)),
   'utf8',
@@ -292,12 +289,16 @@ async function storeSingleToolStep(
   step: AgentToolCallStep,
   options: { forceManualApproval?: boolean; emitPlanReady?: boolean } = {},
 ): Promise<StoredActionGraph> {
-  const items = await planXoxBusinessToolStep(ctx, step)
+  if (!step.providerToolCallId) {
+    throw new Error(`Tool step ${step.providerToolName ?? 'unknown'} is missing its canonical tool-call identity.`)
+  }
+  const items = await executeXoxBusinessToolStep(ctx, step)
   const graph = await storePlannedActionGraph(
     options.forceManualApproval ? { ...ctx, automationLevel: 'manual' } : ctx,
     {
       items,
       plannerSource: state.plannerSource,
+      toolCallId: step.providerToolCallId,
       ...(options.emitPlanReady !== undefined ? { emitPlanReady: options.emitPlanReady } : {}),
     },
   )
@@ -362,7 +363,7 @@ async function appendXoxAgenticOsRunEvent(ctx: XoxAgentRunContext, event: OsRunE
         title: '工具循环保护已触发',
         message: typeof payload.message === 'string' ? payload.message : 'Agentic OS 已阻断不安全或不可继续的工具循环。',
       }),
-      finalReviewed: ({ payload, passed }) => ({
+      evaluatorReviewed: ({ payload, passed }) => ({
         title: 'Agentic OS final review 已完成',
         message: typeof payload.reason === 'string'
           ? payload.reason
@@ -383,7 +384,7 @@ function createXoxHostProfile(
   ctx: XoxAgentRunContext,
   options: XoxAgentHarnessOptions,
   state: XoxHostState,
-): AgentServerSaaSHostProfile {
+): AgentHostProfile {
   const storeProfile = {
     loadRun: async () => {
       const run = await ctx.db.selectFrom('agent_runs').selectAll().where('id', '=', ctx.runId).executeTakeFirst()
@@ -400,90 +401,76 @@ function createXoxHostProfile(
     },
   } satisfies AgentServerSaaSHostStoreProfile
 
-  const provider = ctx.settings.openaiCompatibleProvider || ctx.settings.llmProvider
-  const model = ctx.settings.openaiCompatibleModel
-  const runtimeEvents = {
-    source: () => state.plannerSource,
-    provider: () => provider,
-    appendRunEvent: async (draft: Parameters<typeof addRunEvent>[1]) => {
-      await addRunEvent(ctx.db, draft)
-    },
-    copy: {
-      modelPlanning: {
-        title: '模型规划中',
-        message: 'Agentic OS 正在调用模型规划下一步。',
+  const useOpenAIAgents = state.plannerSource === 'openai_agents'
+  const provider = useOpenAIAgents
+    ? ctx.settings.llmProvider
+    : ctx.settings.openaiCompatibleProvider || ctx.settings.llmProvider
+  const model = useOpenAIAgents
+    ? ctx.settings.openaiModel
+    : ctx.settings.openaiCompatibleModel
+  const adapterName = useOpenAIAgents ? 'openai_agents' : 'openai_compatible'
+  const apiFamily = useOpenAIAgents ? 'openai-responses' : 'openai-chat-completions'
+  const runtime = createOpenAIRuntimePlane({
+    modelControl: {
+      catalog: [{
+        schemaVersion: 'agentic-os.model_catalog_entry.v1',
+        catalogEntryId: `${provider}:${model}:${apiFamily}`,
+        provider,
+        model,
+        requestModel: model,
+        displayName: model,
+        apiFamily,
+        inputModalities: ['text'],
+        outputModalities: ['text'],
+        contextWindow: 128_000,
+        toolCalling: {
+          supported: true,
+          parallelToolCalls: false,
+          toolChoicePolicy: 'auto',
+          schemaProfile: 'generic-json-schema',
+        },
+        routing: { apiMode: useOpenAIAgents ? 'responses' : 'chat-completions', transport: 'https' },
+        availability: 'available',
+        source: 'host_override',
+        timeouts: { requestTimeoutMs: ctx.settings.agentProviderRequestTimeoutMs },
+      }],
+      providerProfiles: [{
+        schemaVersion: 'agentic-os.provider_profile.v1',
+        providerProfileId: `${provider}:${apiFamily}`,
+        provider,
+        apiFamily,
+        authMode: 'host_managed',
+        baseUrlRef: `${provider}:base-url`,
+        explicitProviderOnly: true,
+        tenantScoped: true,
+      }],
+      policy: {
+        allowedModels: [{ provider, model }],
+        unknownContextPolicy: 'require_known',
       },
+      selectionByPurpose: Object.fromEntries([
+        'agent_turn', 'planning', 'online_evaluation', 'offline_evaluation', 'context_compaction', 'auxiliary',
+      ].map((purpose) => [purpose, { provider, model, adapterName }])),
+      maxAttemptsPerProfile: 1,
     },
-  }
-  return createOpenAISaaSHostComputerFromProfile<
-    (typeof AGENT_TOOL_REGISTRY)[number],
-    AgentToolCallStep,
-    Row<'agent_action_requests'>,
-    AgentToolObservation,
-    {
-      id: string
-      key: string
-      value: string
-      kind: string
-      lane: string
-      status: string
-    }
-  >({
-    storeProfile,
-    runtimeProfile: {
-      provider,
-      model,
-      baseUrl: ctx.settings.openaiCompatibleBaseUrl,
-      apiKey: ctx.settings.openaiCompatibleApiKey,
-      systemPrompt: PLANNING_POLICY_PROMPT,
-      userContent: agentServerRuntimeUserContent,
-      observations: (input) => state.observationBridge.combine(state.xoxObservations, input.observations),
-      toReplayObservation: (observation) => ({
-        toolName: observation.toolName,
-        toolCallId: observation.toolCallId,
-        toolArguments: observation.toolArguments,
-        modelContent: observation.modelContent,
-        lane: observation.lane === 'runner_evidence' || observation.lane === 'runner_obligation'
-          ? observation.lane
-          : 'provider_tool',
-      }),
-      replaySuffix: 'planning_observation',
-      maxObservations: 12,
-      maxUserContentChars: PLANNING_USER_CONTENT_MAX_CHARS,
-      redact: redactSecretLikeContent,
+    compatible: {
       stream: true,
-      requestTimeoutMs: ctx.settings.agentProviderRequestTimeoutMs,
-      runtimeEvents,
-      openAIAgents: {
-        model: () => ctx.settings.openaiModel || ctx.settings.openaiCompatibleModel,
-        apiKey: () => ctx.settings.openaiApiKey ?? ctx.settings.openaiCompatibleApiKey ?? undefined,
-        baseURL: () => ctx.settings.openaiBaseUrl || ctx.settings.openaiCompatibleBaseUrl,
-        instructions: PLANNING_POLICY_PROMPT,
-        includeFinalOutputWithToolCalls: false,
-        copy: {
-          run_started: {
-            title: 'OpenAI Agents runtime 已启动',
-          },
-          tool_call: {
-            title: '工具调用已捕获',
-          },
-          run_completed: {
-            title: 'OpenAI Agents runtime 已完成',
-          },
-        },
-        onRunEventDraft: async (draft) => {
-          await addRunEvent(ctx.db, {
-            threadId: ctx.thread.id,
-            runId: ctx.runId,
-            ...draft,
-          })
-        },
-      },
-      selectRuntimeAdapter: () => {
-        state.plannerSource = plannerSource(ctx.settings)
-        return state.plannerSource === 'openai_agents' ? 'openai_agents' : 'openai_compatible'
+      resolveConnection: () => ({
+        baseUrl: ctx.settings.openaiCompatibleBaseUrl,
+        apiKey: ctx.settings.openaiCompatibleApiKey,
+      }),
+    },
+    agents: {
+      resolveConnection: () => {
+        const apiKey = ctx.settings.openaiApiKey ?? ctx.settings.openaiCompatibleApiKey ?? undefined
+        return {
+          ...(apiKey === undefined ? {} : { apiKey }),
+          baseURL: ctx.settings.openaiBaseUrl || ctx.settings.openaiCompatibleBaseUrl,
+        }
       },
     },
+  })
+  const executionPorts = createAgentServerSaaSHostExecutionPorts({
     tools: AGENT_TOOL_REGISTRY,
     toolName: (entry) => entry.name,
     createTool: ({ entry, executeRead }) => agenticOsToolDefinition(entry, executeRead),
@@ -502,7 +489,7 @@ function createXoxHostProfile(
     },
     observationBridge: state.observationBridge,
     observationIndex: ({ observation }) => xoxObservationIndex(state, observation),
-    toActionRequest: ({ action, toolCallId }) => xoxOsActionRequest(action, toolCallId),
+    toActionRequest: ({ action }) => xoxOsActionRequest(action),
     executeAction: (actionInput) => executeXoxConfirmedBusinessActionForOs({
       ctx,
       state,
@@ -531,10 +518,21 @@ function createXoxHostProfile(
       outcome: 'rejected',
       ...(input.reason !== undefined ? { reason: input.reason } : {}),
     }),
+  })
+  return {
+    store: createAgentServerSaaSHostStorePort(storeProfile),
+    runtime,
+    control: createXoxHarnessControlPlane(ctx.db),
+    tools: executionPorts.tools,
+    actions: executionPorts.actions,
+    sandbox: executionPorts.sandbox,
     baseContext: async (input): Promise<Partial<OsAgentContext>> => {
       const facts = await buildXoxHostContextFacts(ctx, input.request.userMessage)
       return {
-        messages: [{ role: 'user', content: input.request.userMessage }],
+        messages: [
+          { role: 'system', content: PLANNING_POLICY_PROMPT },
+          { role: 'user', content: input.request.userMessage },
+        ],
         facts: compactJsonObject({
           ...facts,
           xoxRunId: ctx.runId,
@@ -543,7 +541,7 @@ function createXoxHostProfile(
       }
     },
     ...(options.hooks === undefined ? {} : { hooks: options.hooks }),
-  })
+  }
 }
 
 async function latestRunRows(ctx: PlannerContext) {
@@ -632,20 +630,17 @@ export async function resumeXoxAgentRunAfterActionConfirmation(input: {
   })
   const request = osRunInput(planningCtx, objective)
   const osRun: OsRunRecord = { ...osRunRecord(planningCtx, run), status: 'awaiting_confirmation' }
-  const execution = await confirmAgentServerSaaSProfileActionAndResume({
-    profile: createXoxHostProfile(planningCtx, {
+  const server = createAgentServer(createXoxHostProfile(planningCtx, {
       beforeStateWrite,
       ...(input.hooks === undefined ? {} : { hooks: input.hooks }),
-    }, state),
+    }, state))
+  const actionExecution = await server.confirmAction({
     run: osRun,
-    request,
-    actionRequest: xoxOsActionRequest(input.action, `action_${input.action.id}`),
+    actionRequest: xoxOsActionRequest(input.action),
     actorId: input.user.id,
-    ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
-    ...(request.maxIterations !== undefined ? { maxIterations: request.maxIterations } : {}),
-    shouldResume: async () => !state.actionRows.some((row) => row.status === 'pending'),
+    ...(input.abortSignal === undefined ? {} : { abortSignal: input.abortSignal }),
   })
-  if (!execution.runResult) {
+  if (state.actionRows.some((row) => row.status === 'pending')) {
     const actionRequest = await input.db.selectFrom('agent_action_requests').selectAll().where('id', '=', input.action.id).executeTakeFirstOrThrow()
     return {
       actionRequest,
@@ -653,7 +648,12 @@ export async function resumeXoxAgentRunAfterActionConfirmation(input: {
       runResult: null,
     }
   }
-  const runResult = await finalizeAgenticOsResult(planningCtx, state, execution.runResult, { beforeStateWrite })
+  const resumed = await server.resumeRun({
+    run: osRun,
+    request,
+    observations: [actionExecution.observation],
+  }, input.abortSignal === undefined ? {} : { abortSignal: input.abortSignal })
+  const runResult = await finalizeAgenticOsResult(planningCtx, state, resumed, { beforeStateWrite })
   const actionRequest = await input.db.selectFrom('agent_action_requests').selectAll().where('id', '=', input.action.id).executeTakeFirstOrThrow()
   return {
     actionRequest,
@@ -685,15 +685,10 @@ export async function executeXoxAgentRun(
     status: 'running',
     data: { harness: 'agentic-os' },
   })
-  const run = await ctx.db.selectFrom('agent_runs').selectAll().where('id', '=', ctx.runId).executeTakeFirst()
   const request = osRunInput(planningCtx, objective)
-  const result = await runAgentServerSaaSProfileRun({
-    profile: createXoxHostProfile(planningCtx, options, state),
-    run: osRunRecord(ctx, run ?? null),
+  const result = await createAgentServer(createXoxHostProfile(planningCtx, options, state)).run(
     request,
-    observations: [],
-    ...(request.maxIterations !== undefined ? { maxIterations: request.maxIterations } : {}),
-    ...(ctx.abortSignal ? { control: { abortSignal: ctx.abortSignal } } : {}),
-  })
+    ctx.abortSignal === undefined ? {} : { abortSignal: ctx.abortSignal },
+  )
   return finalizeAgenticOsResult(planningCtx, state, result, options)
 }
