@@ -18,7 +18,7 @@ Agentic OS owns:
 
 - agent loop and terminal-state decisions
 - provider turn execution, stream normalization, replay, retry, and recovery
-- Planner decisions, Runtime Executor calls, tool/result causality, and exact resume
+- inline model-turn decisions, Runtime Executor calls, tool/result causality, and exact resume
 - sandbox execution protocol, backend broker, result parsing, repair semantics, and runtime metadata
 - action lifecycle semantics, approval authority, resume, interruption, and finalization
 - mandatory/additive Evaluator composition, evidence freshness, repair feedback, and Turn Finalizer
@@ -53,7 +53,7 @@ ADR0070-0073 are the current integration baseline.
 
 - `xox-host-profile.ts` supplies declarative catalog/credentials, business
   tools/actions/sandbox/context and additive product facts to
-  `createAgentServer()`; it has no local Planner, Runtime selector, Evaluator,
+  `createAgentServer()`; it has no local continuation engine, Runtime selector, Evaluator,
   continuation or terminal callback.
 - `xox-harness-control-store-adapter.ts` maps SQLite/Kysely to
   `AgentServerControlRecordBackend`, including tenant/workspace/user scoped
@@ -92,7 +92,7 @@ M191 harness frontend cutover is also part of the baseline.
 
 The following categories must stay out of xox-model:
 
-- local Agent Loop / Planner / direct-answer runner
+- local Agent Loop, model-turn controller, or direct-answer runner
 - per-turn runtime selector or provider retry/replay controller
 - provider runtime sidecars and provider replay message assembly
 - local tool-call supervisor, outcome classifier, repair loop, or observation continuation runner

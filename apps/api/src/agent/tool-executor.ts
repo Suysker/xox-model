@@ -50,16 +50,16 @@ import {
 import { assertActionExecutionAllowed } from './tool-policy.js'
 import {
   xoxNavigationFromTabs,
-} from './host-profile/xox-planned-items.js'
+} from './host-profile/xox-runtime-items.js'
 import type {
   AgentActionDraft,
   ActionDraftBuilderHandlers,
   AgentToolObservation,
   PlannedItem,
-  PlannerContext,
+  AgentTurnContext,
   ReadDraft,
-  RuntimePlannerStep,
-} from './host-profile/xox-planned-items.js'
+  RuntimeToolStep,
+} from './host-profile/xox-runtime-items.js'
 import {
   planGenericLedgerCreateFromStep,
   planLedgerCreateFromFields,
@@ -115,8 +115,8 @@ function numericAlias(...values: unknown[]) {
 }
 
 const memoryToolRuntime = createAgentServerSaaSTenantMemoryToolRuntime<
-  PlannerContext,
-  RuntimePlannerStep,
+  AgentTurnContext,
+  RuntimeToolStep,
   AgentServerTenantMemoryToolItem,
   Row<'agent_memories'>,
   ReadDraft
@@ -152,7 +152,7 @@ const memoryToolRuntime = createAgentServerSaaSTenantMemoryToolRuntime<
 
 const sandboxAggregateActionExecutor = createAgenticSandboxAggregateActionExecutor<unknown, Row<'agent_action_requests'>>()
 
-export const xoxBusinessToolHandlers: ActionDraftBuilderHandlers<PlannerContext> = {
+export const xoxBusinessToolHandlers: ActionDraftBuilderHandlers<AgentTurnContext> = {
   'ledger.create_member_income': (ctx, step) => {
     const memberName = typeof step.memberName === 'string' && step.memberName.trim()
       ? step.memberName.trim()
@@ -241,8 +241,8 @@ export const xoxBusinessToolHandlers: ActionDraftBuilderHandlers<PlannerContext>
 }
 
 const xoxBusinessToolRuntime = createAgentServerSaaSBusinessToolRuntime<
-  PlannerContext,
-  RuntimePlannerStep,
+  AgentTurnContext,
+  RuntimeToolStep,
   AgentActionDraft,
   ReadDraft,
   NonNullable<ReadDraft['navigation']>
@@ -255,8 +255,8 @@ const xoxBusinessToolRuntime = createAgentServerSaaSBusinessToolRuntime<
 })
 
 export async function executeXoxBusinessToolStep(
-  ctx: PlannerContext,
-  step: RuntimePlannerStep,
+  ctx: AgentTurnContext,
+  step: RuntimeToolStep,
 ): Promise<PlannedItem[]> {
   return xoxBusinessToolRuntime.runTool(ctx, step)
 }
@@ -340,7 +340,7 @@ function replaceActionRow(state: XoxOsActionExecutionState, action: Row<'agent_a
 }
 
 export async function executeXoxConfirmedBusinessActionForOs(input: {
-  ctx: PlannerContext
+  ctx: AgentTurnContext
   state: XoxOsActionExecutionState
   actionInput: AgentActionExecutionInput
 }): Promise<AgentActionExecutionResult> {

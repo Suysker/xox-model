@@ -205,7 +205,7 @@ export type AgentRunTable = {
   status: string
   input_message_id: string | null
   input_message: string | null
-  planner_source: string | null
+  runtime_source: string | null
   automation_level: string
   goal_status: string | null
   worker_id: string | null

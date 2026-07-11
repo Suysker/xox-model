@@ -150,7 +150,7 @@ export function AgentShell(props: {
 
   const consoleProps = {
     threadId: agent.threadId,
-    planner: agent.planner,
+    runtimeSource: agent.runtimeSource,
     harnessUi: agent.harnessUi,
     transcriptNodes: agent.transcriptNodes,
     memoryCenter: agent.memoryCenter,

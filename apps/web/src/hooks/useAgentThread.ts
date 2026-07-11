@@ -101,7 +101,7 @@ export function useAgentThread(props: {
   const [agUiEvents, setAgUiEvents] = useState<AgentAgUiEvent[]>([])
   const [harnessUi, setHarnessUi] = useState<AgentHarnessUiProjection | null>(null)
   const [transcriptNodes, setTranscriptNodes] = useState<AgentTranscriptNode[]>([])
-  const [planner, setPlanner] = useState<AgentSendResponse['planner'] | null>(null)
+  const [runtimeSource, setRuntimeSource] = useState<AgentSendResponse['runtimeSource'] | null>(null)
   const [memoryCenter, setMemoryCenter] = useState<AgentMemoryCenterState>(EMPTY_MEMORY_CENTER_STATE)
   const [memories, setMemories] = useState<AgentMemoryRecord[]>([])
   const [providerSetting, setProviderSetting] = useState<AgentProviderSettingRecord | null>(null)
@@ -127,7 +127,7 @@ export function useAgentThread(props: {
     setAgUiEvents(state.agUiEvents)
     setHarnessUi(state.harnessUi)
     setTranscriptNodes(state.transcriptNodes)
-    setPlanner(state.planner)
+    setRuntimeSource(state.runtimeSource)
     setRunningRunId(latestRun?.status === 'running' ? latestRun.id : null)
     writeCurrentThreadId(state.thread.id)
     if (replayNavigation) {
@@ -305,7 +305,7 @@ export function useAgentThread(props: {
       const response = await api.sendAgentMessage({ threadId, message, background: true, automationLevel })
       setThreadId(response.threadId)
       writeCurrentThreadId(response.threadId)
-      setPlanner(response.planner)
+      setRuntimeSource(response.runtimeSource)
       setMessages((current) => [...current.filter((item) => item.id !== optimisticId), ...response.messages])
       setActionRequests(response.actionRequests)
       setPlanSteps(response.planSteps)
@@ -421,7 +421,7 @@ export function useAgentThread(props: {
     setAgUiEvents([])
     setHarnessUi(null)
     setTranscriptNodes([])
-    setPlanner(null)
+    setRuntimeSource(null)
     setRunningRunId(null)
     setError(null)
     void refreshMemories()
@@ -510,7 +510,7 @@ export function useAgentThread(props: {
     agUiEvents,
     harnessUi,
     transcriptNodes,
-    planner,
+    runtimeSource,
     memoryCenter,
     memories,
     providerSetting,

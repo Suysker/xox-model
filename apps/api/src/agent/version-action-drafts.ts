@@ -1,5 +1,5 @@
-import type { AgentActionDraft } from './host-profile/xox-planned-items.js'
-import type { PlannerContext } from './host-profile/xox-planned-items.js'
+import type { AgentActionDraft } from './host-profile/xox-runtime-items.js'
+import type { AgentTurnContext } from './host-profile/xox-runtime-items.js'
 import { getWorkspaceDraft, listVersions } from '../modules/workspace.js'
 
 function versionPanelNavigation(reason: string) {
@@ -11,7 +11,7 @@ function versionPanelNavigation(reason: string) {
   }
 }
 
-export function buildPublishReleaseDraft(ctx: PlannerContext, createShare: boolean) {
+export function buildPublishReleaseDraft(ctx: AgentTurnContext, createShare: boolean) {
   return {
     kind: 'workspace.publish_release',
     title: createShare ? '确认发布并创建分享链接' : '确认发布正式版本',
@@ -27,7 +27,7 @@ export function buildPublishReleaseDraft(ctx: PlannerContext, createShare: boole
   } satisfies AgentActionDraft
 }
 
-export async function planSaveSnapshotAction(ctx: PlannerContext) {
+export async function planSaveSnapshotAction(ctx: AgentTurnContext) {
   return {
     kind: 'workspace.save_snapshot',
     title: '确认保存草稿快照',
@@ -40,7 +40,7 @@ export async function planSaveSnapshotAction(ctx: PlannerContext) {
   } satisfies AgentActionDraft
 }
 
-export async function planResetDraftAction(ctx: PlannerContext) {
+export async function planResetDraftAction(ctx: AgentTurnContext) {
   const draft = await getWorkspaceDraft(ctx.db, ctx.workspace)
   return {
     kind: 'workspace.reset_draft',
@@ -62,14 +62,14 @@ export async function planResetDraftAction(ctx: PlannerContext) {
   } satisfies AgentActionDraft
 }
 
-async function versionFromInput(ctx: PlannerContext, versionNo?: number | null, versionName?: string | null) {
+async function versionFromInput(ctx: AgentTurnContext, versionNo?: number | null, versionName?: string | null) {
   const versions = await listVersions(ctx.db, ctx.workspace)
   if (versionNo) return versions.find((item) => item.version_no === versionNo) ?? null
   if (versionName) return versions.find((item) => item.name === versionName || item.name.includes(versionName)) ?? null
   return versions.length === 1 ? versions[0]! : null
 }
 
-function buildRollbackVersionDraft(ctx: PlannerContext, version: Awaited<ReturnType<typeof versionFromInput>>) {
+function buildRollbackVersionDraft(ctx: AgentTurnContext, version: Awaited<ReturnType<typeof versionFromInput>>) {
   if (!version) return null
   return {
     kind: 'workspace.rollback_version',
@@ -87,14 +87,14 @@ function buildRollbackVersionDraft(ctx: PlannerContext, version: Awaited<ReturnT
 }
 
 export async function planRollbackVersionAction(
-  ctx: PlannerContext,
+  ctx: AgentTurnContext,
   input?: { versionNo?: number | null; versionName?: string | null },
 ) {
   const version = await versionFromInput(ctx, input?.versionNo, input?.versionName)
   return buildRollbackVersionDraft(ctx, version)
 }
 
-export async function planPromoteVersionAction(ctx: PlannerContext, input?: { versionNo?: number; versionName?: string }) {
+export async function planPromoteVersionAction(ctx: AgentTurnContext, input?: { versionNo?: number; versionName?: string }) {
   const version = await versionFromInput(ctx, input?.versionNo, input?.versionName)
   if (!version) return null
   return {
@@ -113,7 +113,7 @@ export async function planPromoteVersionAction(ctx: PlannerContext, input?: { ve
   } satisfies AgentActionDraft
 }
 
-export async function planDeleteVersionAction(ctx: PlannerContext, input?: { versionNo?: number; versionName?: string }) {
+export async function planDeleteVersionAction(ctx: AgentTurnContext, input?: { versionNo?: number; versionName?: string }) {
   const version = await versionFromInput(ctx, input?.versionNo, input?.versionName)
   if (!version) return null
   return {
@@ -131,7 +131,7 @@ export async function planDeleteVersionAction(ctx: PlannerContext, input?: { ver
   } satisfies AgentActionDraft
 }
 
-export async function planShareAction(ctx: PlannerContext, input?: { versionNo?: number; versionName?: string; revoke?: boolean }) {
+export async function planShareAction(ctx: AgentTurnContext, input?: { versionNo?: number; versionName?: string; revoke?: boolean }) {
   if (!input) return null
   const revoke = Boolean(input.revoke)
   const version = await versionFromInput(ctx, input.versionNo, input.versionName)

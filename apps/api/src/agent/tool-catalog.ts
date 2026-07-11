@@ -1332,7 +1332,7 @@ export const AGENT_TOOL_REGISTRY: AgentToolRegistryEntry[] = AGENT_TOOL_CATALOG.
   return { name, tool, ...metadata }
 })
 
-export function toolCallToPlannerStep(toolName: string, args: Record<string, unknown>): AgentToolCallStep | null {
+export function toolCallToRuntimeStep(toolName: string, args: Record<string, unknown>): AgentToolCallStep | null {
   switch (toolName) {
     case 'ledger_create_member_income':
       return { intent: 'ledger.create_member_income', ...args }

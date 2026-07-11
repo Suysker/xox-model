@@ -36,7 +36,7 @@ export type XoxToolObservation = AgentHostToolObservation & {
 
 export type AgentToolObservation = XoxToolObservation
 
-export type PlannerContext = {
+export type AgentTurnContext = {
   db: Kysely<Database>
   settings: Settings
   user: CurrentUser
@@ -52,7 +52,7 @@ export type PlannerContext = {
 
 export type PlannedItem = AgentHostToolPlannedItem<AgentActionDraft, ReadDraft>
 
-export type RuntimePlannerStep = AgentToolCallStep
+export type RuntimeToolStep = AgentToolCallStep
 
 export type PlannedItemResult = AgentHostToolPlannedItemResult<AgentActionDraft, ReadDraft>
 
@@ -72,14 +72,13 @@ export function xoxNavigationFromTabs(input: { mainTab: unknown; secondaryTab: u
 
 export type ActionDraftHandler<TContext> = AgentHostToolResultHandler<
   TContext,
-  RuntimePlannerStep,
+  RuntimeToolStep,
   AgentActionDraft,
   ReadDraft
 >
-
 export type ActionDraftBuilderHandlers<TContext> = AgentHostToolResultHandlers<
   TContext,
-  RuntimePlannerStep,
+  RuntimeToolStep,
   AgentActionDraft,
   ReadDraft
 >

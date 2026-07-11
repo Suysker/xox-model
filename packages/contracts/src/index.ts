@@ -231,7 +231,7 @@ export type AgentMessage = {
   createdAt: string
 }
 
-export type AgentPlannerSource = 'openai_agents' | 'openai_compatible_tool_calls' | 'rules'
+export type AgentRuntimeSource = 'openai_agents' | 'openai_compatible_tool_calls' | 'rules'
 
 export type AgentTurnLane = 'direct_answer' | 'agent_goal'
 
@@ -259,7 +259,7 @@ export type AgentRunRecord = {
   id: string
   threadId: string
   status: 'running' | 'completed' | 'failed' | 'cancelled'
-  planner: AgentPlannerSource | null
+  runtimeSource: AgentRuntimeSource | null
   automationLevel: AgentAutomationLevel
   goalStatus: AgentGoalStatus | null
   createdAt: string
@@ -456,7 +456,7 @@ export type AgentHarnessUiProjection = {
 
 export type AgentTranscriptItemKind =
   | 'message'
-  | 'planning'
+  | 'model_turn'
   | 'tool_call'
   | 'tool_result'
   | 'navigation'
@@ -624,13 +624,13 @@ export type AgentThreadSummary = {
   lastMessage: string | null
   lastMessageAt: string | null
   latestRunStatus: AgentRunRecord['status'] | null
-  planner: AgentPlannerSource | null
+  runtimeSource: AgentRuntimeSource | null
   pendingActionCount: number
 }
 
 export type AgentGoalStatus =
   | 'interpreting'
-  | 'planning'
+  | 'executing'
   | 'waiting_for_confirmation'
   | 'needs_clarification'
   | 'evaluating'
@@ -810,7 +810,7 @@ export type AgentThreadState = {
   thread: AgentThreadSummary
   messages: AgentMessage[]
   runs: AgentRunRecord[]
-  planner: AgentPlannerSource | null
+  runtimeSource: AgentRuntimeSource | null
   goals: AgentGoalRecord[]
   evaluations: AgentEvaluationResult[]
   navigationEvents: AgentNavigationEvent[]
@@ -1208,7 +1208,7 @@ export type AgentSendResponse = {
   threadId: string
   runId: string
   status: AgentRunRecord['status']
-  planner: AgentPlannerSource | null
+  runtimeSource: AgentRuntimeSource | null
   automationLevel: AgentAutomationLevel
   messages: AgentMessage[]
   navigationEvents: AgentNavigationEvent[]

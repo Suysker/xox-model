@@ -1,132 +1,62 @@
-# xox-model 项目架构
+# xox-model Project Architecture
 
-## 目标
+Status: Current after Agentic OS ADR 0074
 
-构建一个可持续迭代、易于部署和维护的测算平台，具备以下能力：
+xox-model is a SaaS business host attached to Agentic OS. It supplies scoped
+financial/workspace tools, action previews/execution, context, memory policy,
+sandbox input bundles, provider settings, persistence, and localized product
+projection. It does not own an agent loop, semantic Planner, Evaluator
+replacement, or terminal authority.
 
-- 账号注册、登录、退出、注销
-- 草稿自动保存、版本发布、版本回滚
-- 面向发布版的只读公开分享
-- 按预测收入项 / 成本项记账
-- 按期间对比预算与实际的预实分析
+```mermaid
+flowchart TB
+  WEB["React product UI<br/>Agentic OS user surface + xox renderers"]
+  API["xox API<br/>auth, scope, business DTOs"]
+  STORE["xox Agentic OS adapters<br/>run lease, V3 control records, events"]
+  HOST["xox host profile<br/>tools, context, actions, sandbox bundles,<br/>provider/runtime facts"]
+  OS["Agentic OS SaaS facade<br/>one Agent Loop, Runtime Executor,<br/>Evaluator, Finalizer"]
+  DOMAIN["workspace / ledger / share modules"]
+  DB["SQLite/Kysely persistence"]
 
-详细规划、数据模型、路线图与验收条件见 `docs/project-plan.md`。
-
-## 仓库结构
-
-- `apps/web`：React 前端应用
-- `apps/api`：TypeScript Fastify API 与 Agent 服务
-- `packages/domain`：前后端共享的测算模型、默认值、事实表和导入归一化逻辑
-- `packages/contracts`：REST DTO、Agent 协议、确认卡与共享错误语义
-- `docs`：架构、接口、验收、运维与规划文档
-- `docs/adr`：关键架构决策记录，当前 Agent runtime 采用策略见 `0001-agent-runtime-architecture.md`
-- `infra/scripts`：部署与辅助脚本
-
-当前本地开发默认使用 SQLite。生产环境应切换到 PostgreSQL，服务边界保持不变。
-
-## 运行时依赖
-
-```text
-apps/web -> packages/contracts -> packages/domain
-apps/api/routes -> apps/api/modules -> packages/domain -> apps/api/db
-apps/api/agent/routes -> apps/api/agent/run-submission + apps/api/agent/run-worker
-apps/api/agent/run-worker -> apps/api/agent/agent-kernel -> apps/api/agent/planner
-apps/api/agent/planner -> apps/api/agent/planning-session -> apps/api/agent/runtime-planning-call
-apps/api/agent/runtime-planning-call -> apps/api/agent/context-pack + apps/api/agent/tool-gateway + apps/api/agent/runtime -> provider SDKs
-apps/api/agent/host-profile/xox-agent-run-profile -> Agentic OS ActionRuntime -> apps/api/agent/tool-policy + apps/api/agent/tool-executor
-apps/api/agent/tool-executor -> apps/api/modules -> packages/domain -> apps/api/db
+  WEB --> API --> STORE
+  API --> HOST --> OS
+  HOST --> DOMAIN --> DB
+  STORE --> DB
+  OS --> STORE
 ```
 
-Agent 只能通过领域服务执行动作，不能直接写数据库。所有会改变草稿、版本、分享、账务或锁账状态的 Agent 工具必须先生成 server-owned action request 和可编辑确认卡；随后由 Agentic OS action lifecycle 按 run `automationLevel` 与工具风险判定自动执行还是等待用户确认。无论自动执行还是用户确认执行，都必须走同一条 xox action port、业务校验、领域服务和审计路径。账号影响类动作不开放给 Agent。
+## Runtime Source
 
-Agent runtime 采用“成熟 runtime + 本项目 SaaS Agent Kernel”的策略：
+`agent_runs.runtime_source` and API `runtimeSource` identify the provider leaf
+used by a run: `openai_agents`, `openai_compatible_tool_calls`, or the explicit
+local/CI `rules` path. This is diagnostic runtime metadata, not Planner
+identity or execution authority. The old column is renamed in place; current
+code has no dual reader or compatibility field.
 
-- `LLM_PROVIDER=openai` 使用 OpenAI Agents SDK adapter，是主 runtime 方向的最小可验证落地。
-- OpenAI Agents SDK 当前承担 provider-native planning、SDK tool collection 和 lifecycle trace；SDK 原生 handoff、guardrail、tracing、HITL event 深度映射是后续 maturity gate，不能替代本项目的 Tool Policy、确认卡、审计和租户隔离。
-- Provider adapter 同时保留通用 OpenAI-compatible Chat Completions；DeepSeek 保留为默认真实模型测试通道，豆包、Qwen 等兼容服务可通过用户 / 工作区级 `agent_provider_settings` 或 env 兜底切换。
-- OpenClaw 作为 control plane / execution plane / tool approval / observability 的架构参考，不直接 fork。
-- Claude Agent SDK 不引入；Claude Code 只保留为交互模式参考，不进入依赖和 adapter 计划。
-- Skills 只作为过程知识层，不替代 server tools。
-- MCP 用于外部工具和连接器，不绕过平台内业务权限、确认卡和审计。
+## Harness Boundary
 
-## 数据架构
+- Agentic OS owns `AgentLoopStateV3`, transition V2, model turns, tool-result
+  causality, approval/wait/resume, compaction, Evaluator, and finalization.
+- xox owns business tools, action execution, and localized result projection.
+- Runtime selection is declarative and attempt-frozen. There is no `planning`
+  Runtime purpose.
+- business writes become server-owned action requests and obey Agentic OS
+  automation/approval policy.
+- sandbox receives only host-selected bundles and cannot access the API
+  process, database, credentials, or another tenant.
 
-### 事务层
+## Persistence
 
-- `users`
-- `user_credentials`
-- `user_sessions`
-- `workspaces`
-- `workspace_members`
-- `workspace_drafts`
-- `workspace_events`
-- `workspace_version_shares`
-- `ledger_periods`
-- `actual_entries`
-- `actual_entry_allocations`
-- `audit_logs`
-- `agent_threads`
-- `agent_messages`
-- `agent_runs`：作为持久化 run queue，保存 run 状态、planner source、输入消息指针、输入消息文本、worker lease 和 heartbeat；API worker 据此扫描和恢复安全可重跑的 running run，并支持用户取消 running run
-- `agent_run_events`：保存 run 入队、worker 认领、模型规划、工具计划、确认卡生成、确认卡编辑、执行、取消和失败等用户可见轨迹；不保存 provider 原始响应、提示词全文或密钥
-- `agent_action_requests`
-- `agent_plan_steps`
-- `agent_memories`
-- `agent_context_snapshots`
-- `agent_provider_settings`：保存当前用户 / 工作区的 OpenAI-compatible provider、base URL、model 和 server-side API key；配置 `AGENT_PROVIDER_KEY_ENCRYPTION_SECRET` 后 key 存为 `enc:v1` ciphertext；REST 只返回 `hasApiKey`，不返回密钥
+- `agent_runs.runtime_source` stores bounded runtime identity.
+- `agent_harness_control_records` stores scoped V3 loop state, transition V2,
+  and immutable runtime/child/progress/evaluator records.
+- `agent_run_events` stores ordered canonical/product projection facts.
+- `agent_plan_steps` remains a business-facing tool/action transcript table;
+  it is not a semantic Planner DAG or continuation authority.
 
-### 计划层
+## UI
 
-- `workspace_versions`
-- `forecast_month_facts`
-- `forecast_line_item_facts`
-
-### 分析层
-
-- 按期间、月份、科目、版本聚合的预实分析视图
-
-## 核心建模规则
-
-- 草稿可变
-- 发布版不可变
-- 公开分享只能指向发布版
-- 回滚是从历史版本复制出新草稿
-- 记账与预实分析始终跟随当前草稿 / 当前版本，发布与回滚会同步改变账务口径
-- 一笔实际分录可以分摊到一个或多个预测科目
-- 锁定期间后禁止记账和作废
-- 预实分析同时提供当期差异与累计差异
-- Agent 调用业务能力时必须显式切到对应页面或面板，不允许静默后台写入
-- 写入型 Agent 工具遵循 `preview -> confirm -> execute -> audit -> refresh`
-- Agent 规划必须经 provider-neutral runtime adapter 进入 Agent Kernel；OpenAI-compatible `tool_calls` 是当前过渡 adapter，不绑定 DeepSeek，也不是最终架构中心；provider 模式下不接受本地正则/规则冒充模型 tool call
-- 多步骤计划持久化到 `agent_plan_steps`，待确认动作可在 `pending` 状态编辑确认卡和执行载荷
-- Agent 记忆和上下文摘要必须按 `user_id + workspace_id` 隔离，任何 memory 查询、删除和注入 prompt 都不能跨用户或跨工作区
-- Agent provider 配置同样按 `user_id + workspace_id` 隔离；运行时优先使用当前用户 / 工作区设置，缺省时才使用部署环境变量
-- Agent 历史对话、messages、runs、plan steps 和确认卡必须从服务端恢复；前端 `localStorage` 只能保存当前 `threadId` 指针，不能成为对话事实源
-- Agent 运行轨迹必须由后端写入 `agent_run_events` 并随 ThreadState/SSE 返回；前端只渲染服务端事实，不自行猜测模型进度或工具状态
-- Agent prompts 存放在 `apps/api/src/agent/prompts`，工具 schema 存放在 `apps/api/src/agent/tool-catalog.ts`
-- Tool calling 只表示模型请求调用工具，服务端必须重新校验权限、租户范围、锁账、revision、分摊、派生提成和审计
-
-## 交付阶段
-
-1. 仓库重构与 TypeScript 后端骨架
-2. 认证与草稿持久化
-3. 版本发布、版本回滚与事实表固化
-4. 发布版公开分享与撤销
-5. 期间记账、多分摊分录、锁定 / 解锁流程
-6. 预实分析、累计对账与浏览器验收
-7. TypeScript 后端等价迁移、共享领域层与 Agent OS 化
-8. Agent runtime 成熟化：拆分 adapter / kernel / tools / routes，引入 OpenAI Agents SDK adapter，并保留 OpenAI-compatible provider 真实测试边界
-
-## 验收摘要
-
-- 登录用户只能访问自己的工作区
-- 草稿修改会自动保存，刷新后能恢复
-- 旧草稿版本会被拒绝，并反馈到前端
-- 发布版保持不可变
-- 发布时会固化月度事实表和行项目事实表
-- 分享链接只暴露发布版数据，不暴露草稿编辑
-- 回滚不会篡改历史
-- 记账分录与分摊金额严格对齐
-- 锁定期间后禁止新增与作废
-- 预实分析汇总值必须与当前草稿计划和已过账实际一致
-- 累计差异必须按期间逐期对齐
+The user sees one interleaved conversation timeline with streamed assistant
+output, tools, progress, approvals, child activity, review, and final answer.
+Runtime source is a small diagnostic label. Operator/developer surfaces can
+inspect bounded Agentic OS detail without exposing hidden reasoning or secrets.

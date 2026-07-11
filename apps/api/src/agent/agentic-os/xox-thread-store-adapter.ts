@@ -26,7 +26,7 @@ import type {
   AgentHarnessUiProjection,
   AgentMessage,
   AgentNavigationEvent,
-  AgentPlannerSource,
+  AgentRuntimeSource,
   AgentPlanStep,
   AgentPlanStepStatus,
   AgentRunEvent,
@@ -106,7 +106,7 @@ export function serializeMessage(row: Row<'agent_messages'>): AgentMessage {
   }
 }
 
-function plannerSource(value: string | null): AgentPlannerSource | null {
+function runtimeSource(value: string | null): AgentRuntimeSource | null {
   return value === 'openai_agents' || value === 'openai_compatible_tool_calls' || value === 'rules'
     ? value
     : null
@@ -122,7 +122,7 @@ export function serializeRun(row: Row<'agent_runs'>): AgentRunRecord {
     id: row.id,
     threadId: row.thread_id,
     status: runStatus(row.status),
-    planner: plannerSource(row.planner_source),
+    runtimeSource: runtimeSource(row.runtime_source),
     automationLevel: normalizeAgentAutomationLevel(row.automation_level),
     goalStatus: null,
     createdAt: row.created_at,
@@ -212,7 +212,7 @@ export async function buildThreadSummary(db: Kysely<Database>, thread: Row<'agen
     lastMessage: lastMessage?.content ?? null,
     lastMessageAt: lastMessage?.created_at ?? null,
     latestRunStatus: latestRun ? runStatus(latestRun.status) : null,
-    planner: latestRun ? plannerSource(latestRun.planner_source) : null,
+    runtimeSource: latestRun ? runtimeSource(latestRun.runtime_source) : null,
     pendingActionCount: pendingActions.length,
   }
 }
@@ -383,7 +383,7 @@ type XoxThreadStateViewInput = {
   messages: AgentMessage[]
   runs: AgentRunRecord[]
   runInputs: XoxThreadStateRunInput[]
-  planner: AgentPlannerSource | null
+  runtimeSource: AgentRuntimeSource | null
   goals: AgentThreadState['goals']
   evaluations: AgentThreadState['evaluations']
   navigationEvents: AgentNavigationEvent[]
@@ -467,7 +467,7 @@ function buildXoxThreadStateView(input: XoxThreadStateViewInput): AgentThreadSta
     thread: input.thread,
     messages: input.messages,
     runs: input.runs,
-    planner: input.planner,
+    runtimeSource: input.runtimeSource,
     goals: input.goals,
     evaluations: input.evaluations,
     navigationEvents: input.navigationEvents,
@@ -606,7 +606,7 @@ export async function buildThreadState(
       runId: run.id,
       userMessage: run.input_message,
     })),
-    planner: latestRun ? plannerSource(latestRun.planner_source) : null,
+    runtimeSource: latestRun ? runtimeSource(latestRun.runtime_source) : null,
     goals: [],
     evaluations: [],
     navigationEvents,

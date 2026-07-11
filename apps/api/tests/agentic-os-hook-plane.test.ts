@@ -87,7 +87,7 @@ describe('Agentic OS hook plane downstream boundary', () => {
         status: 'running',
         input_message_id: null,
         input_message: 'Reply with a short completion.',
-        planner_source: null,
+        runtime_source: null,
         automation_level: 'manual',
         goal_status: 'interpreting',
         worker_id: null,

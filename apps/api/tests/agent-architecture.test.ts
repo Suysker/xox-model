@@ -83,8 +83,8 @@ describe('Agentic OS downstream boundary', () => {
     ])
 
     expect(existsSync(join(srcRoot, 'agent', 'host-profile', 'xox-host-profile.ts'))).toBe(true)
-    expect(existsSync(join(srcRoot, 'agent', 'host-profile', 'xox-planned-items.ts'))).toBe(true)
-    expect(existsSync(join(srcRoot, 'agent', 'host-profile', 'prompts', 'xox-planning-policy.md'))).toBe(true)
+    expect(existsSync(join(srcRoot, 'agent', 'host-profile', 'xox-runtime-items.ts'))).toBe(true)
+    expect(existsSync(join(srcRoot, 'agent', 'host-profile', 'prompts', 'xox-agent-turn-policy.md'))).toBe(true)
     expect(existsSync(join(srcRoot, 'agent', 'tool-catalog.ts'))).toBe(true)
     expect(existsSync(join(srcRoot, 'agent', 'tool-executor.ts'))).toBe(true)
   })
@@ -514,7 +514,7 @@ describe('Agentic OS downstream boundary', () => {
   })
 
   it('does not advertise sandbox as a business-tool gateway to the model', () => {
-    const planningPolicy = source('agent/host-profile/prompts/xox-planning-policy.md')
+    const planningPolicy = source('agent/host-profile/prompts/xox-agent-turn-policy.md')
     const toolCatalog = source('agent/tool-catalog.ts')
     const modelVisibleContract = `${planningPolicy}\n${toolCatalog}`
 
@@ -548,8 +548,8 @@ describe('Agentic OS downstream boundary', () => {
 
     const promptsDir = join(srcRoot, 'agent', 'host-profile', 'prompts')
     expect(readdirSync(promptsDir).filter((name) => name.endsWith('.md')).sort()).toEqual([
+      'xox-agent-turn-policy.md',
       'xox-direct-answer-policy.md',
-      'xox-planning-policy.md',
       'xox-turn-lane-policy.md',
     ])
   })

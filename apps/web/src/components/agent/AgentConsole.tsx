@@ -26,7 +26,7 @@ function normalizeMaskedApiKeyInput(current: string, next: string) {
 
 export function AgentConsole(props: {
   threadId: string | null
-  planner: AgentSendResponse['planner'] | null
+  runtimeSource: AgentSendResponse['runtimeSource'] | null
   harnessUi: AgentHarnessUiProjection | null
   transcriptNodes: AgentTranscriptNode[]
   memoryCenter: AgentMemoryCenterState
@@ -122,12 +122,12 @@ export function AgentConsole(props: {
   flattenTranscriptNodes(props.transcriptNodes)
     .filter((item) => item.kind === 'action_update' && item.actionRequestId && item.details?.length)
     .forEach((item) => actionDiffsById.set(item.actionRequestId!, item.details ?? []))
-  const plannerLabel =
-    props.planner === 'openai_agents'
+  const runtimeSourceLabel =
+    props.runtimeSource === 'openai_agents'
       ? 'OpenAI Agents'
-      : props.planner === 'openai_compatible_tool_calls'
+      : props.runtimeSource === 'openai_compatible_tool_calls'
       ? '兼容工具调用'
-      : props.planner === 'rules'
+      : props.runtimeSource === 'rules'
         ? '本地规则'
         : '未运行'
   const connectionLabel =
@@ -288,7 +288,7 @@ export function AgentConsole(props: {
                 </div>
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold text-stone-950">Agent OS</p>
-                  <p className="truncate text-xs text-stone-500">{plannerLabel} / {sideStatusLabel}</p>
+                  <p className="truncate text-xs text-stone-500">{runtimeSourceLabel} / {sideStatusLabel}</p>
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-1" data-testid="agent-side-toolbar">
@@ -364,7 +364,7 @@ export function AgentConsole(props: {
                   <p className="truncate text-xs text-stone-500">
                     {props.busy
                       ? `执行中 / ${connectionLabel}`
-                      : `规划器：${plannerLabel} / ${connectionLabel}${props.threadId ? ` / 对话 ${props.threadId.slice(0, 8)}` : ''}`}
+                      : `模型运行时：${runtimeSourceLabel} / ${connectionLabel}${props.threadId ? ` / 对话 ${props.threadId.slice(0, 8)}` : ''}`}
                   </p>
                 </div>
               </div>

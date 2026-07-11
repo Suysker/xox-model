@@ -2,8 +2,8 @@ import { projectModel, type ModelConfig } from '@xox/domain'
 import type { AgentNavigationEvent } from '@xox/contracts'
 import { listEntries, listPeriods, listSubjectsForPeriod } from '../modules/ledger.js'
 import { utcNow } from '../core/time.js'
-import type { AgentActionDraft } from './host-profile/xox-planned-items.js'
-import type { PlannedItem, ReadDraft, RuntimePlannerStep } from './host-profile/xox-planned-items.js'
+import type { AgentActionDraft } from './host-profile/xox-runtime-items.js'
+import type { PlannedItem, ReadDraft, RuntimeToolStep } from './host-profile/xox-runtime-items.js'
 import {
   currentDraftConfig,
   findEmployee,
@@ -12,10 +12,10 @@ import {
   periodForMonth,
   periodOccurrenceDate,
 } from './action-draft-utils.js'
-import type { PlannerContext } from './host-profile/xox-planned-items.js'
+import type { AgentTurnContext } from './host-profile/xox-runtime-items.js'
 
 export async function planLedgerCreateFromFields(
-  ctx: PlannerContext,
+  ctx: AgentTurnContext,
   input: { monthLabel?: string | null; memberName: string; offlineUnits?: number; onlineUnits?: number; occurredAt?: string | null },
 ) {
   const { config } = await currentDraftConfig(ctx)
@@ -145,7 +145,7 @@ function subjectMatches(subject: LedgerSubject, key?: unknown, name?: unknown) {
   return normalizedLookup(subject.subjectName) === normalized || normalizedLookup(subject.subjectName).includes(normalized)
 }
 
-async function resolveLedgerSubject(ctx: PlannerContext, periodId: string, step: RuntimePlannerStep, direction?: 'income' | 'expense'): Promise<SubjectLookup> {
+async function resolveLedgerSubject(ctx: AgentTurnContext, periodId: string, step: RuntimeToolStep, direction?: 'income' | 'expense'): Promise<SubjectLookup> {
   const subjects = await listSubjectsForPeriod(ctx.db, ctx.workspace, periodId)
   const expectedType = direction === 'income' ? 'revenue' : direction === 'expense' ? 'cost' : null
   const matches = subjects.filter((subject) => {
@@ -165,7 +165,7 @@ async function resolveLedgerSubject(ctx: PlannerContext, periodId: string, step:
   }
 }
 
-function resolveRelatedEntity(config: ModelConfig, step: RuntimePlannerStep, preferredType?: 'teamMember' | 'employee' | null) {
+function resolveRelatedEntity(config: ModelConfig, step: RuntimeToolStep, preferredType?: 'teamMember' | 'employee' | null) {
   const relatedEntityId = asNonEmptyString(step.relatedEntityId)
   const relatedEntityName = asNonEmptyString(step.relatedEntityName) ?? asNonEmptyString(step.newRelatedEntityName)
   const requestedType = step.relatedEntityType === 'teamMember' || step.relatedEntityType === 'employee' ? step.relatedEntityType : preferredType ?? null
@@ -203,7 +203,7 @@ function ledgerNavigation(periodId: string, reason: string, focusRecordId?: stri
   }
 }
 
-export async function planGenericLedgerCreateFromStep(ctx: PlannerContext, step: RuntimePlannerStep) {
+export async function planGenericLedgerCreateFromStep(ctx: AgentTurnContext, step: RuntimeToolStep) {
   const monthLabel = asNonEmptyString(step.monthLabel)
   const direction = normalizedLedgerDirection(step.direction)
   const amount = moneyAmount(step.amount)
@@ -285,7 +285,7 @@ export async function planGenericLedgerCreateFromStep(ctx: PlannerContext, step:
   } satisfies AgentActionDraft
 }
 
-async function postedAmountBySubjectAndEntity(ctx: PlannerContext, periodId: string) {
+async function postedAmountBySubjectAndEntity(ctx: AgentTurnContext, periodId: string) {
   const entries = await listEntries(ctx.db, ctx.workspace, periodId)
   const totals = new Map<string, number>()
   for (const entry of entries) {
@@ -298,7 +298,7 @@ async function postedAmountBySubjectAndEntity(ctx: PlannerContext, periodId: str
   return totals
 }
 
-export async function planPlannedMemberIncomeBatch(ctx: PlannerContext, step: RuntimePlannerStep) {
+export async function planPlannedMemberIncomeBatch(ctx: AgentTurnContext, step: RuntimeToolStep) {
   const monthLabel = asNonEmptyString(step.monthLabel)
   if (!monthLabel) return null
   const period = await periodForMonth(ctx, monthLabel)
@@ -339,7 +339,7 @@ function relatedExpenseRowsForMonth(config: ModelConfig, monthIndex: number, sub
   return []
 }
 
-export async function planPlannedRelatedExpenseBatch(ctx: PlannerContext, step: RuntimePlannerStep) {
+export async function planPlannedRelatedExpenseBatch(ctx: AgentTurnContext, step: RuntimeToolStep) {
   const monthLabel = asNonEmptyString(step.monthLabel)
   if (!monthLabel) return null
   const period = await periodForMonth(ctx, monthLabel)
@@ -368,7 +368,7 @@ export async function planPlannedRelatedExpenseBatch(ctx: PlannerContext, step: 
       amount,
       relatedEntityType: row.type,
       relatedEntityId: row.id,
-    } as RuntimePlannerStep)
+    } as RuntimeToolStep)
     if (action) actions.push(action)
   }
   return actions.length > 0 ? actions : [{
@@ -393,7 +393,7 @@ function entryIncludesKeyword(entry: LedgerEntry, keyword: string) {
 }
 
 async function findLedgerEntryById(
-  ctx: PlannerContext,
+  ctx: AgentTurnContext,
   entryId: string,
   desiredStatus: 'posted' | 'voided',
 ): Promise<EntryLookup> {
@@ -428,8 +428,8 @@ async function findLedgerEntryById(
 }
 
 async function findLedgerEntryForStep(
-  ctx: PlannerContext,
-  step: RuntimePlannerStep,
+  ctx: AgentTurnContext,
+  step: RuntimeToolStep,
   desiredStatus: 'posted' | 'voided',
 ): Promise<EntryLookup> {
   const entryId = asNonEmptyString(step.entryId)
@@ -472,7 +472,7 @@ async function findLedgerEntryForStep(
   return { status: 'missing', message: '没有找到匹配的账本分录。请补充更精确的金额、日期、科目、对象或 entryId。', period }
 }
 
-export async function planLedgerVoidFromStep(ctx: PlannerContext, step: RuntimePlannerStep) {
+export async function planLedgerVoidFromStep(ctx: AgentTurnContext, step: RuntimeToolStep) {
   const lookup = await findLedgerEntryForStep(ctx, step, 'posted')
   if (lookup.status !== 'found') {
     return {
@@ -502,7 +502,7 @@ export async function planLedgerVoidFromStep(ctx: PlannerContext, step: RuntimeP
   } satisfies AgentActionDraft
 }
 
-export async function planLedgerRestoreFromStep(ctx: PlannerContext, step: RuntimePlannerStep) {
+export async function planLedgerRestoreFromStep(ctx: AgentTurnContext, step: RuntimeToolStep) {
   const lookup = await findLedgerEntryForStep(ctx, step, 'voided')
   if (lookup.status !== 'found') {
     return {
@@ -531,7 +531,7 @@ export async function planLedgerRestoreFromStep(ctx: PlannerContext, step: Runti
   } satisfies AgentActionDraft
 }
 
-async function allocationInputsForUpdate(ctx: PlannerContext, periodId: string, entry: LedgerEntry, step: RuntimePlannerStep, amount: number) {
+async function allocationInputsForUpdate(ctx: AgentTurnContext, periodId: string, entry: LedgerEntry, step: RuntimeToolStep, amount: number) {
   if (Array.isArray(step.allocations) && step.allocations.length > 0) {
     const allocations = []
     for (const raw of step.allocations) {
@@ -541,7 +541,7 @@ async function allocationInputsForUpdate(ctx: PlannerContext, periodId: string, 
         ...step,
         subjectKey: raw.subjectKey,
         subjectName: raw.subjectName,
-      } as RuntimePlannerStep, entry.direction)
+      } as RuntimeToolStep, entry.direction)
       if (subjectLookup.status !== 'found') return subjectLookup
       allocations.push({ ...subjectLookup.subject, amount: allocationAmount })
     }
@@ -553,7 +553,7 @@ async function allocationInputsForUpdate(ctx: PlannerContext, periodId: string, 
       ...step,
       subjectKey: step.newSubjectKey,
       subjectName: step.newSubjectName,
-    } as RuntimePlannerStep, entry.direction)
+    } as RuntimeToolStep, entry.direction)
     if (subjectLookup.status !== 'found') return subjectLookup
     return { status: 'found' as const, allocations: [{ ...subjectLookup.subject, amount }] }
   }
@@ -572,7 +572,7 @@ async function allocationInputsForUpdate(ctx: PlannerContext, periodId: string, 
   }
 }
 
-export async function planLedgerUpdateFromStep(ctx: PlannerContext, step: RuntimePlannerStep) {
+export async function planLedgerUpdateFromStep(ctx: AgentTurnContext, step: RuntimeToolStep) {
   const lookup = await findLedgerEntryForStep(ctx, step, 'posted')
   if (lookup.status !== 'found') {
     return {
@@ -601,7 +601,7 @@ export async function planLedgerUpdateFromStep(ctx: PlannerContext, step: Runtim
     relatedEntityName: step.newRelatedEntityName ?? step.relatedEntityName ?? entry.relatedEntityName ?? undefined,
     relatedEntityId: step.relatedEntityId ?? entry.relatedEntityId ?? undefined,
     relatedEntityType: step.relatedEntityType ?? entry.relatedEntityType ?? undefined,
-  } as RuntimePlannerStep)
+  } as RuntimeToolStep)
   const occurredAt = isoFromDateLike(step.newOccurredAt) ?? entry.occurredAt
   const counterparty = step.counterparty === undefined ? entry.counterparty ?? undefined : asNonEmptyString(step.counterparty) ?? undefined
   const description = step.description === undefined ? entry.description ?? undefined : asNonEmptyString(step.description) ?? undefined
@@ -638,7 +638,7 @@ export async function planLedgerUpdateFromStep(ctx: PlannerContext, step: Runtim
   } satisfies AgentActionDraft
 }
 
-export async function planPeriodLockFromStep(ctx: PlannerContext, step: RuntimePlannerStep) {
+export async function planPeriodLockFromStep(ctx: AgentTurnContext, step: RuntimeToolStep) {
   const monthLabel = asNonEmptyString(step.monthLabel)
   if (!monthLabel) return null
   const period = await periodForMonth(ctx, monthLabel)

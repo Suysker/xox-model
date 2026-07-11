@@ -10,14 +10,14 @@ import {
   type AgentServerSaaSDurableRunClaimSource,
   type AgentServerSaaSDurableRunLoad,
 } from '@agentic-os/server'
-import type { AgentNavigationEvent, AgentPlannerSource } from '@xox/contracts'
+import type { AgentNavigationEvent, AgentRuntimeSource } from '@xox/contracts'
 import type { Database, Row } from '../../db/schema.js'
 import { parseJson } from '../../db/database.js'
 import type { Settings } from '../../core/settings.js'
 import { utcNow } from '../../core/time.js'
 import type { CurrentUser } from '../../modules/auth.js'
 import { resolveAgentRuntimeSettings } from '../provider-settings.js'
-import type { PlannerContext } from '../host-profile/xox-planned-items.js'
+import type { AgentTurnContext } from '../host-profile/xox-runtime-items.js'
 import { executeXoxAgentRun, type AgenticOsKernelRunResult } from '../host-profile/xox-host-profile.js'
 import {
   AgentRunLeaseLostError,
@@ -91,12 +91,12 @@ function xoxRunInput(input: {
   }
 }
 
-function xoxPlannerSource(settings: Settings): AgentPlannerSource {
+function xoxRuntimeSource(settings: Settings): AgentRuntimeSource {
   return settings.llmProvider === 'openai' ? 'openai_agents' : 'openai_compatible_tool_calls'
 }
 
 async function executeAgentRun(
-  ctx: PlannerContext & { thread: Row<'agent_threads'> },
+  ctx: AgentTurnContext & { thread: Row<'agent_threads'> },
   options: { beforeStateWrite: () => Promise<boolean> },
 ): Promise<AgenticOsKernelRunResult | null> {
   return executeXoxAgentRun(ctx, options)
@@ -336,7 +336,7 @@ async function resumeProfileRun(
   const load = await loadXoxRun(db, run)
   if (!load.ok) throw new Error(load.invalidReason)
   const runtimeSettings = await resolveAgentRuntimeSettings(db, baseSettings, load.workspace, load.user)
-  const runtimeCtx: PlannerContext & { thread: Row<'agent_threads'> } = {
+  const runtimeCtx: AgentTurnContext & { thread: Row<'agent_threads'> } = {
     db,
     settings: runtimeSettings,
     user: load.user,
@@ -385,7 +385,7 @@ async function materializeXoxRunResult(
   const assistantMessage = await db.selectFrom('agent_messages').selectAll().where('thread_id', '=', input.queuedRun.run.threadId).where('role', '=', 'assistant').orderBy('created_at', 'desc').executeTakeFirst()
   return {
     agenticOsResult: input.result,
-    plannerSource: (run.planner_source as AgentPlannerSource | null) ?? xoxPlannerSource(settings),
+    runtimeSource: (run.runtime_source as AgentRuntimeSource | null) ?? xoxRuntimeSource(settings),
     assistantMessage: assistantMessage ?? null,
     navigationEvents: runNavigationEvents(planRows),
     actionRows,
@@ -417,7 +417,7 @@ export function createXoxDurableRunStore(db: Kysely<Database>, settings: Setting
           .updateTable('agent_runs')
           .set({
             status: projection.durableStatus,
-            planner_source: xoxPlannerSource(settings),
+            runtime_source: xoxRuntimeSource(settings),
             completed_at: utcNow(),
             lease_expires_at: null,
           })

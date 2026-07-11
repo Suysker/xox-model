@@ -17,6 +17,20 @@ async function addColumnIfMissing(db: Kysely<Database>, tableName: string, colum
   }
 }
 
+async function renameColumnIfPresent(
+  db: Kysely<Database>,
+  tableName: string,
+  oldColumnName: string,
+  newColumnName: string,
+) {
+  const columns = await tableColumns(db, tableName)
+  if (!columns.has(oldColumnName)) return
+  if (columns.has(newColumnName)) {
+    throw new Error(`${tableName} contains both ${oldColumnName} and ${newColumnName}.`)
+  }
+  await exec(db, `ALTER TABLE ${tableName} RENAME COLUMN ${oldColumnName} TO ${newColumnName}`)
+}
+
 export async function runMigrations(db: Kysely<Database>) {
   await exec(
     db,
@@ -259,7 +273,7 @@ export async function runMigrations(db: Kysely<Database>) {
       status VARCHAR(32) NOT NULL,
       input_message_id VARCHAR(36),
       input_message TEXT,
-      planner_source VARCHAR(64),
+      runtime_source VARCHAR(64),
       automation_level VARCHAR(16) NOT NULL DEFAULT 'manual',
       goal_status VARCHAR(32),
       worker_id VARCHAR(96),
@@ -271,7 +285,8 @@ export async function runMigrations(db: Kysely<Database>) {
   )
   await addColumnIfMissing(db, 'agent_runs', 'input_message_id', 'VARCHAR(36)')
   await addColumnIfMissing(db, 'agent_runs', 'input_message', 'TEXT')
-  await addColumnIfMissing(db, 'agent_runs', 'planner_source', 'VARCHAR(64)')
+  await renameColumnIfPresent(db, 'agent_runs', 'planner_source', 'runtime_source')
+  await addColumnIfMissing(db, 'agent_runs', 'runtime_source', 'VARCHAR(64)')
   await addColumnIfMissing(db, 'agent_runs', 'automation_level', "VARCHAR(16) NOT NULL DEFAULT 'manual'")
   await addColumnIfMissing(db, 'agent_runs', 'goal_status', 'VARCHAR(32)')
   await addColumnIfMissing(db, 'agent_runs', 'worker_id', 'VARCHAR(96)')

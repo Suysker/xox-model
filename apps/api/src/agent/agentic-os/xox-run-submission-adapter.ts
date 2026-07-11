@@ -58,7 +58,7 @@ type XoxSubmittedRunResponseInput = {
   createdAt: string
   userMessage: string
   status: AgentSendResponse['status']
-  planner: AgentSendResponse['planner']
+  runtimeSource: AgentSendResponse['runtimeSource']
   automationLevel: AgentSendResponse['automationLevel']
   messages: AgentSendResponse['messages']
   navigationEvents: AgentNavigationEvent[]
@@ -76,7 +76,7 @@ function buildSubmittedRunResponse(input: XoxSubmittedRunResponseInput): AgentSe
       id: input.runId,
       threadId: input.threadId,
       status: input.status,
-      planner: input.planner,
+      runtimeSource: input.runtimeSource,
       automationLevel: input.automationLevel,
       goalStatus: null,
       createdAt: input.createdAt,
@@ -108,7 +108,7 @@ function buildSubmittedRunResponse(input: XoxSubmittedRunResponseInput): AgentSe
     events: input.runEvents.map(xoxRunEventToOsRunEvent),
     metadata: {
       host: 'xox-model',
-      xoxPlanner: input.planner,
+      xoxRuntime: input.runtimeSource,
       navigationEventCount: input.navigationEvents.length,
       planStepCount: input.planSteps.length,
     },
@@ -147,7 +147,7 @@ function buildSubmittedRunResponse(input: XoxSubmittedRunResponseInput): AgentSe
     threadId: osView.thread.threadId,
     runId: osView.run.runId,
     status: input.status,
-    planner: input.planner,
+    runtimeSource: input.runtimeSource,
     automationLevel: input.automationLevel,
     messages: input.messages,
     navigationEvents: input.navigationEvents,
@@ -183,7 +183,7 @@ export async function submitAgentMessageRun(input: SubmitAgentMessageRunInput): 
         status: 'running',
         input_message_id: null,
         input_message: input.message,
-        planner_source: null,
+        runtime_source: null,
         automation_level: automationLevel,
         goal_status: null,
         worker_id: null,
@@ -219,7 +219,7 @@ export async function submitAgentMessageRun(input: SubmitAgentMessageRunInput): 
         createdAt: now,
         userMessage: input.message,
         status: 'running',
-        planner: null,
+        runtimeSource: null,
         automationLevel,
         messages,
         navigationEvents: [],
@@ -246,7 +246,7 @@ export async function submitAgentMessageRun(input: SubmitAgentMessageRunInput): 
       createdAt: now,
       userMessage: input.message,
       status: 'completed',
-      planner: completed.plannerSource,
+      runtimeSource: completed.runtimeSource,
       automationLevel,
       messages,
       navigationEvents: completed.navigationEvents,

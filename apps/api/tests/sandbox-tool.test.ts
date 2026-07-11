@@ -3,7 +3,7 @@ import { SandboxBroker, projectAgenticSandboxObservationRead } from '@agentic-os
 import { createProductDefaultModel, projectModel } from '@xox/domain'
 import type { SandboxManifest } from '@agentic-os/sandbox'
 import type { SandboxRunCodeInput } from '@xox/contracts'
-import { AGENT_TOOL_CATALOG, AGENT_TOOL_REGISTRY, toolCallToPlannerStep } from '../src/agent/tool-catalog.js'
+import { AGENT_TOOL_CATALOG, AGENT_TOOL_REGISTRY, toolCallToRuntimeStep } from '../src/agent/tool-catalog.js'
 import {
   inspectSandboxUploadedFile,
   normalizeSandboxArtifactKinds,
@@ -48,7 +48,7 @@ const LOCAL_SANDBOX_EXECUTION = {
 describe('manifest-scoped sandbox tool', () => {
   it('registers sandbox_run_code as a provider-native sandbox capability tool', () => {
     expect(AGENT_TOOL_CATALOG.some((tool) => tool.function.name === 'sandbox_run_code')).toBe(true)
-    expect(toolCallToPlannerStep('sandbox_run_code', {
+    expect(toolCallToRuntimeStep('sandbox_run_code', {
       purpose: '校验表格',
       language: 'python',
       code: 'print("ok")',

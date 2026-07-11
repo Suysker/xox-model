@@ -26,11 +26,11 @@ import {
   type ActionDraftBuilderHandlers,
   type PlannedItem,
   type ReadDraft,
-  type RuntimePlannerStep,
+  type RuntimeToolStep,
   xoxNavigationFromTabs,
-} from './host-profile/xox-planned-items.js'
-import type { AgentActionDraft } from './host-profile/xox-planned-items.js'
-import type { PlannerContext } from './host-profile/xox-planned-items.js'
+} from './host-profile/xox-runtime-items.js'
+import type { AgentActionDraft } from './host-profile/xox-runtime-items.js'
+import type { AgentTurnContext } from './host-profile/xox-runtime-items.js'
 import type {
   SandboxDataBundle,
   SandboxDataScope as AgenticSandboxDataScope,
@@ -42,7 +42,7 @@ import {
   createAgenticSandboxSaaSPeripheral,
   normalizeSandboxDataScope,
 } from '@agentic-os/sandbox'
-import { AGENT_TOOL_REGISTRY, toolCallToPlannerStep, type AgentToolRegistryEntry, type AgentToolRiskLevel } from './tool-catalog.js'
+import { AGENT_TOOL_REGISTRY, toolCallToRuntimeStep, type AgentToolRegistryEntry, type AgentToolRiskLevel } from './tool-catalog.js'
 
 type SandboxExpectedOutput = NonNullable<SandboxRunCodeInput['expectedOutputs']>[number]
 
@@ -91,8 +91,8 @@ const isActionDraft = (item: PlannedItem): item is AgentActionDraft =>
   Boolean(item && typeof item === 'object' && 'kind' in item)
 
 const xoxSandboxPeripheral = createAgenticSandboxSaaSPeripheral<
-  PlannerContext,
-  RuntimePlannerStep,
+  AgentTurnContext,
+  RuntimeToolStep,
   AgentActionDraft,
   ReadDraft,
   NonNullable<ReadDraft['navigation']>,
@@ -463,7 +463,7 @@ function asSandboxDataScope(value: unknown): SandboxDataScope {
     : 'workspace_summary'
 }
 
-function normalizeSandboxInput(step: RuntimePlannerStep): SandboxRunCodeInput {
+function normalizeSandboxInput(step: RuntimeToolStep): SandboxRunCodeInput {
   const dataRequest = step.dataRequest && typeof step.dataRequest === 'object'
     ? step.dataRequest as Record<string, unknown>
     : {}
@@ -750,9 +750,9 @@ function buildManifest(ctx: SandboxServiceContext, input: SandboxRunCodeInput, b
 }
 
 async function readSandboxPeripheral(
-  ctx: PlannerContext,
-  step: RuntimePlannerStep,
-  handlers?: ActionDraftBuilderHandlers<PlannerContext>,
+  ctx: AgentTurnContext,
+  step: RuntimeToolStep,
+  handlers?: ActionDraftBuilderHandlers<AgentTurnContext>,
 ) {
   const input = normalizeSandboxInput(step)
   const toolCallId = step.providerToolCallId ?? `sandbox_${shortHash(`${ctx.runId}:${input.purpose}`)}`
@@ -770,7 +770,7 @@ async function readSandboxPeripheral(
           hostTools: {
           ctx,
           handlers,
-          mapToolCall: toolCallToPlannerStep,
+          mapToolCall: toolCallToRuntimeStep,
           isAction: isActionDraft,
           locale: 'zh-CN',
           createNavigation: xoxNavigationFromTabs,
@@ -889,7 +889,7 @@ function sandboxOutputPresent(observation: SandboxObservation): boolean {
     observation.extraction.extractionStatus === 'parsed'
 }
 
-function sandboxStepFromOsInput(input: AgentSandboxExecutionInput): RuntimePlannerStep {
+function sandboxStepFromOsInput(input: AgentSandboxExecutionInput): RuntimeToolStep {
   return {
     ...input.input,
     providerToolCallId: input.toolCall.toolCallId,
@@ -901,7 +901,7 @@ function sandboxStepFromOsInput(input: AgentSandboxExecutionInput): RuntimePlann
 }
 
 export async function executeXoxSandboxForAgenticOs(
-  ctx: PlannerContext,
+  ctx: AgentTurnContext,
   input: AgentSandboxExecutionInput,
 ): Promise<AgentSandboxExecutionResult> {
   const step = sandboxStepFromOsInput(input)
@@ -957,9 +957,9 @@ export async function executeXoxSandboxForAgenticOs(
 }
 
 export async function planSandboxPeripheralRead(
-  ctx: PlannerContext,
-  step: RuntimePlannerStep,
-  handlers?: ActionDraftBuilderHandlers<PlannerContext>,
+  ctx: AgentTurnContext,
+  step: RuntimeToolStep,
+  handlers?: ActionDraftBuilderHandlers<AgentTurnContext>,
 ): Promise<ReadDraft | PlannedItem[]> {
   const { observation, aggregateActions, projection } = await readSandboxPeripheral(ctx, step, handlers)
   const readDraft: ReadDraft = {

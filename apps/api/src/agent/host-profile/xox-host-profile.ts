@@ -26,7 +26,7 @@ import {
   type AgentServerSaaSHostStoreProfile,
 } from '@agentic-os/server'
 import { createOpenAIRuntimePlane } from '@agentic-os/integration-openai'
-import type { AgentNavigationEvent, AgentPlannerSource } from '@xox/contracts'
+import type { AgentNavigationEvent, AgentRuntimeSource } from '@xox/contracts'
 import { hydrateModelConfig } from '@xox/domain'
 import { parseJson } from '../../db/database.js'
 import type { Row } from '../../db/schema.js'
@@ -41,10 +41,10 @@ import {
 } from '../tool-executor.js'
 import {
   type AgentToolObservation,
-  type PlannerContext,
+  type AgentTurnContext,
   type ReadDraft,
-  type RuntimePlannerStep,
-} from './xox-planned-items.js'
+  type RuntimeToolStep,
+} from './xox-runtime-items.js'
 import {
   storePlannedActionGraph,
   type StoredActionGraph,
@@ -59,7 +59,7 @@ import {
   AGENT_TOOL_REGISTRY,
   isHarnessManagedObservationToolName,
   isManualBoundaryNoticeToolName,
-  toolCallToPlannerStep,
+  toolCallToRuntimeStep,
   type AgentToolCallStep,
   type ChatTool,
 } from '../tool-catalog.js'
@@ -72,19 +72,19 @@ import { extractWorkspaceBundleArtifact } from '../workspace-bundle-artifact.js'
 
 export type AgenticOsKernelRunResult = {
   agenticOsResult: OsRunResult
-  plannerSource: AgentPlannerSource
+  runtimeSource: AgentRuntimeSource
   assistantMessage: Row<'agent_messages'> | null
   navigationEvents: AgentNavigationEvent[]
   actionRows: Row<'agent_action_requests'>[]
   planRows: Row<'agent_plan_steps'>[]
 }
 
-type XoxAgentRunContext = PlannerContext & {
+type XoxAgentRunContext = AgentTurnContext & {
   thread: Row<'agent_threads'>
 }
 
 type XoxHostState = {
-  plannerSource: AgentPlannerSource
+  runtimeSource: AgentRuntimeSource
   navigationEvents: AgentNavigationEvent[]
   actionRows: Row<'agent_action_requests'>[]
   planRows: Row<'agent_plan_steps'>[]
@@ -99,20 +99,20 @@ type XoxAgentHarnessOptions = {
   hooks?: AgentHookPlanePorts
 }
 
-const PLANNING_POLICY_PROMPT = readFileSync(
-  fileURLToPath(new URL('./prompts/xox-planning-policy.md', import.meta.url)),
+const AGENT_TURN_POLICY_PROMPT = readFileSync(
+  fileURLToPath(new URL('./prompts/xox-agent-turn-policy.md', import.meta.url)),
   'utf8',
 ).trim()
 const THREAD_LOG_LIMIT = 8
 const THREAD_LOG_CONTENT_LIMIT = 800
 
 function createXoxHostState(input: {
-  plannerSource: AgentPlannerSource
+  runtimeSource: AgentRuntimeSource
   actionRows?: Row<'agent_action_requests'>[]
   planRows?: Row<'agent_plan_steps'>[]
 }): XoxHostState {
   return {
-    plannerSource: input.plannerSource,
+    runtimeSource: input.runtimeSource,
     navigationEvents: [],
     actionRows: input.actionRows ?? [],
     planRows: input.planRows ?? [],
@@ -220,7 +220,7 @@ async function buildXoxHostContextFacts(ctx: XoxAgentRunContext, userMessage: st
   }
 }
 
-function osScope(ctx: PlannerContext): OsScope {
+function osScope(ctx: AgentTurnContext): OsScope {
   return {
     tenantId: ctx.user.id,
     workspaceId: ctx.workspace.id,
@@ -228,7 +228,7 @@ function osScope(ctx: PlannerContext): OsScope {
   }
 }
 
-function osRunRecord(ctx: PlannerContext, run: Row<'agent_runs'> | null): OsRunRecord {
+function osRunRecord(ctx: AgentTurnContext, run: Row<'agent_runs'> | null): OsRunRecord {
   return {
     runId: ctx.runId,
     threadId: ctx.threadId,
@@ -238,7 +238,7 @@ function osRunRecord(ctx: PlannerContext, run: Row<'agent_runs'> | null): OsRunR
   }
 }
 
-function osRunInput(ctx: PlannerContext, objective: string): OsRunInput {
+function osRunInput(ctx: AgentTurnContext, objective: string): OsRunInput {
   return {
     threadId: ctx.threadId,
     scope: osScope(ctx),
@@ -253,12 +253,12 @@ function osRunInput(ctx: PlannerContext, objective: string): OsRunInput {
   }
 }
 
-function plannerSource(settings: PlannerContext['settings']): AgentPlannerSource {
+function runtimeSource(settings: AgentTurnContext['settings']): AgentRuntimeSource {
   return settings.llmProvider === 'openai' ? 'openai_agents' : 'openai_compatible_tool_calls'
 }
 
 function applyStoredGraph(state: XoxHostState, graph: StoredActionGraph): void {
-  state.plannerSource = graph.plannerSource ?? state.plannerSource
+  state.runtimeSource = graph.runtimeSource ?? state.runtimeSource
   state.navigationEvents.push(...graph.navigationEvents)
   state.actionRows.push(...graph.actionRows)
   state.planRows.push(...graph.planRows)
@@ -269,13 +269,13 @@ function toolSchema(tool: ChatTool): OsJsonObject {
   return compactJsonObject(tool.function.parameters)
 }
 
-function plannerStepFromToolCall(
+function runtimeStepFromToolCall(
   toolName: string,
   toolCallId: string,
   input: OsJsonObject,
 ): AgentToolCallStep | null {
   const args = compactJsonObject(input)
-  const step = toolCallToPlannerStep(toolName, args as Record<string, unknown>)
+  const step = toolCallToRuntimeStep(toolName, args as Record<string, unknown>)
   if (!step) return null
   step.providerToolName = toolName
   step.providerToolCallId = toolCallId
@@ -297,7 +297,7 @@ async function storeSingleToolStep(
     options.forceManualApproval ? { ...ctx, automationLevel: 'manual' } : ctx,
     {
       items,
-      plannerSource: state.plannerSource,
+      runtimeSource: state.runtimeSource,
       toolCallId: step.providerToolCallId,
       ...(options.emitPlanReady !== undefined ? { emitPlanReady: options.emitPlanReady } : {}),
     },
@@ -401,7 +401,7 @@ function createXoxHostProfile(
     },
   } satisfies AgentServerSaaSHostStoreProfile
 
-  const useOpenAIAgents = state.plannerSource === 'openai_agents'
+  const useOpenAIAgents = state.runtimeSource === 'openai_agents'
   const provider = useOpenAIAgents
     ? ctx.settings.llmProvider
     : ctx.settings.openaiCompatibleProvider || ctx.settings.llmProvider
@@ -449,7 +449,7 @@ function createXoxHostProfile(
         unknownContextPolicy: 'require_known',
       },
       selectionByPurpose: Object.fromEntries([
-        'agent_turn', 'planning', 'online_evaluation', 'offline_evaluation', 'context_compaction', 'auxiliary',
+        'agent_turn', 'online_evaluation', 'offline_evaluation', 'context_compaction', 'auxiliary',
       ].map((purpose) => [purpose, { provider, model, adapterName }])),
       maxAttemptsPerProfile: 1,
     },
@@ -476,7 +476,7 @@ function createXoxHostProfile(
     createTool: ({ entry, executeRead }) => agenticOsToolDefinition(entry, executeRead),
     shouldExecuteRead: ({ entry, definition }) =>
       definition.authorityClass === 'read' || entry.name === 'workspace_update_online_factor',
-    toStep: ({ toolName, toolCallId, input }) => plannerStepFromToolCall(toolName, toolCallId, input),
+    toStep: ({ toolName, toolCallId, input }) => runtimeStepFromToolCall(toolName, toolCallId, input),
     storeStep: async ({ step, forceManualApproval, emitPlanReady }) => {
       const graph = await storeSingleToolStep(ctx, state, step, {
         ...(forceManualApproval !== undefined ? { forceManualApproval } : {}),
@@ -530,7 +530,7 @@ function createXoxHostProfile(
       const facts = await buildXoxHostContextFacts(ctx, input.request.userMessage)
       return {
         messages: [
-          { role: 'system', content: PLANNING_POLICY_PROMPT },
+          { role: 'system', content: AGENT_TURN_POLICY_PROMPT },
           { role: 'user', content: input.request.userMessage },
         ],
         facts: compactJsonObject({
@@ -544,7 +544,7 @@ function createXoxHostProfile(
   }
 }
 
-async function latestRunRows(ctx: PlannerContext) {
+async function latestRunRows(ctx: AgentTurnContext) {
   const [actionRows, planRows] = await Promise.all([
     ctx.db
       .selectFrom('agent_action_requests')
@@ -581,7 +581,7 @@ async function finalizeAgenticOsResult(
   if (!(await options.beforeStateWrite())) return null
   return {
     agenticOsResult: result,
-    plannerSource: state.plannerSource,
+    runtimeSource: state.runtimeSource,
     assistantMessage,
     navigationEvents: state.navigationEvents,
     actionRows,
@@ -590,9 +590,9 @@ async function finalizeAgenticOsResult(
 }
 
 export async function resumeXoxAgentRunAfterActionConfirmation(input: {
-  db: PlannerContext['db']
-  settings: PlannerContext['settings']
-  user: PlannerContext['user']
+  db: AgentTurnContext['db']
+  settings: AgentTurnContext['settings']
+  user: AgentTurnContext['user']
   workspace: Row<'workspaces'>
   action: Row<'agent_action_requests'>
   abortSignal?: AbortSignal
@@ -609,7 +609,7 @@ export async function resumeXoxAgentRunAfterActionConfirmation(input: {
     input.db.selectFrom('agent_runs').selectAll().where('id', '=', input.action.run_id).executeTakeFirstOrThrow(),
   ])
   const objective = run.input_message?.trim() || input.action.title
-  const planningCtx: XoxAgentRunContext = {
+  const turnCtx: XoxAgentRunContext = {
     db: input.db,
     settings: input.settings,
     user: input.user,
@@ -620,17 +620,17 @@ export async function resumeXoxAgentRunAfterActionConfirmation(input: {
     automationLevel: normalizeAgentAutomationLevel(run.automation_level),
     thread,
   }
-  if (input.abortSignal) planningCtx.abortSignal = input.abortSignal
+  if (input.abortSignal) turnCtx.abortSignal = input.abortSignal
 
-  const { actionRows, planRows } = await latestRunRows(planningCtx)
+  const { actionRows, planRows } = await latestRunRows(turnCtx)
   const state = createXoxHostState({
-    plannerSource: plannerSource(input.settings),
+    runtimeSource: runtimeSource(input.settings),
     actionRows,
     planRows,
   })
-  const request = osRunInput(planningCtx, objective)
-  const osRun: OsRunRecord = { ...osRunRecord(planningCtx, run), status: 'awaiting_confirmation' }
-  const server = createAgentServer(createXoxHostProfile(planningCtx, {
+  const request = osRunInput(turnCtx, objective)
+  const osRun: OsRunRecord = { ...osRunRecord(turnCtx, run), status: 'awaiting_confirmation' }
+  const server = createAgentServer(createXoxHostProfile(turnCtx, {
       beforeStateWrite,
       ...(input.hooks === undefined ? {} : { hooks: input.hooks }),
     }, state))
@@ -653,7 +653,7 @@ export async function resumeXoxAgentRunAfterActionConfirmation(input: {
     request,
     observations: [actionExecution.observation],
   }, input.abortSignal === undefined ? {} : { abortSignal: input.abortSignal })
-  const runResult = await finalizeAgenticOsResult(planningCtx, state, resumed, { beforeStateWrite })
+  const runResult = await finalizeAgenticOsResult(turnCtx, state, resumed, { beforeStateWrite })
   const actionRequest = await input.db.selectFrom('agent_action_requests').selectAll().where('id', '=', input.action.id).executeTakeFirstOrThrow()
   return {
     actionRequest,
@@ -668,13 +668,13 @@ export async function executeXoxAgentRun(
 ): Promise<AgenticOsKernelRunResult | null> {
   const providedWorkspaceBundle = ctx.providedWorkspaceBundle ?? extractWorkspaceBundleArtifact(ctx.message) ?? undefined
   const objective = providedWorkspaceBundle?.messageForModel ?? ctx.message
-  const planningCtx: XoxAgentRunContext = {
+  const turnCtx: XoxAgentRunContext = {
     ...ctx,
     message: objective,
     ...(providedWorkspaceBundle ? { providedWorkspaceBundle } : {}),
   }
   const state = createXoxHostState({
-    plannerSource: plannerSource(ctx.settings),
+    runtimeSource: runtimeSource(ctx.settings),
   })
   await addRunEvent(ctx.db, {
     threadId: ctx.thread.id,
@@ -685,10 +685,10 @@ export async function executeXoxAgentRun(
     status: 'running',
     data: { harness: 'agentic-os' },
   })
-  const request = osRunInput(planningCtx, objective)
-  const result = await createAgentServer(createXoxHostProfile(planningCtx, options, state)).run(
+  const request = osRunInput(turnCtx, objective)
+  const result = await createAgentServer(createXoxHostProfile(turnCtx, options, state)).run(
     request,
     ctx.abortSignal === undefined ? {} : { abortSignal: ctx.abortSignal },
   )
-  return finalizeAgenticOsResult(planningCtx, state, result, options)
+  return finalizeAgenticOsResult(turnCtx, state, result, options)
 }

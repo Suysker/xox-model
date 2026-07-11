@@ -40,7 +40,7 @@ function threadSummary(index: number): AgentConsoleProps['threadSummaries'][numb
     lastMessage: `第 ${index} 条历史摘要`,
     lastMessageAt: '2026-05-24T00:00:00.000Z',
     latestRunStatus: 'completed',
-    planner: 'openai_compatible_tool_calls',
+    runtimeSource: 'openai_compatible_tool_calls',
     pendingActionCount: 0,
   }
 }
@@ -138,7 +138,7 @@ function harnessUiProjection(): AgentHarnessUiProjection {
 function props(overrides: Partial<AgentConsoleProps> = {}): AgentConsoleProps {
   return {
     threadId: 'thread-1',
-    planner: null,
+    runtimeSource: null,
     harnessUi: null,
     transcriptNodes: [node()],
     memoryCenter: { memories: [], dailyNotes: [], recallSignals: [], dreamReports: [] },

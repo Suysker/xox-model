@@ -606,7 +606,7 @@ async function insertRunningAgentRun(
     status: 'running',
     input_message_id: messageId,
     input_message: input.message,
-    planner_source: null,
+    runtime_source: null,
     automation_level: 'manual',
     goal_status: 'interpreting',
     worker_id: input.workerId ?? null,
@@ -821,7 +821,7 @@ describe('xox TypeScript API', () => {
       status: 'running',
       input_message_id: messageId,
       input_message: '并发事件测试',
-      planner_source: null,
+      runtime_source: null,
       automation_level: 'manual',
       goal_status: 'interpreting',
       worker_id: null,
@@ -855,7 +855,7 @@ describe('xox TypeScript API', () => {
   it('autosaves drafts, rejects stale revisions, and publishes fact tables', async () => {
     const harness = await buildHarness('draft')
     const client = new Client(harness.app)
-    await registerUser(client, 'planner@example.com', 'Planner')
+    await registerUser(client, 'agent@example.com', 'Agent')
 
     const draft = (await client.get('/api/v1/workspace/draft')).json
     draft.config.operating.offlineUnitPrice = 99
@@ -1162,14 +1162,14 @@ describe('xox TypeScript API', () => {
         message: '把 3 月成员 A 线下 10 张、线上 2 张入账',
       })
       expect(planned.statusCode).toBe(200)
-      expect(planned.json.planner).toBe('openai_compatible_tool_calls')
+      expect(planned.json.runtimeSource).toBe('openai_compatible_tool_calls')
       expect(planned.json.navigationEvents[0].route.mainTab).toBe('bookkeeping')
       expect(planned.json.planSteps).toHaveLength(1)
       expect(planned.json.planSteps[0].status).toBe('ready')
       expect(planned.json.actionRequests[0].kind).toBe('ledger.create_entry')
       expect(planned.json.actionRequests[0].status).toBe('pending')
       expect(planned.json.runEvents.map((event: any) => event.type)).toEqual(
-        expect.arrayContaining(['run_queued', 'worker_claimed', 'model_planning', 'tool_plan_ready', 'confirmation_ready', 'run_completed']),
+        expect.arrayContaining(['run_queued', 'worker_claimed', 'model_turn_started', 'tool_plan_ready', 'confirmation_ready', 'run_completed']),
       )
       const visibleTranscript = planned.json.transcriptItems
         .filter((item: any) => item.visibility === 'user')
@@ -1266,7 +1266,7 @@ describe('xox TypeScript API', () => {
         message: '把 3 月成员 B 线下 1 张、线上 1 张入账；把 4 月线上系数改成 0.3 并保存',
       })
       expect(planned.statusCode).toBe(200)
-      expect(planned.json.planner).toBe('openai_compatible_tool_calls')
+      expect(planned.json.runtimeSource).toBe('openai_compatible_tool_calls')
       expect(planned.json.planSteps).toHaveLength(2)
       expect(planned.json.actionRequests.map((action: any) => action.kind)).toEqual([
         'ledger.create_entry',
@@ -1810,7 +1810,7 @@ describe('xox TypeScript API', () => {
       expect(state.json.runEvents.some((event: any) => event.type === 'run_completed')).toBe(true)
       expect(state.json.runEvents.some((event: any) =>
         event.type === 'tool_plan_ready' &&
-        event.data?.plannerSource === 'openai_compatible_tool_calls',
+        event.data?.runtimeSource === 'openai_compatible_tool_calls',
       )).toBe(true)
       expect(state.json.runEvents.some((event: any) =>
         event.type === 'response_evaluated' &&
@@ -2097,7 +2097,7 @@ describe('xox TypeScript API', () => {
       expect(initialPlanningCalls).toBeGreaterThanOrEqual(2)
       expect(resumePlanningCalls).toBeGreaterThanOrEqual(1)
       expect(second.json.runId).not.toBe(first.json.runId)
-      expect(second.json.runEvents.some((event: any) => event.type === 'model_planning')).toBe(true)
+      expect(second.json.runEvents.some((event: any) => event.type === 'model_turn_started')).toBe(true)
       expect(second.json.actionRequests).toHaveLength(1)
       const ledgerAction = second.json.actionRequests.find((action: any) => action.kind === 'ledger.create_entry')
       expect(ledgerAction?.status).toBe('executed')
@@ -2170,7 +2170,7 @@ describe('xox TypeScript API', () => {
         message: '把 3 月成员 A 线下 1 张入账；帮我注销账号',
       })
       expect(planned.statusCode).toBe(200)
-      expect(planned.json.planner).toBe('openai_compatible_tool_calls')
+      expect(planned.json.runtimeSource).toBe('openai_compatible_tool_calls')
       expect(planned.json.planSteps).toHaveLength(2)
       expect(planned.json.actionRequests).toHaveLength(1)
       expect(planned.json.actionRequests[0].kind).toBe('ledger.create_entry')
@@ -2218,7 +2218,7 @@ describe('xox TypeScript API', () => {
         message: '把 3 月成员 A 线下 1 张、线上 0 张入账',
       })
       expect(planned.statusCode).toBe(200)
-      expect(planned.json.planner).toBe('openai_compatible_tool_calls')
+      expect(planned.json.runtimeSource).toBe('openai_compatible_tool_calls')
       const ledgerAction = planned.json.actionRequests[0]
       const secondPeriod = (await secondClient.get('/api/v1/ledger/periods')).json.find((period: any) => period.monthLabel === '3月')
       const crossWorkspacePayload = {
@@ -2318,7 +2318,7 @@ describe('xox TypeScript API', () => {
         message: '把 3 月成员 A 线下 1 张、线上 1 张入账',
       })
       expect(planned.statusCode).toBe(200)
-      expect(planned.json.planner).toBe('openai_compatible_tool_calls')
+      expect(planned.json.runtimeSource).toBe('openai_compatible_tool_calls')
       expect(planned.json.actionRequests[0].kind).toBe('ledger.create_entry')
       expect(planned.json.actionRequests[0].payload.amount).toBe(176)
       await closeHarness(harness)
@@ -2422,7 +2422,7 @@ describe('xox TypeScript API', () => {
       })
 
       expect(planned.statusCode).toBe(200)
-      expect(planned.json.planner).toBe('openai_compatible_tool_calls')
+      expect(planned.json.runtimeSource).toBe('openai_compatible_tool_calls')
       expect(planned.json.actionRequests[0].kind).toBe('ledger.create_entry')
       expect(planned.json.actionRequests[0].payload.amount).toBe(176)
       expect(planned.json.runEvents.some((event: any) => event.type === 'provider_stream_started' && event.data?.provider === 'test-compatible')).toBe(true)
@@ -2465,7 +2465,7 @@ describe('xox TypeScript API', () => {
 
       expect(planned.statusCode).toBe(200)
       expect(planningStreams).toEqual([true])
-      expect(planned.json.planner).toBe('openai_compatible_tool_calls')
+      expect(planned.json.runtimeSource).toBe('openai_compatible_tool_calls')
       expect(planned.json.actionRequests).toHaveLength(0)
       expect(planned.json.runEvents.some((event: any) => event.type === 'provider_retrying')).toBe(false)
       await closeHarness(harness)
@@ -2659,7 +2659,7 @@ describe('xox TypeScript API', () => {
       })
       expect(planned.statusCode).toBe(200)
       expect(callCount).toBe(1)
-      expect(planned.json.planner).toBe('openai_compatible_tool_calls')
+      expect(planned.json.runtimeSource).toBe('openai_compatible_tool_calls')
       expect(planned.json.actionRequests).toHaveLength(0)
       expect(planned.json.planSteps).toHaveLength(0)
       expect(planned.json.messages.at(-1).content).toContain('xox-model Agent OS')
@@ -2691,7 +2691,7 @@ describe('xox TypeScript API', () => {
       })
       expect(planned.statusCode).toBe(200)
       expect(callCount).toBeGreaterThanOrEqual(1)
-      expect(planned.json.planner).toBe('openai_compatible_tool_calls')
+      expect(planned.json.runtimeSource).toBe('openai_compatible_tool_calls')
       expect(planned.json.actionRequests).toHaveLength(0)
       expect(planned.json.planSteps).toHaveLength(0)
       expect(planned.json.messages.at(-1).content).toContain('这不是 tool call')
@@ -2720,7 +2720,7 @@ describe('xox TypeScript API', () => {
         message: '把 3 月成员 A 线下 1 张入账',
       })
       expect(planned.statusCode).toBe(200)
-      expect(planned.json.planner).toBe('openai_compatible_tool_calls')
+      expect(planned.json.runtimeSource).toBe('openai_compatible_tool_calls')
       expect(planned.json.actionRequests).toHaveLength(0)
       expect(planned.json.planSteps).toHaveLength(0)
       expect(planned.json.messages.map((message: any) => message.role)).toEqual(['user'])
@@ -2742,7 +2742,7 @@ describe('xox TypeScript API', () => {
       message: '把 3 月成员 A 线下 1 张入账',
     })
     expect(planned.statusCode).toBe(200)
-    expect(planned.json.planner).toBe('openai_compatible_tool_calls')
+    expect(planned.json.runtimeSource).toBe('openai_compatible_tool_calls')
     expect(planned.json.actionRequests).toHaveLength(0)
     expect(planned.json.planSteps).toHaveLength(0)
     expect(planned.json.messages.map((message: any) => message.role)).toEqual(['user'])
@@ -2811,8 +2811,8 @@ describe('xox TypeScript API', () => {
       expect(planned.statusCode).toBe(200)
       expect(callCount).toBe(1)
       expect(lastAuthorization).toBe('Bearer test-user-provider-key')
-      expect(planned.json.planner).toBe('openai_compatible_tool_calls')
-      expect(planned.json.runEvents.some((event: any) => event.type === 'model_planning' && event.data?.provider === 'qwen')).toBe(true)
+      expect(planned.json.runtimeSource).toBe('openai_compatible_tool_calls')
+      expect(planned.json.runEvents.some((event: any) => event.type === 'model_turn_started' && event.data?.provider === 'qwen')).toBe(true)
       expect(planned.json.actionRequests[0].kind).toBe('ledger.create_entry')
 
       const secondPlanned = await secondClient.post('/api/v1/agent/messages', {
@@ -2820,7 +2820,7 @@ describe('xox TypeScript API', () => {
       })
       expect(secondPlanned.statusCode).toBe(200)
       expect(callCount).toBe(1)
-      expect(secondPlanned.json.planner).toBe('openai_compatible_tool_calls')
+      expect(secondPlanned.json.runtimeSource).toBe('openai_compatible_tool_calls')
       expect(secondPlanned.json.actionRequests).toHaveLength(0)
       expect(secondPlanned.json.planSteps).toHaveLength(0)
       expect(secondPlanned.json.runEvents.some((event: any) => event.type === 'run_failed')).toBe(true)
@@ -2936,7 +2936,7 @@ describe('xox TypeScript API', () => {
       })
       expect(planned.statusCode).toBe(200)
       expect(lastAuthorization).toBe('Bearer test-encrypted-provider-key')
-      expect(planned.json.planner).toBe('openai_compatible_tool_calls')
+      expect(planned.json.runtimeSource).toBe('openai_compatible_tool_calls')
       expect(planned.json.actionRequests[0].kind).toBe('ledger.create_entry')
       await closeHarness(harness)
     })
@@ -2979,7 +2979,7 @@ describe('xox TypeScript API', () => {
       })
       expect(planned.statusCode).toBe(200)
       expect(lastAuthorization).toBe('Bearer legacy-plaintext-provider-key')
-      expect(planned.json.planner).toBe('openai_compatible_tool_calls')
+      expect(planned.json.runtimeSource).toBe('openai_compatible_tool_calls')
 
       const updated = await client.put('/api/v1/agent/provider-settings', {
         provider: 'qwen',
@@ -3025,7 +3025,7 @@ describe('xox TypeScript API', () => {
         message: '3 月计划收入和计划成本是多少？',
       })
       expect(response.statusCode).toBe(200)
-      expect(response.json.planner).toBe('openai_compatible_tool_calls')
+      expect(response.json.runtimeSource).toBe('openai_compatible_tool_calls')
       expect(response.json.actionRequests).toHaveLength(0)
       expect(response.json.planSteps[0].status).toBe('executed')
       expect(response.json.navigationEvents[0].route.mainTab).toBe('dashboard')
@@ -3081,7 +3081,7 @@ describe('xox TypeScript API', () => {
         message: '今天是几月几号？',
       })
       expect(response.statusCode).toBe(200)
-      expect(response.json.planner).toBe('openai_compatible_tool_calls')
+      expect(response.json.runtimeSource).toBe('openai_compatible_tool_calls')
       expect(response.json.actionRequests).toHaveLength(0)
       expect(response.json.planSteps).toHaveLength(0)
       expect(response.json.messages.at(-1).content).toContain('今天是 2026 年 6 月 1 日')
@@ -3090,7 +3090,7 @@ describe('xox TypeScript API', () => {
       const eventTypes = response.json.runEvents.map((event: any) => event.type)
       expect(eventTypes).not.toContain('turn_intake_resolved')
       expect(eventTypes).not.toContain('assistant_final_message')
-      expect(eventTypes).toContain('model_planning')
+      expect(eventTypes).toContain('model_turn_started')
       expect(eventTypes).toContain('run_completed')
       expect(response.json.runEvents.every((event: any) => ['assistant', 'tool', 'lifecycle'].includes(event.channel))).toBe(true)
 
@@ -3130,7 +3130,7 @@ describe('xox TypeScript API', () => {
       expect(response.json.planSteps).toHaveLength(0)
       expect(response.json.messages.at(-1).content).toContain('June 1, 2026')
       expect(requests).toHaveLength(1)
-      expect(response.json.runEvents.map((event: any) => event.type)).toContain('model_planning')
+      expect(response.json.runEvents.map((event: any) => event.type)).toContain('model_turn_started')
       await closeHarness(harness)
     })
   })
@@ -3279,7 +3279,7 @@ describe('xox TypeScript API', () => {
         message: '我们有几个成员？',
       })
       expect(response.statusCode).toBe(200)
-      expect(response.json.planner).toBe('openai_compatible_tool_calls')
+      expect(response.json.runtimeSource).toBe('openai_compatible_tool_calls')
       expect(response.json.actionRequests).toHaveLength(0)
       expect(response.json.planSteps[0].status).toBe('executed')
       expect(response.json.navigationEvents[0].route.secondaryTab).toBe('members')
@@ -3400,7 +3400,7 @@ describe('xox TypeScript API', () => {
 
       expect(response.statusCode).toBe(200)
       const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
-      expect(state.json.runEvents.filter((event: any) => event.type === 'model_planning').length).toBeGreaterThanOrEqual(1)
+      expect(state.json.runEvents.filter((event: any) => event.type === 'model_turn_started').length).toBeGreaterThanOrEqual(1)
       expect(state.json.actionRequests).toHaveLength(0)
       expect(state.json.runEvents.some((event: any) => event.type === 'run_failed')).toBe(true)
       expect(state.json.runEvents.some((event: any) => event.type === 'run_completed')).toBe(false)
@@ -3434,7 +3434,7 @@ describe('xox TypeScript API', () => {
         message: '帮我记一笔收入',
       })
       expect(response.statusCode).toBe(200)
-      expect(response.json.planner).toBe('openai_compatible_tool_calls')
+      expect(response.json.runtimeSource).toBe('openai_compatible_tool_calls')
       expect(response.json.actionRequests).toHaveLength(0)
       expect(response.json.planSteps[0].title).toBe('需要补充信息')
       expect(response.json.planSteps[0].status).toBe('info')
@@ -3475,7 +3475,7 @@ describe('xox TypeScript API', () => {
       })
       expect(started.statusCode).toBe(200)
       expect(started.json.status).toBe('running')
-      expect(started.json.planner).toBeNull()
+      expect(started.json.runtimeSource).toBeNull()
       expect(started.json.messages.map((message: any) => message.role)).toEqual(['user'])
       expect(started.json.actionRequests).toHaveLength(0)
       expect(started.json.runEvents.map((event: any) => event.type)).toEqual(['run_queued'])
@@ -3496,19 +3496,19 @@ describe('xox TypeScript API', () => {
       }
 
       expect(completedState.runs[0].status).toBe('completed')
-      expect(completedState.runs[0].planner).toBe('openai_compatible_tool_calls')
+      expect(completedState.runs[0].runtimeSource).toBe('openai_compatible_tool_calls')
       expect(completedState.messages.map((message: any) => message.role)).toEqual(['user', 'assistant'])
       expect(completedState.messages.at(-1).content).toContain('3月计划收入')
       expect(completedState.planSteps[0].status).toBe('executed')
       expect(completedState.navigationEvents[0].route.mainTab).toBe('dashboard')
       expect(completedState.actionRequests).toHaveLength(0)
       expect(completedState.runEvents.map((event: any) => event.type)).toEqual(
-        expect.arrayContaining(['run_queued', 'worker_claimed', 'model_planning', 'tool_plan_ready', 'run_completed']),
+        expect.arrayContaining(['run_queued', 'worker_claimed', 'model_turn_started', 'tool_plan_ready', 'run_completed']),
       )
 
       const threads = await client.get('/api/v1/agent/threads')
       expect(threads.json.threads[0].latestRunStatus).toBe('completed')
-      expect(threads.json.threads[0].planner).toBe('openai_compatible_tool_calls')
+      expect(threads.json.threads[0].runtimeSource).toBe('openai_compatible_tool_calls')
       await closeHarness(harness)
     })
   })
@@ -3822,7 +3822,7 @@ describe('xox TypeScript API', () => {
       }
 
       expect(completedState.json.runs[0].status).toBe('completed')
-      expect(completedState.json.runs[0].planner).toBe('openai_compatible_tool_calls')
+      expect(completedState.json.runs[0].runtimeSource).toBe('openai_compatible_tool_calls')
       expect(completedState.json.messages.map((message: any) => message.role)).toEqual(['user', 'assistant'])
       expect(completedState.json.actionRequests).toHaveLength(0)
       await closeHarness(harness)
@@ -3873,7 +3873,7 @@ describe('xox TypeScript API', () => {
       }
 
       expect(completedState.runs[0].status).toBe('completed')
-      expect(completedState.runs[0].planner).toBe('openai_compatible_tool_calls')
+      expect(completedState.runs[0].runtimeSource).toBe('openai_compatible_tool_calls')
       expect(completedState.messages.map((message: any) => message.role)).toEqual(['user', 'assistant'])
       expect(completedState.messages.at(-1).content).toContain('3月计划收入')
       expect(completedState.planSteps[0].status).toBe('executed')
@@ -3956,7 +3956,7 @@ describe('xox TypeScript API', () => {
         message: '如果 4 月线上系数变成 0.3，利润会怎样',
       })
       expect(forecast.statusCode).toBe(200)
-      expect(forecast.json.planner).toBe('openai_agents')
+      expect(forecast.json.runtimeSource).toBe('openai_agents')
       expect(forecastCalls, JSON.stringify({ providerBodies, runEvents: forecast.json.runEvents, messages: forecast.json.messages })).toBeGreaterThanOrEqual(1)
       expect(forecast.json.actionRequests).toHaveLength(0)
       expect(forecast.json.navigationEvents[0].route.mainTab).toBe('inputs')
@@ -3980,7 +3980,7 @@ describe('xox TypeScript API', () => {
         message: '把 3 月成员 A 线下 1 张入账',
       })
       expect(planned.statusCode).toBe(200)
-      expect(planned.json.planner).toBe('openai_agents')
+      expect(planned.json.runtimeSource).toBe('openai_agents')
       expect(planned.json.actionRequests[0].kind).toBe('ledger.create_entry')
       expect(planned.json.actionRequests[0].payload.amount).toBe(88)
       expect(planned.json.runEvents.some((event: any) =>
@@ -4017,7 +4017,7 @@ describe('xox TypeScript API', () => {
         message: '把 3 月成员 A 线下 1 张入账',
       })
       expect(planned.statusCode).toBe(200)
-      expect(planned.json.planner).toBe('openai_compatible_tool_calls')
+      expect(planned.json.runtimeSource).toBe('openai_compatible_tool_calls')
       expect(planned.json.actionRequests).toHaveLength(1)
 
       const threads = await firstClient.get('/api/v1/agent/threads')
@@ -4026,20 +4026,20 @@ describe('xox TypeScript API', () => {
       expect(threads.json.threads[0].id).toBe(planned.json.threadId)
       expect(threads.json.threads[0].title).toContain('把 3 月成员 A')
       expect(threads.json.threads[0].latestRunStatus).toBe('completed')
-      expect(threads.json.threads[0].planner).toBe('openai_compatible_tool_calls')
+      expect(threads.json.threads[0].runtimeSource).toBe('openai_compatible_tool_calls')
       expect(threads.json.threads[0].pendingActionCount).toBe(1)
 
       const restored = await firstClient.get(`/api/v1/agent/threads/${planned.json.threadId}`)
       expect(restored.statusCode).toBe(200)
       expect(restored.json.messages.map((message: any) => message.role)).toEqual(['user'])
       expect(restored.json.runs[0].status).toBe('completed')
-      expect(restored.json.runs[0].planner).toBe('openai_compatible_tool_calls')
+      expect(restored.json.runs[0].runtimeSource).toBe('openai_compatible_tool_calls')
       expect(restored.json.planSteps).toHaveLength(1)
       expect(restored.json.planSteps[0].actionRequestId).toBe(planned.json.actionRequests[0].id)
       expect(restored.json.actionRequests[0].status).toBe('pending')
       expect(restored.json.navigationEvents[0].route.mainTab).toBe('bookkeeping')
       expect(restored.json.runEvents.map((event: any) => event.type)).toEqual(
-        expect.arrayContaining(['run_queued', 'model_planning', 'tool_plan_ready', 'confirmation_ready', 'run_completed']),
+        expect.arrayContaining(['run_queued', 'model_turn_started', 'tool_plan_ready', 'confirmation_ready', 'run_completed']),
       )
 
       const secondThreads = await secondClient.get('/api/v1/agent/threads')
@@ -4149,7 +4149,7 @@ describe('xox TypeScript API', () => {
         message: '记住：默认记账成员是 成员 A',
       })
       expect(remembered.statusCode).toBe(200)
-      expect(remembered.json.planner).toBe('openai_compatible_tool_calls')
+      expect(remembered.json.runtimeSource).toBe('openai_compatible_tool_calls')
       expect(remembered.json.planSteps.some((step: any) => step.title === '已保存记忆')).toBe(true)
       expect(remembered.json.runEvents.some((event: any) =>
         event.type === 'tool_call_completed' && event.data?.toolName === 'memory_remember',
@@ -4540,7 +4540,7 @@ describe('xox TypeScript API', () => {
       })
       expect(plannedFromNewThread.statusCode).toBe(200)
       expect(plannedFromNewThread.json.threadId).not.toBe(remembered.json.threadId)
-      expect(plannedFromNewThread.json.planner).toBe('openai_compatible_tool_calls')
+      expect(plannedFromNewThread.json.runtimeSource).toBe('openai_compatible_tool_calls')
       expect(plannedFromNewThread.json.actionRequests[0].kind).toBe('ledger.create_entry')
       expect(plannedFromNewThread.json.actionRequests[0].targetLabel).toContain('成员 A')
       await closeHarness(harness)
@@ -4572,7 +4572,7 @@ describe('xox TypeScript API', () => {
 
       const added = await client.post('/api/v1/agent/messages', { message: '新增成员，名字叫 成员 G，提成 30%，基准场均 18 张' })
       expect(added.statusCode).toBe(200)
-      expect(added.json.planner).toBe('openai_compatible_tool_calls')
+      expect(added.json.runtimeSource).toBe('openai_compatible_tool_calls')
       expect(added.json.actionRequests).toHaveLength(1)
       const addAction = added.json.actionRequests[0]
       expect(addAction.kind).toBe('workspace.update_draft')
@@ -4936,7 +4936,7 @@ describe('xox TypeScript API', () => {
         message: '按这份投资、50 个成员、员工、成本和 12 个月节奏生成经营模型，所有写入先给确认卡。',
       })
       expect(planned.statusCode).toBe(200)
-      expect(planned.json.planner).toBe('openai_compatible_tool_calls')
+      expect(planned.json.runtimeSource).toBe('openai_compatible_tool_calls')
       expect(planned.json.actionRequests).toHaveLength(1)
       expect(planned.json.planSteps.length).toBeGreaterThanOrEqual(2)
       const action = planned.json.actionRequests[0]
@@ -5440,7 +5440,7 @@ describe('xox TypeScript API', () => {
       })
 
       expect(response.statusCode).toBe(200)
-      expect(response.json.planner).toBe('openai_compatible_tool_calls')
+      expect(response.json.runtimeSource).toBe('openai_compatible_tool_calls')
       expect(planningCalls).toBe(1)
       expect(response.json.actionRequests).toHaveLength(1)
       expect(response.json.actionRequests[0].status).toBe('pending')
@@ -5739,7 +5739,7 @@ describe('xox TypeScript API', () => {
         provider.setStep(step)
         const response = await client.post('/api/v1/agent/messages', { ...(threadId ? { threadId } : {}), message })
         expect(response.statusCode).toBe(200)
-        expect(response.json.planner).toBe('openai_compatible_tool_calls')
+        expect(response.json.runtimeSource).toBe('openai_compatible_tool_calls')
         return response.json
       }
 
@@ -5935,7 +5935,7 @@ describe('xox TypeScript API', () => {
         message: '如果 4 月线上系数变成 0.3，利润会怎样',
       })
       expect(forecast.statusCode).toBe(200)
-      expect(forecast.json.planner).toBe('openai_compatible_tool_calls')
+      expect(forecast.json.runtimeSource).toBe('openai_compatible_tool_calls')
       expect(forecast.json.navigationEvents[0].route.mainTab).toBe('inputs')
       expect(forecast.json.actionRequests).toHaveLength(0)
       expect(forecast.json.messages.at(-1).content).toContain('未修改草稿')
@@ -5995,7 +5995,7 @@ describe('xox TypeScript API', () => {
 
       const exported = await client.post('/api/v1/agent/messages', { message: '导出当前工作区 JSON' })
       expect(exported.statusCode).toBe(200)
-      expect(exported.json.planner).toBe('openai_compatible_tool_calls')
+      expect(exported.json.runtimeSource).toBe('openai_compatible_tool_calls')
       expect(exported.json.actionRequests).toHaveLength(0)
       expect(exported.json.navigationEvents[0].panel).toBe('workspace')
       expect(exported.json.messages.at(-1).content).toContain('未修改业务数据')

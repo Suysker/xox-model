@@ -18,9 +18,9 @@ import {
 } from '@xox/domain'
 import type { AgentNavigationEvent } from '@xox/contracts'
 import { newId } from '../core/security.js'
-import type { PlannerContext } from './host-profile/xox-planned-items.js'
-import type { AgentActionDraft } from './host-profile/xox-planned-items.js'
-import type { ReadDraft, RuntimePlannerStep } from './host-profile/xox-planned-items.js'
+import type { AgentTurnContext } from './host-profile/xox-runtime-items.js'
+import type { AgentActionDraft } from './host-profile/xox-runtime-items.js'
+import type { ReadDraft, RuntimeToolStep } from './host-profile/xox-runtime-items.js'
 import { cloneModelConfig, currentDraftConfig, findEmployee, findTeamMember, finiteNumber, normalizedMemberKey } from './action-draft-utils.js'
 
 function memberWorkbenchNavigation(reason: string): AgentNavigationEvent {
@@ -71,7 +71,7 @@ function firstNonEmptyString(...values: unknown[]) {
   return ''
 }
 
-function applyTeamMemberToolFields(member: TeamMember, step: RuntimePlannerStep) {
+function applyTeamMemberToolFields(member: TeamMember, step: RuntimeToolStep) {
   const next: TeamMember = {
     ...member,
     unitsPerEvent: { ...member.unitsPerEvent },
@@ -106,7 +106,7 @@ function applyTeamMemberToolFields(member: TeamMember, step: RuntimePlannerStep)
   return next
 }
 
-export async function planAddTeamMemberFromStep(ctx: PlannerContext, step: RuntimePlannerStep) {
+export async function planAddTeamMemberFromStep(ctx: AgentTurnContext, step: RuntimeToolStep) {
   const { draft, config } = await currentDraftConfig(ctx)
   const requestedName = firstNonEmptyString(step.newMemberName, step.memberName, step.name)
   const name = requestedName || defaultTeamMemberName(config)
@@ -150,7 +150,7 @@ export async function planAddTeamMemberFromStep(ctx: PlannerContext, step: Runti
   } satisfies AgentActionDraft
 }
 
-export async function planDeleteTeamMemberFromStep(ctx: PlannerContext, step: RuntimePlannerStep) {
+export async function planDeleteTeamMemberFromStep(ctx: AgentTurnContext, step: RuntimeToolStep) {
   const { draft, config } = await currentDraftConfig(ctx)
   const memberName = firstNonEmptyString(step.memberName, step.newMemberName, step.name)
   const target = findTeamMember(config, { memberId: step.memberId, memberName })
@@ -217,7 +217,7 @@ function defaultEmployeeName(config: ModelConfig) {
   return `员工 ${index}`
 }
 
-function applyEmployeeToolFields(employee: Employee, step: RuntimePlannerStep) {
+function applyEmployeeToolFields(employee: Employee, step: RuntimeToolStep) {
   const next: Employee = { ...employee }
   if (typeof step.role === 'string' && step.role.trim()) next.role = step.role.trim()
   const monthlyBasePay = finiteNumber(step.monthlyBasePay)
@@ -227,7 +227,7 @@ function applyEmployeeToolFields(employee: Employee, step: RuntimePlannerStep) {
   return next
 }
 
-export async function planAddEmployeeFromStep(ctx: PlannerContext, step: RuntimePlannerStep) {
+export async function planAddEmployeeFromStep(ctx: AgentTurnContext, step: RuntimeToolStep) {
   const { draft, config } = await currentDraftConfig(ctx)
   const requestedName = firstNonEmptyString(step.newEmployeeName, step.employeeName, step.name)
   const name = requestedName || defaultEmployeeName(config)
@@ -270,7 +270,7 @@ export async function planAddEmployeeFromStep(ctx: PlannerContext, step: Runtime
   } satisfies AgentActionDraft
 }
 
-export async function planDeleteEmployeeFromStep(ctx: PlannerContext, step: RuntimePlannerStep) {
+export async function planDeleteEmployeeFromStep(ctx: AgentTurnContext, step: RuntimeToolStep) {
   const { draft, config } = await currentDraftConfig(ctx)
   const navigation = costWorkbenchNavigation('删除员工需要打开运营员工配置供核对。')
   const employeeName = firstNonEmptyString(step.employeeName, step.newEmployeeName, step.name)
@@ -346,7 +346,7 @@ function findShareholder(config: ModelConfig, input: { shareholderId?: string | 
   return config.shareholders.find((shareholder) => shareholder.id === shareholderName || normalizedMemberKey(shareholder.name) === normalized) ?? null
 }
 
-function applyShareholderToolFields(shareholder: Shareholder, step: RuntimePlannerStep) {
+function applyShareholderToolFields(shareholder: Shareholder, step: RuntimeToolStep) {
   const next: Shareholder = { ...shareholder }
   const investmentAmount = finiteNumber(step.investmentAmount)
   if (investmentAmount !== null) next.investmentAmount = investmentAmount
@@ -355,7 +355,7 @@ function applyShareholderToolFields(shareholder: Shareholder, step: RuntimePlann
   return next
 }
 
-export async function planAddShareholderFromStep(ctx: PlannerContext, step: RuntimePlannerStep) {
+export async function planAddShareholderFromStep(ctx: AgentTurnContext, step: RuntimeToolStep) {
   const { draft, config } = await currentDraftConfig(ctx)
   const requestedName = firstNonEmptyString(step.newShareholderName, step.shareholderName, step.name)
   const name = requestedName || defaultShareholderName(config)
@@ -397,7 +397,7 @@ export async function planAddShareholderFromStep(ctx: PlannerContext, step: Runt
   } satisfies AgentActionDraft
 }
 
-export async function planDeleteShareholderFromStep(ctx: PlannerContext, step: RuntimePlannerStep) {
+export async function planDeleteShareholderFromStep(ctx: AgentTurnContext, step: RuntimeToolStep) {
   const { draft, config } = await currentDraftConfig(ctx)
   const navigation = capitalWorkbenchNavigation('删除股东需要打开股东投资页面供核对。')
   const shareholderName = firstNonEmptyString(step.shareholderName, step.newShareholderName, step.name)
@@ -522,7 +522,7 @@ function findCostItem(config: ModelConfig, input: { category?: CostCategory | nu
   return { status: 'missing' }
 }
 
-export async function planAddCostItemFromStep(ctx: PlannerContext, step: RuntimePlannerStep) {
+export async function planAddCostItemFromStep(ctx: AgentTurnContext, step: RuntimeToolStep) {
   if (!isCostCategory(step.costCategory)) {
     return {
       title: '需要指定成本归属',
@@ -573,7 +573,7 @@ export async function planAddCostItemFromStep(ctx: PlannerContext, step: Runtime
   } satisfies AgentActionDraft
 }
 
-export async function planDeleteCostItemFromStep(ctx: PlannerContext, step: RuntimePlannerStep) {
+export async function planDeleteCostItemFromStep(ctx: AgentTurnContext, step: RuntimeToolStep) {
   const { draft, config } = await currentDraftConfig(ctx)
   const category = isCostCategory(step.costCategory) ? step.costCategory : null
   const navigation = costWorkbenchNavigation('删除基础成本项需要打开成本编辑页面供核对。')
@@ -674,7 +674,7 @@ function syncStageCostItemsForPlanner(config: ModelConfig, stageCostItems: Stage
   return hydrateModelConfig(nextConfig)
 }
 
-export async function planAddStageCostTypeFromStep(ctx: PlannerContext, step: RuntimePlannerStep) {
+export async function planAddStageCostTypeFromStep(ctx: AgentTurnContext, step: RuntimeToolStep) {
   const { draft, config } = await currentDraftConfig(ctx)
   const requestedName = firstNonEmptyString(
     step.newStageCostItemName,
@@ -728,7 +728,7 @@ export async function planAddStageCostTypeFromStep(ctx: PlannerContext, step: Ru
   } satisfies AgentActionDraft
 }
 
-export async function planDeleteStageCostTypeFromStep(ctx: PlannerContext, step: RuntimePlannerStep) {
+export async function planDeleteStageCostTypeFromStep(ctx: AgentTurnContext, step: RuntimeToolStep) {
   const { draft, config } = await currentDraftConfig(ctx)
   const navigation = costWorkbenchNavigation('删除专项成本类型需要打开成本编辑页面供核对。')
   const stageCostItemName = firstNonEmptyString(

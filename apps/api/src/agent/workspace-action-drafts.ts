@@ -24,10 +24,10 @@ import type { AgentNavigationEvent } from '@xox/contracts'
 import { newId } from '../core/security.js'
 import { listEntries, listPeriods, varianceForPeriod } from '../modules/ledger.js'
 import { draftContext, exportWorkspaceBundle, getWorkspaceDraft } from '../modules/workspace.js'
-import type { AgentActionDraft } from './host-profile/xox-planned-items.js'
-import type { ReadDraft, RuntimePlannerStep } from './host-profile/xox-planned-items.js'
+import type { AgentActionDraft } from './host-profile/xox-runtime-items.js'
+import type { ReadDraft, RuntimeToolStep } from './host-profile/xox-runtime-items.js'
 import { cloneModelConfig, currentDraftConfig, finiteNumber, getConfigPath, setConfigPath } from './action-draft-utils.js'
-import type { PlannerContext } from './host-profile/xox-planned-items.js'
+import type { AgentTurnContext } from './host-profile/xox-runtime-items.js'
 import {
   isWorkspaceDataQueryMetric,
   isWorkspaceDataQueryScope,
@@ -67,7 +67,7 @@ function workspacePanelNavigation(reason: string): AgentNavigationEvent {
   }
 }
 
-type WorkspaceDataQueryContext = Pick<PlannerContext, 'db' | 'workspace'>
+type WorkspaceDataQueryContext = Pick<AgentTurnContext, 'db' | 'workspace'>
 
 export type WorkspaceDataQueryStep = {
   question?: string | null
@@ -513,7 +513,7 @@ function sameJsonValue(left: unknown, right: unknown) {
 }
 
 export async function planOnlineFactorFromFields(
-  ctx: PlannerContext,
+  ctx: AgentTurnContext,
   input: { monthLabel: string; factor: number; mode: 'forecast' | 'write' },
 ) {
   const { draft, config } = await currentDraftConfig(ctx)
@@ -557,7 +557,7 @@ export async function planOnlineFactorFromFields(
 }
 
 export async function planWorkspacePatch(
-  ctx: PlannerContext,
+  ctx: AgentTurnContext,
   patches: Array<{ path: string; value: unknown; label?: string }>,
 ) {
   if (patches.length === 0) return null
@@ -605,7 +605,7 @@ export async function planWorkspacePatch(
   } satisfies AgentActionDraft
 }
 
-export function planWorkspaceRename(ctx: PlannerContext, workspaceName: unknown) {
+export function planWorkspaceRename(ctx: AgentTurnContext, workspaceName: unknown) {
   const nextName = typeof workspaceName === 'string' ? workspaceName.trim() : ''
   if (!nextName) return null
   if (nextName === ctx.workspace.name) {
@@ -631,7 +631,7 @@ export function planWorkspaceRename(ctx: PlannerContext, workspaceName: unknown)
   } satisfies AgentActionDraft
 }
 
-export async function planExportBundleRead(ctx: PlannerContext) {
+export async function planExportBundleRead(ctx: AgentTurnContext) {
   const bundle = await exportWorkspaceBundle(ctx.db, ctx.workspace)
   return {
     title: '导出工作区 Bundle',
@@ -641,7 +641,7 @@ export async function planExportBundleRead(ctx: PlannerContext) {
   } satisfies ReadDraft
 }
 
-export function planImportBundleFromValue(ctx: PlannerContext, rawBundle: unknown) {
+export function planImportBundleFromValue(ctx: AgentTurnContext, rawBundle: unknown) {
   if (!rawBundle || typeof rawBundle !== 'object') return null
   const bundle = rawBundle as { workspaceName?: unknown; currentConfig?: unknown; snapshots?: unknown[] }
   if (typeof bundle.workspaceName !== 'string' || !bundle.currentConfig) return null
@@ -1140,7 +1140,7 @@ function projectionSummary(config: ModelConfig) {
   return { base, worst, best }
 }
 
-export async function planOperatingModelFromStep(ctx: PlannerContext, step: RuntimePlannerStep) {
+export async function planOperatingModelFromStep(ctx: AgentTurnContext, step: RuntimeToolStep) {
   const rawPlan = isRecordValue(step.plan)
     ? step.plan
     : isRecordValue(step.modelPlan)
@@ -1222,6 +1222,6 @@ export async function planOperatingModelFromStep(ctx: PlannerContext, step: Runt
   return [action, read]
 }
 
-export function planWorkspacePatchFromStep(ctx: PlannerContext, step: RuntimePlannerStep) {
+export function planWorkspacePatchFromStep(ctx: AgentTurnContext, step: RuntimeToolStep) {
   return step.patches ? planWorkspacePatch(ctx, step.patches) : null
 }

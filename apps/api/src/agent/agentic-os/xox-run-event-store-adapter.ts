@@ -343,7 +343,7 @@ function xoxRuntimeStreamCopy(input: AgentServerRuntimeStreamRunEventCopyInput) 
 }
 
 export async function addRuntimeStreamRunEvent(
-  ctx: { db: Kysely<Database>; threadId: string; runId: string; phase?: 'planning' | 'final_answer' },
+  ctx: { db: Kysely<Database>; threadId: string; runId: string; phase?: 'model_turn' | 'final_answer' },
   event: AgentServerRuntimeStreamEvent,
 ) {
   await addAgentServerRuntimeStreamRunEvent({

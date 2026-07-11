@@ -2,8 +2,8 @@ import type { Kysely, Transaction } from 'kysely'
 import type { AgentScope, JsonValue } from '@agentic-os/contracts'
 import type {
   AgentLoopCommitResult,
-  AgentLoopStateV2,
-  AgentLoopTransitionRecordV1,
+  AgentLoopStateV3,
+  AgentLoopTransitionRecordV2,
 } from '@agentic-os/core'
 import {
   createAgentServerDurableControlPlane,
@@ -76,8 +76,8 @@ class XoxHarnessControlRecordBackend implements AgentServerControlRecordBackend 
 
   public async commitLoop(input: {
     expectedStateVersion: number
-    state: AgentLoopStateV2
-    transition: AgentLoopTransitionRecordV1
+    state: AgentLoopStateV3
+    transition: AgentLoopTransitionRecordV2
   }): Promise<AgentLoopCommitResult> {
     return this.db.transaction().execute(async (transaction) => {
       const transitionCollection = `loop_transition:${input.state.runId}`
@@ -108,7 +108,7 @@ class XoxHarnessControlRecordBackend implements AgentServerControlRecordBackend 
           collection: 'loop_state',
           key: input.state.runId,
           version: input.state.stateVersion,
-          value: input.state as AgentLoopStateV2 & JsonValue,
+          value: input.state as AgentLoopStateV3 & JsonValue,
           createdAt: now,
           updatedAt: now,
         })).execute()
@@ -134,7 +134,7 @@ class XoxHarnessControlRecordBackend implements AgentServerControlRecordBackend 
         collection: transitionCollection,
         key: input.transition.transitionId,
         version: 1,
-        value: input.transition as AgentLoopTransitionRecordV1 & JsonValue,
+        value: input.transition as AgentLoopTransitionRecordV2 & JsonValue,
         createdAt: now,
         updatedAt: now,
       })).execute()

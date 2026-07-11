@@ -23,7 +23,7 @@ import {
   type AgentServerActionGraphStepDraft,
   type AgentServerActionGraphStepStatus,
 } from '@agentic-os/server'
-import type { AgentAutomationLevel, AgentNavigationEvent, AgentPlannerSource, AgentPlanStepStatus } from '@xox/contracts'
+import type { AgentAutomationLevel, AgentNavigationEvent, AgentRuntimeSource, AgentPlanStepStatus } from '@xox/contracts'
 import type { Database, Row } from '../../db/schema.js'
 import { jsonString } from '../../db/database.js'
 import type { Settings } from '../../core/settings.js'
@@ -35,7 +35,7 @@ import {
   type AgentToolObservation,
   type PlannedItem,
   type ReadDraft,
-} from '../host-profile/xox-planned-items.js'
+} from '../host-profile/xox-runtime-items.js'
 import { addRunEvent, agentThreadEvents } from './xox-run-event-store-adapter.js'
 import { assertAgentRunLease } from './xox-run-lease-store-adapter.js'
 import { assertActionDraftAllowed } from '../tool-policy.js'
@@ -56,7 +56,7 @@ export type StoredActionGraph = {
   navigationEvents: AgentNavigationEvent[]
   actionRows: Row<'agent_action_requests'>[]
   planRows: Row<'agent_plan_steps'>[]
-  plannerSource: AgentPlannerSource
+  runtimeSource: AgentRuntimeSource
 }
 
 type StoredActionResult = {
@@ -423,7 +423,7 @@ function storedPlanStep(
 async function addLocalizedActionGraphEvent(
   ctx: ActionGraphContext,
   input: {
-    plannerSource: AgentPlannerSource
+    runtimeSource: AgentRuntimeSource
     summary: AgentServerActionGraphSummary
     eventDraft: AgentServerActionGraphEventDraft
   },
@@ -460,7 +460,7 @@ async function addLocalizedActionGraphEvent(
         : '模型没有生成可执行步骤。',
     status: failedCount > 0 ? 'failed' : pendingActionCount > 0 ? 'blocked' : executedActionCount > 0 ? 'completed' : 'info',
     data: {
-      plannerSource: input.plannerSource,
+      runtimeSource: input.runtimeSource,
       stepCount: visibleStepCount,
       actionCount,
       pendingActionCount,
@@ -476,7 +476,7 @@ export async function storePlannedActionGraph(
   ctx: ActionGraphContext,
   input: {
     items: PlannedItem[]
-    plannerSource: AgentPlannerSource
+    runtimeSource: AgentRuntimeSource
     toolCallId: string
     emitPlanReady?: boolean
   },
@@ -558,7 +558,7 @@ export async function storePlannedActionGraph(
   if (input.emitPlanReady !== false) {
     for (const eventDraft of materialized.eventDrafts) {
       await addLocalizedActionGraphEvent(ctx, {
-        plannerSource: input.plannerSource,
+        runtimeSource: input.runtimeSource,
         summary: materialized.summary,
         eventDraft,
       })
@@ -573,6 +573,6 @@ export async function storePlannedActionGraph(
     navigationEvents,
     actionRows,
     planRows,
-    plannerSource: input.plannerSource,
+    runtimeSource: input.runtimeSource,
   }
 }

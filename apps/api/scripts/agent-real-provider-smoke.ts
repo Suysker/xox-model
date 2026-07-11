@@ -16,7 +16,7 @@ type SmokeSummary = {
   ok: true
   provider: string
   model: string
-  plannerSources: string[]
+  runtimeSources: string[]
   coveredDirections: string[]
   memoryCount: number
   newThreadMemoryInjected: true
@@ -150,13 +150,13 @@ function assertOk(response: JsonResponse, label: string) {
   assertSmoke(response.statusCode === 200, `${label} failed: ${redactedResponse(response)}`)
 }
 
-function assertPlannerSource(value: unknown, label: string, planners: Set<string>) {
+function assertRuntimeSource(value: unknown, label: string, planners: Set<string>) {
   assertSmoke(value === 'openai_compatible_tool_calls', `${label} did not use real tool calls: ${String(value)}`)
   planners.add(value)
 }
 
 function assertPlanner(response: JsonResponse, label: string, planners: Set<string>) {
-  assertPlannerSource(response.json.planner, label, planners)
+  assertRuntimeSource(response.json.runtimeSource, label, planners)
 }
 
 function findAction(response: JsonResponse, kind: string, label: string) {
@@ -308,7 +308,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
   const app = await createApp({ settings, db })
   const client = new SmokeClient(app)
   const coveredDirections = new Set<string>()
-  const plannerSources = new Set<string>()
+  const runtimeSources = new Set<string>()
   const actionKinds = new Set<string>()
   let maxMultiStepCount = 0
   let editableActionExecutedAmount = 0
@@ -341,7 +341,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     assertSmoke(!JSON.stringify(fetchedProviderSetting.json).includes(apiKey), 'provider setting fetch leaked API key')
     rememberCoverage(coveredDirections, 'tenant_provider_settings')
 
-    const greeting = await sendAgentMessage(client, plannerSources, {
+    const greeting = await sendAgentMessage(client, runtimeSources, {
       label: 'basic conversational reply',
       message: '你好，告诉我你是谁',
     })
@@ -354,7 +354,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     assertUnifiedTimeline(greeting, 'basic conversational reply', { expectedVisibleKinds: ['user_message', 'assistant_message'] })
     rememberCoverage(coveredDirections, 'basic_conversational_reply')
 
-    const forecast = await sendAgentMessage(client, plannerSources, {
+    const forecast = await sendAgentMessage(client, runtimeSources, {
       label: 'forecast',
       message: '如果 4 月线上系数变成 0.3，利润会怎样',
     })
@@ -382,14 +382,14 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     })
     assertOk(dataQuestionStarted, 'data agent background start')
     assertSmoke(dataQuestionStarted.json.status === 'running', `background data question did not start running: ${redactedResponse(dataQuestionStarted)}`)
-    assertSmoke(dataQuestionStarted.json.planner === null, 'background start should not claim a planner before the model finishes')
+    assertSmoke(dataQuestionStarted.json.runtimeSource === null, 'background start should not claim a runtime source before the model finishes')
     const dataQuestion = await waitForThreadRun(client, dataQuestionStarted.json.threadId, 'data agent background completion')
     assertSmoke(dataQuestion.json.runs[0].status === 'completed', `background data question failed: ${redactedResponse(dataQuestion)}`)
-    assertPlannerSource(dataQuestion.json.runs[0].planner, 'data agent background completion', plannerSources)
+    assertRuntimeSource(dataQuestion.json.runs[0].runtimeSource, 'data agent background completion', runtimeSources)
     assertSmoke(Array.isArray(dataQuestion.json.actionRequests) && dataQuestion.json.actionRequests.length === 0, 'data question created a write confirmation')
     assertSmoke(
       Array.isArray(dataQuestion.json.runEvents) &&
-        dataQuestion.json.runEvents.some((event: any) => event.type === 'model_planning') &&
+        dataQuestion.json.runEvents.some((event: any) => event.type === 'model_turn_started') &&
         dataQuestion.json.runEvents.some((event: any) => event.type === 'run_completed'),
       `background data question did not persist run trace: ${redactedResponse(dataQuestion)}`,
     )
@@ -404,7 +404,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     rememberCoverage(coveredDirections, 'background_run_recovery')
     rememberCoverage(coveredDirections, 'agent_run_trace')
 
-    const teamQuestion = await sendAgentMessage(client, plannerSources, {
+    const teamQuestion = await sendAgentMessage(client, runtimeSources, {
       label: 'team member count question',
       threadId: forecast.json.threadId,
       message: '我们有几个成员？只回答当前工作区团队成员数量，不要回答收入利润总览',
@@ -421,13 +421,13 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     )
     rememberCoverage(coveredDirections, 'data_agent_team_member_count')
 
-    const addMember = await sendAgentMessage(client, plannerSources, {
+    const addMember = await sendAgentMessage(client, runtimeSources, {
       label: 'add team member',
       threadId: forecast.json.threadId,
       message: '新增一个成员，名字叫 成员 G，使用默认团队成员参数，只生成确认卡',
     })
     const addMemberAction = findAction(addMember, 'workspace.update_draft', 'add team member')
-    assertSmoke(String(addMemberAction.title).includes('新增'), `team member add did not use dedicated add planner: ${String(addMemberAction.title)}`)
+    assertSmoke(String(addMemberAction.title).includes('新增'), `team member add did not use the dedicated action builder: ${String(addMemberAction.title)}`)
     assertSmoke(addMemberAction.navigation?.route?.mainTab === 'inputs', 'team member add did not navigate to model inputs')
     await confirmAction(client, addMemberAction, 'confirm add team member', actionKinds)
     const draftAfterAddMember = await client.get('/api/v1/workspace/draft')
@@ -438,13 +438,13 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     )
     rememberCoverage(coveredDirections, 'team_member_add_confirmation')
 
-    const deleteMember = await sendAgentMessage(client, plannerSources, {
+    const deleteMember = await sendAgentMessage(client, runtimeSources, {
       label: 'delete team member',
       threadId: forecast.json.threadId,
       message: '删除成员 G',
     })
     const deleteMemberAction = findAction(deleteMember, 'workspace.update_draft', 'delete team member')
-    assertSmoke(String(deleteMemberAction.title).includes('删除'), `team member delete did not use dedicated delete planner: ${String(deleteMemberAction.title)}`)
+    assertSmoke(String(deleteMemberAction.title).includes('删除'), `team member delete did not use the dedicated action builder: ${String(deleteMemberAction.title)}`)
     assertSmoke(deleteMemberAction.riskLevel === 'high', 'team member delete should be a high-risk confirmation')
     await confirmAction(client, deleteMemberAction, 'confirm delete team member', actionKinds)
     const draftAfterDeleteMember = await client.get('/api/v1/workspace/draft')
@@ -455,13 +455,13 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     )
     rememberCoverage(coveredDirections, 'team_member_delete_confirmation')
 
-    const addShareholder = await sendAgentMessage(client, plannerSources, {
+    const addShareholder = await sendAgentMessage(client, runtimeSources, {
       label: 'add shareholder',
       threadId: forecast.json.threadId,
       message: '新增一个股东，名字叫 股东 C，投资额 10000，分红比例 0.1，只生成确认卡',
     })
     const addShareholderAction = findAction(addShareholder, 'workspace.update_draft', 'add shareholder')
-    assertSmoke(String(addShareholderAction.title).includes('新增股东'), `shareholder add did not use dedicated add planner: ${String(addShareholderAction.title)}`)
+    assertSmoke(String(addShareholderAction.title).includes('新增股东'), `shareholder add did not use the dedicated action builder: ${String(addShareholderAction.title)}`)
     assertSmoke(addShareholderAction.navigation?.route?.secondaryTab === 'capital', 'shareholder add did not navigate to capital inputs')
     await confirmAction(client, addShareholderAction, 'confirm add shareholder', actionKinds)
     const draftAfterAddShareholder = await client.get('/api/v1/workspace/draft')
@@ -472,24 +472,24 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     )
     rememberCoverage(coveredDirections, 'shareholder_add_confirmation')
 
-    const deleteShareholder = await sendAgentMessage(client, plannerSources, {
+    const deleteShareholder = await sendAgentMessage(client, runtimeSources, {
       label: 'delete shareholder',
       threadId: forecast.json.threadId,
       message: '删除股东 C',
     })
     const deleteShareholderAction = findAction(deleteShareholder, 'workspace.update_draft', 'delete shareholder')
-    assertSmoke(String(deleteShareholderAction.title).includes('删除股东'), `shareholder delete did not use dedicated delete planner: ${String(deleteShareholderAction.title)}`)
+    assertSmoke(String(deleteShareholderAction.title).includes('删除股东'), `shareholder delete did not use the dedicated action builder: ${String(deleteShareholderAction.title)}`)
     assertSmoke(deleteShareholderAction.riskLevel === 'high', 'shareholder delete should be a high-risk confirmation')
     await confirmAction(client, deleteShareholderAction, 'confirm delete shareholder', actionKinds)
     rememberCoverage(coveredDirections, 'shareholder_delete_confirmation')
 
-    const addCostItem = await sendAgentMessage(client, plannerSources, {
+    const addCostItem = await sendAgentMessage(client, runtimeSources, {
       label: 'add monthly fixed cost item',
       threadId: forecast.json.threadId,
       message: '新增每月固定成本，名字叫 房租，金额 1200，只生成确认卡',
     })
     const addCostItemAction = findAction(addCostItem, 'workspace.update_draft', 'add monthly fixed cost item')
-    assertSmoke(String(addCostItemAction.title).includes('新增基础成本项'), `cost item add did not use dedicated add planner: ${String(addCostItemAction.title)}`)
+    assertSmoke(String(addCostItemAction.title).includes('新增基础成本项'), `cost item add did not use the dedicated action builder: ${String(addCostItemAction.title)}`)
     assertSmoke(addCostItemAction.navigation?.route?.secondaryTab === 'cost', 'cost item add did not navigate to cost inputs')
     await confirmAction(client, addCostItemAction, 'confirm add monthly fixed cost item', actionKinds)
     const draftAfterAddCost = await client.get('/api/v1/workspace/draft')
@@ -500,23 +500,23 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     )
     rememberCoverage(coveredDirections, 'cost_item_add_confirmation')
 
-    const deleteCostItem = await sendAgentMessage(client, plannerSources, {
+    const deleteCostItem = await sendAgentMessage(client, runtimeSources, {
       label: 'delete monthly fixed cost item',
       threadId: forecast.json.threadId,
       message: '删除每月固定成本房租',
     })
     const deleteCostItemAction = findAction(deleteCostItem, 'workspace.update_draft', 'delete monthly fixed cost item')
-    assertSmoke(String(deleteCostItemAction.title).includes('删除基础成本项'), `cost item delete did not use dedicated delete planner: ${String(deleteCostItemAction.title)}`)
+    assertSmoke(String(deleteCostItemAction.title).includes('删除基础成本项'), `cost item delete did not use the dedicated action builder: ${String(deleteCostItemAction.title)}`)
     await confirmAction(client, deleteCostItemAction, 'confirm delete monthly fixed cost item', actionKinds)
     rememberCoverage(coveredDirections, 'cost_item_delete_confirmation')
 
-    const addStageCostType = await sendAgentMessage(client, plannerSources, {
+    const addStageCostType = await sendAgentMessage(client, runtimeSources, {
       label: 'add stage cost type',
       threadId: forecast.json.threadId,
       message: '新增成本类型，名字叫 摄影，按场计费，只生成确认卡',
     })
     const addStageCostTypeAction = findAction(addStageCostType, 'workspace.update_draft', 'add stage cost type')
-    assertSmoke(String(addStageCostTypeAction.title).includes('新增专项成本类型'), `stage cost type add did not use dedicated add planner: ${String(addStageCostTypeAction.title)}`)
+    assertSmoke(String(addStageCostTypeAction.title).includes('新增专项成本类型'), `stage cost type add did not use the dedicated action builder: ${String(addStageCostTypeAction.title)}`)
     await confirmAction(client, addStageCostTypeAction, 'confirm add stage cost type', actionKinds)
     const draftAfterAddStageCost = await client.get('/api/v1/workspace/draft')
     assertOk(draftAfterAddStageCost, 'draft after add stage cost type')
@@ -526,23 +526,23 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     )
     rememberCoverage(coveredDirections, 'stage_cost_type_add_confirmation')
 
-    const deleteStageCostType = await sendAgentMessage(client, plannerSources, {
+    const deleteStageCostType = await sendAgentMessage(client, runtimeSources, {
       label: 'delete stage cost type',
       threadId: forecast.json.threadId,
       message: '删除成本类型摄影',
     })
     const deleteStageCostTypeAction = findAction(deleteStageCostType, 'workspace.update_draft', 'delete stage cost type')
-    assertSmoke(String(deleteStageCostTypeAction.title).includes('删除专项成本类型'), `stage cost type delete did not use dedicated delete planner: ${String(deleteStageCostTypeAction.title)}`)
+    assertSmoke(String(deleteStageCostTypeAction.title).includes('删除专项成本类型'), `stage cost type delete did not use the dedicated action builder: ${String(deleteStageCostTypeAction.title)}`)
     await confirmAction(client, deleteStageCostTypeAction, 'confirm delete stage cost type', actionKinds)
     rememberCoverage(coveredDirections, 'stage_cost_type_delete_confirmation')
 
-    const addEmployee = await sendAgentMessage(client, plannerSources, {
+    const addEmployee = await sendAgentMessage(client, runtimeSources, {
       label: 'add employee',
       threadId: forecast.json.threadId,
       message: '新增员工，名字叫 场务 C，岗位 场务，月固定薪酬 3200，每场补贴 180，只生成确认卡',
     })
     const addEmployeeAction = findAction(addEmployee, 'workspace.update_draft', 'add employee')
-    assertSmoke(String(addEmployeeAction.title).includes('新增员工'), `employee add did not use dedicated employee planner: ${String(addEmployeeAction.title)}`)
+    assertSmoke(String(addEmployeeAction.title).includes('新增员工'), `employee add did not use the dedicated action builder: ${String(addEmployeeAction.title)}`)
     assertSmoke(addEmployeeAction.navigation?.route?.secondaryTab === 'cost', 'employee add did not navigate to cost inputs')
     await confirmAction(client, addEmployeeAction, 'confirm add employee', actionKinds)
     const draftAfterAddEmployee = await client.get('/api/v1/workspace/draft')
@@ -553,18 +553,18 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     )
     rememberCoverage(coveredDirections, 'employee_add_confirmation')
 
-    const deleteEmployee = await sendAgentMessage(client, plannerSources, {
+    const deleteEmployee = await sendAgentMessage(client, runtimeSources, {
       label: 'delete employee',
       threadId: forecast.json.threadId,
       message: '删除员工 场务 C',
     })
     const deleteEmployeeAction = findAction(deleteEmployee, 'workspace.update_draft', 'delete employee')
-    assertSmoke(String(deleteEmployeeAction.title).includes('删除员工'), `employee delete did not use dedicated employee planner: ${String(deleteEmployeeAction.title)}`)
+    assertSmoke(String(deleteEmployeeAction.title).includes('删除员工'), `employee delete did not use the dedicated action builder: ${String(deleteEmployeeAction.title)}`)
     assertSmoke(deleteEmployeeAction.riskLevel === 'high', 'employee delete should be a high-risk confirmation')
     await confirmAction(client, deleteEmployeeAction, 'confirm delete employee', actionKinds)
     rememberCoverage(coveredDirections, 'employee_delete_confirmation')
 
-    const renameWorkspace = await sendAgentMessage(client, plannerSources, {
+    const renameWorkspace = await sendAgentMessage(client, runtimeSources, {
       label: 'rename workspace',
       threadId: forecast.json.threadId,
       message: '把当前工作区改名为 Agent Smoke 工作区，只生成确认卡',
@@ -577,7 +577,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     assertSmoke(draftAfterRename.json.workspaceName === 'Agent Smoke 工作区', 'workspace rename did not persist')
     rememberCoverage(coveredDirections, 'workspace_rename')
 
-    const clarification = await sendAgentMessage(client, plannerSources, {
+    const clarification = await sendAgentMessage(client, runtimeSources, {
       label: 'clarification for missing ledger fields',
       threadId: forecast.json.threadId,
       message: '我想记一笔收入，但我还没告诉你月份、成员、线下张数和线上张数，请先问我需要补充什么',
@@ -601,7 +601,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
       message: '记住：默认记账成员是 成员 A',
     })
     assertSmoke(memoryWrite.statusCode === 200, `memory write failed: ${redactedResponse(memoryWrite)}`)
-    plannerSources.add(memoryWrite.json.planner)
+    runtimeSources.add(memoryWrite.json.runtimeSource)
     const memories = await client.get('/api/v1/agent/memories')
     assertSmoke(memories.statusCode === 200, `memory list failed: ${redactedResponse(memories)}`)
     assertSmoke(
@@ -610,7 +610,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     )
     rememberCoverage(coveredDirections, 'memory_write')
 
-    const multi = await sendAgentMessage(client, plannerSources, {
+    const multi = await sendAgentMessage(client, runtimeSources, {
       label: 'multi-step ledger and account refusal',
       threadId: null,
       message: '把 3 月默认记账成员线下 1 张、线上 0 张入账；同时帮我注销账号',
@@ -647,7 +647,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     const editedLedgerEntryId = String(confirmedLedger.json.result.id)
     assertSmoke(editedLedgerEntryId.length > 0, 'confirmed ledger did not return an entry id')
 
-    const genericIncome = await sendAgentMessage(client, plannerSources, {
+    const genericIncome = await sendAgentMessage(client, runtimeSources, {
       label: 'generic other income ledger entry',
       threadId: multi.json.threadId,
       message: '3 月记一笔其他收入 500 元，科目用其他收入或退款，发生日 2026-03-10，对方是场地方退款，只生成确认卡',
@@ -657,7 +657,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     await confirmAction(client, genericIncomeAction, 'confirm generic other income ledger entry', actionKinds)
     rememberCoverage(coveredDirections, 'ledger_generic_income')
 
-    const genericExpense = await sendAgentMessage(client, plannerSources, {
+    const genericExpense = await sendAgentMessage(client, runtimeSources, {
       label: 'generic expense ledger entry',
       threadId: multi.json.threadId,
       message: '3 月记一笔普通支出 300 元，科目是排练费，发生日 2026-03-12，备注 Agent smoke 排练支出，只生成确认卡',
@@ -669,7 +669,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     assertSmoke(genericExpenseEntryId.length > 0, 'generic expense did not return an entry id')
     rememberCoverage(coveredDirections, 'ledger_generic_expense')
 
-    const employeeExpense = await sendAgentMessage(client, plannerSources, {
+    const employeeExpense = await sendAgentMessage(client, runtimeSources, {
       label: 'employee related expense ledger entry',
       threadId: multi.json.threadId,
       message: '3 月给员工 A 记一笔员工场次支出 200 元，只生成确认卡',
@@ -679,7 +679,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     await confirmAction(client, employeeExpenseAction, 'confirm employee related expense ledger entry', actionKinds)
     rememberCoverage(coveredDirections, 'ledger_employee_related_expense')
 
-    const batchLedger = await sendAgentMessage(client, plannerSources, {
+    const batchLedger = await sendAgentMessage(client, runtimeSources, {
       label: 'batch planned ledger confirmations',
       threadId: multi.json.threadId,
       message: '按当前计划，把 3 月所有成员计划收入一键入账；再把 3 月所有员工场次支出按计划一键入账，只生成多张确认卡，不要直接执行',
@@ -692,7 +692,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     maxMultiStepCount = Math.max(maxMultiStepCount, batchLedger.json.planSteps.length)
     rememberCoverage(coveredDirections, 'ledger_batch_confirmation_cards')
 
-    const updateEntry = await sendAgentMessage(client, plannerSources, {
+    const updateEntry = await sendAgentMessage(client, runtimeSources, {
       label: 'update ledger entry',
       threadId: multi.json.threadId,
       message: `把 entryId 为 ${genericExpenseEntryId} 的 3 月排练支出金额改成 456 元，备注改成 Agent smoke 已修改，只生成确认卡`,
@@ -702,7 +702,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     assertSmoke(Number(confirmedUpdateEntry.json.result.amount) === 456, 'ledger update did not persist the edited amount')
     rememberCoverage(coveredDirections, 'ledger_update_entry')
 
-    const preciseVoidEntry = await sendAgentMessage(client, plannerSources, {
+    const preciseVoidEntry = await sendAgentMessage(client, runtimeSources, {
       label: 'precise void ledger entry',
       threadId: multi.json.threadId,
       message: `精确作废 entryId 为 ${genericExpenseEntryId} 的 3 月排练支出，只生成确认卡`,
@@ -711,7 +711,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     await confirmAction(client, preciseVoidAction, 'confirm precise void ledger entry', actionKinds)
     rememberCoverage(coveredDirections, 'ledger_precise_void_entry')
 
-    const restoreEntry = await sendAgentMessage(client, plannerSources, {
+    const restoreEntry = await sendAgentMessage(client, runtimeSources, {
       label: 'restore voided ledger entry',
       threadId: multi.json.threadId,
       message: `取消作废并恢复 entryId 为 ${genericExpenseEntryId} 的 3 月排练支出，只生成确认卡`,
@@ -720,7 +720,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     await confirmAction(client, restoreAction, 'confirm restore voided ledger entry', actionKinds)
     rememberCoverage(coveredDirections, 'ledger_restore_entry')
 
-    const varianceDetail = await sendAgentMessage(client, plannerSources, {
+    const varianceDetail = await sendAgentMessage(client, runtimeSources, {
       label: 'variance detail question',
       threadId: multi.json.threadId,
       message: '3 月排练费预实差异明细是什么？请只读回答并打开偏差页，不要修改数据',
@@ -730,7 +730,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     assertSmoke(String(varianceDetail.json.messages.at(-1)?.content ?? '').includes('排练'), 'variance detail did not mention the requested subject')
     rememberCoverage(coveredDirections, 'variance_detail_question')
 
-    const ledgerHistory = await sendAgentMessage(client, plannerSources, {
+    const ledgerHistory = await sendAgentMessage(client, runtimeSources, {
       label: 'ledger history filter question',
       threadId: multi.json.threadId,
       message: '帮我筛选 3 月账本历史：日期 2026-03-12，状态已过账，关键词排练，只读打开账本历史过滤器',
@@ -747,7 +747,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     )
     rememberCoverage(coveredDirections, 'ledger_history_filters')
 
-    const voidEntry = await sendAgentMessage(client, plannerSources, {
+    const voidEntry = await sendAgentMessage(client, runtimeSources, {
       label: 'void ledger entry',
       threadId: multi.json.threadId,
       message: `作废 entryId 为 ${editedLedgerEntryId} 的 3 月成员 A 入账，只生成确认卡`,
@@ -756,7 +756,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     await confirmAction(client, voidAction, 'confirm void ledger entry', actionKinds)
     rememberCoverage(coveredDirections, 'ledger_void_entry')
 
-    const onlineFactorWrite = await sendAgentMessage(client, plannerSources, {
+    const onlineFactorWrite = await sendAgentMessage(client, runtimeSources, {
       label: 'write online factor',
       threadId: multi.json.threadId,
       message: '把 4 月线上系数改成 0.3 并保存',
@@ -767,7 +767,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     assertSmoke(Number.isFinite(editedDraftRevision) && editedDraftRevision > 0, 'online factor write did not return a draft revision')
     rememberCoverage(coveredDirections, 'draft_specialized_write')
 
-    const genericPatch = await sendAgentMessage(client, plannerSources, {
+    const genericPatch = await sendAgentMessage(client, runtimeSources, {
       label: 'generic draft patch',
       threadId: multi.json.threadId,
       message: '把项目规划月份改成 13 并保存',
@@ -778,7 +778,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     editedDraftRevision = Number(confirmedPatch.json.result.revision)
     rememberCoverage(coveredDirections, 'draft_generic_patch')
 
-    const bundleExport = await sendAgentMessage(client, plannerSources, {
+    const bundleExport = await sendAgentMessage(client, runtimeSources, {
       label: 'export workspace bundle',
       threadId: multi.json.threadId,
       message: '导出当前工作区 JSON bundle',
@@ -802,7 +802,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
       snapshots: [],
       lastSavedAt: null,
     }
-    const bundleImport = await sendAgentMessage(client, plannerSources, {
+    const bundleImport = await sendAgentMessage(client, runtimeSources, {
       label: 'import workspace bundle',
       threadId: multi.json.threadId,
       message: `导入这个工作区 bundle 并覆盖当前草稿：${JSON.stringify(importBundle)}`,
@@ -813,7 +813,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     assertSmoke(Number(confirmedImport.json.result.config.operating.offlineUnitPrice) === 333, 'bundle import did not apply currentConfig')
     rememberCoverage(coveredDirections, 'workspace_import_bundle')
 
-    const lockPeriod = await sendAgentMessage(client, plannerSources, {
+    const lockPeriod = await sendAgentMessage(client, runtimeSources, {
       label: 'lock period',
       threadId: multi.json.threadId,
       message: '锁定 3 月账期',
@@ -822,7 +822,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     await confirmAction(client, lockAction, 'confirm lock period', actionKinds)
     rememberCoverage(coveredDirections, 'ledger_lock_period')
 
-    const unlockPeriod = await sendAgentMessage(client, plannerSources, {
+    const unlockPeriod = await sendAgentMessage(client, runtimeSources, {
       label: 'unlock period',
       threadId: multi.json.threadId,
       message: '解锁 3 月账期',
@@ -831,7 +831,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     await confirmAction(client, unlockAction, 'confirm unlock period', actionKinds)
     rememberCoverage(coveredDirections, 'ledger_unlock_period')
 
-    const snapshot = await sendAgentMessage(client, plannerSources, {
+    const snapshot = await sendAgentMessage(client, runtimeSources, {
       label: 'save snapshot',
       threadId: multi.json.threadId,
       message: '保存当前草稿快照',
@@ -841,7 +841,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     const snapshotVersionNo = versionNoFromResult(confirmedSnapshot.json.result)
     rememberCoverage(coveredDirections, 'workspace_save_snapshot')
 
-    const promoteSnapshot = await sendAgentMessage(client, plannerSources, {
+    const promoteSnapshot = await sendAgentMessage(client, runtimeSources, {
       label: 'promote snapshot to release',
       threadId: multi.json.threadId,
       message: `把快照 ${snapshotVersionNo} 发布为正式版，只生成确认卡`,
@@ -851,7 +851,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     assertSmoke(confirmedPromote.json.result.version?.kind === 'release', 'promote snapshot did not create a release')
     rememberCoverage(coveredDirections, 'workspace_promote_version')
 
-    const publish = await sendAgentMessage(client, plannerSources, {
+    const publish = await sendAgentMessage(client, runtimeSources, {
       label: 'publish and share',
       threadId: multi.json.threadId,
       message: '发布当前版本并创建分享链接',
@@ -869,7 +869,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     rememberCoverage(coveredDirections, 'workspace_publish_release')
     rememberCoverage(coveredDirections, 'share_create')
 
-    const revokeShare = await sendAgentMessage(client, plannerSources, {
+    const revokeShare = await sendAgentMessage(client, runtimeSources, {
       label: 'revoke share',
       threadId: multi.json.threadId,
       message: `撤销发布版 ${releaseVersionNo} 的分享链接`,
@@ -878,7 +878,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     await confirmAction(client, revokeAction, 'confirm revoke share', actionKinds)
     rememberCoverage(coveredDirections, 'share_revoke')
 
-    const rollback = await sendAgentMessage(client, plannerSources, {
+    const rollback = await sendAgentMessage(client, runtimeSources, {
       label: 'rollback version',
       threadId: multi.json.threadId,
       message: `恢复到版本 ${snapshotVersionNo}`,
@@ -887,7 +887,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     await confirmAction(client, rollbackAction, 'confirm rollback version', actionKinds)
     rememberCoverage(coveredDirections, 'workspace_rollback_version')
 
-    const deleteSnapshot = await sendAgentMessage(client, plannerSources, {
+    const deleteSnapshot = await sendAgentMessage(client, runtimeSources, {
       label: 'delete snapshot',
       threadId: multi.json.threadId,
       message: `删除版本 ${snapshotVersionNo}`,
@@ -896,7 +896,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     await confirmAction(client, deleteAction, 'confirm delete snapshot', actionKinds)
     rememberCoverage(coveredDirections, 'workspace_delete_version')
 
-    const resetDraft = await sendAgentMessage(client, plannerSources, {
+    const resetDraft = await sendAgentMessage(client, runtimeSources, {
       label: 'reset draft',
       threadId: multi.json.threadId,
       message: '重置当前草稿为默认模型',
@@ -905,7 +905,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     await confirmAction(client, resetAction, 'confirm reset draft', actionKinds)
     rememberCoverage(coveredDirections, 'workspace_reset_draft')
 
-    const complexOperatingModel = await sendAgentMessage(client, plannerSources, {
+    const complexOperatingModel = await sendAgentMessage(client, runtimeSources, {
       label: 'complex operating model',
       threadId: null,
       automationLevel: 'high',
@@ -967,7 +967,7 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
       ok: true,
       provider,
       model: compatibleModel,
-      plannerSources: Array.from(plannerSources),
+      runtimeSources: Array.from(runtimeSources),
       coveredDirections: Array.from(coveredDirections),
       memoryCount: memories.json.memories.length,
       newThreadMemoryInjected: true,

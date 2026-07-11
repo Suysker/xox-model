@@ -106,9 +106,9 @@
   - 删除后 Agent runtime 回到服务端环境变量配置；如果 provider 被选择但没有 key，仍然 fail-closed，不回退到本地规则伪造 tool call
 - `GET /api/v1/agent/threads`
   - 返回当前登录用户 / 当前工作区内最近 30 个 Agent 对话摘要
-  - 摘要包含标题、最近消息、最新 run 状态、planner source 和待确认动作数量
+  - 摘要包含标题、最近消息、最新 run 状态、`runtimeSource` 和待确认动作数量
 - `GET /api/v1/agent/threads/{threadId}`
-  - 返回可恢复的线程状态：messages、runs、最新 run 的 `runEvents`、`planSteps`、`actionRequests`、`navigationEvents` 和 planner source
+  - 返回可恢复的线程状态：messages、runs、最新 run 的 `runEvents`、`planSteps`、`actionRequests`、`navigationEvents` 和 `runtimeSource`
   - `runEvents` 是服务端持久化的运行轨迹，覆盖 run 入队、worker 认领、模型规划、provider chunk 预览、工具计划、确认卡生成、确认卡编辑、执行、取消和失败；不包含 provider 原始响应、提示词全文或密钥
   - OpenAI-compatible provider 流式输出会以 `provider_stream_started / provider_stream_delta / provider_stream_completed` 进入 `runEvents`；`provider_stream_delta.data` 只包含脱敏截断后的 `kind`、短 `delta`、累计 `preview`、`toolCallIndex`、`toolName`、`argumentsPreview` 等 UI 预览字段，不返回原始 SSE 行、HTTP header、完整 tool arguments 或 API key
   - 只能读取当前用户 / 当前工作区下的 thread；跨用户或跨工作区返回 `403`
@@ -123,12 +123,12 @@
   - 已经 `completed / failed / cancelled` 的 run 以幂等方式返回 thread state，不会重复写入取消消息
 - `POST /api/v1/agent/messages`
   - 入参：`threadId?`、`message`、`background?`
-  - 同步模式返回新增对话消息、`status=completed`、`planner`、显式页面导航事件、`runEvents`、`planSteps`、待确认动作卡
-  - 产品前端默认传 `background=true`：接口先创建 `agent_runs` 和用户消息并立即返回 `status=running / planner=null`，模型规划、确认卡生成和 assistant 回复由 Agent run worker 认领 lease 后继续落库
+  - 同步模式返回新增对话消息、`status=completed`、`runtimeSource`、显式页面导航事件、`runEvents`、`planSteps`、待确认动作卡
+  - 产品前端默认传 `background=true`：接口先创建 `agent_runs` 和用户消息并立即返回 `status=running / runtimeSource=null`，模型回合、确认卡生成和 assistant 回复由 Agent run worker 认领 lease 后继续落库
   - 前端应保存返回的 `threadId`，优先订阅 `GET /api/v1/agent/threads/{threadId}/events`，连接失败时轮询 `GET /api/v1/agent/threads/{threadId}`，以恢复 running/completed/failed run、消息、计划步骤、导航事件和待确认动作
   - `agent_runs` 保存输入消息、worker lease 和 heartbeat；每个 API worker 会按 `AGENT_RUN_WORKER_POLL_MS` 扫描未租约、同 worker 或租约已过期且尚未产生运行产物的 `running` run。若 run 已经有部分计划步骤或确认卡，则标记 failed 并取消未执行确认卡，避免重复创建或执行半成品动作
   - 后台执行在回写 assistant message、计划步骤和确认卡前会刷新 worker lease；如果租约已经被其他 worker 认领，迟到的模型结果会被丢弃，不能写入 pending 动作
-  - `planner` 为 `openai_agents`、`openai_compatible_tool_calls`、`rules` 或运行中时的 `null`
+  - `runtimeSource` 为 `openai_agents`、`openai_compatible_tool_calls`、`rules` 或运行中时的 `null`；它只表示 provider/runtime 诊断来源，不拥有 Loop 控制权
   - 一条消息可拆成多个 `planSteps`，写入步骤会关联一个 server-owned action request；eligible action 可能按本轮 `automationLevel` 自动执行，也可能停在待确认动作卡
   - 只有模型返回 provider-native tool call 才会生成业务 action request；模型只返回 assistant 文本时按普通回复持久化，不用本地规则猜测业务动作。`rules` 只作为本地/CI no-op 生命周期路径，不生成业务 action request。
   - 工具 observation 现在带有 `outcome` 语义：`completed_valid / completed_invalid / failed_repairable / failed_terminal / pending_human / policy_blocked`。可修复失败会回到同一个 Agentic OS harness loop；终态失败、策略阻断和待人工确认仍会中断或失败。
