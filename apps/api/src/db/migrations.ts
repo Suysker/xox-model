@@ -17,7 +17,7 @@ async function addColumnIfMissing(db: Kysely<Database>, tableName: string, colum
   }
 }
 
-async function renameColumnIfPresent(
+async function migrateRenamedColumnIfPresent(
   db: Kysely<Database>,
   tableName: string,
   oldColumnName: string,
@@ -26,7 +26,23 @@ async function renameColumnIfPresent(
   const columns = await tableColumns(db, tableName)
   if (!columns.has(oldColumnName)) return
   if (columns.has(newColumnName)) {
-    throw new Error(`${tableName} contains both ${oldColumnName} and ${newColumnName}.`)
+    const conflicts = await sql<{ count: number }>`
+      SELECT COUNT(*) AS count
+      FROM ${sql.raw(tableName)}
+      WHERE ${sql.raw(oldColumnName)} IS NOT NULL
+        AND ${sql.raw(newColumnName)} IS NOT NULL
+        AND ${sql.raw(oldColumnName)} <> ${sql.raw(newColumnName)}
+    `.execute(db)
+    const conflictCount = Number(conflicts.rows[0]?.count ?? 0)
+    if (conflictCount > 0) {
+      throw new Error(`${tableName} contains conflicting ${oldColumnName} and ${newColumnName} values.`)
+    }
+    await exec(
+      db,
+      `UPDATE ${tableName} SET ${newColumnName} = ${oldColumnName} WHERE ${newColumnName} IS NULL AND ${oldColumnName} IS NOT NULL`,
+    )
+    await exec(db, `ALTER TABLE ${tableName} DROP COLUMN ${oldColumnName}`)
+    return
   }
   await exec(db, `ALTER TABLE ${tableName} RENAME COLUMN ${oldColumnName} TO ${newColumnName}`)
 }
@@ -285,7 +301,7 @@ export async function runMigrations(db: Kysely<Database>) {
   )
   await addColumnIfMissing(db, 'agent_runs', 'input_message_id', 'VARCHAR(36)')
   await addColumnIfMissing(db, 'agent_runs', 'input_message', 'TEXT')
-  await renameColumnIfPresent(db, 'agent_runs', 'planner_source', 'runtime_source')
+  await migrateRenamedColumnIfPresent(db, 'agent_runs', 'planner_source', 'runtime_source')
   await addColumnIfMissing(db, 'agent_runs', 'runtime_source', 'VARCHAR(64)')
   await addColumnIfMissing(db, 'agent_runs', 'automation_level', "VARCHAR(16) NOT NULL DEFAULT 'manual'")
   await addColumnIfMissing(db, 'agent_runs', 'goal_status', 'VARCHAR(32)')

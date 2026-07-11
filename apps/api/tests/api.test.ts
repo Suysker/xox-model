@@ -741,6 +741,49 @@ describe('xox TypeScript API', () => {
     await closeHarness(harness)
   })
 
+  it('converges the legacy planner source column when a prior migration already added runtime source', async () => {
+    const harness = await buildHarness('migrations-planner-source')
+    const client = new Client(harness.app)
+    const user = await registerUser(client, 'migrations-planner-source@example.com', 'Migration Source')
+    const workspace = await harness.db.selectFrom('workspaces').selectAll().where('owner_id', '=', user.id).executeTakeFirstOrThrow()
+    const now = new Date().toISOString()
+
+    await sql.raw('ALTER TABLE agent_runs ADD COLUMN planner_source VARCHAR(64)').execute(harness.db)
+    await harness.db.insertInto('agent_threads').values({
+      id: 'thread-migrations-planner-source',
+      workspace_id: workspace.id,
+      user_id: user.id,
+      title: '迁移测试',
+      created_at: now,
+      updated_at: now,
+    }).execute()
+    await harness.db.insertInto('agent_runs').values({
+      id: 'run-migrations-planner-source',
+      thread_id: 'thread-migrations-planner-source',
+      user_id: user.id,
+      status: 'completed',
+      input_message_id: null,
+      input_message: null,
+      runtime_source: null,
+      automation_level: 'manual',
+      goal_status: null,
+      worker_id: null,
+      lease_expires_at: null,
+      heartbeat_at: null,
+      created_at: now,
+      completed_at: now,
+    }).execute()
+    await sql.raw("UPDATE agent_runs SET planner_source = 'legacy-runtime' WHERE id = 'run-migrations-planner-source'").execute(harness.db)
+
+    await runMigrations(harness.db)
+
+    const row = await harness.db.selectFrom('agent_runs').select(['runtime_source']).where('id', '=', 'run-migrations-planner-source').executeTakeFirstOrThrow()
+    const columns = await sql<{ name: string }>`PRAGMA table_info(agent_runs)`.execute(harness.db)
+    expect(row.runtime_source).toBe('legacy-runtime')
+    expect(columns.rows.map((column) => column.name)).not.toContain('planner_source')
+    await closeHarness(harness)
+  })
+
   it('handles auth session lifecycle and audit', async () => {
     const harness = await buildHarness('auth')
     const client = new Client(harness.app)
