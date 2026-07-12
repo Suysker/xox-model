@@ -18,7 +18,7 @@ import {
   type HostObservationBridge,
 } from '@agentic-os/core'
 import {
-  createAgentServer,
+  createSaaSAgentHost,
   createAgentServerSaaSHostExecutionPorts,
   createAgentServerSaaSHostStorePort,
   createAgentServerSaaSToolDefinition,
@@ -52,8 +52,10 @@ import {
 import {
   addAgenticOsActionRunEvent,
   addRunEvent,
+  commitReservedAgenticOsRunEvent,
+  reserveAgenticOsRunEvent,
 } from '../agentic-os/xox-run-event-store-adapter.js'
-import { createXoxHarnessControlPlane } from '../agentic-os/xox-harness-control-store-adapter.js'
+import { createXoxHarnessControlInfrastructure } from '../agentic-os/xox-harness-control-store-adapter.js'
 import { addMessage } from '../agentic-os/xox-thread-store-adapter.js'
 import {
   AGENT_TOOL_REGISTRY,
@@ -338,6 +340,12 @@ function xoxObservationIndex(state: XoxHostState, observation: AgentToolObservat
 }
 
 async function appendXoxAgenticOsRunEvent(ctx: XoxAgentRunContext, event: OsRunEvent) {
+  const scope = osScope(ctx)
+  if (event.scope.tenantId !== scope.tenantId || event.scope.workspaceId !== scope.workspaceId ||
+      event.scope.userId !== scope.userId) {
+    throw new Error('Agentic OS run event scope does not belong to the xox request context.')
+  }
+  await commitReservedAgenticOsRunEvent(ctx.db, event)
   if (event.type.startsWith('action.')) {
     await addAgenticOsActionRunEvent(ctx.db, {
       threadId: ctx.thread.id,
@@ -384,6 +392,7 @@ function createXoxHostProfile(
   ctx: XoxAgentRunContext,
   options: XoxAgentHarnessOptions,
   state: XoxHostState,
+  infrastructure: ReturnType<typeof createXoxHarnessControlInfrastructure>,
 ): AgentHostProfile {
   const storeProfile = {
     loadRun: async () => {
@@ -395,6 +404,9 @@ function createXoxHostProfile(
       const active = await options.beforeStateWrite()
       return active ? { status: 'active', lease } : { status: 'lost', reason: 'xox run lease is no longer active.' }
     },
+    reserveRunEventSequence: ({ run, type }) => reserveAgenticOsRunEvent(ctx.db, {
+      threadId: run.threadId, runId: run.runId, type,
+    }),
     appendEvent: (event) => appendXoxAgenticOsRunEvent(ctx, event),
     finishRun: async (result) => {
       state.finishedResult = result
@@ -411,6 +423,7 @@ function createXoxHostProfile(
   const adapterName = useOpenAIAgents ? 'openai_agents' : 'openai_compatible'
   const apiFamily = useOpenAIAgents ? 'openai-responses' : 'openai-chat-completions'
   const runtime = createOpenAIRuntimePlane({
+    executionStore: infrastructure.runtimeExecutionStore,
     modelControl: {
       catalog: [{
         schemaVersion: 'agentic-os.model_catalog_entry.v1',
@@ -522,7 +535,7 @@ function createXoxHostProfile(
   return {
     store: createAgentServerSaaSHostStorePort(storeProfile),
     runtime,
-    control: createXoxHarnessControlPlane(ctx.db),
+    control: infrastructure.control,
     tools: executionPorts.tools,
     actions: executionPorts.actions,
     sandbox: executionPorts.sandbox,
@@ -542,6 +555,25 @@ function createXoxHostProfile(
     },
     ...(options.hooks === undefined ? {} : { hooks: options.hooks }),
   }
+}
+
+function createXoxAgentServer(
+  ctx: XoxAgentRunContext,
+  options: XoxAgentHarnessOptions,
+  state: XoxHostState,
+) {
+  const infrastructure = createXoxHarnessControlInfrastructure(ctx.db)
+  return createSaaSAgentHost(
+    createXoxHostProfile(ctx, options, state, infrastructure),
+    {
+      trace: {
+        journal: infrastructure.traceJournal,
+        writerOwnerId: `${ctx.runId}:xox-worker`,
+        contentPolicyId: 'agentic-os.metadata-only.v1',
+        sourceRevisions: { host: 'xox-model.agentic-os.v1' },
+      },
+    },
+  )
 }
 
 async function latestRunRows(ctx: AgentTurnContext) {
@@ -630,16 +662,21 @@ export async function resumeXoxAgentRunAfterActionConfirmation(input: {
   })
   const request = osRunInput(turnCtx, objective)
   const osRun: OsRunRecord = { ...osRunRecord(turnCtx, run), status: 'awaiting_confirmation' }
-  const server = createAgentServer(createXoxHostProfile(turnCtx, {
+  const server = createXoxAgentServer(turnCtx, {
       beforeStateWrite,
       ...(input.hooks === undefined ? {} : { hooks: input.hooks }),
-    }, state))
+    }, state)
   const actionExecution = await server.confirmAction({
     run: osRun,
     actionRequest: xoxOsActionRequest(input.action),
     actorId: input.user.id,
     ...(input.abortSignal === undefined ? {} : { abortSignal: input.abortSignal }),
   })
+  const resumed = await server.resumeRun({
+    run: osRun,
+    request,
+    observations: [actionExecution.observation],
+  }, input.abortSignal === undefined ? {} : { abortSignal: input.abortSignal })
   if (state.actionRows.some((row) => row.status === 'pending')) {
     const actionRequest = await input.db.selectFrom('agent_action_requests').selectAll().where('id', '=', input.action.id).executeTakeFirstOrThrow()
     return {
@@ -648,11 +685,6 @@ export async function resumeXoxAgentRunAfterActionConfirmation(input: {
       runResult: null,
     }
   }
-  const resumed = await server.resumeRun({
-    run: osRun,
-    request,
-    observations: [actionExecution.observation],
-  }, input.abortSignal === undefined ? {} : { abortSignal: input.abortSignal })
   const runResult = await finalizeAgenticOsResult(turnCtx, state, resumed, { beforeStateWrite })
   const actionRequest = await input.db.selectFrom('agent_action_requests').selectAll().where('id', '=', input.action.id).executeTakeFirstOrThrow()
   return {
@@ -686,7 +718,7 @@ export async function executeXoxAgentRun(
     data: { harness: 'agentic-os' },
   })
   const request = osRunInput(turnCtx, objective)
-  const result = await createAgentServer(createXoxHostProfile(turnCtx, options, state)).run(
+  const result = await createXoxAgentServer(turnCtx, options, state).run(
     request,
     ctx.abortSignal === undefined ? {} : { abortSignal: ctx.abortSignal },
   )

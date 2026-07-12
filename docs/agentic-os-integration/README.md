@@ -19,6 +19,8 @@ Agentic OS owns:
 - agent loop and terminal-state decisions
 - provider turn execution, stream normalization, replay, retry, and recovery
 - inline model-turn decisions, Runtime Executor calls, tool/result causality, and exact resume
+- V4 causal model history, provider acknowledgement, and provider-family projection
+- generation-fenced causal journal, trace/span assembly, trajectory, and exporter boundaries
 - sandbox execution protocol, backend broker, result parsing, repair semantics, and runtime metadata
 - action lifecycle semantics, approval authority, resume, interruption, and finalization
 - mandatory/additive Evaluator composition, evidence freshness, repair feedback, and Turn Finalizer
@@ -49,15 +51,20 @@ xox-model owns:
 
 ## Recent Integration State
 
-ADR0070-0073 are the current integration baseline.
+ADR0074-0076 are the current integration baseline.
 
 - `xox-host-profile.ts` supplies declarative catalog/credentials, business
   tools/actions/sandbox/context and additive product facts to
-  `createAgentServer()`; it has no local continuation engine, Runtime selector, Evaluator,
+  `createSaaSAgentHost()`; it has no local continuation engine, Runtime selector, Evaluator,
   continuation or terminal callback.
 - `xox-harness-control-store-adapter.ts` maps SQLite/Kysely to
   `AgentServerControlRecordBackend`, including tenant/workspace/user scoped
-  records and atomic loop-state-plus-transition CAS.
+  records and atomic loop-state-plus-transition CAS. The same backend supplies
+  durable Runtime Execution Store and Trace journal records.
+- xox does not build assistant `tool_calls`, tool result replay, provider
+  acknowledgement cursors, trace ids, span parents, or trajectory rows.
+- the shared fake provider enforces the real causal pairing contract, including
+  parallel source order and incomplete-group rejection.
 - Recovery keeps `maxIterations` on the original `AgentRunInput`, submits
   explicit observations, and never reconstructs model history from loose
   messages.
@@ -87,6 +94,15 @@ M191 harness frontend cutover is also part of the baseline.
 - xox web consumes Agentic OS harness UI frames through `@agentic-os/ui-react` / `@agentic-os/ui`.
 - Default user surface hides raw harness internals and shows assistant text, tool activity, approvals, and final output.
 - Operator/developer details remain gated by the host shell.
+
+ADR0077 evaluator timing is part of the current baseline.
+
+- xox declares no `reviewTimeoutMs`, absolute Review deadline, or Lane
+  deadline; Agentic OS owns admission, parent clamping, and exact resume.
+- The SQL control adapter exposes no V1 reader, converter, migration API, or
+  compatibility alias. Old runs drain or terminate before V2 deployment.
+- Downstream tests cover a delayed three-turn Candidate, workspace provenance,
+  and an expired exact-resume Lane without a local evaluator loop.
 
 ## Do Not Reintroduce
 

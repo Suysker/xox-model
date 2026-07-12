@@ -1,6 +1,6 @@
 # Operations
 
-Status: Current after Agentic OS ADR 0074
+Status: Current after Agentic OS ADR 0075, ADR 0076, and ADR 0077
 
 ## Local Verification
 
@@ -15,7 +15,8 @@ back to natural-language rules that fabricate business tool calls.
 
 ## Agent Runtime
 
-- xox enters Agentic OS through `xox-agentic-os-host-kit.ts`.
+- xox enters Agentic OS through `createSaaSAgentHost()` in
+  `host-profile/xox-host-profile.ts`.
 - Runtime source is `openai_agents`, `openai_compatible_tool_calls`, or the
   explicit local/CI `rules` path.
 - Current DB/API/UI names are `runtime_source`, `AgentRuntimeSource`, and
@@ -23,8 +24,19 @@ back to natural-language rules that fabricate business tool calls.
 - Normal model execution uses Agentic OS Runtime purpose `agent_turn`.
 - Provider adapters normalize streams and tool calls; they do not execute xox
   tools or own continuation.
-- Run recovery resumes Agentic OS `AgentLoopStateV3` from tenant-scoped durable
+- Run recovery resumes Agentic OS `AgentLoopStateV4` from tenant-scoped durable
   control records.
+- `createXoxHarnessControlInfrastructure()` supplies the durable control,
+  Runtime Execution Store, and Trace journal from one scoped SQL CAS backend.
+- Before the ADR0077 binary cutover, stop new run admission, let V1 runs finish
+  on the old binary or terminate them, and purge their evaluator control rows.
+  Do not transform or resume old state; unfinished work starts as a new run
+  after the V2-only deployment.
+- Monitor Agentic OS Evaluator canary metrics for admission delay, Review
+  duration, quota saturation, exact-deadline conflicts, typed timeout causes,
+  and withheld finalization. xox must not patch an active deadline.
+- Provider history and trace spans are Agentic OS-owned. Do not reconstruct
+  assistant `tool_calls`, tool results, acknowledgement, or parent spans here.
 
 ## Provider Settings
 
@@ -48,11 +60,13 @@ provider secrets, user session tokens, and container-external paths are denied.
 - interrupted side effects are reconciled according to Agentic OS effect
   disposition and are not blindly replayed;
 - late workers that lose their lease cannot publish terminal state.
+- Review admission and Lane start deadlines are Agentic OS-owned durable facts;
+  recovery reuses them exactly and never derives a host-local window.
 
 ## Diagnostics
 
-Use `runEvents`, Agentic OS operator/developer projections, and durable control
-records. Do not log provider keys, raw authorization headers, full prompts,
+Use `runEvents`, the scoped Agentic OS journal/trajectory/operator projections,
+and durable control records. Do not log provider keys, raw authorization headers, full prompts,
 unbounded tool arguments, worker-local paths, or hidden reasoning.
 
 The pre-ADR0074 operational ledger is retained at

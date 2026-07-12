@@ -96,7 +96,11 @@ function harnessUiProjection(): AgentHarnessUiProjection {
     }],
     traceItems: [{
       traceId: 'trace-1',
+      spanId: 'span-tool-1',
       runId: 'run-1',
+      links: [],
+      operationType: 'tool.call',
+      operationRef: 'tool-1',
       kind: 'tool',
       title: 'workspace_update',
       status: 'completed',

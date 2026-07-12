@@ -16,6 +16,7 @@
     "build:api": "npm run build --workspace @xox/api",
     "test:api": "npm run test --workspace @xox/api",
     "smoke:agent": "npm run smoke:agent --workspace @xox/api",
+    "smoke:agent:m189": "npm run smoke:agent:m189 --workspace @xox/api",
     "dev": "npm run dev:web",
     "build": "npm run build:web && npm run build:api",
     "test": "npm run test:web && npm run test:api"

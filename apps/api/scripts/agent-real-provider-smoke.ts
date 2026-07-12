@@ -30,6 +30,17 @@ type SmokeSummary = {
   auditCount: number
 }
 
+type M189SmokeSummary = {
+  ok: true
+  mode: 'm189'
+  provider: string
+  model: string
+  runtimeSources: string[]
+  modelTurnCount: number
+  toolNames: string[]
+  finalAnswerPresent: true
+}
+
 class SmokeClient {
   private cookie = ''
 
@@ -273,7 +284,7 @@ async function confirmAction(client: SmokeClient, action: any, label: string, ac
   return response
 }
 
-export async function runRealProviderSmoke(): Promise<SmokeSummary> {
+export async function runRealProviderSmoke(): Promise<SmokeSummary | M189SmokeSummary> {
   loadLocalEnvFiles()
   const apiKey = process.env.OPENAI_COMPATIBLE_API_KEY ?? process.env.DEEPSEEK_API_KEY
   if (!apiKey) {
@@ -340,6 +351,40 @@ export async function runRealProviderSmoke(): Promise<SmokeSummary> {
     assertSmoke(fetchedProviderSetting.json.setting?.model === compatibleModel, 'provider setting fetch returned the wrong model')
     assertSmoke(!JSON.stringify(fetchedProviderSetting.json).includes(apiKey), 'provider setting fetch leaked API key')
     rememberCoverage(coveredDirections, 'tenant_provider_settings')
+
+    if (process.argv.includes('--m189-only')) {
+      const response = await sendAgentMessage(client, runtimeSources, {
+        label: 'M189 causal shareholder continuation',
+        message: [
+          '请先读取当前工作区第一个股东的投资额和 12 个月总利润。',
+          '我是第一个股东，投入的钱来自银行贷款，年利率 5%。',
+          '请计算扣除贷款利息后的个人投资回报率；需要计算时使用受控 sandbox。',
+          '不要修改任何业务数据。',
+        ].join('\n'),
+      })
+      const runEvents = Array.isArray(response.json.runEvents) ? response.json.runEvents : []
+      const modelTurnCount = runEvents.filter((event: any) => event.type === 'model_turn_started').length
+      const toolNames = Array.from(new Set(runEvents.flatMap((event: any) =>
+        event.type === 'tool_call_completed' && typeof event.data?.toolName === 'string'
+          ? [event.data.toolName]
+          : []))) as string[]
+      const finalAnswer = String(response.json.messages?.at(-1)?.content ?? '').trim()
+      assertSmoke(modelTurnCount >= 2, `M189 did not continue after the first tool result: ${modelTurnCount}`)
+      assertSmoke(toolNames.includes('data_query_workspace'), `M189 did not read workspace facts: ${toolNames.join(', ')}`)
+      assertSmoke(!runEvents.some((event: any) => event.type === 'provider_stream_failed'), 'M189 provider projection failed')
+      assertSmoke(response.json.actionRequests?.length === 0, 'M189 read-only smoke created a write action')
+      assertSmoke(finalAnswer.length > 0, 'M189 continuation did not produce a final answer')
+      return {
+        ok: true,
+        mode: 'm189',
+        provider,
+        model: compatibleModel,
+        runtimeSources: Array.from(runtimeSources),
+        modelTurnCount,
+        toolNames,
+        finalAnswerPresent: true,
+      }
+    }
 
     const greeting = await sendAgentMessage(client, runtimeSources, {
       label: 'basic conversational reply',

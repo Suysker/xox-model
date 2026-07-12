@@ -1,6 +1,6 @@
 # xox-model Agent Host Design
 
-Status: Current after Agentic OS ADR 0074
+Status: Current after Agentic OS ADR 0075, ADR 0076, and ADR 0077
 
 xox-model is a SaaS business host for Agentic OS. It provides scoped context,
 tools, actions, skills, memory persistence, sandbox input bundles, model
@@ -17,15 +17,18 @@ flowchart LR
   LOOP --> RUNTIME["Runtime Executor<br/>agent_turn"]
   LOOP --> TOOLS["xox tools and actions"]
   LOOP --> EVAL["Agentic OS Evaluator"]
+  LOOP <--> HISTORY["Agentic OS causal model history"]
+  LOOP --> TRACE["Agentic OS durable Trace Plane"]
   EVAL --> FINAL["Agentic OS Finalizer"]
   TOOLS --> DOMAIN["workspace / ledger / share services"]
 ```
 
 Agentic OS owns:
 
-- `AgentLoopStateV3` and transition V2;
+- `AgentLoopStateV4` and transition V2;
 - one inline model-turn path and exact resume;
-- provider tool-call/result causality;
+- assistant-before-effect and exact provider tool-call/result causality;
+- durable run journal, causal spans, trajectory, and exporter boundaries;
 - approval, clarification, wait, handoff, child-run, and compaction control;
 - progress-plan state as an optional ordinary tool result;
 - Evaluator obligations and finalization.
@@ -106,8 +109,11 @@ worker-local paths, and unbounded payloads are never projected.
 ## Invariants
 
 1. Every normal model call has Runtime purpose `agent_turn`.
-2. Tool results keep canonical and provider tool-call correlation.
+2. Tool results keep canonical/provider identity and commit in source order.
 3. Text plus actionable calls cannot finalize a run.
+4. xox never constructs provider assistant/tool replay or trace span hierarchy.
+5. Production runtime and trace storage use the scoped SQL CAS backend; there
+   is no in-memory fallback.
 4. Evaluator repair returns as an observation, not a host callback.
 5. Runtime/provider identity is exposed only as `runtimeSource`.
 6. All stores and events are tenant/workspace/run scoped.

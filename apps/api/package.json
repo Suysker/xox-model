@@ -7,7 +7,8 @@
     "dev": "cross-env XOX_SANDBOX_BACKEND=local-script tsx watch src/main.ts",
     "build": "tsc --noEmit",
     "test": "vitest run",
-    "smoke:agent": "tsx scripts/agent-real-provider-smoke.ts"
+    "smoke:agent": "tsx scripts/agent-real-provider-smoke.ts",
+    "smoke:agent:m189": "tsx scripts/agent-real-provider-smoke.ts --m189-only"
   },
   "dependencies": {
     "@agentic-os/contracts": "^0.1.0",

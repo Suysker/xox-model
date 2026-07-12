@@ -192,6 +192,60 @@ export async function addRunEvent(
   return row
 }
 
+export async function reserveAgenticOsRunEvent(
+  db: Kysely<Database>,
+  input: { threadId: string; runId: string; type: OsRunEvent['type'] },
+) {
+  const row = await runEventAppender.append({
+    runId: input.runId,
+    loadMaxSequence: () => loadRunEventMaxSequence(db, input.runId),
+    insert: ({ sequence }) => insertRunEvent(db, {
+      threadId: input.threadId, runId: input.runId,
+      type: 'agentic_os_event_reserved', title: 'Agentic OS event reserved',
+      message: input.type, status: 'queued', channel: 'lifecycle',
+      data: { canonicalEventType: input.type, harness: 'agentic-os' },
+    }, sequence),
+  })
+  return { eventId: row.id, sequence: row.sequence_no }
+}
+
+export async function commitReservedAgenticOsRunEvent(
+  db: Kysely<Database>,
+  event: OsRunEvent,
+) {
+  const terminal = event.type === 'run.finished'
+  const status = terminal
+    ? event.payload.status === 'completed' ? 'completed'
+      : event.payload.status === 'cancelled' ? 'cancelled' : 'failed'
+    : event.type === 'lane.lease_lost' ? 'failed' : 'running'
+  const result = await db.updateTable('agent_run_events')
+    .where('id', '=', event.eventId)
+    .where('run_id', '=', event.runId)
+    .where('thread_id', '=', event.threadId)
+    .where('sequence_no', '=', event.sequence)
+    .where('event_type', '=', 'agentic_os_event_reserved')
+    .set({
+      event_type: `agentic_os.${event.type}`,
+      title: event.type.slice(0, 180),
+      message: `Canonical Agentic OS event ${event.type}.`,
+      status,
+      channel: runEventChannel(event.channel),
+      data_json: jsonString({
+        harness: 'agentic-os', canonicalEventType: event.type,
+        payload: JSON.parse(JSON.stringify(event.payload)),
+      }),
+      created_at: event.createdAt,
+    })
+    .executeTakeFirst()
+  if (Number(result.numUpdatedRows) !== 1) {
+    const existing = await db.selectFrom('agent_run_events').selectAll()
+      .where('id', '=', event.eventId).executeTakeFirst()
+    if (existing?.event_type !== `agentic_os.${event.type}`) {
+      throw new Error('Reserved Agentic OS run event could not be committed exactly once.')
+    }
+  }
+}
+
 export async function addAgenticOsActionRunEvent(
   db: Kysely<Database>,
   input: {

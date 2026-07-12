@@ -47,6 +47,18 @@ function expectNoSourceReferences(patterns: string[]) {
 }
 
 describe('Agentic OS downstream boundary', () => {
+  it('does not derive or override Agentic OS evaluator deadlines', () => {
+    expectNoSourceReferences([
+      'evaluatorDeadlineMs',
+      'reviewTimeoutMs',
+      'reviewDeadlineAt',
+      'laneDeadlineAt',
+      'migrateAgentEvaluatorV1ToV2',
+      'migrateEvaluatorV1ToV2',
+      'evaluator-v1-migration',
+    ])
+  })
+
   it('keeps xox as host wiring instead of a local harness agent', () => {
     expectAbsent([
       'agent/host-profile/xox-agent-run-profile.ts',
@@ -122,8 +134,9 @@ describe('Agentic OS downstream boundary', () => {
     const host = source('agent/host-profile/xox-host-profile.ts')
 
     expect(host).toContain('createOpenAIRuntimePlane')
-    expect(host).toContain('createAgentServer')
-    expect(host).toContain('createXoxHarnessControlPlane')
+    expect(host).toContain('createSaaSAgentHost')
+    expect(host).toContain('createXoxHarnessControlInfrastructure')
+    expect(host).toContain('executionStore: infrastructure.runtimeExecutionStore')
     expect(host).toContain('storeProfile')
     expect(host).toContain('AgentHookPlanePorts')
     expect(host).not.toContain('AgentHookRunner')
@@ -343,8 +356,9 @@ describe('Agentic OS downstream boundary', () => {
     expect(host).toContain("@agentic-os/integration-openai")
     expect(host).not.toContain("@agentic-os/runtime-openai-agents")
     expect(host).toContain('createOpenAIRuntimePlane')
-    expect(host).toContain('createAgentServer')
-    expect(host).toContain('createXoxHarnessControlPlane')
+    expect(host).toContain('createSaaSAgentHost')
+    expect(host).toContain('createXoxHarnessControlInfrastructure')
+    expect(host).toContain('executionStore: infrastructure.runtimeExecutionStore')
     expect(host).toContain('storeProfile')
     expect(host).not.toContain('AgentStorePort')
     expect(host).not.toContain('claimRunLane')

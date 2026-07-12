@@ -2,11 +2,13 @@ import type { Kysely, Transaction } from 'kysely'
 import type { AgentScope, JsonValue } from '@agentic-os/contracts'
 import type {
   AgentLoopCommitResult,
-  AgentLoopStateV3,
+  AgentLoopStateV4,
   AgentLoopTransitionRecordV2,
 } from '@agentic-os/core'
 import {
   createAgentServerDurableControlPlane,
+  AgentServerDurableRunJournal,
+  AgentServerDurableRuntimeExecutionStore,
   type AgentServerControlRecord,
   type AgentServerControlRecordBackend,
 } from '@agentic-os/server'
@@ -15,8 +17,13 @@ import { jsonString, parseJson } from '../../db/database.js'
 import { newId } from '../../core/security.js'
 import { utcNow } from '../../core/time.js'
 
-export function createXoxHarnessControlPlane(db: Kysely<Database>) {
-  return createAgentServerDurableControlPlane(new XoxHarnessControlRecordBackend(db))
+export function createXoxHarnessControlInfrastructure(db: Kysely<Database>) {
+  const backend = new XoxHarnessControlRecordBackend(db)
+  return {
+    control: createAgentServerDurableControlPlane(backend),
+    runtimeExecutionStore: new AgentServerDurableRuntimeExecutionStore(backend),
+    traceJournal: new AgentServerDurableRunJournal(backend),
+  }
 }
 
 class XoxHarnessControlRecordBackend implements AgentServerControlRecordBackend {
@@ -76,7 +83,7 @@ class XoxHarnessControlRecordBackend implements AgentServerControlRecordBackend 
 
   public async commitLoop(input: {
     expectedStateVersion: number
-    state: AgentLoopStateV3
+    state: AgentLoopStateV4
     transition: AgentLoopTransitionRecordV2
   }): Promise<AgentLoopCommitResult> {
     return this.db.transaction().execute(async (transaction) => {
@@ -108,7 +115,7 @@ class XoxHarnessControlRecordBackend implements AgentServerControlRecordBackend 
           collection: 'loop_state',
           key: input.state.runId,
           version: input.state.stateVersion,
-          value: input.state as AgentLoopStateV3 & JsonValue,
+          value: input.state as AgentLoopStateV4 & JsonValue,
           createdAt: now,
           updatedAt: now,
         })).execute()

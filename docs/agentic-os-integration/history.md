@@ -25,6 +25,8 @@ For exact deleted prose, use git history. For current integration rules, use [RE
 | M190 | Realtime visibility correction | Restored user-visible assistant streaming after tool observations while keeping provider lifecycle, memory, final-review, and worker internals in technical logs. |
 | M191 | Harness frontend audience surface | Integrated Agentic OS harness UI packages into xox web, separating ordinary user timeline from operator/developer trace surfaces. |
 | M192 | Sandbox port cutover | Wired xox manifest-scoped sandbox execution into Agentic OS `AgentSandboxPort`, canonicalized sandbox manifest fields, and made local dev explicitly choose `local-script`. |
+| M193 | Trace and causal history cutover | Wired durable Runtime/Trace stores and strict V4 provider pairing through the production SaaS facade. |
+| M194 | Evaluator temporal authority | Adopted Agentic OS ADR0077 Review admission/Lane CAS, enforced a V2-only hard cutover with no V1 conversion path, rejected host deadline overrides, and locked delayed-candidate/exact-resume regressions. |
 
 ## Boundary Lessons Preserved
 
@@ -49,3 +51,17 @@ These categories were repeatedly deleted across the old milestone files and shou
 - local tool gateway, tool observation continuation runner, tool observation adapter, and approval executor facades
 
 Keep future cleanup notes in this file only when they change the durable integration lineage.
+## M193: ADR0075/0076 Trace And Causal History Cutover
+
+Date: 2026-07-12
+
+- xox production construction moved to `createSaaSAgentHost()` with one scoped
+  SQL CAS backend for Loop records, Runtime Execution Store, and Trace journal.
+- Agentic OS V4 causal model history now owns assistant-before-effect commit,
+  exact source-ordered result commit, provider acknowledgement, compaction,
+  and provider projection.
+- xox event reservation writes and commits the exact canonical event identity;
+  product events remain a downstream projection.
+- the fake provider rejects orphan, duplicate, mismatched, out-of-order, and
+  incomplete results. Sanitized M189 shareholder and parallel-read fixtures
+  exercise the production facade without a local replay builder.

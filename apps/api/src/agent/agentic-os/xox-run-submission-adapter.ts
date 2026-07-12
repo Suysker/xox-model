@@ -105,7 +105,7 @@ function buildSubmittedRunResponse(input: XoxSubmittedRunResponseInput): AgentSe
     }),
     messages: input.messages.map(xoxMessageToOsMessage),
     actionRequests: input.actionRequests.map(xoxActionRequestToOsActionRequest),
-    events: input.runEvents.map(xoxRunEventToOsRunEvent),
+    events: input.runEvents.map((event) => xoxRunEventToOsRunEvent(event, osRun.scope)),
     metadata: {
       host: 'xox-model',
       xoxRuntime: input.runtimeSource,

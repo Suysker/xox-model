@@ -298,8 +298,9 @@ export function xoxActionRequestToOsActionRequest(action: AgentActionRequest): O
   return request
 }
 
-export function xoxRunEventToOsRunEvent(event: AgentRunEvent): OsRunEvent {
+export function xoxRunEventToOsRunEvent(event: AgentRunEvent, scope: OsScope): OsRunEvent {
   return {
+    scope: structuredClone(scope),
     eventId: event.id,
     sequence: event.sequence,
     runId: event.runId,
@@ -553,7 +554,7 @@ function osRunState(input: XoxThreadStateViewInput, run: AgentRunRecord): AgentS
   }
   const events = input.runEvents
     .filter((event) => event.runId === run.id)
-    .map(xoxRunEventToOsRunEvent)
+    .map((event) => xoxRunEventToOsRunEvent(event, runState.run.scope))
   if (events.length > 0) {
     runState.events = events
   }

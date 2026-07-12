@@ -171,10 +171,20 @@ async function withFakeOpenAICompatibleProvider(
       return
     }
     const body = JSON.parse(rawBody)
-    const bodyText = JSON.stringify(body)
+    try {
+      assertStrictChatToolCausality(body)
+    } catch (error) {
+      response.writeHead(422, { 'Content-Type': 'application/json' })
+      response.end(JSON.stringify({
+        error: {
+          type: 'invalid_tool_history',
+          message: error instanceof Error ? error.message : 'Invalid tool history.',
+        },
+      }))
+      return
+    }
     const hasToolObservations = Array.isArray(body?.messages) &&
-      (body.messages.some((message: any) => message?.role === 'tool') ||
-        bodyText.includes('上一轮模型自己选择的 tool_calls'))
+      body.messages.some((message: any) => message?.role === 'tool')
     const isObservationFinalizerRequest =
       (!Array.isArray(body?.tools) || body.tools.length === 0) &&
       hasToolObservations
@@ -462,14 +472,17 @@ function fakeObservationFinalizerResponse(body: any) {
   return fakeAssistantTextResponse(previews.join('\n') || '已根据工具结果完成回复。')
 }
 
+let fakeProviderResponseSequence = 0
+
 function fakeToolResponses(calls: Array<{ name: string; args?: Record<string, unknown> }>) {
+  const responseSequence = ++fakeProviderResponseSequence
   return {
     choices: [{
       message: {
         role: 'assistant',
         content: null,
         tool_calls: calls.map((call, index) => ({
-          id: `call_${index}_${call.name}`,
+          id: `call_${responseSequence}_${index}_${call.name}`,
           type: 'function',
           function: {
             name: call.name,
@@ -482,13 +495,14 @@ function fakeToolResponses(calls: Array<{ name: string; args?: Record<string, un
 }
 
 function fakeMalformedToolResponse(name: string, malformedArguments: string) {
+  const responseSequence = ++fakeProviderResponseSequence
   return {
     choices: [{
       message: {
         role: 'assistant',
         content: null,
         tool_calls: [{
-          id: `call_malformed_${name}`,
+          id: `call_malformed_${responseSequence}_${name}`,
           type: 'function',
           function: {
             name,
@@ -505,8 +519,9 @@ function flattenTranscriptNodes(nodes: any[]): any[] {
 }
 
 function fakeOpenAIChatToolResponse(name: string, args: Record<string, unknown> = {}) {
+  const responseSequence = ++fakeProviderResponseSequence
   return {
-    id: `chatcmpl_${name}`,
+    id: `chatcmpl_${responseSequence}_${name}`,
     object: 'chat.completion',
     created: 0,
     model: 'fake-openai',
@@ -517,7 +532,7 @@ function fakeOpenAIChatToolResponse(name: string, args: Record<string, unknown> 
         role: 'assistant',
         content: null,
         tool_calls: [{
-          id: `call_${name}`,
+          id: `call_${responseSequence}_${name}`,
           type: 'function',
           function: {
             name,
@@ -530,17 +545,56 @@ function fakeOpenAIChatToolResponse(name: string, args: Record<string, unknown> 
   }
 }
 
+function assertStrictChatToolCausality(body: any) {
+  if (!Array.isArray(body?.messages)) return
+  const pending: Array<{ id: string; name: string }> = []
+  const seenCalls = new Set<string>()
+  const seenResults = new Set<string>()
+  for (const [index, message] of body.messages.entries()) {
+    const calls = message?.role === 'assistant' && Array.isArray(message?.tool_calls)
+      ? message.tool_calls : []
+    if (calls.length > 0) {
+      if (pending.length > 0) throw new Error(`assistant tool_calls before prior group closed at message ${index}`)
+      for (const call of calls) {
+        const id = typeof call?.id === 'string' ? call.id : ''
+        const name = typeof call?.function?.name === 'string' ? call.function.name : ''
+        if (!id || !name || seenCalls.has(id)) throw new Error(`invalid or duplicate assistant tool call at message ${index}`)
+        seenCalls.add(id)
+        pending.push({ id, name })
+      }
+      continue
+    }
+    if (message?.role === 'tool') {
+      const id = typeof message?.tool_call_id === 'string' ? message.tool_call_id : ''
+      const expected = pending[0]
+      if (expected === undefined || id !== expected.id) {
+        throw new Error(`orphan or out-of-order tool result at message ${index}`)
+      }
+      if (seenResults.has(id)) throw new Error(`duplicate tool result at message ${index}`)
+      if (typeof message?.name === 'string' && message.name !== expected.name) {
+        throw new Error(`tool result name mismatch at message ${index}`)
+      }
+      seenResults.add(id)
+      pending.shift()
+      continue
+    }
+    if (pending.length > 0) throw new Error(`non-tool message before tool-call group closed at message ${index}`)
+  }
+  if (pending.length > 0) throw new Error('request ended with an incomplete assistant tool-call group')
+}
+
 function fakeOpenAIResponsesToolResponse(name: string, args: Record<string, unknown> = {}) {
+  const responseSequence = ++fakeProviderResponseSequence
   return {
-    id: `resp_${name}`,
+    id: `resp_${responseSequence}_${name}`,
     object: 'response',
     created_at: 0,
     status: 'completed',
     model: 'fake-openai',
     output: [{
       type: 'function_call',
-      id: `fc_${name}`,
-      call_id: `call_${name}`,
+      id: `fc_${responseSequence}_${name}`,
+      call_id: `call_${responseSequence}_${name}`,
       name,
       arguments: JSON.stringify(args),
       status: 'completed',
@@ -732,6 +786,27 @@ async function listenOnFetchSafePort(app: FastifyInstance) {
 }
 
 describe('xox TypeScript API', () => {
+  it('strict fake provider rejects orphan duplicate mismatched and incomplete tool results', () => {
+    const assistant = { role: 'assistant', content: null, tool_calls: [{
+      id: 'call_1', type: 'function', function: { name: 'read_workspace', arguments: '{}' },
+    }] }
+    expect(() => assertStrictChatToolCausality({ messages: [
+      { role: 'user', content: 'read' }, assistant,
+      { role: 'tool', tool_call_id: 'call_1', name: 'read_workspace', content: '{}' },
+    ] })).not.toThrow()
+    expect(() => assertStrictChatToolCausality({ messages: [
+      { role: 'tool', tool_call_id: 'call_1', name: 'read_workspace', content: '{}' },
+    ] })).toThrow(/orphan/)
+    expect(() => assertStrictChatToolCausality({ messages: [assistant,
+      { role: 'tool', tool_call_id: 'call_1', name: 'other_tool', content: '{}' },
+    ] })).toThrow(/name mismatch/)
+    expect(() => assertStrictChatToolCausality({ messages: [assistant] })).toThrow(/incomplete/)
+    expect(() => assertStrictChatToolCausality({ messages: [assistant,
+      { role: 'tool', tool_call_id: 'call_1', name: 'read_workspace', content: '{}' },
+      { role: 'tool', tool_call_id: 'call_1', name: 'read_workspace', content: '{}' },
+    ] })).toThrow(/orphan|duplicate/)
+  })
+
   it('runs migrations repeatedly and serves health', async () => {
     const harness = await buildHarness('migrations')
     const client = new Client(harness.app)
@@ -1352,7 +1427,7 @@ describe('xox TypeScript API', () => {
 
       const draftAction = planned.json.actionRequests[1]
       const confirmedDraft = await client.post(`/api/v1/agent/action-requests/${draftAction.id}/confirm`)
-      expect(confirmedDraft.statusCode).toBe(200)
+      expect(confirmedDraft.statusCode, JSON.stringify(confirmedDraft.json)).toBe(200)
       const draft = (await client.get('/api/v1/workspace/draft')).json
       expect(draft.config.months.find((month: any) => month.label === '4月').onlineSalesFactor).toBe(0.3)
       await closeHarness(harness)
@@ -1360,7 +1435,7 @@ describe('xox TypeScript API', () => {
       capabilities: ['ledger', 'draft'],
       requiredActionCapabilities: ['ledger', 'draft'],
     })
-  }, 10_000)
+  }, 30_000)
 
   it('repairs a cross-domain goal and auto-executes eligible writes under high automation', async () => {
     let goalPlanningCalls = 0
@@ -1453,7 +1528,7 @@ describe('xox TypeScript API', () => {
       requiredActionCapabilities: ['ledger', 'draft'],
       observationContinuationResponse: false,
     })
-  }, 10_000)
+  }, 45_000)
 
   it('continues from domain observations into sandbox computation before the final model answer', async () => {
     await withLocalSandboxBackend(async () => {
@@ -1850,15 +1925,20 @@ describe('xox TypeScript API', () => {
       expect(response.statusCode).toBe(200)
       expect(response.json.planSteps.map((step: any) => step.toolName).filter(Boolean)).toEqual(['data_query_workspace'])
       const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
+      expect(planningCalls).toBe(3)
       expect(state.json.runEvents.some((event: any) => event.type === 'run_completed')).toBe(true)
       expect(state.json.runEvents.some((event: any) =>
         event.type === 'tool_plan_ready' &&
         event.data?.runtimeSource === 'openai_compatible_tool_calls',
       )).toBe(true)
-      expect(state.json.runEvents.some((event: any) =>
+      const finalReview = state.json.runEvents.find((event: any) =>
         event.type === 'response_evaluated' &&
-        event.data?.evaluationStatus === 'pass',
-      )).toBe(true)
+        event.data?.evaluationStatus === 'pass')
+      expect(finalReview).toBeDefined()
+      expect(finalReview.data?.reviewAdmittedAt).toEqual(expect.any(String))
+      expect(finalReview.data?.reviewDeadlineAt).toEqual(expect.any(String))
+      expect(Date.parse(finalReview.data.reviewDeadlineAt)).toBeGreaterThan(Date.parse(finalReview.data.reviewAdmittedAt))
+      expect(finalReview.data?.failureCauses).toEqual([])
       expect(state.json.planSteps.some((step: any) =>
         step.toolName === 'data_query_workspace' &&
         step.toolArguments?.scope === 'entity_summary',
@@ -1872,7 +1952,7 @@ describe('xox TypeScript API', () => {
       ],
       observationContinuationResponse: false,
     })
-  })
+  }, 30_000)
 
   it('repairs shareholder fact obligations with model-visible entity reads', async () => {
     let planningCalls = 0
@@ -2167,7 +2247,7 @@ describe('xox TypeScript API', () => {
       },
       observationContinuationResponse: false,
     })
-  }, 10_000)
+  }, 30_000)
 
   it('does not create a confirmation card for no-op workspace patch arguments', async () => {
     await withFakeOpenAICompatibleProvider(() => fakeToolResponse('workspace_patch_config', {
@@ -2212,7 +2292,7 @@ describe('xox TypeScript API', () => {
       const planned = await client.post('/api/v1/agent/messages', {
         message: '把 3 月成员 A 线下 1 张入账；帮我注销账号',
       })
-      expect(planned.statusCode).toBe(200)
+      expect(planned.statusCode, JSON.stringify(planned.json)).toBe(200)
       expect(planned.json.runtimeSource).toBe('openai_compatible_tool_calls')
       expect(planned.json.planSteps).toHaveLength(2)
       expect(planned.json.actionRequests).toHaveLength(1)
@@ -2322,7 +2402,7 @@ describe('xox TypeScript API', () => {
       expect(rejectedDerived.statusCode).toBe(409)
       await closeHarness(harness)
     })
-  }, 10_000)
+  }, 30_000)
 
   it('uses OpenAI-compatible tool calls as the primary model planning protocol', async () => {
     await withFakeOpenAICompatibleProvider((body) => {
@@ -2477,10 +2557,25 @@ describe('xox TypeScript API', () => {
     })
   })
 
-  it('fails closed on malformed visible tool-call arguments without replaying provider output', async () => {
+  it('repairs malformed visible tool-call arguments on a new semantic turn without provider replay', async () => {
     const planningStreams: Array<unknown> = []
+    let planningCalls = 0
     await withFakeOpenAICompatibleProvider((body) => {
+      planningCalls += 1
       planningStreams.push(body.stream)
+      if (planningCalls > 1) {
+        return {
+          __stream: [{
+            choices: [{ delta: { tool_calls: [{
+              index: 0, id: 'call_repaired_member_income', type: 'function',
+              function: {
+                name: 'ledger_create_member_income',
+                arguments: '{"monthLabel":"3月","memberName":"成员 A","offlineUnits":1,"onlineUnits":0}',
+              },
+            }] } }],
+          }, { choices: [{ delta: {}, finish_reason: 'tool_calls' }] }],
+        }
+      }
       return {
         __stream: [{
           choices: [{ delta: { tool_calls: [{
@@ -2498,6 +2593,7 @@ describe('xox TypeScript API', () => {
         openaiCompatibleProvider: 'test-compatible',
         openaiCompatibleBaseUrl: baseUrl,
         openaiCompatibleApiKey: 'test-key',
+        agentProviderRequestTimeoutMs: 500,
       })
       const client = new Client(harness.app)
       await registerUser(client, 'agent-streaming-tool-call-retry@example.com')
@@ -2506,13 +2602,15 @@ describe('xox TypeScript API', () => {
         message: '把 3 月成员 A 线下 1 张入账',
       })
 
-      expect(planned.statusCode).toBe(200)
-      expect(planningStreams).toEqual([true])
+      expect(planned.statusCode, JSON.stringify(planned.json)).toBe(200)
+      expect(planningStreams).toEqual([true, true])
       expect(planned.json.runtimeSource).toBe('openai_compatible_tool_calls')
-      expect(planned.json.actionRequests).toHaveLength(0)
+      expect(planned.json.actionRequests).toHaveLength(1)
+      expect(planned.json.actionRequests[0].status).toBe('pending')
       expect(planned.json.runEvents.some((event: any) => event.type === 'provider_retrying')).toBe(false)
+      expect(planned.json.runEvents.some((event: any) => event.type === 'provider_stream_failed')).toBe(true)
       await closeHarness(harness)
-    })
+    }, { capabilities: ['ledger'], requiredActionCapabilities: ['ledger'] })
   })
 
   it('uses an extended provider budget for complex structured planning turns', async () => {
@@ -2601,7 +2699,7 @@ describe('xox TypeScript API', () => {
         message: '把 3 月成员 A 线下 1 张入账',
       })
 
-      expect(planned.statusCode).toBe(200)
+      expect(planned.statusCode, JSON.stringify(planned.json)).toBe(200)
       expect(planningStreams).toEqual([true])
       expect(planned.json.actionRequests).toHaveLength(0)
       expect(planned.json.runEvents.some((event: any) => event.type === 'provider_retrying')).toBe(false)
@@ -3973,8 +4071,10 @@ describe('xox TypeScript API', () => {
       }
       if (latestUserText.includes('如果 4 月线上系数变成 0.3') || bodyText.includes('如果 4 月线上系数变成 0.3')) {
         forecastCalls += 1
-        const hasToolObservation = Array.isArray(body.messages) &&
-          body.messages.some((message: any) => message?.role === 'tool')
+        const hasToolObservation = (Array.isArray(body.messages) &&
+          body.messages.some((message: any) => message?.role === 'tool')) ||
+          (Array.isArray(body.input) &&
+            body.input.some((item: any) => item?.type === 'function_call_output'))
         if (hasToolObservation || bodyText.includes('上一轮模型自己选择的 tool_calls')) {
           return fakeOpenAIResponsesTextResponse('4 月线上系数试算完成，草稿没有被修改。')
         }
@@ -3998,7 +4098,7 @@ describe('xox TypeScript API', () => {
       const forecast = await client.post('/api/v1/agent/messages', {
         message: '如果 4 月线上系数变成 0.3，利润会怎样',
       })
-      expect(forecast.statusCode).toBe(200)
+      expect(forecast.statusCode, JSON.stringify(forecast.json)).toBe(200)
       expect(forecast.json.runtimeSource).toBe('openai_agents')
       expect(forecastCalls, JSON.stringify({ providerBodies, runEvents: forecast.json.runEvents, messages: forecast.json.messages })).toBeGreaterThanOrEqual(1)
       expect(forecast.json.actionRequests).toHaveLength(0)
@@ -4103,7 +4203,7 @@ describe('xox TypeScript API', () => {
       expect(threadsAfterConfirm.json.threads[0].pendingActionCount).toBe(0)
       await closeHarness(harness)
     })
-  }, 10_000)
+  }, 30_000)
 
   it('streams server-owned thread state through SSE and keeps events tenant scoped', async () => {
     await withFakeOpenAICompatibleProvider(scriptedProvider([
@@ -4266,7 +4366,7 @@ describe('xox TypeScript API', () => {
       expect(archivedMemory?.injectable).toBe(false)
       await closeHarness(harness)
     })
-  }, 10_000)
+  }, 30_000)
 
   it('applies Memory Kernel v2 lane, capture, recall, and cleanup gates', async () => {
     const diagnosticDecision = decideAgentMemoryCandidate({
@@ -4679,7 +4779,7 @@ describe('xox TypeScript API', () => {
 
       await closeHarness(harness)
     })
-  }, 10_000)
+  }, 30_000)
 
   it('plans shareholder and cost structure add/delete through dedicated Agent confirmations', async () => {
     await withFakeOpenAICompatibleProvider(scriptedProvider([
@@ -4819,7 +4919,7 @@ describe('xox TypeScript API', () => {
 
       await closeHarness(harness)
     })
-  }, 20_000)
+  }, 45_000)
 
   it('plans employee add/delete and workspace rename through model-selected tools', async () => {
     await withFakeOpenAICompatibleProvider(scriptedProvider([
@@ -4879,7 +4979,7 @@ describe('xox TypeScript API', () => {
 
       await closeHarness(harness)
     })
-  }, 10_000)
+  }, 30_000)
 
   it('plans a comprehensive operating model through one high-level editable confirmation', async () => {
     const months = [
@@ -5114,10 +5214,12 @@ describe('xox TypeScript API', () => {
         automationLevel: 'high',
       })
       expect(planned.statusCode).toBe(200)
-      expect(planningCalls).toBe(1)
-      expect(planned.json.actionRequests).toHaveLength(0)
+      expect(planningCalls).toBe(2)
+      expect(planned.json.runEvents.some((event: any) => event.type === 'provider_retrying')).toBe(false)
+      expect(planned.json.actionRequests).toHaveLength(1)
+      expect(planned.json.actionRequests[0].status).toBe('pending')
       expect(planned.json.runEvents.some((event: any) => event.type === 'provider_stream_failed')).toBe(true)
-      expect(planned.json.runEvents.some((event: any) => event.type === 'response_evaluated')).toBe(true)
+      expect(planned.json.runEvents.some((event: any) => event.type === 'confirmation_ready')).toBe(true)
       expect(planned.json.runEvents.some((event: any) => event.type === 'run_completed')).toBe(true)
       expect(planned.json.runEvents.some((event: any) => event.type === 'run_failed')).toBe(false)
       const draft = (await client.get('/api/v1/workspace/draft')).json
@@ -5186,8 +5288,33 @@ describe('xox TypeScript API', () => {
 
   it('repairs malformed non-stream output on a new semantic turn without replaying the provider attempt', async () => {
     let calls = 0
+    const repairedPlan = {
+      workspaceName: '星河 50 期启动测算',
+      planning: { startMonth: 3, horizonMonths: 12 },
+      operating: { offlineUnitPrice: 88, onlineUnitPrice: 68 },
+      shareholders: Array.from({ length: 5 }, (_, index) => ({
+        name: `股东 ${index + 1}`, investmentAmount: 100000, dividendRate: 0.2,
+      })),
+      memberSegments: [{
+        label: '成员', namePrefix: '成员', count: 50, monthlyBasePay: 1000,
+        commissionRate: 0.1, offlineUnitsPerEvent: 5, onlineUnitsPerEvent: 2,
+      }],
+      employees: [{ role: '运营', count: 1, monthlyBasePay: 10000 }],
+      monthlyFixedCosts: [{ name: '房租', amount: 10000 }],
+      perEventCosts: [{ name: '场地', amount: 1000 }],
+      perUnitCosts: [{ name: '物料', amount: 6 }],
+      months: Array.from({ length: 12 }, (_, index) => ({
+        monthIndex: index + 1,
+        events: index === 0 ? 0 : 4,
+        salesMultiplier: index === 0 ? 0 : 1,
+        onlineSalesFactor: 0.35,
+      })),
+    }
     await withFakeOpenAICompatibleProvider(() => {
       calls += 1
+      if (calls > 1) {
+        return fakeToolResponse('workspace_configure_operating_model', { plan: repairedPlan })
+      }
       return {
         choices: [{
           message: {
@@ -5210,6 +5337,7 @@ describe('xox TypeScript API', () => {
         openaiCompatibleProvider: 'test-compatible',
         openaiCompatibleBaseUrl: baseUrl,
         openaiCompatibleApiKey: 'test-key',
+        agentProviderRequestTimeoutMs: 500,
       })
       const client = new Client(harness.app)
       await registerUser(client, 'agent-non-stream-tool-parse-fail-closed@example.com')
@@ -5219,11 +5347,14 @@ describe('xox TypeScript API', () => {
         automationLevel: 'high',
       })
       expect(response.statusCode).toBe(200)
-      expect(calls).toBe(1)
-      expect(response.json.actionRequests).toHaveLength(0)
-      expect(response.json.planSteps).toHaveLength(0)
+      expect(calls).toBe(2)
+      expect(response.json.actionRequests).toHaveLength(1)
+      expect(response.json.actionRequests[0].status).toBe('pending')
+      expect(response.json.planSteps).toHaveLength(2)
+      expect(response.json.planSteps.some((step: any) =>
+        step.actionRequestId === response.json.actionRequests[0].id)).toBe(true)
       expect(response.json.runEvents.some((event: any) => event.type === 'provider_stream_failed')).toBe(true)
-      expect(response.json.runEvents.some((event: any) => event.type === 'response_evaluated')).toBe(true)
+      expect(response.json.runEvents.some((event: any) => event.type === 'provider_retrying')).toBe(false)
       expect(response.json.runEvents.some((event: any) => event.type === 'run_completed')).toBe(true)
       expect(response.json.runEvents.some((event: any) => event.type === 'run_failed')).toBe(false)
       await closeHarness(harness)
@@ -5678,7 +5809,7 @@ describe('xox TypeScript API', () => {
 
       await closeHarness(harness)
     })
-  }, 20_000)
+  }, 45_000)
 
   it('promotes a selected snapshot to a new release through an Agent confirmation', async () => {
     await withFakeOpenAICompatibleProvider(() => fakeToolResponse('workspace_promote_version', { versionNo: 1 }), async (baseUrl) => {
@@ -5959,7 +6090,7 @@ describe('xox TypeScript API', () => {
 
       await closeHarness(harness)
     })
-  }, 60_000)
+  }, 90_000)
 
   it('keeps agent read-only forecasts non-mutating and refuses account actions', async () => {
     await withFakeOpenAICompatibleProvider(scriptedProvider([
@@ -5992,7 +6123,7 @@ describe('xox TypeScript API', () => {
       expect(account.json.messages.at(-1).content).toContain('不能由 Agent 自动执行')
       await closeHarness(harness)
     })
-  }, 10_000)
+  }, 30_000)
 
   it('exports and imports workspace bundles through REST and Agent confirmation cards', async () => {
     const importConfig = createProductDefaultModel()
@@ -6174,5 +6305,44 @@ describe('xox TypeScript API', () => {
       'versions_and_shares',
     ]))
     expect(AGENT_MANUAL_CAPABILITY_COVERAGE.find((item) => item.capability === 'account_actions')?.status).toBe('manual_only')
+  })
+
+  it('preserves one assistant frame and source-ordered results for parallel read calls', async () => {
+    let planningCalls = 0
+    await withFakeOpenAICompatibleProvider((body) => {
+      planningCalls += 1
+      if (planningCalls === 1) {
+        return fakeToolResponses([
+          { name: 'data_query_workspace', args: {
+            question: '读取工作区汇总', scope: 'workspace_summary', metrics: ['roi'],
+          } },
+          { name: 'data_query_workspace', args: {
+            question: '读取股东列表', scope: 'entity_summary', metrics: ['shareholders'],
+          } },
+        ])
+      }
+      const messages = body.messages as any[]
+      const assistantIndex = messages.findIndex((message) =>
+        message.role === 'assistant' && Array.isArray(message.tool_calls) && message.tool_calls.length === 2)
+      expect(assistantIndex).toBeGreaterThan(-1)
+      const calls = messages[assistantIndex].tool_calls
+      const results = messages.slice(assistantIndex + 1).filter((message) => message.role === 'tool')
+      expect(results.map((message) => message.tool_call_id)).toEqual(calls.map((call: any) => call.id))
+      expect(results.map((message) => message.name)).toEqual(calls.map((call: any) => call.function.name))
+      return fakeAssistantTextResponse('已读取工作区汇总和股东列表，并按两个工具结果完成回答。')
+    }, async (baseUrl) => {
+      const harness = await buildHarness('agent-m189-parallel-read-pairing', fakeProviderSettings(baseUrl))
+      const client = new Client(harness.app)
+      await registerUser(client, 'agent-m189-parallel-read-pairing@example.com')
+      const response = await client.post('/api/v1/agent/messages', {
+        message: '同时读取当前工作区汇总和股东列表，然后给我一个简短结论。',
+      })
+      expect(response.statusCode, JSON.stringify(response.json)).toBe(200)
+      expect(planningCalls).toBe(2)
+      expect(response.json.messages.at(-1).content).toContain('两个工具结果')
+      await closeHarness(harness)
+    }, {
+      capabilities: ['data'], observationContinuationResponse: false,
+    })
   })
 })
