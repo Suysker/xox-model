@@ -56,6 +56,7 @@ import {
 import { addMessage } from './agentic-os/xox-thread-store-adapter.js'
 import { resumeXoxAgentRunAfterActionConfirmation } from './host-profile/xox-host-profile.js'
 import {
+  assertActionExecutionAllowed,
   assertActionUpdateAllowed,
   coerceAgentActionKind,
 } from './tool-policy.js'
@@ -206,6 +207,7 @@ async function confirmAgentActionRequest(db: Kysely<Database>, settings: Setting
   const action = await getActionRequest(db, actionRequestId)
   const workspace = await getWorkspaceForUser(db, user)
   assertActionOwnedByWorkspace(action, workspace, user)
+  await assertActionExecutionAllowed(db, workspace, user, action)
   if (!(await claimAgentRunContinuationLease(db, settings, action.run_id))) {
     throw conflict('Agent run continuation is already active or no longer resumable')
   }

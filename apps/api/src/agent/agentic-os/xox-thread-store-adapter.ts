@@ -17,9 +17,9 @@ import type { AgentServerThreadRunState, AgentServerThreadSnapshot } from '@agen
 import {
   AgentServerThreadStateProjector,
   projectAgentServerHarnessUi,
-  projectAgentServerLegacyTranscriptViews,
   projectAgentServerSaaSAgUiEvents,
 } from '@agentic-os/server'
+import { projectXoxTranscriptViews } from './xox-product-view-projector.js'
 import type {
   AgentActionRequest,
   AgentAgUiEvent,
@@ -484,7 +484,7 @@ function buildXoxThreadStateView(input: XoxThreadStateViewInput): AgentThreadSta
 }
 
 export function projectXoxProductViews(input: XoxProjectionViewInput): XoxProjectionViews {
-  return projectAgentServerLegacyTranscriptViews<AgentActionRequest, AgentNavigationEvent>({
+  return projectXoxTranscriptViews<AgentActionRequest, AgentNavigationEvent>({
     messages: input.messages,
     osTranscriptItems: input.osTranscriptItems,
     planSteps: input.planSteps ?? [],

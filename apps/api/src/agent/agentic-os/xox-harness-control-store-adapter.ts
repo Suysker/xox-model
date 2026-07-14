@@ -5,10 +5,14 @@ import type {
   AgentLoopStateV4,
   AgentLoopTransitionRecordV2,
 } from '@agentic-os/core'
+import { AgentRuntimeProviderHealthManager } from '@agentic-os/core'
 import {
   createAgentServerDurableControlPlane,
   AgentServerDurableRunJournal,
+  AgentServerDurableRunOwnershipStore,
+  AgentServerDurableRuntimeAdmission,
   AgentServerDurableRuntimeExecutionStore,
+  AgentServerDurableRuntimeProviderHealthStore,
   type AgentServerControlRecord,
   type AgentServerControlRecordBackend,
 } from '@agentic-os/server'
@@ -17,11 +21,43 @@ import { jsonString, parseJson } from '../../db/database.js'
 import { newId } from '../../core/security.js'
 import { utcNow } from '../../core/time.js'
 
-export function createXoxHarnessControlInfrastructure(db: Kysely<Database>) {
+export function createXoxHarnessControlInfrastructure(
+  db: Kysely<Database>,
+  leaseDurationMs = 30_000,
+) {
   const backend = new XoxHarnessControlRecordBackend(db)
+  const operationalBackend = new XoxHarnessOperationalRecordBackend(db)
+  const providerHealthStore = new AgentServerDurableRuntimeProviderHealthStore(operationalBackend)
   return {
     control: createAgentServerDurableControlPlane(backend),
     runtimeExecutionStore: new AgentServerDurableRuntimeExecutionStore(backend),
+    durableRunOwnership: new AgentServerDurableRunOwnershipStore(backend, leaseDurationMs),
+    runtimeOperationalServices: {
+      admission: new AgentServerDurableRuntimeAdmission({
+        backend: operationalBackend,
+        controlScope: {
+          tenantId: 'xox-runtime-control',
+          workspaceId: 'shared-provider-admission',
+          userId: '',
+        },
+        policy: {
+          maxGlobalConcurrency: 32,
+          maxConcurrencyPerTenant: 4,
+          maxQueueSize: 1_000,
+          purposePriority: {
+            agent_turn: 100,
+            online_evaluation: 80,
+            context_compaction: 60,
+            auxiliary: 40,
+          },
+        },
+      }),
+      providerHealth: new AgentRuntimeProviderHealthManager(providerHealthStore, {
+        failureThreshold: 3,
+        cooldownMs: 30_000,
+        halfOpenProbeLimit: 1,
+      }),
+    },
     traceJournal: new AgentServerDurableRunJournal(backend),
   }
 }
@@ -150,6 +186,66 @@ class XoxHarnessControlRecordBackend implements AgentServerControlRecordBackend 
   }
 }
 
+class XoxHarnessOperationalRecordBackend implements AgentServerControlRecordBackend {
+  public constructor(private readonly db: Kysely<Database>) {}
+
+  public async load<T extends JsonValue>(input: {
+    scope: AgentScope
+    collection: string
+    key: string
+  }): Promise<AgentServerControlRecord<T> | null> {
+    const row = await operationalQuery(this.db, input.scope, input.collection, input.key).executeTakeFirst()
+    return row === undefined ? null : fromRow<T>(row, input.scope)
+  }
+
+  public async create<T extends JsonValue>(record: AgentServerControlRecord<T>): Promise<'created' | 'existing'> {
+    const inserted = await this.db
+      .insertInto('agent_harness_operational_records')
+      .values(toRow(record))
+      .onConflict((conflict) => conflict
+        .columns(['tenant_id', 'workspace_id', 'user_id', 'collection_name', 'record_key'])
+        .doNothing())
+      .returning('id')
+      .executeTakeFirst()
+    return inserted === undefined ? 'existing' : 'created'
+  }
+
+  public async compareAndSet<T extends JsonValue>(input: {
+    scope: AgentScope
+    collection: string
+    key: string
+    expectedVersion: number
+    next: AgentServerControlRecord<T>
+  }): Promise<'committed' | 'version_conflict'> {
+    const result = await operationalUpdate(this.db, input.scope, input.collection, input.key)
+      .where('version_no', '=', input.expectedVersion)
+      .set({
+        version_no: input.next.version,
+        value_json: jsonString(input.next.value),
+        updated_at: input.next.updatedAt,
+      })
+      .executeTakeFirst()
+    return Number(result.numUpdatedRows) === 1 ? 'committed' : 'version_conflict'
+  }
+
+  public async list<T extends JsonValue>(input: {
+    scope: AgentScope
+    collection: string
+    limit: number
+  }): Promise<Array<AgentServerControlRecord<T>>> {
+    const rows = await operationalCollectionQuery(this.db, input.scope, input.collection)
+      .orderBy('updated_at', 'asc')
+      .orderBy('record_key', 'asc')
+      .limit(Math.max(0, Math.trunc(input.limit)))
+      .execute()
+    return rows.map((row) => fromRow<T>(row, input.scope))
+  }
+
+  public commitLoop(): Promise<AgentLoopCommitResult> {
+    throw new Error('Global operational records cannot own Agent Loop transitions.')
+  }
+}
+
 type XoxDb = Kysely<Database> | Transaction<Database>
 
 function scopedCollectionQuery(db: XoxDb, scope: AgentScope, collection: string) {
@@ -176,6 +272,30 @@ function scopedUpdate(db: XoxDb, scope: AgentScope, collection: string, key: str
     .where('record_key', '=', key)
 }
 
+function operationalCollectionQuery(db: XoxDb, scope: AgentScope, collection: string) {
+  return db
+    .selectFrom('agent_harness_operational_records')
+    .selectAll()
+    .where('tenant_id', '=', scope.tenantId)
+    .where('workspace_id', '=', scope.workspaceId)
+    .where('user_id', '=', scope.userId ?? '')
+    .where('collection_name', '=', collection)
+}
+
+function operationalQuery(db: XoxDb, scope: AgentScope, collection: string, key: string) {
+  return operationalCollectionQuery(db, scope, collection).where('record_key', '=', key)
+}
+
+function operationalUpdate(db: XoxDb, scope: AgentScope, collection: string, key: string) {
+  return db
+    .updateTable('agent_harness_operational_records')
+    .where('tenant_id', '=', scope.tenantId)
+    .where('workspace_id', '=', scope.workspaceId)
+    .where('user_id', '=', scope.userId ?? '')
+    .where('collection_name', '=', collection)
+    .where('record_key', '=', key)
+}
+
 function toRow<T extends JsonValue>(record: AgentServerControlRecord<T>) {
   return {
     id: newId(),
@@ -192,7 +312,7 @@ function toRow<T extends JsonValue>(record: AgentServerControlRecord<T>) {
 }
 
 function fromRow<T extends JsonValue>(
-  row: Row<'agent_harness_control_records'>,
+  row: Row<'agent_harness_control_records'> | Row<'agent_harness_operational_records'>,
   scope: AgentScope,
 ): AgentServerControlRecord<T> {
   return {

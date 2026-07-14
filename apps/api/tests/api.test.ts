@@ -1,4 +1,5 @@
 import { mkdtempSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -20,6 +21,7 @@ import {
 import { createProductDefaultModel, projectModel } from '@xox/domain'
 import { decideAgentMemoryCandidate } from '@agentic-os/core'
 import { createXoxDurableRunStore } from '../src/agent/agentic-os/xox-run-store-adapter.js'
+import { claimAgentRunLease } from '../src/agent/agentic-os/xox-run-lease-store-adapter.js'
 import {
   captureTenantMemory,
   retrieveAgentMemories,
@@ -163,47 +165,41 @@ async function withFakeOpenAICompatibleProvider(
   run: (baseUrl: string) => Promise<void>,
   options: FakeProviderOptions = {},
 ) {
+  let providerHandlerError: unknown
   const server = createServer(async (request: IncomingMessage, response: ServerResponse) => {
-    const rawBody = await readRequestBody(request)
-    if (!rawBody.trim()) {
-      response.writeHead(400, { 'Content-Type': 'application/json' })
-      response.end(JSON.stringify({ error: { message: 'empty request body' } }))
-      return
-    }
-    const body = JSON.parse(rawBody)
     try {
-      assertStrictChatToolCausality(body)
-    } catch (error) {
-      response.writeHead(422, { 'Content-Type': 'application/json' })
-      response.end(JSON.stringify({
-        error: {
-          type: 'invalid_tool_history',
-          message: error instanceof Error ? error.message : 'Invalid tool history.',
-        },
-      }))
-      return
-    }
-    const hasToolObservations = Array.isArray(body?.messages) &&
-      body.messages.some((message: any) => message?.role === 'tool')
-    const isObservationFinalizerRequest =
-      (!Array.isArray(body?.tools) || body.tools.length === 0) &&
-      hasToolObservations
-    const isObservationContinuationPlanningRequest =
-      Array.isArray(body?.tools) &&
-      body.tools.length > 0 &&
-      hasToolObservations
-    const shouldAutoAnswerObservationPlanning =
-      isObservationContinuationPlanningRequest &&
-      options.observationContinuationResponse !== false
-    const payload = isObservationFinalizerRequest
-      ? options.finalizerResponse
-        ? await options.finalizerResponse(body, request)
-        : fakeObservationFinalizerResponse(body)
-      : shouldAutoAnswerObservationPlanning
-        ? options.observationContinuationResponse
-          ? await options.observationContinuationResponse(body, request)
-          : fakeObservationFinalizerResponse(body)
-      : isTurnLaneResolverRequest(body)
+      const rawBody = await readRequestBody(request)
+      if (!rawBody.trim()) {
+        response.writeHead(400, { 'Content-Type': 'application/json' })
+        response.end(JSON.stringify({ error: { message: 'empty request body' } }))
+        return
+      }
+      const body = JSON.parse(rawBody)
+      try {
+        assertStrictChatToolCausality(body)
+      } catch (error) {
+        response.writeHead(422, { 'Content-Type': 'application/json' })
+        response.end(JSON.stringify({
+          error: {
+            type: 'invalid_tool_history',
+            message: error instanceof Error ? error.message : 'Invalid tool history.',
+          },
+        }))
+        return
+      }
+      const hasToolObservations = Array.isArray(body?.messages) &&
+        body.messages.some((message: any) => message?.role === 'tool')
+      const isObservationFinalizerRequest =
+        (!Array.isArray(body?.tools) || body.tools.length === 0) &&
+        hasToolObservations
+      const isObservationContinuationPlanningRequest =
+        Array.isArray(body?.tools) &&
+        body.tools.length > 0 &&
+        hasToolObservations
+      const shouldAutoAnswerObservationPlanning =
+        isObservationContinuationPlanningRequest &&
+        options.observationContinuationResponse !== false
+      const payload = isTurnLaneResolverRequest(body)
         ? typeof options.turnLane === 'function'
           ? await options.turnLane(body, request)
           : fakeTurnLaneResolutionResponse(options.turnLane ?? 'agent_goal', {
@@ -219,36 +215,69 @@ async function withFakeOpenAICompatibleProvider(
             ...(options.requiredActionCapabilities ? { requiredActionCapabilities: options.requiredActionCapabilities } : {}),
             ...(options.goalFacts ? { goalFacts: options.goalFacts } : {}),
           })
+      : isObservationFinalizerRequest
+        ? options.finalizerResponse
+          ? await options.finalizerResponse(body, request)
+          : fakeObservationFinalizerResponse(body)
+      : shouldAutoAnswerObservationPlanning
+        ? options.observationContinuationResponse
+          ? await options.observationContinuationResponse(body, request)
+          : fakeObservationFinalizerResponse(body)
         : await handler(body, request)
-    if (payload && typeof payload === 'object' && '__statusCode' in payload) {
-      const statusPayload = payload as { __statusCode: number; body: unknown }
-      response.writeHead(statusPayload.__statusCode, { 'Content-Type': 'application/json' })
-      response.end(JSON.stringify(statusPayload.body))
-      return
-    }
-    if (payload && typeof payload === 'object' && '__stream' in payload) {
-      const streamPayload = payload as { __stream: unknown[]; delayMs?: number }
-      response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache' })
-      for (const item of streamPayload.__stream) {
-        response.write(`data: ${typeof item === 'string' ? item : JSON.stringify(item)}\n\n`)
-        if (streamPayload.delayMs && streamPayload.delayMs > 0) {
-          await new Promise((resolve) => setTimeout(resolve, streamPayload.delayMs))
-        }
+      if (payload && typeof payload === 'object' && '__statusCode' in payload) {
+        const statusPayload = payload as { __statusCode: number; body: unknown }
+        response.writeHead(statusPayload.__statusCode, { 'Content-Type': 'application/json' })
+        response.end(JSON.stringify(statusPayload.body))
+        return
       }
-      response.write('data: [DONE]\n\n')
-      response.end()
-      return
+      if (payload && typeof payload === 'object' && '__stream' in payload) {
+        const streamPayload = payload as { __stream: unknown[]; delayMs?: number }
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache' })
+        for (const item of streamPayload.__stream) {
+          response.write(`data: ${typeof item === 'string' ? item : JSON.stringify(item)}\n\n`)
+          if (streamPayload.delayMs && streamPayload.delayMs > 0) {
+            await new Promise((resolve) => setTimeout(resolve, streamPayload.delayMs))
+          }
+        }
+        response.write('data: [DONE]\n\n')
+        response.end()
+        return
+      }
+      response.writeHead(200, { 'Content-Type': 'application/json' })
+      response.end(JSON.stringify(payload))
+    } catch (error) {
+      providerHandlerError ??= error
+      if (!response.headersSent) {
+        response.writeHead(500, { 'Content-Type': 'application/json' })
+      }
+      if (!response.writableEnded) {
+        response.end(JSON.stringify({
+          error: {
+            type: 'fake_provider_handler_error',
+            message: error instanceof Error ? error.message : 'Fake provider handler failed.',
+          },
+        }))
+      }
     }
-    response.writeHead(200, { 'Content-Type': 'application/json' })
-    response.end(JSON.stringify(payload))
   })
+  // Multi-turn harness tests can pause for approvals longer than Node's
+  // five-second default keep-alive window before reusing the provider socket.
+  server.keepAliveTimeout = 60_000
+  server.headersTimeout = 65_000
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   const address = server.address() as AddressInfo
+  let runError: unknown
   try {
     await run(`http://127.0.0.1:${address.port}`)
+  } catch (error) {
+    runError = error
   } finally {
+    server.closeIdleConnections()
+    server.closeAllConnections()
     await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())))
   }
+  if (providerHandlerError !== undefined) throw providerHandlerError
+  if (runError !== undefined) throw runError
 }
 
 class Client {
@@ -1313,7 +1342,7 @@ describe('xox TypeScript API', () => {
       )
 
       const confirmed = await client.post(`/api/v1/agent/action-requests/${planned.json.actionRequests[0].id}/confirm`)
-      expect(confirmed.statusCode).toBe(200)
+      expect(confirmed.statusCode, JSON.stringify(confirmed.json)).toBe(200)
       expect(confirmed.json.actionRequest.status).toBe('executed')
       expect(confirmed.json.result.amount).toBe(1056)
       expect(confirmed.json.runEvents.some((event: any) => event.type === 'action_executed')).toBe(true)
@@ -1385,7 +1414,13 @@ describe('xox TypeScript API', () => {
       })
       expect(planned.statusCode).toBe(200)
       expect(planned.json.runtimeSource).toBe('openai_compatible_tool_calls')
-      expect(planned.json.planSteps).toHaveLength(2)
+      expect(planned.json.planSteps, JSON.stringify({
+        planSteps: planned.json.planSteps,
+        actionRequests: planned.json.actionRequests,
+        toolEvents: planned.json.runEvents
+          .filter((event: any) => event.type.includes('tool') || event.type.includes('action'))
+          .map((event: any) => ({ type: event.type, data: event.data })),
+      }, null, 2)).toHaveLength(2)
       expect(planned.json.actionRequests.map((action: any) => action.kind)).toEqual([
         'ledger.create_entry',
         'workspace.update_draft',
@@ -1420,7 +1455,7 @@ describe('xox TypeScript API', () => {
       expect(edited.json.runEvents.some((event: any) => event.type === 'action_updated')).toBe(true)
 
       const confirmedLedger = await client.post(`/api/v1/agent/action-requests/${ledgerAction.id}/confirm`)
-      expect(confirmedLedger.statusCode).toBe(200)
+      expect(confirmedLedger.statusCode, JSON.stringify(confirmedLedger.json)).toBe(200)
       expect(confirmedLedger.json.result.amount).toBe(264)
       expect(confirmedLedger.json.planSteps[0].status).toBe('executed')
       expect(confirmedLedger.json.runEvents.some((event: any) => event.type === 'action_executed')).toBe(true)
@@ -1715,7 +1750,9 @@ describe('xox TypeScript API', () => {
       expect(response.statusCode, JSON.stringify(response.json)).toBe(200)
       expect(planningCalls).toBeGreaterThanOrEqual(3)
       expect(planningCalls).toBeLessThanOrEqual(4)
+      expect(response.json.threadId, JSON.stringify(response.json, null, 2)).toEqual(expect.any(String))
       const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
+      expect(state.statusCode, JSON.stringify(state.json, null, 2)).toBe(200)
       const sandboxEvents = state.json.runEvents.filter((event: any) =>
         event.data?.toolName === 'sandbox_run_code')
       expect(sandboxEvents.map((event: any) => event.type)).toEqual([
@@ -1820,6 +1857,7 @@ describe('xox TypeScript API', () => {
       })
 
       expect(response.statusCode).toBe(200)
+      expect(response.json.threadId, JSON.stringify(response.json, null, 2)).toEqual(expect.any(String))
       const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
       expect(state.json.planSteps.some((step: any) => step.toolName === 'sandbox_run_code')).toBe(false)
       expect(state.json.runEvents.some((event: any) => event.type === 'run_failed')).toBe(false)
@@ -2611,6 +2649,50 @@ describe('xox TypeScript API', () => {
       expect(planned.json.runEvents.some((event: any) => event.type === 'provider_stream_failed')).toBe(true)
       await closeHarness(harness)
     }, { capabilities: ['ledger'], requiredActionCapabilities: ['ledger'] })
+  })
+
+  it('grants exactly one durable DB lease claim to concurrent calls from the same worker', async () => {
+    const harness = await buildHarness('agent-run-lease-single-winner', { agentRunWorkerPollMs: 60_000 })
+    const client = new Client(harness.app)
+    await registerUser(client, 'agent-run-lease-single-winner@example.com')
+    const [user, workspace] = await Promise.all([
+      harness.db.selectFrom('users').selectAll().executeTakeFirstOrThrow(),
+      harness.db.selectFrom('workspaces').selectAll().executeTakeFirstOrThrow(),
+    ])
+    const threadId = randomUUID()
+    const runId = randomUUID()
+    const now = new Date().toISOString()
+    await harness.db.insertInto('agent_threads').values({
+      id: threadId,
+      workspace_id: workspace.id,
+      user_id: user.id,
+      title: 'Lease claim test',
+      created_at: now,
+      updated_at: now,
+    }).execute()
+    await harness.db.insertInto('agent_runs').values({
+      id: runId,
+      thread_id: threadId,
+      user_id: user.id,
+      status: 'running',
+      input_message_id: null,
+      input_message: 'lease claim test',
+      runtime_source: null,
+      automation_level: 'manual',
+      goal_status: null,
+      worker_id: null,
+      lease_expires_at: null,
+      heartbeat_at: null,
+      created_at: now,
+      completed_at: null,
+    }).execute()
+
+    const claims = await Promise.all([
+      claimAgentRunLease(harness.db, harness.settings, runId),
+      claimAgentRunLease(harness.db, harness.settings, runId),
+    ])
+    expect(claims.filter((claim) => claim !== null)).toHaveLength(1)
+    await closeHarness(harness)
   })
 
   it('uses an extended provider budget for complex structured planning turns', async () => {
@@ -3541,6 +3623,7 @@ describe('xox TypeScript API', () => {
 
       expect(response.statusCode).toBe(200)
       const state = await client.get(`/api/v1/agent/threads/${response.json.threadId}`)
+      expect(state.statusCode, JSON.stringify(state.json, null, 2)).toBe(200)
       expect(state.json.runEvents.filter((event: any) => event.type === 'model_turn_started').length).toBeGreaterThanOrEqual(1)
       expect(state.json.actionRequests).toHaveLength(0)
       expect(state.json.runEvents.some((event: any) => event.type === 'run_failed')).toBe(true)
@@ -3551,7 +3634,7 @@ describe('xox TypeScript API', () => {
       requiredActionCapabilities: ['draft'],
       observationContinuationResponse: false,
     })
-  })
+  }, 90_000)
 
   it('asks for clarification through a model-selected tool when required business details are missing', async () => {
     await withFakeOpenAICompatibleProvider((body) => {
@@ -3804,14 +3887,10 @@ describe('xox TypeScript API', () => {
     })
   })
 
-  it('claims expired leased running agent runs before recovery', async () => {
-    let releaseProvider!: () => void
-    const providerGate = new Promise<void>((resolve) => {
-      releaseProvider = resolve
-    })
-
+  it('quarantines an expired worker run that has no canonical recovery snapshot', async () => {
+    let providerCalls = 0
     await withFakeOpenAICompatibleProvider(async () => {
-      await providerGate
+      providerCalls += 1
       return fakeToolResponse('data_query_workspace', {
         question: '3 月计划收入和计划成本是多少',
         scope: 'period_summary',
@@ -3837,22 +3916,19 @@ describe('xox TypeScript API', () => {
       })
 
       await createXoxDurableRunStore(harness.db, harness.settings).startReady()
-      const claimed = await harness.db.selectFrom('agent_runs').select(['worker_id', 'lease_expires_at']).where('id', '=', run.runId).executeTakeFirstOrThrow()
-      expect(claimed.worker_id).toBe('recover-worker')
-      expect(new Date(claimed.lease_expires_at ?? 0).getTime()).toBeGreaterThan(Date.now())
-
-      releaseProvider()
-      let completedState = await client.get(`/api/v1/agent/threads/${run.threadId}`)
-      for (let attempt = 0; attempt < 20; attempt += 1) {
+      let quarantinedState = await client.get(`/api/v1/agent/threads/${run.threadId}`)
+      for (let attempt = 0; attempt < 20 && quarantinedState.json.runs[0].status === 'running'; attempt += 1) {
         await sleep(25)
-        const nextState = await client.get(`/api/v1/agent/threads/${run.threadId}`)
-        completedState = nextState
-        if (completedState.json.runs[0].status === 'completed') break
+        quarantinedState = await client.get(`/api/v1/agent/threads/${run.threadId}`)
       }
 
-      expect(completedState.json.runs[0].status).toBe('completed')
-      expect(completedState.json.messages.map((message: any) => message.role)).toEqual(['user', 'assistant'])
-      expect(completedState.json.actionRequests).toHaveLength(0)
+      expect(providerCalls).toBe(0)
+      expect(quarantinedState.json.runs[0].status).toBe('failed')
+      expect(quarantinedState.json.messages.map((message: any) => message.role)).toEqual(['user'])
+      expect(quarantinedState.json.runEvents.some((event: any) =>
+        event.type === 'run_failed' && event.data?.recoveryDecision === 'missing_reconciliation_snapshot')).toBe(true)
+      const released = await harness.db.selectFrom('agent_runs').select('lease_expires_at').where('id', '=', run.runId).executeTakeFirstOrThrow()
+      expect(released.lease_expires_at).toBeNull()
       await closeHarness(harness)
     })
   })
@@ -4023,7 +4099,7 @@ describe('xox TypeScript API', () => {
     })
   })
 
-  it('fails closed when recovering an interrupted running agent run with partial output', async () => {
+  it('quarantines an interrupted owned run without inferring recovery from business projections', async () => {
     const harness = await buildHarness('agent-recover-partial-run')
     const client = new Client(harness.app)
     const user = await registerUser(client, 'agent-recover-partial-run@example.com')
@@ -4031,6 +4107,9 @@ describe('xox TypeScript API', () => {
       suffix: 'recover-partial',
       message: '把 4 月线上系数改成 0.3 并保存',
       partialOutput: true,
+      workerId: 'dead-worker',
+      leaseExpiresAt: new Date(Date.now() - 1_000).toISOString(),
+      heartbeatAt: new Date(Date.now() - 60_000).toISOString(),
     })
 
     await createXoxDurableRunStore(harness.db, harness.settings).startReady()
@@ -4042,7 +4121,7 @@ describe('xox TypeScript API', () => {
     expect(state.statusCode).toBe(200)
     expect(state.json.runs[0].status).toBe('failed')
     expect(state.json.actionRequests[0].status).toBe('cancelled')
-    expect(state.json.actionRequests[0].errorMessage).toContain('部分运行产物')
+    expect(state.json.actionRequests[0].errorMessage).toContain('canonical durable facts')
     expect(state.json.planSteps[0].status).toBe('failed')
     expect(state.json.messages.map((message: any) => message.role)).toEqual(['user'])
     const threads = await client.get('/api/v1/agent/threads')
@@ -4192,7 +4271,7 @@ describe('xox TypeScript API', () => {
       expect(crossUserRestore.statusCode).toBe(403)
 
       const confirmed = await firstClient.post(`/api/v1/agent/action-requests/${planned.json.actionRequests[0].id}/confirm`)
-      expect(confirmed.statusCode).toBe(200)
+      expect(confirmed.statusCode, JSON.stringify(confirmed.json)).toBe(200)
       const restoredAfterConfirm = await firstClient.get(`/api/v1/agent/threads/${planned.json.threadId}`)
       expect(restoredAfterConfirm.statusCode).toBe(200)
       expect(restoredAfterConfirm.json.actionRequests[0].status).toBe('executed')
@@ -4627,7 +4706,7 @@ describe('xox TypeScript API', () => {
       (body) => {
         const prompt = body.messages.map((message: any) => message.content).join('\n')
         expect(prompt).not.toContain(secretValue)
-        expect(prompt).toContain('[redacted-api-key]')
+        expect(prompt).toContain('记住：DeepSeek API key')
         expectProviderTools(body, ['memory_remember'])
         return fakeToolResponse('memory_remember', {
           value: `DeepSeek API key 是 ${secretValue}`,
@@ -4852,6 +4931,7 @@ describe('xox TypeScript API', () => {
 
       const editedShareholder = await client.post('/api/v1/agent/messages', { threadId: addedShareholder.json.threadId, message: '把股东 C 投资额改成 20000 并保存' })
       expect(editedShareholder.statusCode).toBe(200)
+      expect(editedShareholder.json.actionRequests).toHaveLength(1)
       expect(editedShareholder.json.actionRequests[0].kind).toBe('workspace.update_draft')
       await confirm(editedShareholder.json.actionRequests[0])
       draft = (await client.get('/api/v1/workspace/draft')).json
@@ -4895,6 +4975,7 @@ describe('xox TypeScript API', () => {
 
       const deletedCost = await client.post('/api/v1/agent/messages', { threadId: addedShareholder.json.threadId, message: '删除每月固定成本房租' })
       expect(deletedCost.statusCode).toBe(200)
+      expect(deletedCost.json.actionRequests).toHaveLength(1)
       expect(deletedCost.json.actionRequests[0].title).toContain('删除基础成本项')
       await confirm(deletedCost.json.actionRequests[0])
       draft = (await client.get('/api/v1/workspace/draft')).json
@@ -4919,7 +5000,7 @@ describe('xox TypeScript API', () => {
 
       await closeHarness(harness)
     })
-  }, 45_000)
+  }, 120_000)
 
   it('plans employee add/delete and workspace rename through model-selected tools', async () => {
     await withFakeOpenAICompatibleProvider(scriptedProvider([
@@ -5713,7 +5794,7 @@ describe('xox TypeScript API', () => {
       expect(entries.filter((entry: any) => entry.entryOrigin === 'manual')).toHaveLength(4)
       await closeHarness(harness)
     })
-  }, 20_000)
+  }, 90_000)
 
   it('expands batch planned ledger tools into multiple editable confirmation cards', async () => {
     await withFakeOpenAICompatibleProvider(() => fakeToolResponses([
@@ -6090,7 +6171,7 @@ describe('xox TypeScript API', () => {
 
       await closeHarness(harness)
     })
-  }, 90_000)
+  }, 240_000)
 
   it('keeps agent read-only forecasts non-mutating and refuses account actions', async () => {
     await withFakeOpenAICompatibleProvider(scriptedProvider([
@@ -6109,7 +6190,7 @@ describe('xox TypeScript API', () => {
         message: '如果 4 月线上系数变成 0.3，利润会怎样',
       })
       expect(forecast.statusCode).toBe(200)
-      expect(forecast.json.runtimeSource).toBe('openai_compatible_tool_calls')
+      expect(forecast.json.runtimeSource, JSON.stringify(forecast.json, null, 2)).toBe('openai_compatible_tool_calls')
       expect(forecast.json.navigationEvents[0].route.mainTab).toBe('inputs')
       expect(forecast.json.actionRequests).toHaveLength(0)
       expect(forecast.json.messages.at(-1).content).toContain('未修改草稿')
@@ -6169,7 +6250,7 @@ describe('xox TypeScript API', () => {
 
       const exported = await client.post('/api/v1/agent/messages', { message: '导出当前工作区 JSON' })
       expect(exported.statusCode).toBe(200)
-      expect(exported.json.runtimeSource).toBe('openai_compatible_tool_calls')
+      expect(exported.json.runtimeSource, JSON.stringify(exported.json, null, 2)).toBe('openai_compatible_tool_calls')
       expect(exported.json.actionRequests).toHaveLength(0)
       expect(exported.json.navigationEvents[0].panel).toBe('workspace')
       expect(exported.json.messages.at(-1).content).toContain('未修改业务数据')

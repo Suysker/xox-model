@@ -948,8 +948,8 @@ export const AGENT_TOOL_CATALOG: ChatTool[] = [
         dataRequest: objectSchema({
           scope: {
             type: 'string',
-            enum: ['workspace_summary', 'forecast_months', 'ledger_entries', 'entity_summary', 'uploaded_file', 'custom_bundle'],
-            description: '`workspace_summary` 和 `forecast_months` 都会挂载工作区摘要、月份 rows、总收入/总成本/总利润/ROI/回本字段，以及有序股东 shareholders/firstShareholder；需要成员/员工明细才使用 entity_summary。',
+            enum: ['summary_records', 'time_series_records', 'tabular_records', 'entity_records', 'uploaded_file', 'custom_bundle'],
+            description: '`summary_records` 和 `time_series_records` 都会挂载工作区摘要、月份 rows、总收入/总成本/总利润/ROI/回本字段，以及有序股东 shareholders/firstShareholder；需要成员/员工明细才使用 `entity_records`。',
           },
           fields: { type: 'array', items: { type: 'string' }, description: '需要的字段白名单；不确定时可省略，由服务端按 scope 提供最小摘要。' },
           monthLabels: { type: 'array', items: { type: 'string' }, description: '需要的月份标签，例如 ["3月","4月"]。' },

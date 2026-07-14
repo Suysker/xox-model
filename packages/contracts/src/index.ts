@@ -981,14 +981,6 @@ export type SandboxArtifactKind =
   | 'docx'
 
 export type SandboxDataScope =
-  | 'workspace_summary'
-  | 'forecast_months'
-  | 'ledger_entries'
-  | 'entity_summary'
-  | 'uploaded_file'
-  | 'custom_bundle'
-
-export type SandboxManifestDataScope =
   | 'summary_records'
   | 'time_series_records'
   | 'tabular_records'
@@ -1039,7 +1031,7 @@ export type SandboxManifest = {
   }
   inputBundle: {
     bundleId: string
-    kind: SandboxManifestDataScope
+    kind: SandboxDataScope
     schemaVersion: string
     mountPath: '/input'
     readonly: true

@@ -637,6 +637,26 @@ export async function runMigrations(db: Kysely<Database>) {
     db,
     'CREATE INDEX IF NOT EXISTS idx_agent_harness_control_collection ON agent_harness_control_records (tenant_id, workspace_id, user_id, collection_name, updated_at)',
   )
+  await exec(
+    db,
+    `CREATE TABLE IF NOT EXISTS agent_harness_operational_records (
+      id VARCHAR(36) PRIMARY KEY,
+      tenant_id VARCHAR(128) NOT NULL,
+      workspace_id VARCHAR(128) NOT NULL,
+      user_id VARCHAR(128) NOT NULL DEFAULT '',
+      collection_name VARCHAR(160) NOT NULL,
+      record_key VARCHAR(255) NOT NULL,
+      version_no INTEGER NOT NULL,
+      value_json JSON NOT NULL,
+      created_at DATETIME NOT NULL,
+      updated_at DATETIME NOT NULL,
+      UNIQUE(tenant_id, workspace_id, user_id, collection_name, record_key)
+    )`,
+  )
+  await exec(
+    db,
+    'CREATE INDEX IF NOT EXISTS idx_agent_harness_operational_collection ON agent_harness_operational_records (tenant_id, workspace_id, user_id, collection_name, updated_at)',
+  )
 
   await addColumnIfMissing(db, 'actual_entries', 'related_entity_type', 'VARCHAR(32)')
   await addColumnIfMissing(db, 'actual_entries', 'related_entity_id', 'VARCHAR(128)')

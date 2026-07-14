@@ -9,8 +9,8 @@ import type {
   AgentAgUiEvent,
   AgentNavigationEvent,
   AgentPlanStep,
+  AgentRuntimeSource,
   AgentSendResponse,
-  AgentThreadState,
 } from '@xox/contracts'
 import { normalizeAgentAutomationLevel } from '@agentic-os/core'
 import type { Database, Row } from '../../db/schema.js'
@@ -21,7 +21,6 @@ import type { CurrentUser } from '../../modules/auth.js'
 import { addRunEvent, agentThreadEvents, listSerializedRunEvents, serializeRunEvent } from './xox-run-event-store-adapter.js'
 import {
   addMessage,
-  buildThreadState,
   projectXoxProductViews,
   projectXoxHarnessUi,
   getOrCreateThread,
@@ -66,6 +65,18 @@ type XoxSubmittedRunResponseInput = {
   planSteps: AgentPlanStep[]
   actionRequests: AgentActionRequest[]
   assistantText?: string | undefined
+}
+
+function submittedRunStatus(value: string): AgentSendResponse['status'] {
+  if (value === 'running' || value === 'completed' || value === 'failed' || value === 'cancelled') return value
+  throw new Error(`Invalid durable Agent run status: ${value}`)
+}
+
+function submittedRuntimeSource(value: string | null): AgentRuntimeSource | null {
+  if (value === null || value === 'openai_agents' || value === 'openai_compatible_tool_calls' || value === 'rules') {
+    return value
+  }
+  throw new Error(`Invalid durable Agent runtime source: ${value}`)
 }
 
 function buildSubmittedRunResponse(input: XoxSubmittedRunResponseInput): AgentSendResponse {
@@ -168,7 +179,74 @@ export async function failSubmittedAgentRun(db: Kysely<Database>, runId: string,
   agentThreadEvents.publish(thread.id, 'run_failed')
 }
 
-export async function submitAgentMessageRun(input: SubmitAgentMessageRunInput): Promise<AgentSendResponse | AgentThreadState> {
+async function awaitDurableSubmittedRunProjection(input: {
+  db: Kysely<Database>
+  settings: Settings
+  runId: string
+  threadId: string
+  userMessage: Row<'agent_messages'>
+}) {
+  const deadlineAt = Date.now() + Math.max(
+    30_000,
+    input.settings.agentRunLeaseTtlMs * 3,
+    input.settings.agentProviderRequestTimeoutMs * 12,
+  )
+  const pollMs = Math.min(250, Math.max(25, Math.floor(input.settings.agentRunWorkerPollMs / 10)))
+
+  while (Date.now() < deadlineAt) {
+    const run = await input.db.selectFrom('agent_runs').selectAll().where('id', '=', input.runId).executeTakeFirst()
+    if (!run) throw new Error(`Submitted Agent run disappeared: ${input.runId}`)
+    if (run.status !== 'running') {
+      const runEvents = await listSerializedRunEvents(input.db, input.runId)
+      const hasTerminalProjection = runEvents.some((event) =>
+        event.type === 'run_completed' || event.type === 'run_failed' || event.type === 'run_cancelled')
+      if (hasTerminalProjection) {
+        const [assistantMessage, actionRows, planRows] = await Promise.all([
+          input.db
+            .selectFrom('agent_messages')
+            .selectAll()
+            .where('thread_id', '=', input.threadId)
+            .where('role', '=', 'assistant')
+            .where('created_at', '>=', input.userMessage.created_at)
+            .orderBy('created_at', 'desc')
+            .executeTakeFirst(),
+          input.db
+            .selectFrom('agent_action_requests')
+            .selectAll()
+            .where('run_id', '=', input.runId)
+            .orderBy('created_at', 'asc')
+            .execute(),
+          input.db
+            .selectFrom('agent_plan_steps')
+            .selectAll()
+            .where('run_id', '=', input.runId)
+            .orderBy('sequence_no', 'asc')
+            .execute(),
+        ])
+        const planSteps = planRows.map(serializePlanStep)
+        const navigationEvents = planSteps
+          .map((step) => step.navigation)
+          .filter((event): event is AgentNavigationEvent => event !== null)
+        return {
+          run,
+          messages: [
+            serializeMessage(input.userMessage),
+            ...(assistantMessage ? [serializeMessage(assistantMessage)] : []),
+          ],
+          navigationEvents,
+          runEvents,
+          planSteps,
+          actionRequests: actionRows.map(serializeAction),
+          assistantText: assistantMessage?.content,
+        }
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollMs))
+  }
+  throw new Error(`Timed out waiting for durable Agent run projection: ${input.runId}`)
+}
+
+export async function submitAgentMessageRun(input: SubmitAgentMessageRunInput): Promise<AgentSendResponse> {
   const thread = await getOrCreateThread(input.db, input.workspace, input.user, input.threadId)
   const runId = newId()
   const automationLevel = normalizeAgentAutomationLevel(input.automationLevel)
@@ -230,14 +308,26 @@ export async function submitAgentMessageRun(input: SubmitAgentMessageRunInput): 
     }
 
     const completed = await createXoxDurableRunStore(input.db, input.settings).runSubmitted({ runId })
-    if (!completed) return buildThreadState(input.db, input.workspace, input.user, thread.id)
-    const runEvents = await listSerializedRunEvents(input.db, runId)
-    const messages = [
-      serializeMessage(userMessage),
-      ...(completed.assistantMessage ? [serializeMessage(completed.assistantMessage)] : []),
-    ]
-    const planSteps = completed.planRows.map(serializePlanStep)
-    const actionRequests = completed.actionRows.map(serializeAction)
+    const projection = completed === null
+      ? await awaitDurableSubmittedRunProjection({
+          db: input.db,
+          settings: input.settings,
+          runId,
+          threadId: thread.id,
+          userMessage,
+        })
+      : {
+          run: await input.db.selectFrom('agent_runs').selectAll().where('id', '=', runId).executeTakeFirstOrThrow(),
+          messages: [
+            serializeMessage(userMessage),
+            ...(completed.assistantMessage ? [serializeMessage(completed.assistantMessage)] : []),
+          ],
+          navigationEvents: completed.navigationEvents,
+          runEvents: await listSerializedRunEvents(input.db, runId),
+          planSteps: completed.planRows.map(serializePlanStep),
+          actionRequests: completed.actionRows.map(serializeAction),
+          assistantText: completed.assistantMessage?.content,
+        }
     return buildSubmittedRunResponse({
       workspace: input.workspace,
       user: input.user,
@@ -245,15 +335,15 @@ export async function submitAgentMessageRun(input: SubmitAgentMessageRunInput): 
       runId,
       createdAt: now,
       userMessage: input.message,
-      status: 'completed',
-      runtimeSource: completed.runtimeSource,
+      status: submittedRunStatus(projection.run.status),
+      runtimeSource: submittedRuntimeSource(projection.run.runtime_source),
       automationLevel,
-      messages,
-      navigationEvents: completed.navigationEvents,
-      runEvents,
-      planSteps,
-      actionRequests,
-      assistantText: completed.assistantMessage?.content,
+      messages: projection.messages,
+      navigationEvents: projection.navigationEvents,
+      runEvents: projection.runEvents,
+      planSteps: projection.planSteps,
+      actionRequests: projection.actionRequests,
+      assistantText: projection.assistantText,
     })
   } catch (error) {
     await failSubmittedAgentRun(input.db, runId, thread)

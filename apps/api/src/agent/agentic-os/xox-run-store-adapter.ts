@@ -1,14 +1,24 @@
 import type { Kysely } from 'kysely'
-import type { AgentRunInput, AgentRunRecord, AgentRunResumeInput, AgentScope } from '@agentic-os/contracts'
-import { normalizeAgentAutomationLevel, type AgentRunControl } from '@agentic-os/core'
+import type {
+  AgentRunInput,
+  AgentRunRecord,
+  AgentRunResult,
+  AgentRunResumeInput,
+  AgentScope,
+  JsonValue,
+} from '@agentic-os/contracts'
+import { createAgentTraceContext, normalizeAgentAutomationLevel, type AgentRunControl } from '@agentic-os/core'
 import {
   applyAgentServerSaaSRunInterruption,
+  createAgentServerDurableJournalCausalFactPort,
   createAgentServerSaaSDurableRunHostProfileRegistry,
   safeAgentServerErrorMessage,
   type AgentServerQueuedRun,
+  materializeAgentServerRunRecoverySnapshot,
   type AgentServerSaaSRunInterruptionEffects,
   type AgentServerSaaSDurableRunClaimSource,
   type AgentServerSaaSDurableRunLoad,
+  type AgentServerRunRecoverySnapshot,
 } from '@agentic-os/server'
 import type { AgentNavigationEvent, AgentRuntimeSource } from '@xox/contracts'
 import type { Database, Row } from '../../db/schema.js'
@@ -28,6 +38,7 @@ import {
 } from './xox-run-lease-store-adapter.js'
 import { addRunEvent, agentThreadEvents } from './xox-run-event-store-adapter.js'
 import { addMessage, touchThreadAfterRun } from './xox-thread-store-adapter.js'
+import { createXoxHarnessControlInfrastructure } from './xox-harness-control-store-adapter.js'
 
 const xoxRunHosts = createAgentServerSaaSDurableRunHostProfileRegistry<Kysely<Database>, Row<'agent_runs'>, AgenticOsKernelRunResult>()
 
@@ -181,14 +192,6 @@ async function countRunRows(db: Kysely<Database>, table: 'agent_plan_steps' | 'a
   return Number(row.count)
 }
 
-async function runPartialOutputSummary(db: Kysely<Database>, runId: string) {
-  const [planStepCount, actionRequestCount] = await Promise.all([
-    countRunRows(db, 'agent_plan_steps', runId),
-    countRunRows(db, 'agent_action_requests', runId),
-  ])
-  return { planStepCount, actionRequestCount }
-}
-
 async function recoverRunMessage(db: Kysely<Database>, run: Row<'agent_runs'>) {
   const stored = run.input_message?.trim()
   if (stored) return stored
@@ -230,7 +233,11 @@ async function loadXoxRun(db: Kysely<Database>, run: Row<'agent_runs'>): Promise
   return { ok: true, run, thread, workspace, user, message }
 }
 
-function queuedRunFromLoad(load: Extract<XoxRunLoad, { ok: true }>): AgentServerQueuedRun {
+function queuedRunFromLoad(
+  load: Extract<XoxRunLoad, { ok: true }>,
+  source: AgentServerSaaSDurableRunClaimSource,
+  ownership: AgentServerQueuedRun['ownership'],
+): AgentServerQueuedRun {
   const automationLevel = normalizeAgentAutomationLevel(load.run.automation_level)
   return {
     run: xoxRunRecord({
@@ -246,6 +253,8 @@ function queuedRunFromLoad(load: Extract<XoxRunLoad, { ok: true }>): AgentServer
       message: load.message,
       automationLevel,
     }),
+    ownership,
+    source: source === 'recoverable' ? 'recovery' : 'pending',
     metadata: {
       xoxRunId: load.run.id,
       xoxThreadId: load.thread.id,
@@ -270,13 +279,60 @@ function invalidRunRecord(run: Row<'agent_runs'>, thread: Row<'agent_threads'> |
 async function loadProfileRun(
   db: Kysely<Database>,
   run: Row<'agent_runs'>,
+  source: AgentServerSaaSDurableRunClaimSource,
+  infrastructure: ReturnType<typeof createXoxHarnessControlInfrastructure>,
 ): Promise<AgentServerSaaSDurableRunLoad<Row<'agent_runs'>>> {
   const load = await loadXoxRun(db, run)
   if (load.ok) {
+    const scope = xoxScope(load.workspace, load.user)
+    const [state, journalCursor] = await Promise.all([
+      infrastructure.control.loopState.load({ scope, runId: run.id }),
+      infrastructure.traceJournal.currentCursor({ scope, runId: run.id }),
+    ])
+    const workerId = run.worker_id
+    if (workerId === null) throw new Error(`Agent run ${run.id} has no durable worker owner.`)
+    const ownership = await infrastructure.durableRunOwnership.claim({
+      scope,
+      runId: run.id,
+      workerId,
+      expectedStateVersion: state?.stateVersion ?? 0,
+      journalCursor,
+      now: run.heartbeat_at ?? utcNow(),
+    })
+    const queuedRun = queuedRunFromLoad(load, source, ownership)
+    let recoverySnapshot: AgentServerRunRecoverySnapshot | undefined
+    if (source === 'recoverable' && state !== null) {
+      try {
+        recoverySnapshot = await materializeAgentServerRunRecoverySnapshot({
+          dependencies: {
+            control: infrastructure.control,
+            runtimeExecution: infrastructure.runtimeExecutionStore,
+            loadTerminalResult: async ({ run: recoveryRun, resultRef }) => {
+              const record = await infrastructure.control.records.load<AgentRunResult & JsonValue>({
+                scope: recoveryRun.scope,
+                runId: recoveryRun.runId,
+                refId: resultRef,
+                kind: 'run_result',
+              })
+              return record?.value ?? null
+            },
+          },
+          run: queuedRun.run,
+          ownership,
+          journalCursor,
+        })
+      } catch (error) {
+        queuedRun.metadata = {
+          ...(queuedRun.metadata ?? {}),
+          recoverySnapshotError: safeRunErrorMessage(error),
+        }
+      }
+    }
     return {
       status: 'ready',
       row: run,
-      queuedRun: queuedRunFromLoad(load),
+      queuedRun,
+      ...(recoverySnapshot === undefined ? {} : { recoverySnapshot }),
     }
   }
   return {
@@ -363,10 +419,15 @@ async function resumeProfileRun(
   }
 }
 
-async function submittedProfileRun(db: Kysely<Database>, settings: Settings, runId: string) {
+async function submittedProfileRun(
+  db: Kysely<Database>,
+  settings: Settings,
+  runId: string,
+  infrastructure: ReturnType<typeof createXoxHarnessControlInfrastructure>,
+) {
   const claimed = await claimAgentRunLease(db, settings, runId)
   if (!claimed) return null
-  return loadProfileRun(db, claimed)
+  return loadProfileRun(db, claimed, 'pending', infrastructure)
 }
 
 async function materializeXoxRunResult(
@@ -394,14 +455,60 @@ async function materializeXoxRunResult(
 }
 
 export function createXoxDurableRunStore(db: Kysely<Database>, settings: Settings) {
+  const infrastructure = createXoxHarnessControlInfrastructure(db, settings.agentRunLeaseTtlMs)
   return xoxRunHosts.forHost(db, () => ({
     resumeRun: (input, control) => resumeProfileRun(db, settings, input, control),
+    causalFacts: createAgentServerDurableJournalCausalFactPort({
+      journal: infrastructure.traceJournal,
+      resolveWriter: (fact) => infrastructure.traceJournal.acquireWriter({
+        scope: fact.scope,
+        runId: fact.runId,
+        ownerId: settings.agentWorkerId,
+        traceContext: createAgentTraceContext({
+          run: {
+            runId: fact.runId,
+            threadId: fact.threadId,
+            scope: fact.scope,
+            status: 'running',
+            createdAt: fact.occurredAt,
+          },
+          contentPolicyId: 'agentic-os.metadata-only.v1',
+        }),
+      }),
+    }),
     rows: {
       claim: (input) => claimRows(db, settings, input, input.source),
-      load: ({ row }) => loadProfileRun(db, row),
-      loadSubmittedRun: (runId) => submittedProfileRun(db, settings, runId),
+      load: ({ row, source }) => loadProfileRun(db, row, source, infrastructure),
+      loadSubmittedRun: (runId) => submittedProfileRun(db, settings, runId, infrastructure),
     },
-    partialOutput: ({ runId }) => runPartialOutputSummary(db, runId),
+    ownership: {
+      refresh: async ({ queuedRun, workerId, now }) => {
+        if (workerId !== settings.agentWorkerId || queuedRun.ownership.workerId !== workerId) {
+          return { active: false as const }
+        }
+        if (!(await refreshAgentRunLease(db, settings, queuedRun.run.runId))) {
+          return { active: false as const }
+        }
+        const row = await db
+          .selectFrom('agent_runs')
+          .select(['status', 'worker_id', 'lease_expires_at'])
+          .where('id', '=', queuedRun.run.runId)
+          .executeTakeFirst()
+        if (
+          row?.status !== 'running' ||
+          row.worker_id !== workerId ||
+          row.lease_expires_at === null ||
+          row.lease_expires_at <= now
+        ) {
+          return { active: false as const }
+        }
+        return infrastructure.durableRunOwnership.refresh({ queuedRun, workerId, now })
+      },
+      release: async ({ ownership, workerId, now }) => {
+        if (workerId !== settings.agentWorkerId || ownership.workerId !== workerId) return 'stale' as const
+        return infrastructure.durableRunOwnership.release({ ownership, now })
+      },
+    },
     effects: {
       started: async ({ projection }) => {
         await addRunEvent(db, {
@@ -411,8 +518,8 @@ export function createXoxDurableRunStore(db: Kysely<Database>, settings: Setting
         })
         agentThreadEvents.publish(projection.event.threadId, projection.signal)
       },
-      completed: async ({ queuedRun, projection, partialOutput }) => {
-        const actionCount = partialOutput?.actionRequestCount ?? 0
+      completed: async ({ queuedRun, projection }) => {
+        const actionCount = await countRunRows(db, 'agent_action_requests', queuedRun.run.runId)
         await db
           .updateTable('agent_runs')
           .set({
@@ -439,11 +546,7 @@ export function createXoxDurableRunStore(db: Kysely<Database>, settings: Setting
     },
     interruption: {
       effects: xoxRunInterruptionEffects(db),
-      recoveryCopy: {
-        partial_output_present: 'Agent run 在服务重启时已有部分运行产物，系统已取消未执行确认卡以避免重复执行。请重新发送这条指令。',
-      },
     },
-    queueOptions: { recoverRunningRuns: true },
     workerOptions: {
       workerId: settings.agentWorkerId,
       batchSize: 1,

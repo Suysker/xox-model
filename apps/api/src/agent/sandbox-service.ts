@@ -454,13 +454,13 @@ function buildSandboxToolSdk(): { tools: SandboxToolSdkEntry[]; documents: Sandb
 }
 
 function asSandboxDataScope(value: unknown): SandboxDataScope {
-  return value === 'forecast_months' ||
-    value === 'ledger_entries' ||
-    value === 'entity_summary' ||
+  return value === 'time_series_records' ||
+    value === 'tabular_records' ||
+    value === 'entity_records' ||
     value === 'uploaded_file' ||
     value === 'custom_bundle'
     ? value
-    : 'workspace_summary'
+    : 'summary_records'
 }
 
 function normalizeSandboxInput(step: RuntimeToolStep): SandboxRunCodeInput {
@@ -589,7 +589,7 @@ async function buildSandboxDataBundle(ctx: SandboxServiceContext, input: Sandbox
   let fileCount: number | undefined
   let fileKinds: SandboxFileKind[] | undefined
 
-  if (scope === 'forecast_months') {
+  if (scope === 'time_series_records') {
     structured = buildProjectionStructuredBundle({
       scope,
       workspaceName: ctx.workspace.name,
@@ -599,7 +599,7 @@ async function buildSandboxDataBundle(ctx: SandboxServiceContext, input: Sandbox
       rowLimit,
     })
     rows = (structured as { rows: unknown[] }).rows
-  } else if (scope === 'entity_summary') {
+  } else if (scope === 'entity_records') {
     structured = {
       teamMembers: config.teamMembers.map((member, index) => ({
         index: index + 1,
@@ -629,7 +629,7 @@ async function buildSandboxDataBundle(ctx: SandboxServiceContext, input: Sandbox
       ...config.shareholders,
       ...config.employees,
     ].slice(0, rowLimit)
-  } else if (scope === 'ledger_entries') {
+  } else if (scope === 'tabular_records') {
     const periods = await listPeriods(ctx.db, ctx.workspace)
     const targetPeriods = periods.filter((period) => monthLabels.size === 0 || monthLabels.has(period.monthLabel))
     rows = []

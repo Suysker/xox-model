@@ -17,7 +17,7 @@ export async function claimAgentRunLease(
   runId: string,
 ): Promise<Row<'agent_runs'> | null> {
   const now = utcNow()
-  await db
+  const claim = await db
     .updateTable('agent_runs')
     .set({
       worker_id: settings.agentWorkerId,
@@ -33,7 +33,8 @@ export async function claimAgentRunLease(
         eb('lease_expires_at', '<', now),
       ]),
     )
-    .execute()
+    .executeTakeFirst()
+  if (Number(claim.numUpdatedRows) !== 1) return null
 
   const row = await db
     .selectFrom('agent_runs')

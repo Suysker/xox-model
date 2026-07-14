@@ -410,6 +410,8 @@ export type AgentHarnessControlRecordTable = {
   updated_at: Timestamp
 }
 
+export type AgentHarnessOperationalRecordTable = AgentHarnessControlRecordTable
+
 export type Database = {
   users: UserTable
   user_credentials: UserCredentialTable
@@ -441,6 +443,7 @@ export type Database = {
   agent_context_snapshots: AgentContextSnapshotTable
   agent_provider_settings: AgentProviderSettingTable
   agent_harness_control_records: AgentHarnessControlRecordTable
+  agent_harness_operational_records: AgentHarnessOperationalRecordTable
 }
 
 export type Row<T extends keyof Database> = Selectable<Database[T]>

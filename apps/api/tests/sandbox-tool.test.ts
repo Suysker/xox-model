@@ -195,7 +195,7 @@ describe('manifest-scoped sandbox tool', () => {
     const baseScenario = projection.scenarios.find((scenario) => scenario.key === 'base') ?? projection.scenarios[0] ?? null
 
     const structured = sandboxInternalsForTests.buildProjectionStructuredBundle({
-      scope: 'forecast_months',
+      scope: 'time_series_records',
       workspaceName: 'Sandbox Forecast',
       config,
       baseScenario,
@@ -203,7 +203,7 @@ describe('manifest-scoped sandbox tool', () => {
       rowLimit: 500,
     }) as any
 
-    expect(structured.scope).toBe('forecast_months')
+    expect(structured.scope).toBe('time_series_records')
     expect(structured.workspaceName).toBe('Sandbox Forecast')
     expect(structured.months.length).toBe(baseScenario?.months.length)
     expect(structured.rows).toBe(structured.months)
@@ -248,12 +248,12 @@ describe('manifest-scoped sandbox tool', () => {
         '  }',
         '})',
       ].join('\n'),
-      dataRequest: { scope: 'workspace_summary' },
+      dataRequest: { scope: 'summary_records' },
       expectedOutputs: ['json'],
     }
     const bundle = {
       bundleId: 'bundle_summary',
-      scope: 'workspace_summary' as const,
+      scope: 'summary_records' as const,
       fields: ['grossSales', 'totalCost'],
       rows: [{ grossSales: 100, totalCost: 80 }],
       structured: { grossSales: 100, totalCost: 80, totalProfit: 20, rows: [{ grossSales: 100, totalCost: 80 }] },
@@ -318,12 +318,12 @@ describe('manifest-scoped sandbox tool', () => {
         '  "structured": {"profit": 20}',
         '})',
       ].join('\n'),
-      dataRequest: { scope: 'workspace_summary' },
+      dataRequest: { scope: 'summary_records' },
       expectedOutputs: ['json'],
     }
     const bundle = {
       bundleId: 'bundle_unconsumed',
-      scope: 'workspace_summary' as const,
+      scope: 'summary_records' as const,
       fields: ['grossSales', 'totalCost'],
       rows: [{ grossSales: 100, totalCost: 80 }],
       structured: { grossSales: 100, totalCost: 80, totalProfit: 20 },
@@ -365,7 +365,7 @@ describe('manifest-scoped sandbox tool', () => {
       language: 'python',
       code: [
         'import agentic_os_sandbox',
-        'summary = agentic_os_sandbox.data_query_workspace(scope="workspace_summary", metrics=["roi", "payback"])',
+        'summary = agentic_os_sandbox.data_query_workspace(scope="summary_records", metrics=["roi", "payback"])',
         'agentic_os_sandbox.emit({',
         '  "summary": "SDK ok",',
         '  "structured": {',
@@ -374,15 +374,15 @@ describe('manifest-scoped sandbox tool', () => {
         '  }',
         '})',
       ].join('\n'),
-      dataRequest: { scope: 'workspace_summary' },
+      dataRequest: { scope: 'summary_records' },
       expectedOutputs: ['json'],
     }
     const bundle = {
       bundleId: 'bundle_sdk',
-      scope: 'workspace_summary' as const,
+      scope: 'summary_records' as const,
       fields: ['grossSales', 'totalCost', 'roi', 'paybackMonthLabel'],
       rows: [{ grossSales: 100, totalCost: 80, totalProfit: 20 }],
-      structured: { scope: 'workspace_summary', grossSales: 100, totalCost: 80, totalProfit: 20, roi: 0.2, paybackMonthLabel: '4月', rows: [{ grossSales: 100 }] },
+      structured: { scope: 'summary_records', grossSales: 100, totalCost: 80, totalProfit: 20, roi: 0.2, paybackMonthLabel: '4月', rows: [{ grossSales: 100 }] },
       rowCount: 1,
       redactions: 0,
       contentHash: 'hash',
@@ -428,15 +428,15 @@ describe('manifest-scoped sandbox tool', () => {
         '])',
         'agentic_os_sandbox.emit({"summary": "write requested", "structured": {"request": request}})',
       ].join('\n'),
-      dataRequest: { scope: 'workspace_summary' },
+      dataRequest: { scope: 'summary_records' },
       expectedOutputs: ['json'],
     }
     const bundle = {
       bundleId: 'bundle_write_sdk',
-      scope: 'workspace_summary' as const,
+      scope: 'summary_records' as const,
       fields: ['grossSales'],
       rows: [{ grossSales: 100 }],
-      structured: { scope: 'workspace_summary', grossSales: 100 },
+      structured: { scope: 'summary_records', grossSales: 100 },
       rowCount: 1,
       redactions: 0,
       contentHash: 'hash',
@@ -478,12 +478,12 @@ describe('manifest-scoped sandbox tool', () => {
       purpose: '普通文本输出校验',
       language: 'python',
       code: 'print("ROI after loan cost is 12.5%")',
-      dataRequest: { scope: 'workspace_summary' },
+      dataRequest: { scope: 'summary_records' },
       expectedOutputs: ['markdown'],
     }
     const bundle = {
       bundleId: 'bundle_text',
-      scope: 'workspace_summary' as const,
+      scope: 'summary_records' as const,
       fields: ['totalProfit'],
       rows: [{ totalProfit: 100 }],
       structured: { totalProfit: 100 },
@@ -524,7 +524,7 @@ describe('manifest-scoped sandbox tool', () => {
       stdout: '',
       stderr: '',
       purpose: '长输出预览校验',
-      dataBundleSummary: { scope: 'workspace_summary', fields: ['totalProfit'], rows: 1, redactions: 0 },
+      dataBundleSummary: { scope: 'summary_records', fields: ['totalProfit'], rows: 1, redactions: 0 },
       manifest: {
         manifestId: 'manifest_long_output',
         nonce: 'nonce_long_output',
@@ -573,12 +573,12 @@ describe('manifest-scoped sandbox tool', () => {
       purpose: '空输出校验',
       language: 'python',
       code: 'pass',
-      dataRequest: { scope: 'workspace_summary' },
+      dataRequest: { scope: 'summary_records' },
       expectedOutputs: ['markdown'],
     }
     const bundle = {
       bundleId: 'bundle_empty',
-      scope: 'workspace_summary' as const,
+      scope: 'summary_records' as const,
       fields: ['totalProfit'],
       rows: [{ totalProfit: 100 }],
       structured: { totalProfit: 100 },
@@ -606,12 +606,12 @@ describe('manifest-scoped sandbox tool', () => {
       purpose: '超时校验',
       language: 'python',
       code: 'import time\ntime.sleep(2)',
-      dataRequest: { scope: 'workspace_summary' },
+      dataRequest: { scope: 'summary_records' },
       expectedOutputs: ['json'],
     }
     const bundle = {
       bundleId: 'bundle_timeout',
-      scope: 'workspace_summary' as const,
+      scope: 'summary_records' as const,
       fields: ['grossSales'],
       rows: [{ grossSales: 100 }],
       structured: { grossSales: 100 },
@@ -639,12 +639,12 @@ describe('manifest-scoped sandbox tool', () => {
       purpose: '运行时错误校验',
       language: 'python',
       code: 'raise RuntimeError("boom")',
-      dataRequest: { scope: 'workspace_summary' },
+      dataRequest: { scope: 'summary_records' },
       expectedOutputs: ['json'],
     }
     const bundle = {
       bundleId: 'bundle_failure',
-      scope: 'workspace_summary' as const,
+      scope: 'summary_records' as const,
       fields: ['grossSales'],
       rows: [{ grossSales: 100 }],
       structured: { grossSales: 100 },
@@ -673,12 +673,12 @@ describe('manifest-scoped sandbox tool', () => {
       purpose: '策略阻断校验',
       language: 'python',
       code: 'print("should not run")',
-      dataRequest: { scope: 'workspace_summary' },
+      dataRequest: { scope: 'summary_records' },
       expectedOutputs: ['json'],
     }
     const bundle = {
       bundleId: 'bundle_blocked',
-      scope: 'workspace_summary' as const,
+      scope: 'summary_records' as const,
       fields: ['grossSales'],
       rows: [{ grossSales: 100 }],
       structured: { grossSales: 100 },

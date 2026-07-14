@@ -25,6 +25,7 @@ import {
   projectAgentServerSaaSRunEventDrafts,
   type AgentServerSaaSHostStoreProfile,
 } from '@agentic-os/server'
+import { createAgenticOsHarnessRepairResponse } from '@agentic-os/ui-protocol'
 import { createOpenAIRuntimePlane } from '@agentic-os/integration-openai'
 import type { AgentNavigationEvent, AgentRuntimeSource } from '@xox/contracts'
 import { hydrateModelConfig } from '@xox/domain'
@@ -56,7 +57,7 @@ import {
   reserveAgenticOsRunEvent,
 } from '../agentic-os/xox-run-event-store-adapter.js'
 import { createXoxHarnessControlInfrastructure } from '../agentic-os/xox-harness-control-store-adapter.js'
-import { addMessage } from '../agentic-os/xox-thread-store-adapter.js'
+import { addMessage, buildThreadState } from '../agentic-os/xox-thread-store-adapter.js'
 import {
   AGENT_TOOL_REGISTRY,
   isHarnessManagedObservationToolName,
@@ -424,6 +425,7 @@ function createXoxHostProfile(
   const apiFamily = useOpenAIAgents ? 'openai-responses' : 'openai-chat-completions'
   const runtime = createOpenAIRuntimePlane({
     executionStore: infrastructure.runtimeExecutionStore,
+    operationalServices: infrastructure.runtimeOperationalServices,
     modelControl: {
       catalog: [{
         schemaVersion: 'agentic-os.model_catalog_entry.v1',
@@ -562,8 +564,11 @@ function createXoxAgentServer(
   options: XoxAgentHarnessOptions,
   state: XoxHostState,
 ) {
-  const infrastructure = createXoxHarnessControlInfrastructure(ctx.db)
-  return createSaaSAgentHost(
+  const infrastructure = createXoxHarnessControlInfrastructure(
+    ctx.db,
+    ctx.settings.agentRunLeaseTtlMs,
+  )
+  const server = createSaaSAgentHost(
     createXoxHostProfile(ctx, options, state, infrastructure),
     {
       trace: {
@@ -572,8 +577,54 @@ function createXoxAgentServer(
         contentPolicyId: 'agentic-os.metadata-only.v1',
         sourceRevisions: { host: 'xox-model.agentic-os.v1' },
       },
+      activeRunCommands: {
+        authorize: async ({ actorId, scope, runId }) =>
+          actorId === ctx.user.id && runId === ctx.runId &&
+          scope.tenantId === ctx.user.id && scope.workspaceId === ctx.workspace.id &&
+          scope.userId === ctx.user.id,
+        validateGeneration: async ({ scope, runId, attemptId }) => {
+          if (runId !== ctx.runId || scope.tenantId !== ctx.user.id ||
+              scope.workspaceId !== ctx.workspace.id || scope.userId !== ctx.user.id) return false
+          const loop = await infrastructure.control.loopState.load({ scope, runId })
+          return loop?.attempt?.attemptId === attemptId && await options.beforeStateWrite()
+        },
+        signalActiveOwner: () => false,
+        repairUiGap: async ({ request }) => {
+          if (request.threadId !== ctx.thread.id || request.runId !== ctx.runId) {
+            return compactJsonObject({
+              response: createAgenticOsHarnessRepairResponse({
+                request,
+                repairedThroughSequence: 0,
+                snapshotStateVersion: 0,
+                status: 'failed',
+                repairedAt: utcNow(),
+              }),
+              snapshotEvents: [],
+            })
+          }
+          const state = await buildThreadState(ctx.db, ctx.workspace, ctx.user, request.threadId)
+          const snapshot = state.harnessUi.snapshot
+          const repairedThroughSequence = snapshot.state.lastAgenticOsSequence ?? 0
+          const covers = repairedThroughSequence >= request.actualSequence &&
+            snapshot.state.stateVersion >= request.lastAcceptedStateVersion
+          return compactJsonObject({
+            response: createAgenticOsHarnessRepairResponse({
+              request,
+              repairedThroughSequence,
+              snapshotStateVersion: snapshot.state.stateVersion,
+              status: covers ? 'repaired' : 'stale',
+              repairedAt: utcNow(),
+            }),
+            snapshotEvents: covers
+              ? state.harnessUi.events.filter((event) =>
+                  event.type === 'MESSAGES_SNAPSHOT' || event.type === 'STATE_SNAPSHOT')
+              : [],
+          })
+        },
+      },
     },
   )
+  return { server, infrastructure }
 }
 
 async function latestRunRows(ctx: AgentTurnContext) {
@@ -662,20 +713,57 @@ export async function resumeXoxAgentRunAfterActionConfirmation(input: {
   })
   const request = osRunInput(turnCtx, objective)
   const osRun: OsRunRecord = { ...osRunRecord(turnCtx, run), status: 'awaiting_confirmation' }
-  const server = createXoxAgentServer(turnCtx, {
+  const harness = createXoxAgentServer(turnCtx, {
       beforeStateWrite,
       ...(input.hooks === undefined ? {} : { hooks: input.hooks }),
     }, state)
-  const actionExecution = await server.confirmAction({
-    run: osRun,
-    actionRequest: xoxOsActionRequest(input.action),
-    actorId: input.user.id,
-    ...(input.abortSignal === undefined ? {} : { abortSignal: input.abortSignal }),
+  if (input.action.tool_call_id === null) {
+    throw new Error('Pending action is missing its canonical tool-call identity.')
+  }
+  const approvalId = `action_request:${input.action.tool_call_id}:${input.action.id}`
+  const approval = await harness.infrastructure.control.approvals.load({
+    scope: osRun.scope,
+    runId: osRun.runId,
+    approvalId,
   })
-  const resumed = await server.resumeRun({
+  if (approval === null || approval.toolCallId === undefined) {
+    throw new Error('Pending action is missing its canonical durable approval record.')
+  }
+  const now = utcNow()
+  const commandResult = await harness.server.executeActiveRunCommand({
+    type: 'resolve_approval',
+    commandId: `${approval.approvalId}:approve:${input.user.id}`,
+    scope: osRun.scope,
+    runId: osRun.runId,
+    attemptId: approval.attemptId,
+    actorId: input.user.id,
+    audience: approval.audience,
+    workerOwnerEpoch: approval.workerOwnerEpoch,
+    createdAt: now,
+    expiresAt: approval.expiresAt,
+    toolCallId: approval.toolCallId,
+    resolution: {
+      approvalId: approval.approvalId,
+      scope: osRun.scope,
+      runId: osRun.runId,
+      verdict: 'approved',
+      resolverId: input.user.id,
+      audience: approval.audience,
+      authorizationPolicyRef: approval.authorizationPolicyRef,
+      expectedLoopStateVersion: approval.loopStateVersion,
+      expectedWorkerOwnerEpoch: approval.workerOwnerEpoch,
+      resolvedAt: now,
+    },
+  })
+  if (commandResult.status !== 'approval' ||
+      commandResult.materialization !== 'completed' ||
+      (commandResult.resolution.status !== 'resolved' && commandResult.resolution.status !== 'already_resolved')) {
+    throw new Error('Approval command was rejected by the canonical active-run command plane.')
+  }
+  const resumed = await harness.server.resumeRun({
     run: osRun,
     request,
-    observations: [actionExecution.observation],
+    observations: [],
   }, input.abortSignal === undefined ? {} : { abortSignal: input.abortSignal })
   if (state.actionRows.some((row) => row.status === 'pending')) {
     const actionRequest = await input.db.selectFrom('agent_action_requests').selectAll().where('id', '=', input.action.id).executeTakeFirstOrThrow()
@@ -718,7 +806,7 @@ export async function executeXoxAgentRun(
     data: { harness: 'agentic-os' },
   })
   const request = osRunInput(turnCtx, objective)
-  const result = await createXoxAgentServer(turnCtx, options, state).run(
+  const result = await createXoxAgentServer(turnCtx, options, state).server.run(
     request,
     ctx.abortSignal === undefined ? {} : { abortSignal: ctx.abortSignal },
   )
