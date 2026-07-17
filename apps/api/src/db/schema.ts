@@ -3,6 +3,7 @@ import type { ColumnType, Generated, Insertable, Selectable, Updateable } from '
 type JsonText = ColumnType<string, string, string>
 type Timestamp = ColumnType<string, string | undefined, string>
 type NullableTimestamp = ColumnType<string | null, string | null | undefined, string | null>
+type BlobBytes = ColumnType<Uint8Array, Uint8Array, Uint8Array>
 
 export type UserTable = {
   id: Generated<string>
@@ -412,6 +413,32 @@ export type AgentHarnessControlRecordTable = {
 
 export type AgentHarnessOperationalRecordTable = AgentHarnessControlRecordTable
 
+export type AgentSandboxObjectTable = {
+  id: string
+  tenant_id: string
+  workspace_id: string
+  object_type: 'input' | 'artifact'
+  object_version: string
+  name: string
+  file_kind: string
+  content_hash: string
+  size_bytes: number
+  bytes: BlobBytes
+  expires_at: string | null
+  created_at: Timestamp
+}
+
+export type AgentSandboxArtifactCommitTable = {
+  idempotency_key: string
+  tenant_id: string
+  workspace_id: string
+  run_id: string
+  sandbox_session_id: string
+  tool_call_id: string
+  artifact_ids_json: JsonText
+  created_at: Timestamp
+}
+
 export type Database = {
   users: UserTable
   user_credentials: UserCredentialTable
@@ -444,6 +471,8 @@ export type Database = {
   agent_provider_settings: AgentProviderSettingTable
   agent_harness_control_records: AgentHarnessControlRecordTable
   agent_harness_operational_records: AgentHarnessOperationalRecordTable
+  agent_sandbox_objects: AgentSandboxObjectTable
+  agent_sandbox_artifact_commits: AgentSandboxArtifactCommitTable
 }
 
 export type Row<T extends keyof Database> = Selectable<Database[T]>

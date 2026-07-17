@@ -27,6 +27,7 @@ import {
 } from '@agentic-os/server'
 import { createAgenticOsHarnessRepairResponse } from '@agentic-os/ui-protocol'
 import { createOpenAIRuntimePlane } from '@agentic-os/integration-openai'
+import type { SandboxBroker } from '@agentic-os/sandbox'
 import type { AgentNavigationEvent, AgentRuntimeSource } from '@xox/contracts'
 import { hydrateModelConfig } from '@xox/domain'
 import { parseJson } from '../../db/database.js'
@@ -100,6 +101,7 @@ type XoxHostState = {
 type XoxAgentHarnessOptions = {
   beforeStateWrite: () => Promise<boolean>
   hooks?: AgentHookPlanePorts
+  sandboxBroker: SandboxBroker
 }
 
 const AGENT_TURN_POLICY_PROMPT = readFileSync(
@@ -511,7 +513,7 @@ function createXoxHostProfile(
       actionInput,
     }),
     sandboxPort: {
-      executeSandbox: (sandboxInput) => executeXoxSandboxForAgenticOs(ctx, sandboxInput),
+      executeSandbox: (sandboxInput) => executeXoxSandboxForAgenticOs(ctx, sandboxInput, options.sandboxBroker),
     },
     createEditAudit: (input) => xoxOsActionAudit({
       runId: input.run.runId,
@@ -681,6 +683,7 @@ export async function resumeXoxAgentRunAfterActionConfirmation(input: {
   abortSignal?: AbortSignal
   beforeStateWrite?: () => Promise<boolean>
   hooks?: AgentHookPlanePorts
+  sandboxBroker: SandboxBroker
 }): Promise<{
   actionRequest: Row<'agent_action_requests'>
   actionResult: unknown
@@ -715,6 +718,7 @@ export async function resumeXoxAgentRunAfterActionConfirmation(input: {
   const osRun: OsRunRecord = { ...osRunRecord(turnCtx, run), status: 'awaiting_confirmation' }
   const harness = createXoxAgentServer(turnCtx, {
       beforeStateWrite,
+      sandboxBroker: input.sandboxBroker,
       ...(input.hooks === undefined ? {} : { hooks: input.hooks }),
     }, state)
   if (input.action.tool_call_id === null) {

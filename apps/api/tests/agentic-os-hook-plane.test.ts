@@ -9,6 +9,7 @@ import {
   AgentServerHookProvider,
   AgentServerInMemoryHookStore,
 } from '@agentic-os/server'
+import { SandboxBroker } from '@agentic-os/sandbox'
 import type { Settings } from '../src/core/settings.js'
 import { createDatabase } from '../src/db/database.js'
 import { runMigrations } from '../src/db/migrations.js'
@@ -135,6 +136,7 @@ describe('Agentic OS hook plane downstream boundary', () => {
         automationLevel: 'manual',
       }, {
         beforeStateWrite: async () => true,
+        sandboxBroker: new SandboxBroker(),
         hooks: { provider, store, outputStore: store },
       })
 

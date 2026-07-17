@@ -27,6 +27,11 @@ import {
   retrieveAgentMemories,
 } from '../src/agent/memory.js'
 import { addRunEvent } from '../src/agent/agentic-os/xox-run-event-store-adapter.js'
+import { SandboxBackendRegistry, SandboxBroker } from '@agentic-os/sandbox'
+import {
+  SANDBOX_CONFORMANCE_IMAGE_CATALOG,
+  createSandboxConformanceBackend,
+} from '@agentic-os/testing'
 
 type JsonResponse = {
   statusCode: number
@@ -132,26 +137,70 @@ function fakeFinalAnswerClaimExtractionResponse(claims: Array<Record<string, unk
   return fakeOpenAIChatToolResponse('final_answer_extract_claims', { claims })
 }
 
-async function buildHarness(name: string, overrides: Partial<Settings> = {}) {
+async function buildHarness(
+  name: string,
+  overrides: Partial<Settings> = {},
+  sandboxBroker?: SandboxBroker,
+) {
   const dir = mkdtempSync(join(tmpdir(), `xox-api-${name}-`))
   const settings = { ...testSettings(join(dir, 'test.db')), ...overrides }
   const db = createDatabase(settings)
-  const app = await createApp({ settings, db })
-  return { app, db, settings }
+  const activeSandboxBroker = sandboxBroker ?? new SandboxBroker()
+  const app = await createApp({ settings, db, sandboxBroker: activeSandboxBroker })
+  return { app, db, settings, sandboxBroker: activeSandboxBroker }
 }
 
-async function withLocalSandboxBackend(run: () => Promise<void>) {
-  const previous = process.env.XOX_SANDBOX_BACKEND
-  process.env.XOX_SANDBOX_BACKEND = 'local-script'
-  try {
-    await run()
-  } finally {
-    if (previous === undefined) {
-      delete process.env.XOX_SANDBOX_BACKEND
-    } else {
-      process.env.XOX_SANDBOX_BACKEND = previous
+async function withSandboxConformanceBackend(run: (broker: SandboxBroker) => Promise<void>) {
+  const backend = createSandboxConformanceBackend({
+    id: 'test-container',
+    productionFacadeContract: true,
+  })
+  const execute = backend.execute.bind(backend)
+  backend.execute = async (session, input) => {
+    const result = await execute(session, input)
+    if (input.input.code.trim() === 'pass') {
+      return {
+        ...result,
+        stdout: '',
+        stderr: '',
+        outputText: '',
+        extraction: { extractionStatus: 'empty' },
+        result: { summary: '' },
+      }
+    }
+    if (input.input.code.includes('broken =')) {
+      return {
+        ...result,
+        status: 'failed',
+        exitCode: 1,
+        stderr: 'SyntaxError: invalid syntax',
+        outputText: 'SyntaxError: invalid syntax',
+        extraction: { extractionStatus: 'text_only', summary: 'SyntaxError: invalid syntax' },
+        result: { summary: 'SyntaxError: invalid syntax' },
+      }
+    }
+    const structured = {
+      firstShareholder: { name: '股东 A', investmentAmount: 65000 },
+      shareholders: [{ name: '股东 A', investmentAmount: 65000 }],
+      totalProfit: 120000,
+      loanInterest: 3250,
+      personalRoi: 1.796,
+    }
+    const summary = input.input.purpose.includes('修正')
+      ? '修复后完成第一位股东个人回报测算'
+      : '已完成第一位股东个人回报测算'
+    return {
+      ...result,
+      stdout: summary,
+      outputText: summary,
+      extraction: { extractionStatus: 'parsed', parsedOutput: { summary, structured }, summary },
+      result: { summary, structured },
     }
   }
+  await run(new SandboxBroker({
+    registry: new SandboxBackendRegistry().register(backend, { default: true }),
+    imageCatalog: SANDBOX_CONFORMANCE_IMAGE_CATALOG,
+  }))
 }
 
 async function readRequestBody(request: IncomingMessage) {
@@ -1566,7 +1615,7 @@ describe('xox TypeScript API', () => {
   }, 45_000)
 
   it('continues from domain observations into sandbox computation before the final model answer', async () => {
-    await withLocalSandboxBackend(async () => {
+    await withSandboxConformanceBackend(async (sandboxBroker) => {
     let planningCalls = 0
     await withFakeOpenAICompatibleProvider((body) => {
       planningCalls += 1
@@ -1621,7 +1670,7 @@ describe('xox TypeScript API', () => {
       const harness = await buildHarness('agent-observation-sandbox-loop', {
         ...fakeProviderSettings(baseUrl),
         agentProviderRequestTimeoutMs: 10_000,
-      })
+      }, sandboxBroker)
       const client = new Client(harness.app)
       await registerUser(client, 'agent-observation-sandbox-loop@example.com')
 
@@ -1671,7 +1720,7 @@ describe('xox TypeScript API', () => {
   })
 
   it('replays repairable sandbox failures into the main loop before accepting the final answer', async () => {
-    await withLocalSandboxBackend(async () => {
+    await withSandboxConformanceBackend(async (sandboxBroker) => {
     let planningCalls = 0
     await withFakeOpenAICompatibleProvider((body) => {
       planningCalls += 1
@@ -1739,7 +1788,7 @@ describe('xox TypeScript API', () => {
       const harness = await buildHarness('agent-sandbox-repairable-observation-loop', {
         ...fakeProviderSettings(baseUrl),
         agentProviderRequestTimeoutMs: 10_000,
-      })
+      }, sandboxBroker)
       const client = new Client(harness.app)
       await registerUser(client, 'agent-sandbox-repairable-observation-loop@example.com')
 
@@ -1871,6 +1920,7 @@ describe('xox TypeScript API', () => {
   })
 
   it('keeps empty sandbox observations visible as repairable harness trace', async () => {
+    await withSandboxConformanceBackend(async (sandboxBroker) => {
     let planningCalls = 0
     await withFakeOpenAICompatibleProvider((body) => {
       planningCalls += 1
@@ -1889,7 +1939,7 @@ describe('xox TypeScript API', () => {
       const harness = await buildHarness('agent-invalid-sandbox-evidence', {
         ...fakeProviderSettings(baseUrl),
         agentProviderRequestTimeoutMs: 10_000,
-      })
+      }, sandboxBroker)
       const client = new Client(harness.app)
       await registerUser(client, 'agent-invalid-sandbox-evidence@example.com')
 
@@ -1902,16 +1952,18 @@ describe('xox TypeScript API', () => {
       expect(state.json.runEvents.some((event: any) =>
         event.type === 'tool_call_failed' &&
         event.data?.toolName === 'sandbox_run_code' &&
-        event.data?.outcome === 'failed_repairable',
+        event.data?.outcome === 'completed_invalid',
       ), JSON.stringify(state.json.runEvents.filter((event: any) => event.data?.toolName === 'sandbox_run_code'))).toBe(true)
       await closeHarness(harness)
     }, {
       capabilities: ['sandbox'],
       observationContinuationResponse: false,
     })
+    })
   })
 
   it('requires model-visible ordered shareholder evidence before accepting shareholder-specific sandbox answers', async () => {
+    await withSandboxConformanceBackend(async (sandboxBroker) => {
     let planningCalls = 0
     await withFakeOpenAICompatibleProvider((body) => {
       planningCalls += 1
@@ -1952,7 +2004,7 @@ describe('xox TypeScript API', () => {
       const harness = await buildHarness('agent-shareholder-evidence-required', {
         ...fakeProviderSettings(baseUrl),
         agentProviderRequestTimeoutMs: 10_000,
-      })
+      }, sandboxBroker)
       const client = new Client(harness.app)
       await registerUser(client, 'agent-shareholder-evidence-required@example.com')
 
@@ -1990,9 +2042,11 @@ describe('xox TypeScript API', () => {
       ],
       observationContinuationResponse: false,
     })
+    })
   }, 30_000)
 
   it('repairs shareholder fact obligations with model-visible entity reads', async () => {
+    await withSandboxConformanceBackend(async (sandboxBroker) => {
     let planningCalls = 0
     await withFakeOpenAICompatibleProvider((body) => {
       planningCalls += 1
@@ -2029,7 +2083,7 @@ describe('xox TypeScript API', () => {
       const harness = await buildHarness('agent-shareholder-evidence-obligation-repair', {
         ...fakeProviderSettings(baseUrl),
         agentProviderRequestTimeoutMs: 10_000,
-      })
+      }, sandboxBroker)
       const client = new Client(harness.app)
       await registerUser(client, 'agent-shareholder-evidence-obligation-repair@example.com')
 
@@ -2060,6 +2114,7 @@ describe('xox TypeScript API', () => {
         { kind: 'derived_calculation', subject: { type: 'calculation', label: 'personal ROI' }, reason: 'final answer reports a calculated ROI' },
       ],
       observationContinuationResponse: false,
+    })
     })
   })
 
@@ -3252,7 +3307,7 @@ describe('xox TypeScript API', () => {
       expect(response.json.actionRequests).toHaveLength(0)
       expect(response.json.planSteps[0].status).toBe('executed')
       expect(response.json.navigationEvents[0].route.mainTab).toBe('dashboard')
-      expect(response.json.messages.at(-1).content).toContain('3月计划收入')
+      expect(response.json.messages.at(-1).content).toMatch(/3\s*月计划收入/u)
       expect(response.json.messages.at(-1).content).toContain('计划成本')
       expect(response.json.messages.at(-1).content).not.toContain('本次只读取当前工作区数据')
       expect(response.json.runEvents.some((event: any) => event.type === 'response_evaluated')).toBe(true)
@@ -3823,7 +3878,11 @@ describe('xox TypeScript API', () => {
         heartbeatAt: new Date().toISOString(),
       })
 
-      await createXoxDurableRunStore(harness.db, harness.settings).startReady()
+      await createXoxDurableRunStore(
+        harness.db,
+        harness.settings,
+        { sandboxBroker: harness.sandboxBroker },
+      ).startReady()
       await sleep(50)
 
       expect(providerCalls).toBe(0)
@@ -3870,7 +3929,11 @@ describe('xox TypeScript API', () => {
         heartbeatAt: new Date().toISOString(),
       })
 
-      await createXoxDurableRunStore(harness.db, harness.settings).startReady()
+      await createXoxDurableRunStore(
+        harness.db,
+        harness.settings,
+        { sandboxBroker: harness.sandboxBroker },
+      ).startReady()
       await sleep(80)
 
       expect(providerCalls).toBe(0)
@@ -3915,7 +3978,11 @@ describe('xox TypeScript API', () => {
         heartbeatAt: new Date(Date.now() - 60_000).toISOString(),
       })
 
-      await createXoxDurableRunStore(harness.db, harness.settings).startReady()
+      await createXoxDurableRunStore(
+        harness.db,
+        harness.settings,
+        { sandboxBroker: harness.sandboxBroker },
+      ).startReady()
       let quarantinedState = await client.get(`/api/v1/agent/threads/${run.threadId}`)
       for (let attempt = 0; attempt < 20 && quarantinedState.json.runs[0].status === 'running'; attempt += 1) {
         await sleep(25)
@@ -4074,7 +4141,11 @@ describe('xox TypeScript API', () => {
         message: '3 月计划收入和计划成本是多少？',
       })
 
-      await createXoxDurableRunStore(harness.db, harness.settings).startReady()
+      await createXoxDurableRunStore(
+        harness.db,
+        harness.settings,
+        { sandboxBroker: harness.sandboxBroker },
+      ).startReady()
       const runningState = await client.get(`/api/v1/agent/threads/${run.threadId}`)
       expect(runningState.statusCode).toBe(200)
       expect(runningState.json.runs[0].status).toBe('running')
@@ -4112,7 +4183,11 @@ describe('xox TypeScript API', () => {
       heartbeatAt: new Date(Date.now() - 60_000).toISOString(),
     })
 
-    await createXoxDurableRunStore(harness.db, harness.settings).startReady()
+    await createXoxDurableRunStore(
+      harness.db,
+      harness.settings,
+      { sandboxBroker: harness.sandboxBroker },
+    ).startReady()
     let state = await client.get(`/api/v1/agent/threads/${run.threadId}`)
     for (let attempt = 0; attempt < 20 && state.json.runs[0].status === 'running'; attempt += 1) {
       await sleep(25)

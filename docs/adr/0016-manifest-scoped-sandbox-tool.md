@@ -1,6 +1,11 @@
 # ADR 0016: Manifest-Scoped Sandbox Tool
 
-Status: Accepted, refined by ADR 0026 and ADR 0030
+> Enforcement amendment: Agentic OS ADR0079 removes every host-local sandbox
+> backend, selector, unsafe opt-in, and fallback. Backend details below record
+> the historical implementation only; current xox code supplies scoped bundles
+> to the Agentic OS production container boundary.
+
+Status: Accepted; execution enforcement superseded by Agentic OS ADR0079
 
 Date: 2026-05-29
 
@@ -142,10 +147,14 @@ As of 2026-06-03, the core harness boundary is implemented in the TypeScript API
 - `packages/contracts` defines `SandboxRunCodeInput`, `SandboxManifest`, `SandboxCapabilityProfile`, `SandboxObservation`, `SandboxFileKind` and `SandboxArtifactKind`.
 - `apps/api/src/agent/tool-catalog.ts` registers provider-native `sandbox_run_code`; `tool-gateway.ts` can project the `sandbox` capability bucket; `runtime-intent-handlers.ts` maps it to `sandbox.run_code`.
 - `apps/api/src/agent/sandbox-service.ts` is the thin sandbox tool façade for manifest construction, minimized workspace data bundles and tool observation projection.
-- `apps/api/src/agent/sandbox/sandbox-broker.ts` owns policy, backend selection and execution.
-- `apps/api/src/agent/sandbox/backend-registry.ts` registers only real execution backends: default `local-script` and optional `docker`.
-- `apps/api/src/agent/sandbox/backends/local-script-backend.ts` really executes Python/Node in a temporary child process with scrubbed environment.
-- `apps/api/src/agent/sandbox/backends/docker-backend.ts` is selected by `XOX_SANDBOX_BACKEND=docker` and runs the same manifest workspace in a container with network disabled.
+- a process-level Agentic OS `SandboxBroker` is created at application bootstrap,
+  reconciled before traffic, and injected as a required infrastructure
+  dependency into the durable run store and host profile;
+- `createAgenticOsProductionSandboxPort` is the only xox execution facade;
+  xox does not register/select backends, construct images or launch arguments,
+  or execute model code in a host process;
+- missing executor readiness or hardened-container enforcement fails closed
+  before execution in development, tests, and production alike.
 - `apps/api/src/agent/sandbox-file-adapters.ts` owns typed file kind normalization and deterministic file safety checks for common business formats.
 - Sandbox output is returned as a `tool_observation`, so the model must continue and author the final user answer or choose ordinary write tools that create editable confirmation cards.
 

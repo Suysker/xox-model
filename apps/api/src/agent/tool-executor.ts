@@ -100,7 +100,6 @@ import {
   planWorkspacePatchFromStep,
   planWorkspaceRename,
 } from './workspace-action-drafts.js'
-import { planSandboxPeripheralRead } from './sandbox-service.js'
 import {
   actionExecutionObservation,
   actionFailureObservation,
@@ -237,7 +236,6 @@ export const xoxBusinessToolHandlers: ActionDraftBuilderHandlers<AgentTurnContex
   'memory.get': memoryToolRuntime.get,
   'memory.remember': memoryToolRuntime.remember,
   'data.query_workspace': planWorkspaceDataQueryRead,
-  'sandbox.run_code': (ctx, step) => planSandboxPeripheralRead(ctx, step, xoxBusinessToolHandlers),
 }
 
 const xoxBusinessToolRuntime = createAgentServerSaaSBusinessToolRuntime<

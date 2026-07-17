@@ -1,6 +1,10 @@
 # ADR 0030: OpenClaw/Hermes-Style Sandbox Observation Runtime
 
-Status: Proposed
+> Enforcement amendment: Agentic OS ADR0079 supersedes historical backend
+> diagrams in this ADR. There is no host-local backend or per-run backend
+> selection in the current integration.
+
+Status: Accepted; backend enforcement superseded by Agentic OS ADR0079
 
 Date: 2026-06-05
 

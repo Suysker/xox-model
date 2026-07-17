@@ -18,6 +18,7 @@ import type { Settings } from '../../core/settings.js'
 import { newId } from '../../core/security.js'
 import { utcNow } from '../../core/time.js'
 import type { CurrentUser } from '../../modules/auth.js'
+import type { SandboxBroker } from '@agentic-os/sandbox'
 import { addRunEvent, agentThreadEvents, listSerializedRunEvents, serializeRunEvent } from './xox-run-event-store-adapter.js'
 import {
   addMessage,
@@ -47,6 +48,7 @@ export type SubmitAgentMessageRunInput = {
   message: string
   background?: boolean | undefined
   automationLevel?: AgentAutomationLevel | undefined
+  sandboxBroker: SandboxBroker
 }
 
 type XoxSubmittedRunResponseInput = {
@@ -286,7 +288,9 @@ export async function submitAgentMessageRun(input: SubmitAgentMessageRunInput): 
     if (input.background === true) {
       await touchThreadAfterRun(input.db, thread, input.message)
       agentThreadEvents.publish(thread.id, 'thread_started')
-      createXoxDurableRunStore(input.db, input.settings).scheduleReady()
+      createXoxDurableRunStore(input.db, input.settings, {
+        sandboxBroker: input.sandboxBroker,
+      }).scheduleReady()
       const messages = [serializeMessage(userMessage)]
       const runEvents = [serializeRunEvent(queuedEvent)]
       return buildSubmittedRunResponse({
@@ -307,7 +311,9 @@ export async function submitAgentMessageRun(input: SubmitAgentMessageRunInput): 
       })
     }
 
-    const completed = await createXoxDurableRunStore(input.db, input.settings).runSubmitted({ runId })
+    const completed = await createXoxDurableRunStore(input.db, input.settings, {
+      sandboxBroker: input.sandboxBroker,
+    }).runSubmitted({ runId })
     const projection = completed === null
       ? await awaitDurableSubmittedRunProjection({
           db: input.db,

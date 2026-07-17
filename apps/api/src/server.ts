@@ -5,7 +5,7 @@ import { z } from 'zod'
 import type { Kysely } from 'kysely'
 import { hydrateModelConfig } from '@xox/domain'
 import { getSettings, type Settings } from './core/settings.js'
-import { ApiError, sendError, unprocessable } from './core/http.js'
+import { ApiError, notFound, sendError, unprocessable } from './core/http.js'
 import { createDatabase } from './db/database.js'
 import type { Database } from './db/schema.js'
 import { runMigrations } from './db/migrations.js'
@@ -43,6 +43,13 @@ import {
   voidEntry,
 } from './modules/ledger.js'
 import { registerAgentRoutes } from './agent/routes.js'
+import { admitAgenticOsProductionSandbox, SandboxBroker } from '@agentic-os/sandbox'
+import { createXoxSandboxStorage } from './agent/sandbox-storage.js'
+import {
+  inspectSandboxUploadedFile,
+  normalizeSandboxFileKind,
+  xoxProductionSandboxManifests,
+} from './agent/sandbox-service.js'
 
 const registerSchema = z.object({
   email: z.email(),
@@ -104,6 +111,13 @@ const entrySchema = z.object({
 
 const updateEntrySchema = entrySchema.omit({ ledgerPeriodId: true, direction: true })
 
+const sandboxFileUploadSchema = z.object({
+  name: z.string().trim().min(1).max(255),
+  kind: z.string().trim().min(1).max(16),
+  mimeType: z.string().trim().max(160).nullable().optional(),
+  contentBase64: z.string().min(1).max(36 * 1024 * 1024),
+})
+
 function parseBody<T>(schema: z.ZodType<T>, body: unknown) {
   const parsed = schema.safeParse(body)
   if (!parsed.success) {
@@ -118,10 +132,35 @@ async function routeContext(db: Kysely<Database>, settings: Settings, request: P
   return { user, workspace }
 }
 
-export async function createApp(options?: { settings?: Settings; db?: Kysely<Database> }) {
+type CreateAppOptions = {
+  settings?: Settings
+  db?: Kysely<Database>
+  sandboxBroker?: SandboxBroker
+  productionSandbox?: boolean
+}
+
+export async function createApp(options?: CreateAppOptions) {
   const settings = options?.settings ?? getSettings()
   const db = options?.db ?? createDatabase(settings)
   await runMigrations(db)
+  const sandboxStorage = createXoxSandboxStorage(db)
+  const sandboxBroker = options?.sandboxBroker ?? new SandboxBroker({
+    inputFileResolver: sandboxStorage.inputFileResolver,
+    artifactPersistence: sandboxStorage.artifactPersistence,
+  })
+  const reconciliation = await sandboxBroker.reconcile()
+  if (reconciliation.failures.length > 0) throw new Error('sandbox_startup_reconcile_failed')
+  if (options?.productionSandbox === true) {
+    const admission = await admitAgenticOsProductionSandbox({
+      broker: sandboxBroker,
+      admission: {
+        manifests: xoxProductionSandboxManifests(),
+        requireInputFileResolver: true,
+        requireArtifactPersistence: true,
+      },
+    })
+    if (!admission.ok) throw new Error(admission.reason)
+  }
 
   const app = Fastify({ logger: false })
   await app.register(cookie)
@@ -143,6 +182,53 @@ export async function createApp(options?: { settings?: Settings; db?: Kysely<Dat
   })
 
   app.get('/api/v1/health', async () => ({ status: 'ok' }))
+
+  app.post('/api/v1/sandbox/files', async (request, reply) => {
+    try {
+      const { workspace } = await routeContext(db, settings, request)
+      const body = parseBody(sandboxFileUploadSchema, request.body)
+      const kind = normalizeSandboxFileKind(body.kind)
+      if (kind === null) throw unprocessable('unsupported_sandbox_file_kind')
+      const bytes = Buffer.from(body.contentBase64, 'base64')
+      if (bytes.byteLength === 0) throw unprocessable('sandbox_input_file_empty')
+      const preview = inspectSandboxUploadedFile({
+        name: body.name,
+        sizeBytes: bytes.byteLength,
+        mimeType: body.mimeType ?? null,
+        bytes,
+      })
+      if (preview.status !== 'accepted' || preview.kind !== kind) {
+        throw unprocessable(preview.reason ?? 'sandbox_input_file_rejected')
+      }
+      return await sandboxStorage.putInputFile({
+        tenantId: workspace.owner_id,
+        workspaceId: workspace.id,
+        name: body.name,
+        kind,
+        bytes,
+      })
+    } catch (error) {
+      return sendError(reply, error)
+    }
+  })
+
+  app.get('/api/v1/sandbox/artifacts/:artifactId', async (request, reply) => {
+    try {
+      const { workspace } = await routeContext(db, settings, request)
+      const { artifactId } = request.params as { artifactId: string }
+      const artifact = await sandboxStorage.readArtifact({
+        tenantId: workspace.owner_id,
+        workspaceId: workspace.id,
+        artifactId,
+      })
+      if (artifact === null) throw notFound('sandbox_artifact_not_found')
+      void reply.header('content-type', 'application/octet-stream')
+      void reply.header('x-content-type-options', 'nosniff')
+      return reply.send(Buffer.from(artifact.bytes))
+    } catch (error) {
+      return sendError(reply, error)
+    }
+  })
 
   app.post('/api/v1/auth/register', async (request, reply) => {
     try {
@@ -410,7 +496,13 @@ export async function createApp(options?: { settings?: Settings; db?: Kysely<Dat
     }
   })
 
-  registerAgentRoutes(app, db, settings)
+  registerAgentRoutes(app, db, settings, {
+    sandboxBroker,
+  })
 
   return app
+}
+
+export function createProductionApp(options: Omit<CreateAppOptions, 'productionSandbox'> = {}) {
+  return createApp({ ...options, productionSandbox: true })
 }

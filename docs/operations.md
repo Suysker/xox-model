@@ -48,9 +48,11 @@ without persisting transient form values.
 ## Sandbox
 
 The host materializes only explicitly selected user files and normalized
-business data. Production sandbox backends must be isolated; local script mode
-is development-only. Network, internal HTTP, API process memory, DB paths,
-provider secrets, user session tokens, and container-external paths are denied.
+business data. Agentic OS has no local-process or local-script execution mode;
+every admitted sandbox job crosses the hardened container executor boundary.
+Network, internal HTTP, API process memory, DB paths, provider secrets, user
+session tokens, and container-external paths are denied. The host supplies only
+tenant-scoped input resolution and durable artifact persistence ports.
 
 ## Run Recovery
 

@@ -1,6 +1,10 @@
 # ADR 0027: OpenClaw-Style Hard Runtime Boundaries
 
-Status: Accepted
+> Enforcement amendment: Agentic OS ADR0079 deletes the historical local
+> process implementation referenced below. The current xox integration uses
+> only the Agentic OS hardened production sandbox and scoped business bundles.
+
+Status: Accepted; sandbox execution enforcement superseded by Agentic OS ADR0079
 
 Date: 2026-06-03
 

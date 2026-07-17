@@ -84,10 +84,21 @@ snapshot and owns invocation, timeout, replay, outbox and terminal semantics.
 
 M192 sandbox port cutover is the current baseline.
 
-- xox passes its manifest-scoped sandbox peripheral into Agentic OS through `AgentSandboxPort`.
+- xox exposes its manifest-scoped sandbox peripheral to the harness through the
+  `AgentSandboxPort` returned by `createAgenticOsProductionSandboxPort`.
 - Sandbox calls are projected through Agentic OS run events and transcript facts rather than xox legacy `planSteps`.
 - Sandbox manifests use Agentic OS canonical bundle scopes and `runtime.computeMs`.
-- Local development uses `XOX_SANDBOX_BACKEND=local-script`; production should use Docker or another isolated backend.
+- Development and production both use the Agentic OS production-admitted
+  container backend. xox does not select a backend per run and has no local
+  process fallback. A process-level `SandboxBroker` is injected into the
+  production facade and reconciled during server startup. Deployment supplies
+  the private executor endpoint,
+  digest-pinned image catalog, scoped workspace root, and shared executor
+  group through Agentic OS configuration.
+- xox contributes only authorized business bundle descriptors. Uploaded file
+  ids are materialized only when deployment composition supplies a
+  tenant-scoped `SandboxInputFileResolverPort`; otherwise execution fails
+  closed before code starts.
 
 M191 harness frontend cutover is also part of the baseline.
 

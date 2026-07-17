@@ -4,7 +4,7 @@
   "version": "0.2.0",
   "type": "module",
   "scripts": {
-    "dev": "cross-env XOX_SANDBOX_BACKEND=local-script tsx watch src/main.ts",
+    "dev": "tsx watch src/main.ts",
     "build": "tsc --noEmit",
     "test": "vitest run",
     "smoke:agent": "tsx scripts/agent-real-provider-smoke.ts",
@@ -16,7 +16,7 @@
     "@agentic-os/integration-openai": "file:../../../agentic-os/packages/integration-openai",
     "@agentic-os/runtime-openai-agents": "^0.1.0",
     "@agentic-os/runtime-openai-compatible": "^0.1.0",
-    "@agentic-os/sandbox": "^0.1.0",
+    "@agentic-os/sandbox": "file:../../../agentic-os/packages/sandbox",
     "@agentic-os/server": "^0.1.0",
     "@agentic-os/ui-protocol": "file:../../../agentic-os/packages/ui-protocol",
     "@fastify/cookie": "^11.0.2",
@@ -31,7 +31,7 @@
     "zod": "^4.1.13"
   },
   "devDependencies": {
-    "@agentic-os/testing": "^0.1.0",
+    "@agentic-os/testing": "file:../../../agentic-os/packages/testing",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^24.10.1",
     "cross-env": "^10.1.0",

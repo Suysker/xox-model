@@ -472,6 +472,7 @@ describe('Agentic OS downstream boundary', () => {
     expect(toolExecutor).not.toContain('resultRuntime:')
     expect(toolExecutor).toContain('planWorkspaceDataQueryRead')
     expect(toolExecutor).not.toContain('answerWorkspaceDataQuestion')
+    expect(toolExecutor).not.toContain("'sandbox.run_code':")
     expect(memory).toContain('createAgentServerSaaSTenantMemoryRepository')
     expect(memory).not.toContain('createAgentServerTenantMemoryCaptureRuntime')
     expect(memory).not.toContain('createAgentMemoryCaptureRuntime')
@@ -500,7 +501,8 @@ describe('Agentic OS downstream boundary', () => {
       expect(memory, `${forbidden} must not return to xox memory peripheral`).not.toContain(forbidden)
     }
 
-    expect(sandbox).toContain('createAgenticSandboxSaaSPeripheral')
+    expect(sandbox).toContain('createAgenticOsProductionSandboxPort')
+    expect(sandbox).not.toContain('createAgenticSandboxSaaSPeripheral')
     expect(sandbox).not.toContain('runAgenticSandboxSaaSPeripheralRead')
     expect(sandbox).not.toContain('runAgenticSandboxPeripheralRead')
     expect(sandbox).not.toContain('createAgenticSandboxSaaSHostToolPeripheral')
@@ -532,7 +534,7 @@ describe('Agentic OS downstream boundary', () => {
     expect(sandbox).not.toContain('function sandboxObservationStatus')
     expect(sandbox).not.toContain('sandboxToolRuntimeHandler')
     expect(sandbox).not.toContain('aggregateSandboxActions')
-    expect(sandbox).not.toContain('SandboxBroker')
+    expect(sandbox).not.toContain('new SandboxBroker')
   })
 
   it('does not advertise sandbox as a business-tool gateway to the model', () => {

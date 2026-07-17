@@ -1,6 +1,11 @@
 # ADR 0026: Real Manifest-Scoped Sandbox Runtime
 
-Status: Proposed, refined by ADR 0030
+> Enforcement amendment: Agentic OS ADR0079 supersedes the historical local
+> process and mutable-image backend choices in this ADR. Current execution is
+> production-admitted, digest-pinned, and container-isolated in every
+> environment, with no alias or fallback.
+
+Status: Superseded for execution enforcement by Agentic OS ADR0079
 
 Date: 2026-06-03
 

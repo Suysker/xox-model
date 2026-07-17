@@ -13,6 +13,7 @@ import type { Database, Row } from '../db/schema.js'
 import { jsonString, parseJson } from '../db/database.js'
 import { conflict, forbidden, notFound, unprocessable } from '../core/http.js'
 import type { Settings } from '../core/settings.js'
+import type { SandboxBroker } from '@agentic-os/sandbox'
 import { utcNow } from '../core/time.js'
 import { recordAudit } from '../modules/audit.js'
 import type { CurrentUser } from '../modules/auth.js'
@@ -203,7 +204,13 @@ function safeActionRouteErrorMessage(error: unknown) {
   return redactSecretLikeContent(message).slice(0, 500) || 'Agent action failed'
 }
 
-async function confirmAgentActionRequest(db: Kysely<Database>, settings: Settings, user: CurrentUser, actionRequestId: string) {
+async function confirmAgentActionRequest(
+  db: Kysely<Database>,
+  settings: Settings,
+  user: CurrentUser,
+  actionRequestId: string,
+  sandboxBroker: SandboxBroker,
+) {
   const action = await getActionRequest(db, actionRequestId)
   const workspace = await getWorkspaceForUser(db, user)
   assertActionOwnedByWorkspace(action, workspace, user)
@@ -219,6 +226,7 @@ async function confirmAgentActionRequest(db: Kysely<Database>, settings: Setting
       user,
       workspace,
       action,
+      sandboxBroker,
       beforeStateWrite: () => refreshAgentRunLease(db, settings, action.run_id),
     }).catch(async (executionError) => {
       const message = safeActionRouteErrorMessage(executionError)
@@ -389,7 +397,12 @@ async function updateAgentActionRequest(
   }
 }
 
-export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, settings: Settings) {
+export function registerAgentRoutes(
+  app: FastifyInstance,
+  db: Kysely<Database>,
+  settings: Settings,
+  options: { sandboxBroker: SandboxBroker },
+) {
   app.get('/api/v1/agent/threads', async (request, reply) => {
     try {
       const user = await requireCurrentUser(db, settings, request)
@@ -512,7 +525,17 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
       if (!message) throw unprocessable('Message is required')
       const user = await requireCurrentUser(db, settings, request)
       const workspace = await getWorkspaceForUser(db, user)
-      return submitAgentMessageRun({ db, settings, user, workspace, threadId: body.threadId, message, background: body.background, automationLevel: body.automationLevel })
+      return submitAgentMessageRun({
+        db,
+        settings,
+        user,
+        workspace,
+        threadId: body.threadId,
+        message,
+        background: body.background,
+        automationLevel: body.automationLevel,
+        sandboxBroker: options.sandboxBroker,
+      })
     } catch (error) {
       return reply.send(error)
     }
@@ -528,7 +551,14 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
       if (run.user_id !== user.id) throw forbidden()
       const thread = await getThreadForUser(db, workspace, user, run.thread_id)
       if (run.status === 'running') {
-        await cancelRunningAgentRun(db, settings, thread, run.id, '已取消当前 Agent 运行。')
+        await cancelRunningAgentRun(
+          db,
+          settings,
+          thread,
+          run.id,
+          '已取消当前 Agent 运行。',
+          options.sandboxBroker,
+        )
         await recordAudit(db, {
           workspaceId: workspace.id,
           actorId: user.id,
@@ -595,7 +625,7 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
     try {
       const user = await requireCurrentUser(db, settings, request)
       const { actionRequestId } = request.params as { actionRequestId: string }
-      const result = await confirmAgentActionRequest(db, settings, user, actionRequestId)
+      const result = await confirmAgentActionRequest(db, settings, user, actionRequestId, options.sandboxBroker)
       agentThreadEvents.publish(result.threadId, 'action_executed')
       return {
         actionRequest: serializeAction(result.actionRequest),
@@ -647,6 +677,6 @@ export function registerAgentRoutes(app: FastifyInstance, db: Kysely<Database>, 
     }
   })
 
-  const stopAgentRunQueueWorker = createXoxDurableRunStore(db, settings).startQueue()
+  const stopAgentRunQueueWorker = createXoxDurableRunStore(db, settings, options).startQueue()
   app.addHook('onClose', async () => stopAgentRunQueueWorker())
 }

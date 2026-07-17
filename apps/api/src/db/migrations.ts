@@ -657,6 +657,40 @@ export async function runMigrations(db: Kysely<Database>) {
     db,
     'CREATE INDEX IF NOT EXISTS idx_agent_harness_operational_collection ON agent_harness_operational_records (tenant_id, workspace_id, user_id, collection_name, updated_at)',
   )
+  await exec(
+    db,
+    `CREATE TABLE IF NOT EXISTS agent_sandbox_objects (
+      id VARCHAR(128) PRIMARY KEY,
+      tenant_id VARCHAR(128) NOT NULL,
+      workspace_id VARCHAR(36) NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      object_type VARCHAR(16) NOT NULL CHECK (object_type IN ('input', 'artifact')),
+      object_version VARCHAR(128) NOT NULL,
+      name VARCHAR(255) NOT NULL,
+      file_kind VARCHAR(32) NOT NULL,
+      content_hash VARCHAR(64) NOT NULL,
+      size_bytes INTEGER NOT NULL,
+      bytes BLOB NOT NULL,
+      expires_at DATETIME,
+      created_at DATETIME NOT NULL
+    )`,
+  )
+  await exec(
+    db,
+    'CREATE INDEX IF NOT EXISTS idx_agent_sandbox_objects_scope ON agent_sandbox_objects (tenant_id, workspace_id, object_type, created_at)',
+  )
+  await exec(
+    db,
+    `CREATE TABLE IF NOT EXISTS agent_sandbox_artifact_commits (
+      idempotency_key VARCHAR(160) PRIMARY KEY,
+      tenant_id VARCHAR(128) NOT NULL,
+      workspace_id VARCHAR(36) NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      run_id VARCHAR(128) NOT NULL,
+      sandbox_session_id VARCHAR(128) NOT NULL,
+      tool_call_id VARCHAR(128) NOT NULL,
+      artifact_ids_json JSON NOT NULL,
+      created_at DATETIME NOT NULL
+    )`,
+  )
 
   await addColumnIfMissing(db, 'actual_entries', 'related_entity_type', 'VARCHAR(32)')
   await addColumnIfMissing(db, 'actual_entries', 'related_entity_id', 'VARCHAR(128)')

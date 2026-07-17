@@ -26,6 +26,7 @@ import { parseJson } from '../../db/database.js'
 import type { Settings } from '../../core/settings.js'
 import { utcNow } from '../../core/time.js'
 import type { CurrentUser } from '../../modules/auth.js'
+import type { SandboxBroker } from '@agentic-os/sandbox'
 import { resolveAgentRuntimeSettings } from '../provider-settings.js'
 import type { AgentTurnContext } from '../host-profile/xox-runtime-items.js'
 import { executeXoxAgentRun, type AgenticOsKernelRunResult } from '../host-profile/xox-host-profile.js'
@@ -108,7 +109,7 @@ function xoxRuntimeSource(settings: Settings): AgentRuntimeSource {
 
 async function executeAgentRun(
   ctx: AgentTurnContext & { thread: Row<'agent_threads'> },
-  options: { beforeStateWrite: () => Promise<boolean> },
+  options: { beforeStateWrite: () => Promise<boolean>; sandboxBroker: SandboxBroker },
 ): Promise<AgenticOsKernelRunResult | null> {
   return executeXoxAgentRun(ctx, options)
 }
@@ -170,8 +171,9 @@ export async function cancelRunningAgentRun(
   thread: Row<'agent_threads'>,
   runId: string,
   message: string,
+  sandboxBroker: SandboxBroker,
 ) {
-  createXoxDurableRunStore(db, settings).cancelActive(runId, message)
+  createXoxDurableRunStore(db, settings, { sandboxBroker }).cancelActive(runId, message)
   await applyAgentServerSaaSRunInterruption({
     interruption: {
       kind: 'cancelled',
@@ -385,7 +387,8 @@ async function resumeProfileRun(
   db: Kysely<Database>,
   baseSettings: Settings,
   input: AgentRunResumeInput,
-  control?: AgentRunControl,
+  control: AgentRunControl | undefined,
+  sandboxBroker: SandboxBroker,
 ) {
   const run = await db.selectFrom('agent_runs').selectAll().where('id', '=', input.run.runId).executeTakeFirst()
   if (!run) throw new Error(`Agent run not found: ${input.run.runId}`)
@@ -411,6 +414,7 @@ async function resumeProfileRun(
     stopHeartbeat = startAgentRunLeaseHeartbeat(db, runtimeSettings, run.id)
     const completed = await executeAgentRun(runtimeCtx, {
       beforeStateWrite: () => refreshAgentRunLease(db, runtimeSettings, run.id),
+      sandboxBroker,
     })
     if (!completed) throw new AgentRunLeaseLostError(run.id)
     return completed.agenticOsResult
@@ -454,10 +458,14 @@ async function materializeXoxRunResult(
   }
 }
 
-export function createXoxDurableRunStore(db: Kysely<Database>, settings: Settings) {
+export function createXoxDurableRunStore(
+  db: Kysely<Database>,
+  settings: Settings,
+  options: { sandboxBroker: SandboxBroker },
+) {
   const infrastructure = createXoxHarnessControlInfrastructure(db, settings.agentRunLeaseTtlMs)
   return xoxRunHosts.forHost(db, () => ({
-    resumeRun: (input, control) => resumeProfileRun(db, settings, input, control),
+    resumeRun: (input, control) => resumeProfileRun(db, settings, input, control, options.sandboxBroker),
     causalFacts: createAgentServerDurableJournalCausalFactPort({
       journal: infrastructure.traceJournal,
       resolveWriter: (fact) => infrastructure.traceJournal.acquireWriter({

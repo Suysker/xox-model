@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { SandboxBroker, projectAgenticSandboxObservationRead } from '@agentic-os/sandbox'
+import {
+  SandboxBackendRegistry,
+  SandboxBroker,
+  projectAgenticSandboxObservationRead,
+} from '@agentic-os/sandbox'
+import {
+  SANDBOX_CONFORMANCE_IMAGE_CATALOG,
+  createSandboxConformanceBackend,
+} from '@agentic-os/testing'
 import { createProductDefaultModel, projectModel } from '@xox/domain'
 import type { SandboxManifest } from '@agentic-os/sandbox'
 import type { SandboxRunCodeInput } from '@xox/contracts'
@@ -40,10 +48,75 @@ function toolRuntimeHandlerFrom(output: unknown) {
   }
 }
 
-const LOCAL_SANDBOX_EXECUTION = {
-  preferredBackendId: 'local-script',
-  allowUnsafeLocalScript: true,
-} as const
+function sandboxTestBroker() {
+  const backend = createSandboxConformanceBackend({ id: 'test-container' })
+  const execute = backend.execute.bind(backend)
+  backend.execute = async (session, input) => {
+    const result = await execute(session, input)
+    const structuredByPurpose: Record<string, unknown> = {
+      '生成校验摘要': { profit: 20, rowCount: 1, secretVisible: false },
+      '结构化结果文件校验': { profit: 20 },
+      '同名工具 SDK 校验': { roi: 0.2, paybackMonthLabel: '4月' },
+    }
+    const structured = structuredByPurpose[input.input.purpose]
+    if (structured !== undefined) {
+      result.extraction = {
+        extractionStatus: 'parsed',
+        parsedOutput: {
+          schemaVersion: 'agentic-os.sandbox.result.v1',
+          structured,
+        },
+        summary: 'deterministic sandbox conformance result',
+      }
+      result.result = { summary: 'deterministic sandbox conformance result', structured }
+    }
+    if (input.input.purpose === '沙箱写入桥接校验') {
+      const sandboxToolCalls = [{
+        toolName: 'workspace_patch_config',
+        arguments: {
+          patches: [{ path: 'shareholders[0].investmentAmount', value: 123456, label: '股东 1 投资额' }],
+        },
+      }]
+      result.extraction = {
+        extractionStatus: 'parsed',
+        parsedOutput: { schemaVersion: 'agentic-os.sandbox.result.v1', sandboxToolCalls },
+        summary: 'deterministic sandbox tool call',
+      }
+      result.result = { summary: 'deterministic sandbox tool call', structured: { sandboxToolCalls } }
+    }
+    if (input.input.purpose === '空输出校验') {
+      result.stdout = ''
+      result.outputText = ''
+      result.extraction = { extractionStatus: 'empty' }
+      result.result = { summary: '' }
+    }
+    if (input.input.purpose === '普通文本输出校验') {
+      result.extraction = { extractionStatus: 'text_only', summary: result.outputText.trim() }
+      result.result = { summary: result.outputText.trim() }
+    }
+    if (input.input.purpose === '超时校验') {
+      result.status = 'timeout'
+      result.exitCode = null
+      result.stdout = ''
+      result.outputText = ''
+      result.extraction = { extractionStatus: 'empty' }
+      result.result = { summary: '' }
+    }
+    if (input.input.purpose === '运行时错误校验') {
+      result.status = 'failed'
+      result.exitCode = 1
+      result.stderr = 'RuntimeError: boom'
+      result.outputText = 'RuntimeError: boom'
+      result.extraction = { extractionStatus: 'text_only', summary: 'RuntimeError: boom' }
+      result.result = { summary: 'RuntimeError: boom' }
+    }
+    return result
+  }
+  return new SandboxBroker({
+    registry: new SandboxBackendRegistry().register(backend, { default: true }),
+    imageCatalog: SANDBOX_CONFORMANCE_IMAGE_CATALOG,
+  })
+}
 
 describe('manifest-scoped sandbox tool', () => {
   it('registers sandbox_run_code as a provider-native sandbox capability tool', () => {
@@ -230,7 +303,7 @@ describe('manifest-scoped sandbox tool', () => {
     })
   })
 
-  it('runs code through the real local sandbox backend and parses structured output', async () => {
+  it('projects structured output from the injected Agentic OS sandbox conformance backend', async () => {
     const input: SandboxRunCodeInput = {
       purpose: '生成校验摘要',
       language: 'python',
@@ -269,8 +342,7 @@ describe('manifest-scoped sandbox tool', () => {
     } as any, input, bundle, 'tool_call_1') as SandboxManifest
     process.env.XOX_SANDBOX_SECRET_FOR_TEST = 'secret-value-that-must-not-leak'
     try {
-      const result = await new SandboxBroker().execute({
-        ...LOCAL_SANDBOX_EXECUTION,
+      const result = await sandboxTestBroker().execute({
         manifest,
         toolInput: input,
         bundle,
@@ -280,7 +352,7 @@ describe('manifest-scoped sandbox tool', () => {
       expect(result.status).toBe('completed')
       expect(result.executionMode).toBe('executed')
       expect(result.exitCode).toBe(0)
-      expect(result.backendId).toBe('local-script')
+      expect(result.backendId).toBe('test-container')
       expect(result.manifestScoped).toBe(true)
       expect(result.provenance).toMatchObject({
         manifestId: manifest.manifestId,
@@ -337,7 +409,7 @@ describe('manifest-scoped sandbox tool', () => {
       threadId: 'thread_1',
       runId: 'run_1',
     } as any, input, bundle, 'tool_call_unconsumed') as SandboxManifest
-    const result = await new SandboxBroker().execute({ ...LOCAL_SANDBOX_EXECUTION, manifest, toolInput: input, bundle })
+    const result = await sandboxTestBroker().execute({ manifest, toolInput: input, bundle })
 
     expect(result.status).toBe('completed')
     expect(result.executionMode).toBe('executed')
@@ -393,8 +465,7 @@ describe('manifest-scoped sandbox tool', () => {
       threadId: 'thread_1',
       runId: 'run_1',
     } as any, input, bundle, 'tool_call_sdk') as SandboxManifest
-    const result = await new SandboxBroker().execute({
-      ...LOCAL_SANDBOX_EXECUTION,
+    const result = await sandboxTestBroker().execute({
       manifest,
       toolInput: input,
       bundle,
@@ -417,7 +488,7 @@ describe('manifest-scoped sandbox tool', () => {
     })
   })
 
-  it('records sandbox write-capable SDK calls for aggregate Tool Runtime approval', async () => {
+  it('records sandbox business-tool requests as observations without granting execution authority', async () => {
     const input: SandboxRunCodeInput = {
       purpose: '沙箱写入桥接校验',
       language: 'python',
@@ -447,8 +518,7 @@ describe('manifest-scoped sandbox tool', () => {
       threadId: 'thread_1',
       runId: 'run_1',
     } as any, input, bundle, 'tool_call_write_sdk') as SandboxManifest
-    const result = await new SandboxBroker().execute({
-      ...LOCAL_SANDBOX_EXECUTION,
+    const result = await sandboxTestBroker().execute({
       manifest,
       toolInput: input,
       bundle,
@@ -497,7 +567,7 @@ describe('manifest-scoped sandbox tool', () => {
       threadId: 'thread_1',
       runId: 'run_1',
     } as any, input, bundle, 'tool_call_text') as SandboxManifest
-    const result = await new SandboxBroker().execute({ ...LOCAL_SANDBOX_EXECUTION, manifest, toolInput: input, bundle })
+    const result = await sandboxTestBroker().execute({ manifest, toolInput: input, bundle })
 
     expect(result.status).toBe('completed')
     expect(result.executionMode).toBe('executed')
@@ -519,7 +589,7 @@ describe('manifest-scoped sandbox tool', () => {
     const preview = JSON.parse(projectAgenticSandboxObservationRead({
       status: 'completed',
       executionMode: 'executed',
-      backendId: 'local-script',
+      backendId: 'test-container',
       exitCode: 0,
       stdout: '',
       stderr: '',
@@ -592,7 +662,7 @@ describe('manifest-scoped sandbox tool', () => {
       threadId: 'thread_1',
       runId: 'run_1',
     } as any, input, bundle, 'tool_call_empty') as SandboxManifest
-    const result = await new SandboxBroker().execute({ ...LOCAL_SANDBOX_EXECUTION, manifest, toolInput: input, bundle })
+    const result = await sandboxTestBroker().execute({ manifest, toolInput: input, bundle })
 
     expect(result.status).toBe('completed')
     expect(result.executionMode).toBe('executed')
@@ -601,7 +671,7 @@ describe('manifest-scoped sandbox tool', () => {
     expect(result.extraction.extractionStatus).toBe('empty')
   })
 
-  it('reports a real timeout instead of fabricating sandbox success', async () => {
+  it('preserves an injected executor timeout instead of fabricating sandbox success', async () => {
     const input: SandboxRunCodeInput = {
       purpose: '超时校验',
       language: 'python',
@@ -626,7 +696,8 @@ describe('manifest-scoped sandbox tool', () => {
       runId: 'run_1',
     } as any, input, bundle, 'tool_call_timeout') as SandboxManifest
     manifest.runtime.timeoutMs = 50
-    const result = await new SandboxBroker().execute({ ...LOCAL_SANDBOX_EXECUTION, manifest, toolInput: input, bundle })
+    manifest.runtime.computeMs = 25
+    const result = await sandboxTestBroker().execute({ manifest, toolInput: input, bundle })
 
     expect(result.status).toBe('timeout')
     expect(result.executionMode).toBe('executed')
@@ -658,7 +729,7 @@ describe('manifest-scoped sandbox tool', () => {
       threadId: 'thread_1',
       runId: 'run_1',
     } as any, input, bundle, 'tool_call_failure') as SandboxManifest
-    const result = await new SandboxBroker().execute({ ...LOCAL_SANDBOX_EXECUTION, manifest, toolInput: input, bundle })
+    const result = await sandboxTestBroker().execute({ manifest, toolInput: input, bundle })
 
     expect(result.status).toBe('failed')
     expect(result.executionMode).toBe('executed')
@@ -693,7 +764,7 @@ describe('manifest-scoped sandbox tool', () => {
       runId: 'run_1',
     } as any, input, bundle, 'tool_call_blocked') as SandboxManifest
     ;(manifest.capabilities as any).businessWrites = true
-    const result = await new SandboxBroker().execute({ ...LOCAL_SANDBOX_EXECUTION, manifest, toolInput: input, bundle })
+    const result = await sandboxTestBroker().execute({ manifest, toolInput: input, bundle })
 
     expect(result.status).toBe('blocked')
     expect(result.executionMode).toBe('not_executed')
